@@ -1,0 +1,28 @@
+{
+  "name": "ArmoTuSitio Light",
+  "type": "light",
+  "colors": {
+    "editor.background": "#ffffff",
+    "editor.foreground": "#202c37",
+    "activityBar.background": "#273645",
+    "activityBar.foreground": "#f9ed32",
+    "sideBar.background": "#f5f7f9",
+    "sideBar.foreground": "#202c37",
+    "statusBar.background": "#2c3e50",
+    "statusBar.foreground": "#ffffff",
+    "titleBar.activeBackground": "#f5f7f9",
+    "titleBar.activeForeground": "#202c37",
+    "tab.activeBackground": "#ffffff",
+    "tab.inactiveBackground": "#e9edf1",
+    "button.background": "#2c3e50",
+    "button.foreground": "#ffffff",
+    "button.hoverBackground": "#273645",
+    "editorCursor.foreground": "#2c3e50",
+    "focusBorder": "#2c3e50",
+    "terminal.background": "#ffffff",
+    "terminal.foreground": "#202c37",
+    "editorLineNumber.activeForeground": "#2c3e50",
+    "list.activeSelectionBackground": "#dce7ef",
+    "list.highlightForeground": "#2c3e50"
+  }
+}
