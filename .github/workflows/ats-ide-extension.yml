@@ -1,0 +1,22 @@
+name: ATS IDE Extension
+on:
+  pull_request:
+    paths:
+      - 'extensions/armotusitio-ide/**'
+      - '.github/workflows/ats-ide-extension.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Syntax checks
+        run: npm run check --prefix extensions/armotusitio-ide
+      - name: Contract tests
+        run: npm test --prefix extensions/armotusitio-ide
