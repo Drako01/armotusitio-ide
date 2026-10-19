@@ -1,0 +1,64 @@
+{
+  "name": "ArmoTuSitio Dark",
+  "type": "dark",
+  "colors": {
+    "editor.background": "#141b22",
+    "editor.foreground": "#e5e7eb",
+    "sideBar.background": "#1a242d",
+    "sideBar.foreground": "#e5e7eb",
+    "activityBar.background": "#10161d",
+    "activityBar.foreground": "#f9ed32",
+    "activityBarBadge.background": "#f9ed32",
+    "activityBarBadge.foreground": "#141b22",
+    "statusBar.background": "#273645",
+    "statusBar.foreground": "#f8fafc",
+    "titleBar.activeBackground": "#141b22",
+    "titleBar.activeForeground": "#e5e7eb",
+    "tab.activeBackground": "#141b22",
+    "tab.inactiveBackground": "#1a242d",
+    "focusBorder": "#f9ed32",
+    "button.background": "#f9ed32",
+    "button.foreground": "#141b22",
+    "button.hoverBackground": "#fef48a",
+    "terminal.background": "#141b22",
+    "terminal.foreground": "#e5e7eb",
+    "editorCursor.foreground": "#f9ed32",
+    "editorLineNumber.activeForeground": "#f9ed32",
+    "sideBarTitle.foreground": "#f9ed32",
+    "list.activeSelectionBackground": "#2c3e50",
+    "list.highlightForeground": "#f9ed32",
+    "input.background": "#202c37",
+    "input.foreground": "#e5e7eb",
+    "panel.background": "#141b22",
+    "panel.border": "#2c3e50"
+  },
+  "tokenColors": [
+    {
+      "scope": [
+        "keyword",
+        "storage.type"
+      ],
+      "settings": {
+        "foreground": "#f9ed32"
+      }
+    },
+    {
+      "scope": [
+        "string",
+        "string.quoted"
+      ],
+      "settings": {
+        "foreground": "#b5d89b"
+      }
+    },
+    {
+      "scope": [
+        "comment"
+      ],
+      "settings": {
+        "foreground": "#91a0ae",
+        "fontStyle": "italic"
+      }
+    }
+  ]
+}
