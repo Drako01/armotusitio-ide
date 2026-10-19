@@ -1,78 +1,95 @@
-/*---------------------------------------------------------------------------------------------
- *  ArmoTuSitio IDE - Harness integration. Licensed under MIT.
- *--------------------------------------------------------------------------------------------*/
 'use strict';
 const vscode = require('vscode');
 const fs = require('node:fs');
 const path = require('node:path');
+const cp = require('node:child_process');
 
-const commandCatalog = ['check', 'status', 'run'];
-function detectHarness(folder) {
+const PROFILES = {
+  'armotusitio2.0': { label: 'ArmoTuSitio 2.0', directory: 'harness', actions: ['doctor','check','context','verify','report','run','changes','ci-gaps','tokens'] },
+  'redevent': { label: 'RedEvent', directory: '.harness', actions: ['doctor','check','status','context','verify','report','run','dispatch','plan','progress','abort','metrics','ci-gaps'] }
+};
+const SAFE_ACTIONS = new Set(['doctor','check','status','context','verify','report','run','dispatch','plan','progress','abort','metrics','ci-gaps','tokens','changes']);
+function inspect(folder) {
   const root = folder.uri.fsPath;
-  if (!fs.existsSync(path.join(root, 'package.json'))) return undefined;
   let pkg;
-  try { pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')); } catch { return undefined; }
+  try { pkg = JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8')); } catch { return; }
   const scripts = pkg.scripts || {};
-  if (!scripts['harness:check'] || !fs.existsSync(path.join(root, '.harness'))) return undefined;
-  return { folder, scripts, manager: typeof pkg.packageManager === 'string' && pkg.packageManager.startsWith('pnpm@') ? 'pnpm' : 'npm' };
+  if (typeof scripts['harness:check'] !== 'string') return;
+  const profileId = pkg.name === 'redevent' ? 'redevent' :
+    pkg.name === 'armotusitio-next' ? 'armotusitio2.0' : undefined;
+  const profile = profileId && PROFILES[profileId];
+  if (!profile || !fs.existsSync(path.join(root,profile.directory))) return;
+  const manager = (pkg.packageManager || '').startsWith('pnpm@') ? 'pnpm' : 'npm';
+  return { folder, profileId, profile, manager, scripts };
 }
-class HarnessProvider {
-  constructor() { this.emitter = new vscode.EventEmitter(); this.onDidChangeTreeData = this.emitter.event; }
-  refresh() { this.emitter.fire(); }
+function findAll() { return (vscode.workspace.workspaceFolders || []).map(inspect).filter(Boolean); }
+class ProjectsProvider {
+  constructor() { this.events = new vscode.EventEmitter(); this.onDidChangeTreeData = this.events.event; }
+  refresh() { this.events.fire(); }
   getTreeItem(item) { return item; }
-  getChildren() {
-    if (!vscode.workspace.getConfiguration('atsHarness').get('enabled', true)) return [new vscode.TreeItem('Harness integration disabled')];
-    const folders = vscode.workspace.workspaceFolders || [];
-    if (!folders.length) return [new vscode.TreeItem('Open a project workspace')];
-    const entries = folders.map(detectHarness).filter(Boolean);
-    if (!entries.length) return [new vscode.TreeItem('No compatible harness found')];
-    return entries.flatMap(entry => {
-      const heading = new vscode.TreeItem(entry.folder.name, vscode.TreeItemCollapsibleState.None);
-      heading.description = 'Harness detected';
-      const nodes = [heading];
-      for (const action of commandCatalog) {
-        if (!entry.scripts['harness:' + action]) continue;
-        const item = new vscode.TreeItem(action === 'run' ? 'Run task…' : 'Harness ' + action, vscode.TreeItemCollapsibleState.None);
-        item.command = { command: 'atsHarness.' + action, title: 'Harness ' + action, arguments: [entry.folder.uri.toString()] };
-        item.iconPath = new vscode.ThemeIcon(action === 'run' ? 'play' : action === 'status' ? 'pulse' : 'check');
-        nodes.push(item);
-      }
-      return nodes;
-    });
+  getChildren(element) {
+    if (!vscode.workspace.getConfiguration('atsHarness').get('enabled',true)) return [new vscode.TreeItem('Harness disabled')];
+    if (!element) {
+      const projects=findAll();
+      return projects.length ? projects.map(p=>{
+        const item=new vscode.TreeItem(p.profile.label,vscode.TreeItemCollapsibleState.Expanded);
+        item.description=p.folder.name; item.contextValue='atsProject'; item.profile=p;
+        item.iconPath=new vscode.ThemeIcon('repo'); return item;
+      }) : [new vscode.TreeItem('Open ArmoTuSitio 2.0 or RedEvent')];
+    }
+    if (!element.profile) return [];
+    return element.profile.profile.actions.filter(action=>typeof element.profile.scripts['harness:'+action]==='string')
+      .map(action=>{
+        const item=new vscode.TreeItem(action,vscode.TreeItemCollapsibleState.None);
+        item.iconPath=new vscode.ThemeIcon(action==='run'||action==='dispatch'?'play':'terminal');
+        item.command={command:'atsHarness.execute',title:'Execute harness '+action,arguments:[element.profile.folder.uri.toString(),action]};
+        return item;
+      });
   }
 }
-async function execute(action, selectedUri) {
-  const entries = (vscode.workspace.workspaceFolders || []).map(detectHarness).filter(Boolean);
-  if (!entries.length) { vscode.window.showWarningMessage('No compatible .harness found in this workspace.'); return; }
-  const entry = selectedUri ? entries.find(e => e.folder.uri.toString() === selectedUri) : entries.length === 1 ? entries[0] : await vscode.window.showQuickPick(entries.map(e => ({label:e.folder.name, entry:e})), {placeHolder:'Choose harness workspace'}).then(x => x?.entry);
-  if (!entry) return;
-  if (!entry.scripts['harness:' + action]) { vscode.window.showWarningMessage('Harness script is not available: ' + action); return; }
-  let args = [];
-  if (action === 'run') {
-    const text = await vscode.window.showInputBox({prompt:'Harness task arguments (project-specific syntax)',ignoreFocusOut:true});
-    if (text === undefined || !text.trim()) return;
-    // Do not interpolate untrusted input into a shell command.
-    vscode.window.showInformationMessage('Run the task from the integrated terminal using the documented harness syntax.');
-    const term = vscode.window.createTerminal({name:'ATS Harness: run',cwd:entry.folder.uri.fsPath});
-    term.show();
-    term.sendText(entry.manager === 'pnpm' ? 'pnpm harness:run' : 'npm run harness:run', false);
-    return;
-  }
-  const command = entry.manager === 'pnpm' ? 'pnpm harness:' + action : 'npm run harness:' + action;
-  if (vscode.workspace.getConfiguration('atsHarness').get('confirmExecution', true)) {
-    const approved = await vscode.window.showWarningMessage('Run ' + command + ' in ' + entry.folder.name + '?', {modal:true}, 'Run');
-    if (approved !== 'Run') return;
-  }
-  const term = vscode.window.createTerminal({name:'ATS Harness: ' + action,cwd:entry.folder.uri.fsPath});
-  term.show();
-  term.sendText(command);
+async function chooseProject(uri) {
+  const projects=findAll();
+  if (uri) return projects.find(p=>p.folder.uri.toString()===uri);
+  if (projects.length===1) return projects[0];
+  const chosen=await vscode.window.showQuickPick(projects.map(p=>({label:p.profile.label,description:p.folder.uri.fsPath,project:p})),{placeHolder:'Select harness'});
+  return chosen?.project;
+}
+function npmArgs(project, action) {
+  return project.manager==='pnpm' ? ['harness:'+action] : ['run','harness:'+action];
+}
+async function runAction(uri, action) {
+  if (!SAFE_ACTIONS.has(action)) return;
+  const project=await chooseProject(uri);
+  if (!project) { vscode.window.showWarningMessage('Open a supported project workspace first.'); return; }
+  if (typeof project.scripts['harness:'+action]!=='string') { vscode.window.showWarningMessage('Command not available in this harness.'); return; }
+  const command=project.manager+' '+npmArgs(project,action).join(' ');
+  const confirm=await vscode.window.showWarningMessage('Launch '+command+' in '+project.profile.label+'?',{modal:true},'Launch');
+  if (confirm!=='Launch') return;
+  // A VS Code Task uses ProcessExecution: never concatenate prompts into shell source.
+  const execution=new vscode.ProcessExecution(project.manager,npmArgs(project,action),{cwd:project.folder.uri.fsPath});
+  const task=new vscode.Task({type:'ats-harness',action},project.folder,'ATS '+action,'ArmoTuSitio IDE',execution);
+  task.presentationOptions={reveal:vscode.TaskRevealKind.Always,panel:vscode.TaskPanelKind.Dedicated,clear:false};
+  await vscode.tasks.executeTask(task);
+}
+async function openPlan(uri) {
+  const project=await chooseProject(uri);
+  if (!project) return;
+  const plan=await vscode.window.showOpenDialog({canSelectFiles:true,canSelectFolders:false,canSelectMany:false,openLabel:'Open harness plan',filters:{JSON:['json']},defaultUri:project.folder.uri});
+  if (!plan?.length) return;
+  const doc=await vscode.workspace.openTextDocument(plan[0]); await vscode.window.showTextDocument(doc);
+  vscode.window.showInformationMessage('Plan opened for review. Execute it using the project harness CLI after validating permissions, scope and token budgets.');
 }
 function activate(context) {
-  const provider = new HarnessProvider();
-  context.subscriptions.push(vscode.window.registerTreeDataProvider('atsHarness.tasks', provider));
-  context.subscriptions.push(vscode.commands.registerCommand('atsHarness.refresh', () => provider.refresh()));
-  for (const action of commandCatalog) context.subscriptions.push(vscode.commands.registerCommand('atsHarness.' + action, selectedUri => execute(action, selectedUri)));
-  context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(() => provider.refresh()));
+  const provider=new ProjectsProvider();
+  context.subscriptions.push(vscode.window.registerTreeDataProvider('atsHarness.tasks',provider));
+  context.subscriptions.push(vscode.commands.registerCommand('atsHarness.refresh',()=>provider.refresh()));
+  context.subscriptions.push(vscode.commands.registerCommand('atsHarness.execute',runAction));
+  context.subscriptions.push(vscode.commands.registerCommand('atsHarness.openPlan',openPlan));
+  for (const action of ['check','status','run']) context.subscriptions.push(vscode.commands.registerCommand('atsHarness.'+action,uri=>runAction(uri,action)));
+  context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(()=>provider.refresh()));
+  const watcher=vscode.workspace.createFileSystemWatcher('**/package.json');
+  watcher.onDidChange(()=>provider.refresh()); watcher.onDidCreate(()=>provider.refresh()); watcher.onDidDelete(()=>provider.refresh());
+  context.subscriptions.push(watcher);
 }
-function deactivate() {}
-module.exports = { activate, deactivate };
+function deactivate(){}
+module.exports={activate,deactivate,inspect};
