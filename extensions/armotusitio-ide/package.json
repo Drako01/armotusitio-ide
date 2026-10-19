@@ -1,0 +1,86 @@
+{
+  "name": "armotusitio-ide",
+  "displayName": "ArmoTuSitio IDE",
+  "description": "ArmoTuSitio theme and local harness integration",
+  "version": "0.1.0",
+  "publisher": "armotusitio",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.100.0"
+  },
+  "main": "./extension.js",
+  "activationEvents": [
+    "onView:atsHarness.tasks",
+    "onCommand:atsHarness.check",
+    "onCommand:atsHarness.status",
+    "onCommand:atsHarness.run"
+  ],
+  "contributes": {
+    "configuration": {
+      "title": "ArmoTuSitio Harness",
+      "properties": {
+        "atsHarness.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable workspace-local harness detection."
+        },
+        "atsHarness.confirmExecution": {
+          "type": "boolean",
+          "default": true,
+          "description": "Confirm before running a workspace harness command."
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "atsHarness",
+          "title": "ArmoTuSitio",
+          "icon": "$(tools)"
+        }
+      ]
+    },
+    "views": {
+      "atsHarness": [
+        {
+          "id": "atsHarness.tasks",
+          "name": "Harness & Agents"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "atsHarness.refresh",
+        "title": "ArmoTuSitio: Refresh Harness"
+      },
+      {
+        "command": "atsHarness.check",
+        "title": "ArmoTuSitio: Harness Check"
+      },
+      {
+        "command": "atsHarness.status",
+        "title": "ArmoTuSitio: Harness Status"
+      },
+      {
+        "command": "atsHarness.run",
+        "title": "ArmoTuSitio: Run Harness Task"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "atsHarness.refresh",
+          "when": "view == atsHarness.tasks",
+          "group": "navigation"
+        }
+      ]
+    },
+    "themes": [
+      {
+        "label": "ArmoTuSitio Dark",
+        "uiTheme": "vs-dark",
+        "path": "./themes/armotusitio-dark-color-theme.json"
+      }
+    ]
+  }
+}
