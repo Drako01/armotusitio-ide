@@ -36,7 +36,7 @@
         {
           "id": "atsHarness",
           "title": "ArmoTuSitio",
-          "icon": "$(tools)"
+          "icon": "resources/ats.svg"
         }
       ]
     },
