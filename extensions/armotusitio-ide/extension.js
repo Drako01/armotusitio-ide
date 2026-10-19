@@ -3,6 +3,7 @@ const vscode=require('vscode');
 const fs=require('node:fs');
 const path=require('node:path');
 const {detect,command,validatePlan}=require('./src/core');
+const integrations=require('./src/integrations');
 
 function projects(){return (vscode.workspace.workspaceFolders||[]).map(folder=>({folder,profile:detect(folder.uri.fsPath)})).filter(x=>x.profile);}
 async function selectProject(uri){
@@ -62,6 +63,7 @@ async function reviewPlan(){
 }
 function activate(context){
  const controller=new Controller();
+ integrations.register(context,projects);
  context.subscriptions.push(vscode.window.registerTreeDataProvider('atsHarness.tasks',controller));
  context.subscriptions.push(vscode.commands.registerCommand('atsHarness.refresh',()=>controller.refresh()));
  context.subscriptions.push(vscode.commands.registerCommand('atsHarness.execute',(uri,action)=>controller.execute(uri,action)));
