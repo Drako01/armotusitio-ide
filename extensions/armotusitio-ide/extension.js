@@ -1,78 +1,78 @@
-/*---------------------------------------------------------------------------------------------
- *  ArmoTuSitio IDE - Harness integration. Licensed under MIT.
- *--------------------------------------------------------------------------------------------*/
 'use strict';
-const vscode = require('vscode');
-const fs = require('node:fs');
-const path = require('node:path');
+const vscode=require('vscode');
+const fs=require('node:fs');
+const path=require('node:path');
+const {detect,command,validatePlan}=require('./src/core');
 
-const commandCatalog = ['check', 'status', 'run'];
-function detectHarness(folder) {
-  const root = folder.uri.fsPath;
-  if (!fs.existsSync(path.join(root, 'package.json'))) return undefined;
-  let pkg;
-  try { pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')); } catch { return undefined; }
-  const scripts = pkg.scripts || {};
-  if (!scripts['harness:check'] || !fs.existsSync(path.join(root, '.harness'))) return undefined;
-  return { folder, scripts, manager: typeof pkg.packageManager === 'string' && pkg.packageManager.startsWith('pnpm@') ? 'pnpm' : 'npm' };
+function projects(){return (vscode.workspace.workspaceFolders||[]).map(folder=>({folder,profile:detect(folder.uri.fsPath)})).filter(x=>x.profile);}
+async function selectProject(uri){
+ const all=projects();if(uri)return all.find(x=>x.folder.uri.toString()===uri);
+ if(all.length===1)return all[0];
+ return (await vscode.window.showQuickPick(all.map(x=>({label:x.profile.name,description:x.profile.root,project:x})),{placeHolder:'Select project'}))?.project;
 }
-class HarnessProvider {
-  constructor() { this.emitter = new vscode.EventEmitter(); this.onDidChangeTreeData = this.emitter.event; }
-  refresh() { this.emitter.fire(); }
-  getTreeItem(item) { return item; }
-  getChildren() {
-    if (!vscode.workspace.getConfiguration('atsHarness').get('enabled', true)) return [new vscode.TreeItem('Harness integration disabled')];
-    const folders = vscode.workspace.workspaceFolders || [];
-    if (!folders.length) return [new vscode.TreeItem('Open a project workspace')];
-    const entries = folders.map(detectHarness).filter(Boolean);
-    if (!entries.length) return [new vscode.TreeItem('No compatible harness found')];
-    return entries.flatMap(entry => {
-      const heading = new vscode.TreeItem(entry.folder.name, vscode.TreeItemCollapsibleState.None);
-      heading.description = 'Harness detected';
-      const nodes = [heading];
-      for (const action of commandCatalog) {
-        if (!entry.scripts['harness:' + action]) continue;
-        const item = new vscode.TreeItem(action === 'run' ? 'Run task…' : 'Harness ' + action, vscode.TreeItemCollapsibleState.None);
-        item.command = { command: 'atsHarness.' + action, title: 'Harness ' + action, arguments: [entry.folder.uri.toString()] };
-        item.iconPath = new vscode.ThemeIcon(action === 'run' ? 'play' : action === 'status' ? 'pulse' : 'check');
-        nodes.push(item);
-      }
-      return nodes;
-    });
+class Controller {
+ constructor(){this.jobs=new Map();this.events=new vscode.EventEmitter();this.onDidChangeTreeData=this.events.event;}
+ refresh(){this.events.fire();}
+ getTreeItem(item){return item;}
+ getChildren(element){
+  if(!element){
+   const all=projects();return all.length?all.map(project=>{const item=new vscode.TreeItem(project.profile.name,vscode.TreeItemCollapsibleState.Expanded);item.project=project;item.iconPath=new vscode.ThemeIcon('repo');item.description=project.profile.repo;return item;}):[new vscode.TreeItem('Open RedEvent or ArmoTuSitio 2.0')];
   }
-}
-async function execute(action, selectedUri) {
-  const entries = (vscode.workspace.workspaceFolders || []).map(detectHarness).filter(Boolean);
-  if (!entries.length) { vscode.window.showWarningMessage('No compatible .harness found in this workspace.'); return; }
-  const entry = selectedUri ? entries.find(e => e.folder.uri.toString() === selectedUri) : entries.length === 1 ? entries[0] : await vscode.window.showQuickPick(entries.map(e => ({label:e.folder.name, entry:e})), {placeHolder:'Choose harness workspace'}).then(x => x?.entry);
-  if (!entry) return;
-  if (!entry.scripts['harness:' + action]) { vscode.window.showWarningMessage('Harness script is not available: ' + action); return; }
-  let args = [];
-  if (action === 'run') {
-    const text = await vscode.window.showInputBox({prompt:'Harness task arguments (project-specific syntax)',ignoreFocusOut:true});
-    if (text === undefined || !text.trim()) return;
-    // Do not interpolate untrusted input into a shell command.
-    vscode.window.showInformationMessage('Run the task from the integrated terminal using the documented harness syntax.');
-    const term = vscode.window.createTerminal({name:'ATS Harness: run',cwd:entry.folder.uri.fsPath});
-    term.show();
-    term.sendText(entry.manager === 'pnpm' ? 'pnpm harness:run' : 'npm run harness:run', false);
-    return;
+  if(!element.project)return [];
+  const {project}=element;
+  const nodes=project.profile.actions.map(action=>{const item=new vscode.TreeItem(action);item.iconPath=new vscode.ThemeIcon(action==='run'?'play':'terminal');item.command={command:'atsHarness.execute',title:action,arguments:[project.folder.uri.toString(),action]};return item;});
+  for(const job of this.jobs.values()){
+   if(job.project!==project.profile.root)continue;
+   const item=new vscode.TreeItem(job.action+' — '+job.state);item.description=job.started;item.iconPath=new vscode.ThemeIcon(job.state==='running'?'sync':job.state==='passed'?'check':'error');nodes.unshift(item);
   }
-  const command = entry.manager === 'pnpm' ? 'pnpm harness:' + action : 'npm run harness:' + action;
-  if (vscode.workspace.getConfiguration('atsHarness').get('confirmExecution', true)) {
-    const approved = await vscode.window.showWarningMessage('Run ' + command + ' in ' + entry.folder.name + '?', {modal:true}, 'Run');
-    if (approved !== 'Run') return;
-  }
-  const term = vscode.window.createTerminal({name:'ATS Harness: ' + action,cwd:entry.folder.uri.fsPath});
-  term.show();
-  term.sendText(command);
+  return nodes;
+ }
+ async execute(uri,action){
+  const project=await selectProject(uri);if(!project){vscode.window.showWarningMessage('Supported workspace not found');return;}
+  let spec;try{spec=command(project.profile,action);}catch(e){vscode.window.showErrorMessage(e.message);return;}
+  if(!vscode.workspace.isTrusted){vscode.window.showWarningMessage('Trust the workspace before executing harness tasks.');return;}
+  if(await vscode.window.showWarningMessage('Run '+spec.executable+' '+spec.args.join(' ')+' in '+project.profile.name+'?',{modal:true},'Run')!=='Run')return;
+  const task=new vscode.Task({type:'ats-harness',action},project.folder,'ATS '+project.profile.id+' '+action,'ArmoTuSitio IDE',new vscode.ProcessExecution(spec.executable,spec.args,{cwd:spec.cwd}));
+  task.presentationOptions={reveal:vscode.TaskRevealKind.Always,panel:vscode.TaskPanelKind.New};
+  const execution=await vscode.tasks.executeTask(task);
+  const id=Date.now()+'-'+Math.random().toString(36).slice(2);
+  this.jobs.set(execution,{id,project:spec.cwd,action,state:'running',started:new Date().toLocaleTimeString()});
+  this.refresh();
+ }
+ finish(execution,exitCode){const job=this.jobs.get(execution);if(!job)return;job.state=exitCode===0?'passed':'failed';this.refresh();}
+ async terminate(){
+  const jobs=[...this.jobs.entries()].filter(([,job])=>job.state==='running');
+  if(!jobs.length){vscode.window.showInformationMessage('No active ATS harness task');return;}
+  const selected=await vscode.window.showQuickPick(jobs.map(([execution,job])=>({label:job.action+' · '+job.project,execution})),{placeHolder:'Cancel one ATS task'});
+  if(!selected)return;
+  if(await vscode.window.showWarningMessage('Terminate this harness process?',{modal:true},'Terminate')==='Terminate')selected.execution.terminate();
+ }
 }
-function activate(context) {
-  const provider = new HarnessProvider();
-  context.subscriptions.push(vscode.window.registerTreeDataProvider('atsHarness.tasks', provider));
-  context.subscriptions.push(vscode.commands.registerCommand('atsHarness.refresh', () => provider.refresh()));
-  for (const action of commandCatalog) context.subscriptions.push(vscode.commands.registerCommand('atsHarness.' + action, selectedUri => execute(action, selectedUri)));
-  context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(() => provider.refresh()));
+async function reviewPlan(){
+ const project=await selectProject();if(!project)return;
+ const files=await vscode.window.showOpenDialog({defaultUri:project.folder.uri,canSelectFiles:true,canSelectMany:false,filters:{JSON:['json']}});
+ if(!files?.length)return;
+ try{
+  const raw=await vscode.workspace.fs.readFile(files[0]);
+  if(raw.byteLength>1048576)throw new Error('Plan too large');
+  const result=validatePlan(JSON.parse(Buffer.from(raw).toString('utf8')));
+  await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(files[0]));
+  vscode.window.showInformationMessage('Validated agent DAG: '+result.tasks+' tasks, reserved budget '+result.budget+'. Plan was not executed.');
+ }catch(e){vscode.window.showErrorMessage('Invalid agent plan: '+e.message);}
 }
-function deactivate() {}
-module.exports = { activate, deactivate };
+function activate(context){
+ const controller=new Controller();
+ context.subscriptions.push(vscode.window.registerTreeDataProvider('atsHarness.tasks',controller));
+ context.subscriptions.push(vscode.commands.registerCommand('atsHarness.refresh',()=>controller.refresh()));
+ context.subscriptions.push(vscode.commands.registerCommand('atsHarness.execute',(uri,action)=>controller.execute(uri,action)));
+ context.subscriptions.push(vscode.commands.registerCommand('atsHarness.cancelTask',()=>controller.terminate()));
+ context.subscriptions.push(vscode.commands.registerCommand('atsHarness.reviewPlan',reviewPlan));
+ for(const action of ['check','status','run'])context.subscriptions.push(vscode.commands.registerCommand('atsHarness.'+action,uri=>controller.execute(uri,action)));
+ context.subscriptions.push(vscode.tasks.onDidEndTaskProcess(e=>controller.finish(e.execution,e.exitCode)));
+ context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(()=>controller.refresh()));
+ const watcher=vscode.workspace.createFileSystemWatcher('**/package.json');
+ context.subscriptions.push(watcher);
+ context.subscriptions.push(watcher.onDidChange(()=>controller.refresh()),watcher.onDidCreate(()=>controller.refresh()),watcher.onDidDelete(()=>controller.refresh()));
+}
+function deactivate(){}
+module.exports={activate,deactivate};
