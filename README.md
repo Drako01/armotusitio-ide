@@ -13,6 +13,8 @@ Repositorio: [Drako01/vscode](https://github.com/Drako01/vscode) · Base upstrea
 
 **Limitación importante:** la presencia de una extensión en `extensions/` **no prueba por sí sola que esté incluida y activada en el build de escritorio**. Debe verificarse en el entorno de desarrollo y en el empaquetado. El centro multiagente completo, actualizador de distribución, instalador personalizado y otras funcionalidades del roadmap siguen pendientes.
 
+> **Windows 11 / Visual Studio 2026 Insiders:** antes de instalar dependencias, ejecutá `node scripts/ats-windows-preflight.mjs`. Si detecta solo VS 2026, consultá la [guía de compilación Windows](docs/armotusitio-ide/WINDOWS-BUILD.md): `npm ci` utiliza `node-gyp 11`, que puede rechazar VS 2026 aunque `cl.exe` funcione. No repitas reinstalaciones sin resolver ese requisito.
+
 ## 1. Requisitos para Windows 11 x64
 
 Instalá antes de compilar:
