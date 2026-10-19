@@ -1,20 +1,38 @@
-# ArmoTuSitio IDE — delivery gates and product backlog
+# ArmoTuSitio IDE: estado de la implementación
 
-## Verified source contracts
-- RedEvent: `redevent` package, `.harness/`, `pnpm harness:...`.
-- ArmoTuSitio 2.0: `armotusitio-next` package, `harness/`, `pnpm harness:...`.
-- Harness execution is only enabled for trusted VS Code workspaces and is always confirmed.
-- Jobs are VS Code process tasks; the running task can be terminated and task completion is reflected in the explorer.
-- Agent JSON plan is validated for duplicate IDs, cycles, hosts, basic shape and unsafe flags; validation does not execute the plan.
+## Fuentes de verdad
+- `Drako01/armotusitio2.0`: `package.json`, `harness/QUICKSTART.md`.
+- `Drako01/redevent`: `package.json`, `.harness/bootstrap.mjs`.
+- Los comandos disponibles se detectan por proyecto. Un script ausente nunca aparece como ejecutable.
 
-## Gates before any release
-1. Run extension syntax/contract CI.
-2. Verify extension activation, process termination and both project profiles manually on Windows.
-3. Compile and smoke-test a redistributable Code - OSS app.
-4. Review use of product identifiers, branding assets, license/extension marketplace terms and provenance.
-5. Validate upstream synchronization and signed update manifests on real release artifacts.
+## Disponible en la rama
+1. Tema ArmoTuSitio Dark y Light.
+2. Selector por proyecto y comandos de harness; ejecuciones como tareas VS Code, con cancelación.
+3. Validación estructural de planes DAG Codex/Claude (solo revisión).
+4. Inventario acotado de archivos para contexto, sin leer contenido ni seguir enlaces simbólicos.
+5. Visualización de worktrees, creación aislada tras confirmación.
+6. Acceso a GitHub mediante comandos de solo lectura de `gh` local.
+7. Apertura del dashboard n8n usando una URL configurable, sin credenciales embebidas.
+8. Ejecución de `codex exec` o `claude -p` después de una confirmación visible.
+9. Tests de contratos y workflow de CI para la extensión.
 
-## Not complete
-The following are **not** implemented or proven: provider adapters and interactive chat, structured mission-control webviews, a live agent DAG orchestrator, worktree creation and merge review, memory indexing, architecture map, metrics/token telemetry, automatic CI remediation, GitHub Actions/PR actions, n8n control, database migration center, QA/security gates beyond current harness commands, signed installers, rollback, release updater, upstream sync robot.
+## Requisitos locales
+- Node 24 y el entorno de build requerido por este checkout de Code - OSS.
+- pnpm compatible con cada repositorio.
+- `gh` instalado y autenticado para comandos de GitHub.
+- CLI de Claude/Codex instalada y autenticada para ejecutar agentes.
+- n8n disponible en la URL local configurada cuando corresponda.
+- Workspace marcado como confiable para ejecutar tareas.
 
-This branch adds a useful harness task controller but must not be labelled full product completion. Do not merge solely on static contract tests.
+## Comprobación manual recomendada
+- `npm run check --prefix extensions/armotusitio-ide`
+- `npm test --prefix extensions/armotusitio-ide`
+- Lanzar el entorno de desarrollo Code - OSS según `CONTRIBUTING.md`.
+- Abrir los dos proyectos y verificar vista lateral, commands, cancelación y diferentes versiones de pnpm.
+- Comprobar que los proveedores no lanzan comandos sin autorización.
+
+## NO validado ni completo
+Esta rama **no es una release**. No están probados el build completo de Code - OSS ni E2E Windows.
+No se han construido todavía un dashboard multiagente con streaming estructurado, orquestación automática completa, memoria semántica persistente, aprobación/revisión automática de PR, autenticación n8n por API, centro de migraciones, telemetría fiable de tokens, instaladores firmados, actualizador de binarios ni sincronización upstream de producción.
+
+No publicar ni fusionar por considerarlo 100% terminado. Antes de llamar a esto v1.0, cada área requiere pruebas funcionales con evidencia.
