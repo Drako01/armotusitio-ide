@@ -1,7 +1,7 @@
 {
   "name": "armotusitio-ide",
   "displayName": "ArmoTuSitio IDE",
-  "description": "ArmoTuSitio theme and local harness integration",
+  "description": "Dual-project Harness integration for ArmoTuSitio 2.0 and RedEvent",
   "version": "0.1.0",
   "publisher": "armotusitio",
   "license": "MIT",
@@ -11,9 +11,8 @@
   "main": "./extension.js",
   "activationEvents": [
     "onView:atsHarness.tasks",
-    "onCommand:atsHarness.check",
-    "onCommand:atsHarness.status",
-    "onCommand:atsHarness.run"
+    "onCommand:atsHarness.execute",
+    "onCommand:atsHarness.openPlan"
   ],
   "contributes": {
     "configuration": {
@@ -51,25 +50,38 @@
     "commands": [
       {
         "command": "atsHarness.refresh",
-        "title": "ArmoTuSitio: Refresh Harness"
+        "title": "ArmoTuSitio: Refresh Projects"
+      },
+      {
+        "command": "atsHarness.execute",
+        "title": "ArmoTuSitio: Execute Harness Command"
+      },
+      {
+        "command": "atsHarness.openPlan",
+        "title": "ArmoTuSitio: Review Agent Plan"
       },
       {
         "command": "atsHarness.check",
-        "title": "ArmoTuSitio: Harness Check"
+        "title": "ArmoTuSitio: Harness check"
       },
       {
         "command": "atsHarness.status",
-        "title": "ArmoTuSitio: Harness Status"
+        "title": "ArmoTuSitio: Harness status"
       },
       {
         "command": "atsHarness.run",
-        "title": "ArmoTuSitio: Run Harness Task"
+        "title": "ArmoTuSitio: Harness run"
       }
     ],
     "menus": {
       "view/title": [
         {
           "command": "atsHarness.refresh",
+          "when": "view == atsHarness.tasks",
+          "group": "navigation"
+        },
+        {
+          "command": "atsHarness.openPlan",
           "when": "view == atsHarness.tasks",
           "group": "navigation"
         }
