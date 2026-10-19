@@ -137,6 +137,11 @@
         "label": "ArmoTuSitio Dark",
         "uiTheme": "vs-dark",
         "path": "./themes/armotusitio-dark-color-theme.json"
+      },
+      {
+        "label": "ArmoTuSitio Light",
+        "uiTheme": "vs",
+        "path": "./themes/armotusitio-light-color-theme.json"
       }
     ]
   },
