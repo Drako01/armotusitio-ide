@@ -6,7 +6,7 @@
   "publisher": "armotusitio",
   "license": "MIT",
   "engines": {
-    "vscode": "^1.100.0"
+    "vscode": "^1.143.0"
   },
   "main": "./dist/extension.js",
   "activationEvents": [
@@ -23,9 +23,40 @@
     "onStartupFinished"
   ],
   "contributes": {
+    "chatParticipants": [
+      {
+        "id": "atsIde.harness",
+        "name": "harness",
+        "fullName": "ArmotuSitio Harness",
+        "description": "Harness local y Work Management de ArmotuSitio, sin llamadas a modelos de IA.",
+        "commands": [
+          { "name": "estado", "description": "Consultar el progreso y el historial del Harness" },
+          { "name": "comandos", "description": "Listar comandos de los proyectos abiertos" },
+          { "name": "check", "description": "Confirmar e iniciar check [armotusitio o redevent]" },
+          { "name": "verify", "description": "Confirmar e iniciar verify [armotusitio o redevent]" },
+          { "name": "test", "description": "Confirmar e iniciar test [armotusitio o redevent]" },
+          { "name": "mcp", "description": "Consultar la conexión y las herramientas del MCP" },
+          { "name": "proyectos", "description": "Listar proyectos de Work Management" },
+          { "name": "tareas", "description": "Listar tareas de un proyecto" },
+          { "name": "tarea", "description": "Obtener contexto de una tarea por su clave" },
+          { "name": "crear", "description": "Crear una tarea con confirmación" },
+          { "name": "mover", "description": "Cambiar de columna una tarea con confirmación" },
+          { "name": "comentar", "description": "Agregar un comentario con confirmación" }
+        ]
+      }
+    ],
+    "mcpServerDefinitionProviders": [
+      { "id": "atsIde.armotusitioMcp", "label": "ArmotuSitio Work Management" }
+    ],
     "configuration": {
       "title": "ArmoTuSitio Harness",
       "properties": {
+        "atsHarness.mcp.enabled": {
+          "type": "boolean",
+          "default": true,
+          "scope": "application",
+          "description": "Conectar el MCP de Work Management de ArmotuSitio. Requiere workspace confiable y clave de agente."
+        },
         "atsHarness.enabled": {
           "type": "boolean",
           "default": true,
@@ -73,6 +104,9 @@
       ]
     },
     "commands": [
+      { "command": "atsIde.chat", "title": "ArmotuSitio: Chat Harness", "icon": "$(comment-discussion)" },
+      { "command": "atsIde.mcpConfigure", "title": "ArmotuSitio: Configurar clave MCP" },
+      { "command": "atsIde.mcpClearKey", "title": "ArmotuSitio: Borrar clave MCP guardada" },
       { "command": "atsHarness.history", "title": "ArmotuSitio: Historial del Harness" },
       { "command": "atsHarness.clearHistory", "title": "ArmotuSitio: Borrar historial del Harness" },
       {
@@ -135,6 +169,7 @@
     ],
     "menus": {
       "view/title": [
+        { "command": "atsIde.chat", "when": "view == atsHarness.tasks", "group": "navigation@1" },
         {
           "command": "atsIde.home",
           "when": "view == atsHarness.tasks",
@@ -182,7 +217,7 @@
   "scripts": {
     "compile": "node esbuild.mts",
     "test": "node --test test/*.test.cts",
-    "check": "node ../../node_modules/@typescript/native/bin/tsc --project tsconfig.json && node --check resources/home.ts",
+    "check": "node ../../node_modules/@typescript/native/bin/tsc --project tsconfig.json && node --check resources/home.ts && node --check resources/chat.ts",
     "vscode:prepublish": "npm run compile"
   },
   "icon": "resources/logo.png",

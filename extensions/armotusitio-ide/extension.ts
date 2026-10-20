@@ -8,6 +8,8 @@ const { detect, command, validatePlan } = require('./src/core.ts');
 const integrations = require('./src/integrations.ts');
 const { registerHome } = require('./src/home.ts');
 const { History, registerActivity } = require('./src/activity.ts');
+const { registerMcp } = require('./src/mcp.ts');
+const { registerChat } = require('./src/chat.ts');
 const repeatActions = ['check', 'verify', 'test'];
 
 async function projects() {
@@ -64,10 +66,11 @@ class Controller {
 		}
 		return nodes;
 	}
-	async execute(uri, action) {
+	async execute(uri, action, token = undefined) {
 		const project = await selectProject(uri); if (!project) { vscode.window.showWarningMessage('Supported workspace not found'); return; }
 		if (!action) { action = await vscode.window.showQuickPick(project.profile.actions, { placeHolder: vscode.l10n.t('Eleg\u00ed un comando del harness') }); }
 		if (!action) { return; }
+		if (token?.isCancellationRequested) { return; }
 		let spec; try { spec = command(project.profile, action); } catch (e) { vscode.window.showErrorMessage(e.message); return; }
 		if (!vscode.workspace.isTrusted) { vscode.window.showWarningMessage('Trust the workspace before executing harness tasks.'); return; }
 		const guarded = repeatActions.includes(action);
@@ -78,6 +81,7 @@ class Controller {
 			if (await vscode.window.showWarningMessage('Run ' + spec.executable + ' ' + spec.args.join(' ') + ' in ' + project.profile.name + '?', { modal: true }, 'Run') !== 'Run') { return; }
 			if (guarded && !(await projects()).some(item => item.profile.root === spec.cwd && item.profile.actions.includes(action))) { return; }
 			if (!vscode.workspace.isTrusted) { return; }
+			if (token?.isCancellationRequested) { return; }
 			const task = new vscode.Task({ type: 'ats-harness', action }, project.folder, 'ATS ' + project.profile.id + ' ' + action, 'ArmoTuSitio IDE', new vscode.ProcessExecution(spec.executable, spec.args, { cwd: spec.cwd }));
 			task.presentationOptions = { reveal: vscode.TaskRevealKind.Always, panel: vscode.TaskPanelKind.New };
 			const execution = await vscode.tasks.executeTask(task);
@@ -86,6 +90,7 @@ class Controller {
 			this.jobs.set(execution, job);
 			this.history.put(job);
 			this.refresh();
+			return id;
 		} finally { if (guarded) { this.launching.delete(launchKey); this.refresh(); } }
 	}
 	/** Notify once for IDE task completion, using the current project preference. */
@@ -141,6 +146,8 @@ function activate(context) {
 	integrations.register(context, projects);
 	registerHome(context, controller, projects);
 	registerActivity(context, controller, projects, vscode);
+	const mcp = registerMcp(context, vscode);
+	registerChat(context, controller, projects, mcp, vscode);
 	context.subscriptions.push(controller.events);
 	context.subscriptions.push(vscode.window.registerTreeDataProvider('atsHarness.tasks', controller));
 	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.refresh', async () => { await controller.refreshActivity(); controller.refresh(); }));
