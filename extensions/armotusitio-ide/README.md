@@ -27,6 +27,17 @@ Usá **ArmotuSitio: Historial del Harness** para abrirlo desde la paleta de coma
 **Borrar historial** solicita confirmación y conserva las tareas que siguen ejecutándose.
 Las tareas externas de RedEvent se muestran como progreso, sin agregarlas al historial del IDE.
 
+### Repetir tareas
+
+Las entradas finalizadas de `check`, `verify` y `test` incluyen **Repetir tarea**.
+Requiere el proyecto original abierto, el comando disponible y un workspace confiable.
+Se solicita confirmación y se crea una ejecución nueva con su propio registro.
+Una tarea igual activa en el IDE, o esperando confirmación, bloquea otra ejecución del mismo comando y proyecto.
+El bloqueo también aplica a esos tres comandos desde el panel de proyectos.
+Se libera al cancelar la confirmación o si no se puede iniciar el proceso.
+Las entradas con resultado desconocido al reiniciar y los comandos `run`, `dispatch` y `abort` no se repiten.
+Este bloqueo controla ejecuciones del IDE; no detecta procesos equivalentes iniciados desde otras terminales.
+
 ## Notificaciones
 
 Las tareas iniciadas desde el IDE avisan al finalizar según `atsHarness.notifications`:

@@ -14,6 +14,7 @@ const { stripTypeScriptTypes } = require('node:module');
 function harness(trusted = true, notifications = 'errors') {
 	let controller, executed = 0, confirm = 'Run';
 	let enabled = true, selection, rejectNotification = false;
+	let available = true, actions = ['check'], failStart = false;
 	let now = 100000;
 	const clock = class extends Date { static now() { return now; } };
 	const notices = [], commands = [];
@@ -40,13 +41,13 @@ function harness(trusted = true, notifications = 'errors') {
 		},
 		commands: { registerCommand: () => disposable, executeCommand: async id => { commands.push(id); } },
 		Task: class { }, ProcessExecution: class { }, TaskRevealKind: { Always: 1 }, TaskPanelKind: { New: 1 },
-		tasks: { async executeTask() { executed++; return execution; }, onDidEndTaskProcess: noopEvent, onDidEndTask: noopEvent }
+		tasks: { async executeTask() { executed++; if (failStart) { throw new Error('Cannot start task'); } return execution; }, onDidEndTaskProcess: noopEvent, onDidEndTask: noopEvent }
 	};
 	const module = { exports: {} };
-	const core = { detect: () => ({ root: '/repo', name: 'RedEvent', id: 'redevent', actions: ['check'] }), command: () => ({ executable: 'pnpm', args: ['harness:check'], cwd: '/repo' }) };
+	const core = { detect: () => available ? ({ root: '/repo', name: 'RedEvent', id: 'redevent', actions }) : null, command: (_, action) => ({ executable: 'pnpm', args: ['harness:' + action], cwd: '/repo' }) };
 	vm.runInNewContext(stripTypeScriptTypes(fs.readFileSync(path.join(__dirname, '../extension.ts'), 'utf8')), { module, Date: clock, require: n => n === 'vscode' ? vscode : n === './src/core.ts' ? core : n === './src/home.ts' ? { registerHome() { } } : n === './src/activity.ts' ? { History: require('../src/activity.ts').History, registerActivity() { } } : { register() { } } });
 	module.exports.activate({ subscriptions: [], workspaceState: { get: () => [], update: async () => { } } });
-	return { controller, execution, notices, commands, executed: () => executed, advance: milliseconds => { now += milliseconds; }, confirm: value => { confirm = value; }, mode: value => { notifications = value; }, disable: () => { enabled = false; }, select: value => { selection = value; }, rejectNotification: () => { rejectNotification = true; } };
+	return { controller, execution, notices, commands, executed: () => executed, advance: milliseconds => { now += milliseconds; }, confirm: value => { confirm = value; }, mode: value => { notifications = value; }, disable: () => { enabled = false; }, select: value => { selection = value; }, rejectNotification: () => { rejectNotification = true; }, trust: value => { vscode.workspace.isTrusted = value; }, available: value => { available = value; }, actions: value => { actions = value; }, failStart: value => { failStart = value; } };
 }
 
 test('generic harness command selects an action and never executes in an untrusted workspace', async () => {
@@ -141,4 +142,60 @@ test('notification API failures do not alter the persisted outcome or reject com
 	await h.controller.execute(undefined, 'check'); h.controller.finish(h.execution, 1); await tick();
 	assert.equal(h.controller.getHistory()[0].state, 'failed');
 	assert.deepEqual(h.commands, []);
+});
+
+test('repeat only launches eligible completed history records as a new confirmed execution', async () => {
+	for (const action of ['check', 'verify', 'test']) {
+		const h = harness(); h.actions([action]);
+		await h.controller.execute(undefined, action); h.controller.finish(h.execution, 0);
+		const old = h.controller.getHistory()[0];
+		await h.controller.repeat(old.id);
+		assert.equal(h.executed(), 2);
+		assert.equal(h.controller.getHistory().length, 2);
+		assert.equal(old.state, 'passed');
+		assert.notEqual(h.controller.jobs.get(h.execution).id, old.id);
+		assert.equal(h.controller.jobs.get(h.execution).action, action);
+	}
+	for (const [action, state] of [['run', 'passed'], ['dispatch', 'failed'], ['abort', 'cancelled'], ['check', 'unknown'], ['check', 'running']]) {
+		const h = harness();
+		h.controller.history.put({ id: 'old', project: '/repo', action, state, startedAt: 0 });
+		await h.controller.repeat('old'); await h.controller.repeat('missing');
+		assert.equal(h.executed(), 0);
+	}
+});
+
+test('repeat respects trust, project availability, removed commands and declined confirmation', async () => {
+	for (const change of [h => h.trust(false), h => h.available(false), h => h.actions([]), h => h.confirm(undefined)]) {
+		const h = harness();
+		await h.controller.execute(undefined, 'check'); h.controller.finish(h.execution, 0);
+		change(h); await h.controller.repeat(h.controller.getHistory()[0].id);
+		assert.equal(h.executed(), 1);
+		assert.equal(h.controller.launching.size, 0);
+	}
+});
+
+test('repeat blocks concurrent confirmation, active tasks and bypass through the regular command', async () => {
+	const h = harness(); await h.controller.execute(undefined, 'check'); h.controller.finish(h.execution, 0);
+	const id = h.controller.getHistory()[0].id;
+	let confirm;
+	h.confirm(new Promise(resolve => { confirm = resolve; }));
+	const pending = h.controller.repeat(id); await tick();
+	await h.controller.repeat(id); await h.controller.execute(undefined, 'check');
+	assert.equal(h.executed(), 1);
+	confirm('Run'); await pending;
+	await h.controller.repeat(id); assert.equal(h.executed(), 2);
+	assert.equal(h.controller.launching.size, 0);
+});
+
+test('repeat releases its launch lock after a startup error and rechecks trust after confirmation', async () => {
+	const h = harness(); await h.controller.execute(undefined, 'check'); h.controller.finish(h.execution, 0);
+	const id = h.controller.getHistory()[0].id;
+	h.failStart(true); await assert.rejects(h.controller.repeat(id), /Cannot start task/);
+	assert.equal(h.controller.launching.size, 0);
+	h.failStart(false); await h.controller.repeat(id); assert.equal(h.executed(), 3);
+	h.controller.finish(h.execution, 0);
+	let confirm;
+	h.confirm(new Promise(resolve => { confirm = resolve; }));
+	const pending = h.controller.repeat(id); await tick(); h.trust(false); confirm('Run'); await pending;
+	assert.equal(h.executed(), 3); assert.equal(h.controller.launching.size, 0);
 });
