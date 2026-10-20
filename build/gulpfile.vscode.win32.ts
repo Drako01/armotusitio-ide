@@ -14,15 +14,12 @@ import product from '../product.json' with { type: 'json' };
 import { getVersion } from './lib/getVersion.ts';
 import * as task from './lib/gulp/task.ts';
 import * as util from './lib/util.ts';
-
-import { createRequire } from 'module';
-const require = createRequire(import.meta.url);
+import { ensureInnoSetup } from './lib/innoSetup.ts';
 
 const repoPath = path.dirname(import.meta.dirname);
 const commit = getVersion(repoPath);
 const buildPath = (arch: string) => path.join(path.dirname(repoPath), `ArmotuSitio-IDE-win32-${arch}`);
 const setupDir = (arch: string, target: string) => path.join(repoPath, '.build', `win32-${arch}`, `${target}-setup`);
-const innoSetupPath = path.join(path.dirname(path.dirname(require.resolve('innosetup'))), 'bin', 'ISCC.exe');
 const signWin32Path = path.join(repoPath, 'build', 'azure-pipelines', 'common', 'sign-win32.ts');
 
 function packageInnoSetup(iss: string, options: { definitions?: Record<string, unknown> }, cb: (err?: Error | null) => void) {
@@ -47,7 +44,7 @@ function packageInnoSetup(iss: string, options: { definitions?: Record<string, u
 		`/sesrp=node ${signWin32Path} $f`
 	];
 
-	cp.spawn(innoSetupPath, args, { stdio: ['ignore', 'inherit', 'inherit'] })
+	ensureInnoSetup(repoPath).then(innoSetupPath => cp.spawn(innoSetupPath, args, { stdio: ['ignore', 'inherit', 'inherit'] })
 		.on('error', cb)
 		.on('exit', code => {
 			if (code === 0) {
@@ -55,7 +52,7 @@ function packageInnoSetup(iss: string, options: { definitions?: Record<string, u
 			} else {
 				cb(new Error(`InnoSetup returned exit code: ${code}`));
 			}
-		});
+		})).catch(cb);
 }
 
 function buildWin32Setup(arch: string, target: string): task.CallbackTask {

@@ -17,6 +17,10 @@ node scripts/ats-build-all.mts
 El orden es: empaquetar Windows e instalador, comprimir la aplicación completa y compilar la salida de `code.bat`.
 Si falla un paso, los siguientes no se ejecutan.
 El comando comprueba antes si hay procesos usando el ejecutable de la carpeta empaquetada; no los termina.
+El empaquetador prepara Inno Setup 7.1.0 en `.build/tools` para admitir rutas largas de Copilot al instalar.
+La primera ejecución requiere Internet para descargar el compilador oficial y verificar su SHA-256.
+El compilador se prepara en modo portable.
+Las siguientes ejecuciones reutilizan el compilador; no modifica asociaciones ni instala herramientas globalmente.
 No cambies archivos ni commits y no inicies otra compilación durante la receta.
 
 - Instalador: `.build/releases/ArmotuSitio-IDE-Setup-1.143.0-x64.exe`.
