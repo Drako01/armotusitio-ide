@@ -143,7 +143,7 @@ Cierre: un cliente instalado detecta una release aprobada, la verifica y se actu
 - [x] Definir recuperación con instalador anterior y respaldo del perfil antes de migraciones incompatibles.
 - [ ] Probar recuperación sin asumir que todas las migraciones admiten downgrade.
 - [x] Preparar pausa de consultas, retirada de una release y publicación de una corrección posterior.
-- [ ] Registrar evidencia y comprobar en GitHub que no hubo ejecuciones nuevas de Actions.
+- [x] Evidencia: 19 tests, tipos, lint e higiene aprobados; push verificado sin workflows nuevos.
 
 Cierre: actualización y recuperación ensayadas, con las limitaciones restantes registradas.
 
