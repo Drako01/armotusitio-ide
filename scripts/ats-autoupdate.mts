@@ -252,7 +252,7 @@ export async function fileDigest(file: string): Promise<string> {
 }
 
 async function applicationInfo(): Promise<any> {
-	const application = path.resolve(repositoryRoot, '..', 'VSCode-win32-x64');
+	const application = path.resolve(repositoryRoot, '..', 'ArmotuSitio-IDE-win32-x64');
 	const product = await jsonFile(path.join(application, 'resources', 'app', 'product.json'));
 	const configuration = await jsonFile(overridesPath);
 	const receipt = await jsonFile(path.join(stateRoot, 'build-receipt.json'));

@@ -21,7 +21,7 @@ No cambies archivos ni commits y no inicies otra compilación durante la receta.
 
 - Instalador: `.build/releases/ArmotuSitio-IDE-Setup-1.143.0-x64.exe`.
 - ZIP: `.build/releases/ArmotuSitio-IDE-1.143.0-win32-x64.zip`.
-- Aplicación completa: `F:\VSCode-win32-x64` si el checkout está en `F:\vscode`.
+- Aplicación completa: `F:\ArmotuSitio-IDE-win32-x64` si el checkout está en `F:\vscode`.
 - Desarrollo: listo para abrir con `.\scripts\code.bat --new-window` al finalizar correctamente.
 
 Las rutas se calculan desde el repositorio, sin depender de que esté clonado en `F:\vscode`.

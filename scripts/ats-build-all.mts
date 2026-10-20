@@ -57,7 +57,7 @@ export async function buildAll(root = path.resolve(import.meta.dirname, '..'), d
 		const commit = await source();
 		const { version } = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
 		if (typeof version !== 'string' || !/^\d+\.\d+\.\d+$/.test(version)) { throw new Error('Invalid release version in package.json.'); }
-		const application = path.resolve(root, '..', 'VSCode-win32-x64');
+		const application = path.resolve(root, '..', 'ArmotuSitio-IDE-win32-x64');
 		const releases = path.join(root, '.build', 'releases');
 		const installer = path.join(releases, `ArmotuSitio-IDE-Setup-${version}-x64.exe`);
 		const zip = path.join(releases, `ArmotuSitio-IDE-${version}-win32-x64.zip`);
