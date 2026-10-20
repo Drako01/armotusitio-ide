@@ -63,7 +63,7 @@ Los comandos requieren un workspace confiable y confirmación antes de ejecutar 
 El inicio es una vista de herramientas y tareas de la sesión, no un orquestador multiagente completo.
 La ejecución de agentes usa las CLI instaladas; no integra un chat ni informa tokens que no recibe.
 El acceso a n8n abre su dashboard; la integración GitHub consulta mediante `gh`.
-La distribución local de Windows no está firmada. El actualizador propio sigue pendiente.
+La distribución original de Windows no está firmada. El actualizador requiere instalar la nueva versión puente.
 No se configura acceso al Marketplace de Microsoft ni se agregan extensiones propietarias.
 
 Consultá [el estado y las evidencias](DELIVERY.md) antes de considerar esta distribución una release.
@@ -73,3 +73,5 @@ Consultá [el estado y las evidencias](DELIVERY.md) antes de considerar esta dis
 Consultá [la guía de distribución local](DISTRIBUTION.md) para generar la aplicación y el instalador de Windows.
 
 Actions permanece desactivado en el fork por pedido del propietario.
+
+Consultá [el flujo de actualizaciones](AUTOUPDATE.md) para detectar upstream y publicar releases firmadas sin Actions.

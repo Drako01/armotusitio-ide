@@ -4,5 +4,16 @@
 		"itemUrl": "https://open-vsx.org/vscode/item",
 		"resourceUrlTemplate": "https://open-vsx.org/vscode/unpkg/{publisher}/{name}/{version}/{path}",
 		"extensionUrlTemplate": "https://open-vsx.org/vscode/gallery/{publisher}/{name}/latest"
+	},
+	"quality": "stable",
+	"updateUrl": "https://api.github.com/repos/Drako01/armotusitio-ide/releases/latest",
+	"armotusitioUpdate": {
+		"repository": "Drako01/armotusitio-ide",
+		"publicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAXhmSyY9FdlYjs5y5OVnNDxtiQUrJDdsEQ/ZIqP0slGo=\n-----END PUBLIC KEY-----\n",
+		"revision": 1
+	},
+	"armotusitioUpstream": {
+		"ref": "main",
+		"commit": "caf4fe387393f704f7eb94578e48dcff65bf8032"
 	}
 }

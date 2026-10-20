@@ -4,7 +4,9 @@
  *--------------------------------------------------------------------------------------------*/
 import * as path from 'node:path';
 import { spawn } from 'node:child_process';
-import { access, readdir } from 'node:fs/promises';
+import { access, mkdir, readdir, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
+import { fileDigest, run, withLock } from './ats-autoupdate.mts';
 
 const root = path.resolve(import.meta.dirname, '..');
 
@@ -44,6 +46,17 @@ async function main(): Promise<void> {
 	if (process.platform !== 'win32' || process.arch !== 'x64') {
 		throw new Error('This packaging command requires Windows x64.');
 	}
+	const require = createRequire(import.meta.url);
+	if (await run('git', ['status', '--porcelain', '--untracked-files=no'])) {
+		throw new Error('Release builds require clean tracked sources. Commit changes before packaging.');
+	}
+	const sourceCommit = await run('git', ['rev-parse', 'HEAD']);
+	try {
+		await access(path.join(path.dirname(require.resolve('@types/node/package.json')), 'index.d.ts'));
+	} catch {
+		throw new Error('Node type definitions are missing. Run npm install in the repository root, wait for it to finish, then retry.');
+	}
+	await execute([path.join(path.dirname(require.resolve('@typescript/native/package.json')), 'bin', 'tsc'), '--project', 'extensions/armotusitio-ide/tsconfig.json', '--noEmit', '--pretty', 'false']);
 	await configureWindowsSdk();
 	const copilot = path.join(root, 'extensions', 'copilot');
 	await execute([path.join(copilot, 'node_modules', 'tsx', 'dist', 'cli.mjs'), path.join(copilot, 'script', 'postinstall.ts')], copilot);
@@ -51,9 +64,20 @@ async function main(): Promise<void> {
 	await execute([...gulp, 'vscode-win32-x64']);
 	await execute([...gulp, 'vscode-win32-x64-inno-updater']);
 	await execute([...gulp, 'vscode-win32-x64-user-setup']);
+	if (sourceCommit !== await run('git', ['rev-parse', 'HEAD']) || await run('git', ['status', '--porcelain', '--untracked-files=no'])) {
+		throw new Error('Source changed during packaging. Rebuild from a fixed clean commit.');
+	}
+	const state = path.join(root, '.build', 'ats-autoupdate');
+	await mkdir(state, { recursive: true });
+	await writeFile(path.join(state, 'build-receipt.json'), JSON.stringify({
+		commit: sourceCommit,
+		installerSha256: await fileDigest(path.join(root, '.build', 'win32-x64', 'user-setup', 'VSCodeSetup.exe')),
+		productSha256: await fileDigest(path.resolve(root, '..', 'VSCode-win32-x64', 'resources', 'app', 'product.json')),
+		completedAt: new Date().toISOString()
+	}, null, 2) + '\n');
 }
 
-main().catch(error => {
+withLock(path.join(root, '.build', 'ats-autoupdate'), main).catch(error => {
 	console.error(error.message);
 	process.exitCode = 1;
 });

@@ -10,7 +10,7 @@ import { mkdir, readFile, unlink } from 'fs/promises';
 import { release, tmpdir } from 'os';
 import { Delayer, ProcessTimeRunOnceScheduler, timeout } from '../../../base/common/async.js';
 import { VSBuffer } from '../../../base/common/buffer.js';
-import { CancellationTokenSource } from '../../../base/common/cancellation.js';
+import { CancellationToken, CancellationTokenSource } from '../../../base/common/cancellation.js';
 import { memoize } from '../../../base/common/decorators.js';
 import { isCancellationError } from '../../../base/common/errors.js';
 import { hash } from '../../../base/common/hash.js';
@@ -35,6 +35,8 @@ import { IApplicationStorageMainService } from '../../storage/electron-main/stor
 import { ITelemetryService } from '../../telemetry/common/telemetry.js';
 import { AvailableForDownload, DisablementReason, IUpdate, State, StateType, UpdateType } from '../common/update.js';
 import { AbstractUpdateService, createUpdateURL, getUpdateRequestHeaders, IUpdateURLOptions, UpdateErrorClassification } from './abstractUpdateService.js';
+import { armotusitioRepository } from '../common/armotusitioUpdate.js';
+import { resolveArmotusitioUpdate } from '../node/armotusitioUpdate.js';
 import { getRelaunchArguments } from './updateRelaunchArguments.js';
 import { getWin32UpdateType } from './win32UpdateType.js';
 
@@ -63,7 +65,8 @@ export class Win32UpdateService extends AbstractUpdateService implements IRelaun
 	private readonly setupMutexName: string;
 
 	private get cachePathSync(): string {
-		return path.join(tmpdir(), `vscode-${this.productService.quality}-${this.productService.target}-${process.arch}`);
+		const prefix = this.productService.armotusitioUpdate ? 'armotusitio-ide' : 'vscode';
+		return path.join(tmpdir(), `${prefix}-${this.productService.quality}-${this.productService.target}-${process.arch}`);
 	}
 
 	@memoize
@@ -206,6 +209,12 @@ export class Win32UpdateService extends AbstractUpdateService implements IRelaun
 	}
 
 	protected buildUpdateFeedUrl(quality: string, commit: string, options?: IUpdateURLOptions): string | undefined {
+		const trust = this.productService.armotusitioUpdate;
+		if (trust) {
+			return quality === 'stable' && trust.repository === armotusitioRepository && trust.publicKey
+				? `https://api.github.com/repos/${armotusitioRepository}/releases/latest`
+				: undefined;
+		}
 		let platform = `win32-${process.arch}`;
 
 		if (this.getUpdateType() === UpdateType.Archive) {
@@ -215,6 +224,29 @@ export class Win32UpdateService extends AbstractUpdateService implements IRelaun
 		}
 
 		return createUpdateURL(this.productService.updateUrl!, platform, quality, commit, options);
+	}
+
+	protected override async doIsLatestVersion(commit?: string, token = CancellationToken.None): Promise<boolean | undefined> {
+		const trust = this.productService.armotusitioUpdate;
+		if (!trust) {
+			return super.doIsLatestVersion(commit, token);
+		}
+		if (!this.quality || this.configurationService.getValue('update.mode') === 'none') {
+			return undefined;
+		}
+		try {
+			const url = this.buildUpdateFeedUrl(this.quality, commit ?? this.productService.commit!);
+			const context = await this.requestService.request({ url, timeout: 15000, callSite: 'updateService.win32.armotusitioLatest' }, token);
+			if (context.res.statusCode === 404) {
+				return true;
+			}
+			const platform = this.getUpdateType() === UpdateType.Archive ? `win32-${process.arch}-archive` : `win32-${process.arch}-${this.productService.target}`;
+			return (await resolveArmotusitioUpdate(await asJson<unknown>(context), trust, this.productService.version, commit ?? this.productService.commit!, platform,
+				url => this.requestService.request({ url, timeout: 15000, callSite: 'updateService.win32.armotusitioManifest' }, token).then(asJson<unknown>))) === null;
+		} catch (error) {
+			this.logService.error('ArmotuSitio update check failed', error);
+			return undefined;
+		}
 	}
 
 	protected doCheckForUpdates(explicit: boolean, pendingCommit?: string): void {
@@ -238,7 +270,18 @@ export class Win32UpdateService extends AbstractUpdateService implements IRelaun
 
 		const headers = getUpdateRequestHeaders(this.productService.version);
 		const promise = this.requestService.request({ url, headers, callSite: 'updateService.win32.checkForUpdates' }, token)
-			.then<IUpdate | null>(asJson)
+			.then<IUpdate | null>(async context => {
+				const trust = this.productService.armotusitioUpdate;
+				if (!trust) {
+					return asJson<IUpdate>(context);
+				}
+				if (context.res.statusCode === 404) {
+					return null;
+				}
+				const platform = this.getUpdateType() === UpdateType.Archive ? `win32-${process.arch}-archive` : `win32-${process.arch}-${this.productService.target}`;
+				return resolveArmotusitioUpdate(await asJson<unknown>(context), trust, this.productService.version, pendingCommit ?? this.productService.commit!, platform,
+					url => this.requestService.request({ url, timeout: 15000, callSite: 'updateService.win32.armotusitioManifest' }, token).then(asJson<unknown>));
+			})
 			.then(update => {
 				const updateType = this.getUpdateType();
 
@@ -274,6 +317,9 @@ export class Win32UpdateService extends AbstractUpdateService implements IRelaun
 					return this.getUpdatePackagePath(update.version).then(updatePackagePath => {
 						return pfs.Promises.exists(updatePackagePath).then(exists => {
 							if (exists) {
+								if (this.productService.armotusitioUpdate && update.sha256hash) {
+									return checksum(updatePackagePath, update.sha256hash).then(() => updatePackagePath);
+								}
 								return Promise.resolve(updatePackagePath);
 							}
 

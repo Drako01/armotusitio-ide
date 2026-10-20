@@ -127,6 +127,11 @@ export interface IProductConfiguration {
 
 	readonly downloadUrl?: string;
 	readonly updateUrl?: string;
+	readonly armotusitioUpdate?: {
+		readonly repository: string;
+		readonly publicKey: string;
+		readonly revision: number;
+	};
 	readonly webUrl?: string;
 	readonly webEndpointUrlTemplate?: string;
 	readonly webviewContentExternalBaseUrlTemplate?: string;

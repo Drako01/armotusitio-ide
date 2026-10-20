@@ -5,14 +5,14 @@ El alcance Enterprise AAA continúa pendiente según [el estado de entrega](DELI
 
 ## GitHub Actions
 
-GitHub Actions está desactivado a nivel del repositorio `Drako01/vscode` por pedido del propietario.
+GitHub Actions está desactivado a nivel del repositorio `Drako01/armotusitio-ide` por pedido del propietario.
 Se verificó `enabled: false` mediante la API antes de preparar el push.
 Los archivos YAML se conservan para futuras validaciones; no se renombran ni se eliminan sus controles.
 
 Antes de un push, comprobá que Actions siga desactivado:
 
 ```powershell
-gh api repos/Drako01/vscode/actions/permissions
+gh api repos/Drako01/armotusitio-ide/actions/permissions
 ```
 
 Si devuelve `enabled: true`, detené el push y revisá la configuración del repositorio.
@@ -34,6 +34,10 @@ El instalador es por usuario y se genera con Inno Setup.
 El instalador se escribe en `.build/win32-x64/user-setup`.
 La aplicación necesita sus DLL y su carpeta `resources`: no alcanza con compartir únicamente el `.exe`.
 Para compartir sin instalar, comprimí la carpeta completa generada.
+
+Generá el ZIP y su manifiesto firmado con `node scripts/ats-autoupdate.mts artifacts`.
+Este comando requiere un build exitoso del mismo commit limpio y la clave privada local de distribución.
+Los pasos de revisión, firma, publicación y recuperación están en [actualizaciones](AUTOUPDATE.md).
 
 ## Contenido y configuración de cada compañero
 

@@ -8,6 +8,7 @@ import { isDefined } from '../../../base/common/types.js';
 import { TargetPlatform } from '../../extensions/common/extensions.js';
 import { createDecorator } from '../../instantiation/common/instantiation.js';
 import { ILogService, LogLevel } from '../../log/common/log.js';
+import { IProductService } from '../../product/common/productService.js';
 import { ITelemetryService } from '../../telemetry/common/telemetry.js';
 import { ExtensionSignatureVerificationCode } from '../common/extensionManagement.js';
 
@@ -56,6 +57,7 @@ export class ExtensionSignatureVerificationService implements IExtensionSignatur
 	constructor(
 		@ILogService private readonly logService: ILogService,
 		@ITelemetryService private readonly telemetryService: ITelemetryService,
+		@IProductService private readonly productService: IProductService,
 	) { }
 
 	private vsceSign(): Promise<typeof vsceSign> {
@@ -67,6 +69,17 @@ export class ExtensionSignatureVerificationService implements IExtensionSignatur
 	}
 
 	private async resolveVsceSign(): Promise<typeof vsceSign> {
+		if (this.productService.extensionsGallery?.serviceUrl === 'https://open-vsx.org/vscode/gallery') {
+			const { verify } = await import('node-ovsx-sign');
+			return {
+				verify: async (vsixFilePath, signatureArchiveFilePath, verbose) => {
+					if (!await verify(vsixFilePath, signatureArchiveFilePath, verbose, { verifySignatureManifest: true })) {
+						return { code: ExtensionSignatureVerificationCode.SignatureIsInvalid, didExecute: true };
+					}
+					return { code: ExtensionSignatureVerificationCode.Success, didExecute: true };
+				}
+			};
+		}
 		const mod = '@vscode/vsce-sign';
 		return import(mod);
 	}

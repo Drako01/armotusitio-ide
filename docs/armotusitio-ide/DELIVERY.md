@@ -4,7 +4,7 @@
 
 Las mejoras se desarrollaron localmente sobre `main`. El propietario autorizó luego el push y el empaquetado local.
 
-Actions quedó desactivado en `Drako01/vscode` antes del push; no se abre PR ni se ejecutan workflows.
+Actions quedó desactivado en `Drako01/armotusitio-ide` antes del push; no se abre PR ni se ejecutan workflows.
 Se conservaron los archivos `pnpm-lock.yaml` y `pnpm-workspace.yaml` que ya estaban sin seguimiento.
 No se modificaron los repositorios de ArmotuSitio 2.0 ni RedEvent.
 
@@ -79,7 +79,7 @@ El instalador por usuario y el ZIP completo quedaron generados en `.build/releas
 
 La versión del binario es `1.143.0`, x64, con commit de fuentes `a315e1c43175ce2dd30c7fee87685dcd335dacaa`.
 Ambos ejecutables carecen de firma digital. El paquete no contiene perfiles ni credenciales personales.
-No hay `updateUrl` configurada: las actualizaciones de VS Code requieren integración y nueva distribución.
+Ese paquete original no tenía `updateUrl`; no recibe actualizaciones por cambiar posteriormente el código fuente.
 El proceso y las condiciones para compartirlos se describen en [distribución](DISTRIBUTION.md).
 La instalación en una máquina limpia, la firma digital y el actualizador propio siguen pendientes.
 
@@ -97,6 +97,14 @@ Open VSX y el Marketplace de Microsoft tienen catálogos diferentes; no se garan
 La configuración del catálogo no habilita un actualizador del IDE ni cambia las preferencias de los usuarios.
 
 ## Alcance pendiente
+
+El autoupdate de Windows está implementado según [la guía operativa](AUTOUPDATE.md).
+Incluye consulta de upstream, candidatos aislados, aprobación, manifiestos firmados y uso del actualizador nativo.
+La base 1.143.0 está adelantada respecto de la estable 1.142.0 consultada; no se integró ningún downgrade.
+El typecheck completo volvió a pasar tras alinear las dependencias; el typecheck de la extensión también pasa.
+El verificador Open VSX acepta una extensión firmada de prueba y rechaza paquetes y firmas alterados.
+El error TS2688 reportado coincidió con dependencias en ajuste; se agregó preflight y resolución explícita de tipos.
+Los builds y ZIPs de esta etapa quedan a cargo del propietario. Falta ensayar el puente y una actualización instalada.
 
 Windows bloqueó el launcher auxiliar `.agents/skills/launch/scripts/launch.ps1` durante la prueba inicial.
 Se recuperó posteriormente desde Git sin ejecutarlo ni cambiar el antivirus; su eliminación no llegó al repositorio.
