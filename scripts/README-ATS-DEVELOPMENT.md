@@ -5,6 +5,29 @@ No se compila el archivo `.bat`: se actualizan las salidas que carga.
 El empaquetador de Windows genera otra salida y no actualiza ese `out` de desarrollo.
 Si `out` ya existe, la preparación de `code.bat` no vuelve a compilarla.
 
+## Todo en un comando: instalador, ZIP y desarrollo
+
+Cerrá las ventanas anteriores de ArmotuSitio IDE y ubicá el checkout en `main`, sin cambios versionados.
+Ejecutá desde PowerShell 7, con `pwsh.exe` disponible en `PATH`:
+
+```powershell
+node scripts/ats-build-all.mts
+```
+
+El orden es: empaquetar Windows e instalador, comprimir la aplicación completa y compilar la salida de `code.bat`.
+Si falla un paso, los siguientes no se ejecutan.
+El comando comprueba antes si hay procesos usando el ejecutable de la carpeta empaquetada; no los termina.
+No cambies archivos ni commits y no inicies otra compilación durante la receta.
+
+- Instalador: `.build/win32-x64/user-setup/VSCodeSetup.exe`.
+- ZIP: `.build/releases/ArmotuSitio-IDE-win32-x64.zip`.
+- Desarrollo: listo para abrir con `.\scripts\code.bat --new-window` al finalizar correctamente.
+
+Las rutas se calculan desde el repositorio, sin depender de que esté clonado en `F:\vscode`.
+El ZIP anterior se reemplaza solo después de completar la compresión.
+Este ZIP manual no genera el manifiesto firmado ni publica una release; ese flujo usa `ats-autoupdate.mts artifacts`.
+La receta no instala extensiones personales, no abre el IDE automáticamente y no ejecuta GitHub Actions.
+
 ## Probar main completo
 
 Cerrá las ventanas anteriores de ArmotuSitio IDE para evitar reutilizar un proceso con código viejo.
