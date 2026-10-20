@@ -50,7 +50,7 @@ Los comandos requieren un workspace confiable y confirmación antes de ejecutar 
 El inicio es una vista de herramientas y tareas de la sesión, no un orquestador multiagente completo.
 La ejecución de agentes usa las CLI instaladas; no integra un chat ni informa tokens que no recibe.
 El acceso a n8n abre su dashboard; la integración GitHub consulta mediante `gh`.
-No existe todavía un instalador firmado ni un actualizador propio validado.
+La distribución local de Windows no está firmada. El actualizador propio sigue pendiente.
 No se configura acceso al Marketplace de Microsoft ni se agregan extensiones propietarias.
 
 Consultá [el estado y las evidencias](DELIVERY.md) antes de considerar esta distribución una release.

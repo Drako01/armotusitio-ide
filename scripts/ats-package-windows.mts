@@ -49,6 +49,7 @@ async function main(): Promise<void> {
 	await execute([path.join(copilot, 'node_modules', 'tsx', 'dist', 'cli.mjs'), path.join(copilot, 'script', 'postinstall.ts')], copilot);
 	const gulp = ['--experimental-strip-types', '--max-old-space-size=8192', path.join(root, 'node_modules', 'gulp', 'bin', 'gulp.js')];
 	await execute([...gulp, 'vscode-win32-x64']);
+	await execute([...gulp, 'vscode-win32-x64-inno-updater']);
 	await execute([...gulp, 'vscode-win32-x64-user-setup']);
 }
 
