@@ -7,8 +7,8 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 function validRef(ref) { return /^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,120}$/.test(ref) && !ref.includes('..') && !ref.endsWith('.lock'); }
-function git(root, args, opts = {}) {
-	return new Promise((resolve, reject) => {
+function git(root, args, opts: { signal?: AbortSignal } = {}) {
+	return new Promise<string>((resolve, reject) => {
 		if (!Array.isArray(args) || !args.every(x => typeof x === 'string')) { return reject(new Error('Invalid Git argv')); }
 		let output = '', errors = '';
 		const child = spawn('git', args, { cwd: root, shell: false, windowsHide: true, env: process.env });

@@ -27,5 +27,5 @@ async function indexProject(root, { limit = 5000 } = {}) {
 	}
 	result.files.sort(); return result;
 }
-function summary(index) { return Object.entries(index.byExtension).sort((a, b) => b[1] - a[1]).map(([ext, count]) => ext + ': ' + count).join(', '); }
+function summary(index: { byExtension: Record<string, number> }) { return Object.entries(index.byExtension).sort((a, b) => b[1] - a[1]).map(([ext, count]) => ext + ': ' + count).join(', '); }
 module.exports = { indexProject, summary };

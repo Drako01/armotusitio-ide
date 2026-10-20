@@ -1,0 +1,18 @@
+{
+	"compilerOptions": {
+		"target": "ES2024",
+		"module": "CommonJS",
+		"moduleDetection": "force",
+		"types": [
+			"node"
+		],
+		"noEmit": true,
+		"skipLibCheck": true,
+		"strict": false,
+		"allowImportingTsExtensions": true
+	},
+	"include": [
+		"extension.ts",
+		"src/**/*.ts"
+	]
+}

@@ -13,13 +13,16 @@ async function projects() {
 	const all = await Promise.all((vscode.workspace.workspaceFolders || []).map(async folder => ({ folder, profile: await detect(folder.uri.fsPath) })));
 	return all.filter(item => item.profile);
 }
-async function selectProject(uri) {
+async function selectProject(uri = undefined) {
 	const all = await projects(); if (uri) { return all.find(x => x.folder.uri.toString() === uri); }
 	if (all.length === 1) { return all[0]; }
 	return (await vscode.window.showQuickPick(all.map(x => ({ label: x.profile.name, description: x.profile.root, project: x })), { placeHolder: 'Select project' }))?.project;
 }
 class Controller {
-	constructor() { this.jobs = new Map(); this.events = new vscode.EventEmitter(); this.onDidChangeTreeData = this.events.event; }
+	jobs = new Map();
+	events = new vscode.EventEmitter();
+	onDidChangeTreeData = this.events.event;
+	constructor() { }
 	refresh() { this.events.fire(); }
 	getTreeItem(item) { return item; }
 	async getChildren(element) {

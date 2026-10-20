@@ -26,11 +26,11 @@ Las tareas oficiales pueden descargar componentes de build; no ejecutan GitHub A
 Su salida principal es `../VSCode-win32-x64`, fuera de la carpeta del checkout.
 
 ```powershell
-node --experimental-strip-types --max-old-space-size=8192 node_modules/gulp/bin/gulp.js vscode-win32-x64
-node --experimental-strip-types --max-old-space-size=8192 node_modules/gulp/bin/gulp.js vscode-win32-x64-user-setup
+node scripts/ats-package-windows.mts
 ```
 
-La primera tarea genera la aplicación completa; la segunda crea un instalador por usuario con Inno Setup.
+El comando prepara primero los recursos de Copilot y luego ejecuta las tareas oficiales de aplicación e instalador.
+El instalador es por usuario y se genera con Inno Setup.
 El instalador se escribe en `.build/win32-x64/user-setup`.
 La aplicación necesita sus DLL y su carpeta `resources`: no alcanza con compartir únicamente el `.exe`.
 Para compartir sin instalar, comprimí la carpeta completa generada.
