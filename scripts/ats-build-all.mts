@@ -5,9 +5,9 @@
 import * as path from 'node:path';
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdir, readFile, rename, rm, stat } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, rename, rm, stat } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
-import { run, withLock } from './ats-autoupdate.mts';
+import { fileDigest, run, withLock } from './ats-autoupdate.mts';
 
 const capture = promisify(execFile);
 type Runner = (file: string, args: string[], root: string, env?: NodeJS.ProcessEnv) => Promise<void>;
@@ -55,22 +55,35 @@ export async function buildAll(root = path.resolve(import.meta.dirname, '..'), d
 			return deps.git(['rev-parse', 'HEAD'], root);
 		};
 		const commit = await source();
+		const { version } = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
+		if (typeof version !== 'string' || !/^\d+\.\d+\.\d+$/.test(version)) { throw new Error('Invalid release version in package.json.'); }
 		const application = path.resolve(root, '..', 'VSCode-win32-x64');
-		const zip = path.join(root, '.build', 'releases', 'ArmotuSitio-IDE-win32-x64.zip');
+		const releases = path.join(root, '.build', 'releases');
+		const installer = path.join(releases, `ArmotuSitio-IDE-Setup-${version}-x64.exe`);
+		const zip = path.join(releases, `ArmotuSitio-IDE-${version}-win32-x64.zip`);
 		await deps.assertClosed(application);
 		console.log('[1/3] Windows application and installer');
 		await deps.run(process.execPath, [path.join(root, 'scripts', 'ats-package-windows.mts')], root);
 		const receipt = JSON.parse(await readFile(path.join(root, '.build', 'ats-autoupdate', 'build-receipt.json'), 'utf8'));
 		if (receipt.commit !== commit || await source() !== commit) { throw new Error('Packaging did not validate the selected commit.'); }
-		console.log('[2/3] ZIP');
+		console.log('[2/3] Versioned installer and ZIP');
 		await withLock(path.join(root, '.build', 'ats-autoupdate'), async () => {
+			const product = JSON.parse(await readFile(path.join(application, 'resources', 'app', 'product.json'), 'utf8'));
+			if (product.version !== version || product.commit !== commit) { throw new Error('Packaged application does not match the release version and commit.'); }
+			await mkdir(releases, { recursive: true });
+			const temporary = path.join(releases, `.ArmotuSitio-IDE-${randomUUID()}.tmp.exe`);
+			try {
+				await copyFile(path.join(root, '.build', 'win32-x64', 'user-setup', 'VSCodeSetup.exe'), temporary);
+				if ((await stat(temporary)).size === 0 || await fileDigest(temporary) !== receipt.installerSha256) { throw new Error('Installer does not match the packaging receipt.'); }
+				await rename(temporary, installer);
+			} finally { await rm(temporary, { force: true }); }
 			await archiveApplication(application, zip, root, deps.run);
 			if (await source() !== commit) { throw new Error('Source changed while creating the ZIP.'); }
 		});
 		console.log('[3/3] Complete development build');
 		await deps.run(process.execPath, [path.join(root, 'scripts', 'ats-build-dev.mts')], root);
 		if (await source() !== commit) { throw new Error('Source changed during the development build.'); }
-		console.log(`Ready at ${commit}\nInstaller: ${path.join(root, '.build', 'win32-x64', 'user-setup', 'VSCodeSetup.exe')}\nZIP: ${zip}\nDevelopment: scripts\\code.bat --new-window`);
+		console.log(`Ready at ${commit}\nApplication: ${application}\nInstaller: ${installer}\nZIP: ${zip}\nDevelopment: scripts\\code.bat --new-window`);
 	});
 }
 

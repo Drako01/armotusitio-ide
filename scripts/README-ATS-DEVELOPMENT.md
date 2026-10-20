@@ -19,11 +19,15 @@ Si falla un paso, los siguientes no se ejecutan.
 El comando comprueba antes si hay procesos usando el ejecutable de la carpeta empaquetada; no los termina.
 No cambies archivos ni commits y no inicies otra compilación durante la receta.
 
-- Instalador: `.build/win32-x64/user-setup/VSCodeSetup.exe`.
-- ZIP: `.build/releases/ArmotuSitio-IDE-win32-x64.zip`.
+- Instalador: `.build/releases/ArmotuSitio-IDE-Setup-1.143.0-x64.exe`.
+- ZIP: `.build/releases/ArmotuSitio-IDE-1.143.0-win32-x64.zip`.
+- Aplicación completa: `F:\VSCode-win32-x64` si el checkout está en `F:\vscode`.
 - Desarrollo: listo para abrir con `.\scripts\code.bat --new-window` al finalizar correctamente.
 
 Las rutas se calculan desde el repositorio, sin depender de que esté clonado en `F:\vscode`.
+La versión de los nombres se obtiene de `package.json`; `1.143.0` corresponde a la versión actual.
+El instalador intermedio se conserva en `.build/win32-x64/user-setup/VSCodeSetup.exe`.
+La copia versionada se verifica contra el hash del recibo de empaquetado antes de reemplazar la anterior.
 El ZIP anterior se reemplaza solo después de completar la compresión.
 Este ZIP manual no genera el manifiesto firmado ni publica una release; ese flujo usa `ats-autoupdate.mts artifacts`.
 La receta no instala extensiones personales, no abre el IDE automáticamente y no ejecuta GitHub Actions.
