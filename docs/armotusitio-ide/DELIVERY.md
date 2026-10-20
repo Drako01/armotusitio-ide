@@ -83,10 +83,24 @@ No hay `updateUrl` configurada: las actualizaciones de VS Code requieren integra
 El proceso y las condiciones para compartirlos se describen en [distribución](DISTRIBUTION.md).
 La instalación en una máquina limpia, la firma digital y el actualizador propio siguen pendientes.
 
+## Catálogo de extensiones
+
+`build/armotusitio/product-overrides.json` conecta el cliente nativo con el adaptador de Open VSX.
+El arranque desde fuentes y el empaquetado incorporan ese archivo sin modificar las reglas de higiene de upstream.
+La CLI de desarrollo instaló EditorConfig 0.18.2 y vscode-icons 13.0.0 desde ese catálogo en un perfil temporal.
+La ficha de vscode-icons abrió en el editor y el selector guardó `workbench.iconTheme: vscode-icons` en ese perfil.
+Los logs están en `.build/ats-openvsx-cli-install.log` y `.build/ats-openvsx-icons-install.log`.
+La captura del panel está en `.build/ats-openvsx-search.png`.
+
+Atom Material Icons no se encontró con el identificador `AtomMaterial.a-file-icon-vscode` en esa comprobación.
+Open VSX y el Marketplace de Microsoft tienen catálogos diferentes; no se garantiza paridad de extensiones.
+La configuración del catálogo no habilita un actualizador del IDE ni cambia las preferencias de los usuarios.
+
 ## Alcance pendiente
 
-El launcher auxiliar `.agents/skills/launch/scripts/launch.ps1` sigue bloqueado por Windows en este checkout.
-Su desaparición local no se incorporó al commit; el smoke del binario usó una instancia temporal independiente.
+Windows bloqueó el launcher auxiliar `.agents/skills/launch/scripts/launch.ps1` durante la prueba inicial.
+Se recuperó posteriormente desde Git sin ejecutarlo ni cambiar el antivirus; su eliminación no llegó al repositorio.
+El smoke del binario usó una instancia temporal independiente.
 Las plataformas Linux/macOS y las integraciones completas no fueron certificadas.
 
 El objetivo Enterprise AAA del documento de misión sigue incompleto en las áreas indicadas.

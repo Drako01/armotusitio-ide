@@ -18,6 +18,19 @@ El logo de inicio y los íconos de Windows/Linux provienen de los PNG originales
 El ícono lateral usa los trazos del SVG oficial, sin su fondo para permitir la máscara nativa del editor.
 No se generó un logo nuevo. El nombre de aplicación, protocolo y almacenamiento tienen identidad propia.
 
+## Extensiones
+
+El panel nativo usa Open VSX para buscar, instalar y consultar actualizaciones de extensiones compatibles.
+El catálogo se configura en `build/armotusitio/product-overrides.json`, separado del producto base de upstream.
+Se incorpora al iniciar desde fuentes y al generar el `product.json` de los paquetes de ArmotuSitio.
+Reiniciá el editor de desarrollo para que lea el catálogo; los instaladores anteriores deben reemplazarse.
+
+Open VSX tiene un catálogo propio: una extensión del Marketplace de Microsoft puede no estar publicada allí.
+También podés usar **Extensions: Install from VSIX...** con un paquete compatible del proveedor.
+No se desactivan los controles de confianza, compatibilidad ni verificación de extensiones.
+
+La integración sigue la [guía oficial de Open VSX](https://github.com/eclipse-openvsx/openvsx/wiki/Using-Open-VSX-in-VS-Code).
+
 ## Desarrollo y validación
 
 Prepará el entorno según [la guía de Windows](WINDOWS-BUILD.md). Antes del primer arranque, regenerá el cliente:

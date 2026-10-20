@@ -11,6 +11,7 @@ const require = createRequire(import.meta.url);
 let productObj: Partial<IProductConfiguration> & { BUILD_INSERT_PRODUCT_CONFIGURATION?: string } = { BUILD_INSERT_PRODUCT_CONFIGURATION: 'BUILD_INSERT_PRODUCT_CONFIGURATION' }; // DO NOT MODIFY, PATCHED DURING BUILD
 if (productObj['BUILD_INSERT_PRODUCT_CONFIGURATION']) {
 	productObj = require('../product.json'); // Running out of sources
+	Object.assign(productObj, require('../build/armotusitio/product-overrides.json'));
 }
 
 let pkgObj = { BUILD_INSERT_PACKAGE_CONFIGURATION: 'BUILD_INSERT_PACKAGE_CONFIGURATION' }; // DO NOT MODIFY, PATCHED DURING BUILD
