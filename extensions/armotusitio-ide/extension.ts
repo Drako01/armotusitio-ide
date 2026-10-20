@@ -7,6 +7,7 @@ const vscode = require('vscode');
 const { detect, command, validatePlan } = require('./src/core.ts');
 const integrations = require('./src/integrations.ts');
 const { registerHome } = require('./src/home.ts');
+const { History, registerActivity } = require('./src/activity.ts');
 
 async function projects() {
 	if (!vscode.workspace.getConfiguration('atsHarness').get('enabled', true)) { return []; }
@@ -22,7 +23,21 @@ class Controller {
 	jobs = new Map();
 	events = new vscode.EventEmitter();
 	onDidChangeTreeData = this.events.event;
-	constructor() { }
+	history;
+	progress = [];
+	refreshActivity = async () => { };
+	constructor(context) {
+		this.history = new History(context.workspaceState, () => vscode.window.showWarningMessage(vscode.l10n.t('No se pudo guardar el historial del Harness.')));
+	}
+	getHistory() {
+		const rows = new Map<string, { id: string; project: string; action: string; state: string; startedAt: number; endedAt?: number }>(this.history.rows.map(row => [row.id, row]));
+		for (const job of this.jobs.values()) { if (job.state === 'running') { rows.set(job.id, job); } }
+		return [...rows.values()].sort((a, b) => a.startedAt - b.startedAt);
+	}
+	async clearHistory() {
+		const clear = vscode.l10n.t('Borrar historial');
+		if (await vscode.window.showWarningMessage(vscode.l10n.t('\u00bfQuer\u00e9s borrar el historial de este workspace? Las tareas activas van a seguir ejecut\u00e1ndose.'), { modal: true }, clear) === clear) { this.history.clear(); this.refresh(); }
+	}
 	refresh() { this.events.fire(); }
 	getTreeItem(item) { return item; }
 	async getChildren(element) {
@@ -32,9 +47,9 @@ class Controller {
 		if (!element.project) { return []; }
 		const { project } = element;
 		const nodes = project.profile.actions.map(action => { const item = new vscode.TreeItem(action); item.iconPath = new vscode.ThemeIcon(action === 'run' ? 'play' : 'terminal'); item.command = { command: 'atsHarness.execute', title: action, arguments: [project.folder.uri.toString(), action] }; return item; });
-		for (const job of this.jobs.values()) {
+		for (const job of this.getHistory()) {
 			if (job.project !== project.profile.root) { continue; }
-			const item = new vscode.TreeItem(job.action + ' \u2014 ' + job.state); item.description = job.started; item.iconPath = new vscode.ThemeIcon(job.state === 'running' ? 'sync' : job.state === 'passed' ? 'check' : 'error'); nodes.unshift(item);
+			const item = new vscode.TreeItem(job.action + ' \u2014 ' + job.state); item.description = new Date(job.startedAt).toLocaleString(); item.iconPath = new vscode.ThemeIcon(job.state === 'running' ? 'sync' : job.state === 'passed' ? 'check' : job.state === 'unknown' ? 'question' : 'error'); nodes.unshift(item);
 		}
 		return nodes;
 	}
@@ -49,10 +64,18 @@ class Controller {
 		task.presentationOptions = { reveal: vscode.TaskRevealKind.Always, panel: vscode.TaskPanelKind.New };
 		const execution = await vscode.tasks.executeTask(task);
 		const id = Date.now() + '-' + Math.random().toString(36).slice(2);
-		this.jobs.set(execution, { id, project: spec.cwd, action, state: 'running', started: new Date().toLocaleTimeString() });
+		const job = { id, project: spec.cwd, action, state: 'running', started: new Date().toLocaleTimeString(), startedAt: Date.now(), endedAt: undefined };
+		this.jobs.set(execution, job);
+		this.history.put(job);
 		this.refresh();
 	}
-	finish(execution, exitCode) { const job = this.jobs.get(execution); if (!job) { return; } job.state = job.cancelRequested ? 'cancelled' : exitCode === 0 ? 'passed' : exitCode === undefined ? 'ended' : 'failed'; this.refresh(); }
+	finish(execution, exitCode) {
+		const job = this.jobs.get(execution); if (!job || job.state !== 'running') { return; }
+		job.state = job.cancelRequested ? 'cancelled' : exitCode === 0 ? 'passed' : exitCode === undefined ? 'ended' : 'failed';
+		job.endedAt = Date.now(); this.history.put(job);
+		for (const [key, value] of this.jobs) { if (value.state !== 'running' && !this.history.rows.some(row => row.id === value.id)) { this.jobs.delete(key); } }
+		this.refresh();
+	}
 	async terminate() {
 		const jobs = [...this.jobs.entries()].filter(([, job]) => job.state === 'running');
 		if (!jobs.length) { vscode.window.showInformationMessage('No active ATS harness task'); return; }
@@ -74,12 +97,15 @@ async function reviewPlan() {
 	} catch (e) { vscode.window.showErrorMessage('Invalid agent plan: ' + e.message); }
 }
 function activate(context) {
-	const controller = new Controller();
+	const controller = new Controller(context);
 	integrations.register(context, projects);
 	registerHome(context, controller, projects);
+	registerActivity(context, controller, projects, vscode);
 	context.subscriptions.push(controller.events);
 	context.subscriptions.push(vscode.window.registerTreeDataProvider('atsHarness.tasks', controller));
-	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.refresh', () => controller.refresh()));
+	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.refresh', async () => { await controller.refreshActivity(); controller.refresh(); }));
+	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.history', () => vscode.commands.executeCommand('atsIde.home')));
+	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.clearHistory', () => controller.clearHistory()));
 	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.execute', (uri, action) => controller.execute(uri, action)));
 	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.cancelTask', () => controller.terminate()));
 	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.reviewPlan', reviewPlan));

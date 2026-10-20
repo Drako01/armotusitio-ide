@@ -27,7 +27,7 @@ function harness() {
 		commands: { registerCommand(id, fn) { commands.set(id, fn); return disposable; }, async executeCommand(id) { calls.push(id); } },
 		window: { createWebviewPanel() { return panel; }, async showOpenDialog() { return [{ path: '/chosen' }]; } }
 	};
-	const controller = { jobs: new Map(), onDidChangeTreeData(fn) { update = fn; return disposable; }, refresh() { update(); }, async execute(...args) { calls.push(args); } };
+	const controller = { jobs: new Map(), progress: [], getHistory() { return [...this.jobs.values()]; }, onDidChangeTreeData(fn) { update = fn; return disposable; }, refresh() { update(); }, async refreshActivity() { }, async execute(...args) { calls.push(args); } };
 	const projects = [{ profile: { name: 'RedEvent', root: '/repo', actions: ['check'] }, folder: { uri: { toString: () => 'file:///repo' } } }];
 	const module = { exports: {} };
 	vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../src/home.ts'), 'utf8'), { module, require: name => name === 'vscode' ? vscode : require(name) });
@@ -49,10 +49,10 @@ test('home routes only declared project actions and fixed commands', async () =>
 
 test('home publishes actual session state, reuses one panel and excludes arbitrary HTML data', async () => {
 	const h = harness();
-	h.controller.jobs.set('task', { action: 'check', state: 'cancelled', project: '/repo', started: '10:00' });
+	h.controller.jobs.set('task', { action: 'check', state: 'cancelled', project: '/repo', startedAt: 1000, endedAt: 2000 });
 	await h.receive({ action: 'ready' });
 	const state = h.calls[0];
-	assert.deepEqual(JSON.parse(JSON.stringify({ ...state, labels: undefined })), { type: 'state', trusted: true, projects: [{ name: 'RedEvent', root: '/repo', actions: ['check'] }], jobs: [{ action: 'check', state: 'cancelled', project: '/repo', started: '10:00' }] });
+	assert.deepEqual(JSON.parse(JSON.stringify({ ...state, labels: undefined })), { type: 'state', trusted: true, projects: [{ name: 'RedEvent', root: '/repo', actions: ['check'] }], jobs: [{ action: 'check', state: 'cancelled', project: '/repo', startedAt: 1000, endedAt: 2000 }], progress: [] });
 	assert.match(h.panel.webview.html, /default-src 'none'/);
 	assert.doesNotMatch(h.panel.webview.html, /unsafe-inline|command:|\/repo/);
 	h.commands.get('atsIde.home')();
