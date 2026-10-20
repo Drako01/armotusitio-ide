@@ -1,59 +1,60 @@
-# Compilación Windows: diagnóstico previo
+# Compilación de ArmotuSitio IDE en Windows
 
-Esta guía aborda el error observado al compilar ArmoTuSitio IDE en Windows 11:
+## Entorno de desarrollo
 
-```
-gyp ERR! find VS unknown version "undefined" found at "F:\\visual"
-gyp ERR! using node-gyp@11.4.2
-```
+Usá Node de `.nvmrc` y el lockfile npm del repositorio.
+El diagnóstico local no instala paquetes ni altera las dependencias:
 
-**Diagnóstico:** Visual Studio 2026 Insiders (MSVC 14.52) está instalado y funciona con otros `node-gyp`, pero **el node-gyp 11.4.2 que ejecuta npm ci no identifica correctamente esa versión**. Instalar Spectre repara MSB8040, pero no este detector. Ejecutar `vcvars64.bat` de VS 2026 tampoco soluciona el rechazo de versión.
-
-## Preparación única, no destructiva
-
-Desde PowerShell o Git Bash en la raíz de `vscode`:
-
-```bash
-node scripts/ats-windows-preflight.mjs
+```powershell
+node scripts/ats-windows-preflight.mts
 ```
 
-El diagnóstico comprueba Node de `.nvmrc`, `package-lock.json`, instalaciones de Visual Studio (incluidas prerelease) y presencia de `vcvars64.bat`. No altera el repositorio ni instala dependencias.
+El problema previo de `node-gyp@11.4.2` era su detección de Visual Studio 2026 Insiders.
+Las bibliotecas Spectre no corrigen por sí solas ese detector.
+Una instalación de Visual Studio Build Tools 2022 en paralelo sigue siendo una alternativa para ejecutar `npm ci`.
 
-### Si informa que solamente existe VS 2026
+Componentes del toolchain de Windows:
 
-La alternativa conservadora y compatible con node-gyp 11 es **instalar Visual Studio Build Tools 2022, versión 17, en paralelo**. Seleccionar:
 - Desktop development with C++.
 - MSVC v143 x64/x86.
 - Windows 10/11 SDK.
 - Bibliotecas Spectre mitigated para v143 x64/x86.
 
-No desinstales VS 2026 ni hagas un downgrade global de Node o npm. La instalación de VS 2022 requiere espacio adicional; esta solución se debe validar en la máquina local.
+No hace falta desinstalar Visual Studio 2026 ni cambiar globalmente Node o npm.
+Si las dependencias ya están preparadas, no repitas su instalación para cada arranque.
 
-Desde una **x64 Native Tools Command Prompt for VS 2022** ejecutar:
+## Compilar y abrir
 
-```bat
-cd /d F:\vscode
-npm ci
-node -e "console.log(require.resolve('vinyl-fs'))"
-npm run watch
+Desde PowerShell en la raíz del checkout:
+
+```powershell
+node build/next/build-fast.ts --client-only
+npm run compile --prefix extensions/armotusitio-ide
+.\scripts\code.bat
 ```
 
-Para ejecutar el IDE en una segunda consola, desde el mismo checkout:
+La compilación del cliente recupera también recursos como `codicon.ttf`.
+Tener una carpeta `out` incompleta puede permitir abrir la ventana y mostrar los íconos como cuadrados.
+El comando directo de Node conserva `--client-only` en PowerShell.
 
-```bat
-scripts\code.bat
-```
+Para generar la aplicación distribuible y el instalador, consultá [distribución local](DISTRIBUTION.md).
 
-La compilación completa y el empaquetado siguen sujetos a pruebas reales.
+## Problemas frecuentes
 
-### Si aparecen EBUSY o EPERM
+### Acceso denegado o archivos bloqueados
 
-Cerrá procesos de `watch`, Code - OSS y editores que utilicen la carpeta. Reiniciá Windows si hay archivos bloqueados. **No** hagas `taskkill /F /IM node.exe` indiscriminadamente, porque puede cortar servicios de otros proyectos. No elimines `node_modules` hasta que el proceso de compilación termine y los bloqueos estén liberados.
+Cerrá la instancia específica que utiliza los archivos antes de regenerarlos.
+No termines todos los procesos Node del equipo: otros proyectos pueden usarlos.
+No borres dependencias mientras una compilación está ejecutándose.
 
-### Por qué no se reemplaza npm por pnpm
+### Mezcla de gestores de paquetes
 
-Esta revisión versiona `package-lock.json` y sus scripts de instalación usan npm. Una instalación parcial con pnpm puede generar un árbol incompleto y errores `ERR_MODULE_NOT_FOUND` como `vinyl-fs`. No hagas `pnpm add vinyl-fs` ni cambies el lockfile para ocultar un error de toolchain.
+Este checkout versiona `package-lock.json` y sus tareas usan npm.
+Una instalación parcial con pnpm puede dejar dependencias o recursos faltantes.
+No agregues paquetes individuales para ocultar un fallo de instalación o de toolchain.
 
-### Mejoras futuras
+### Consulta del usuario de Windows
 
-Se puede evaluar actualizar el `node-gyp` utilizado por el npm efectivo, **con pruebas de build completas**, o adoptar un toolchain 2026 cuando sea oficialmente compatible. No se fuerza ni parchea el detector de forma opaca desde el repositorio.
+Un entorno restringido puede hacer fallar `os.userInfo()` durante el postinstall de Copilot.
+El proceso local de empaquetado necesita acceso normal a la información del usuario y a sus herramientas de build.
+Esto no requiere desactivar el antivirus ni ejecutar GitHub Actions.

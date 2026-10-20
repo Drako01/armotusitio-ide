@@ -1,0 +1,647 @@
+{
+  "source": "VS Code local",
+  "extensions": [
+    {
+      "id": "42crunch.vscode-openapi",
+      "version": "5.10.0"
+    },
+    {
+      "id": "4ops.terraform",
+      "version": "0.2.5"
+    },
+    {
+      "id": "afractal.node-essentials",
+      "version": "1.1.0"
+    },
+    {
+      "id": "alefragnani.project-manager",
+      "version": "13.1.0"
+    },
+    {
+      "id": "angular.ng-template",
+      "version": "22.2.0"
+    },
+    {
+      "id": "anthropic.claude-code",
+      "version": "2.1.304"
+    },
+    {
+      "id": "atommaterial.a-file-icon-vscode",
+      "version": "2.0.1"
+    },
+    {
+      "id": "aykutsarac.jsoncrack-vscode",
+      "version": "5.1.0"
+    },
+    {
+      "id": "batisteo.vscode-django",
+      "version": "1.15.0"
+    },
+    {
+      "id": "be5invis.vscode-icontheme-nomo-dark",
+      "version": "1.3.9"
+    },
+    {
+      "id": "bibhasdn.django-html",
+      "version": "1.3.0"
+    },
+    {
+      "id": "bibhasdn.django-snippets",
+      "version": "1.1.1"
+    },
+    {
+      "id": "bierner.markdown-mermaid",
+      "version": "1.32.1"
+    },
+    {
+      "id": "bigonesystems.django",
+      "version": "1.0.2"
+    },
+    {
+      "id": "billyokeyo.djangomodels",
+      "version": "1.0.1"
+    },
+    {
+      "id": "blackboxapp.blackbox",
+      "version": "2.8.53"
+    },
+    {
+      "id": "blackboxapp.blackboxagent",
+      "version": "3.7.0"
+    },
+    {
+      "id": "bmewburn.vscode-intelephense-client",
+      "version": "1.18.5"
+    },
+    {
+      "id": "brapifra.phpserver",
+      "version": "3.0.2"
+    },
+    {
+      "id": "chris-noring.node-snippets",
+      "version": "1.4.0"
+    },
+    {
+      "id": "christian-kohler.npm-intellisense",
+      "version": "1.4.5"
+    },
+    {
+      "id": "christian-kohler.path-intellisense",
+      "version": "2.10.0"
+    },
+    {
+      "id": "codezombiech.gitignore",
+      "version": "0.10.0"
+    },
+    {
+      "id": "danielsanmedium.dscodegpt",
+      "version": "3.24.74"
+    },
+    {
+      "id": "dannyconnell.split-html-attributes",
+      "version": "1.0.10"
+    },
+    {
+      "id": "davidanson.vscode-markdownlint",
+      "version": "0.62.1"
+    },
+    {
+      "id": "davidbabel.antigravity-icons-supercharged-blue",
+      "version": "1.0.6"
+    },
+    {
+      "id": "davidbabel.antigravity-icons-supercharged-gray",
+      "version": "1.0.6"
+    },
+    {
+      "id": "davidbabel.vscode-simpler-icons",
+      "version": "1.6.14"
+    },
+    {
+      "id": "dbaeumer.vscode-eslint",
+      "version": "3.0.34"
+    },
+    {
+      "id": "dhavalvira.django-import-libraries",
+      "version": "0.0.4"
+    },
+    {
+      "id": "docker.docker",
+      "version": "0.18.0"
+    },
+    {
+      "id": "donjayamanne.githistory",
+      "version": "0.6.20"
+    },
+    {
+      "id": "donjayamanne.python-environment-manager",
+      "version": "1.2.7"
+    },
+    {
+      "id": "donjayamanne.python-extension-pack",
+      "version": "1.7.0"
+    },
+    {
+      "id": "dotjoshjohnson.xml",
+      "version": "2.5.1"
+    },
+    {
+      "id": "dsznajder.es7-react-js-snippets",
+      "version": "4.4.3"
+    },
+    {
+      "id": "ecmel.vscode-html-css",
+      "version": "2.0.14"
+    },
+    {
+      "id": "editorconfig.editorconfig",
+      "version": "0.18.2"
+    },
+    {
+      "id": "emeric-defay.django-factory",
+      "version": "0.0.9"
+    },
+    {
+      "id": "esbenp.prettier-vscode",
+      "version": "12.4.0"
+    },
+    {
+      "id": "formulahendry.auto-close-tag",
+      "version": "0.5.15"
+    },
+    {
+      "id": "formulahendry.auto-rename-tag",
+      "version": "0.1.10"
+    },
+    {
+      "id": "formulahendry.code-runner",
+      "version": "0.12.2"
+    },
+    {
+      "id": "github.codespaces",
+      "version": "1.18.16"
+    },
+    {
+      "id": "github.github-vscode-theme",
+      "version": "6.3.5"
+    },
+    {
+      "id": "github.remotehub",
+      "version": "0.64.0"
+    },
+    {
+      "id": "github.remotehub",
+      "version": "0.65.0"
+    },
+    {
+      "id": "github.vscode-github-actions",
+      "version": "0.32.3"
+    },
+    {
+      "id": "github.vscode-pull-request-github",
+      "version": "0.170.0"
+    },
+    {
+      "id": "glenn2223.live-sass",
+      "version": "6.1.5"
+    },
+    {
+      "id": "golang.go",
+      "version": "0.56.1"
+    },
+    {
+      "id": "google.geminicodeassist",
+      "version": "2.100.0"
+    },
+    {
+      "id": "googlecloudtools.cloudcode",
+      "version": "2.41.0"
+    },
+    {
+      "id": "googlecloudtools.datacloud",
+      "version": "1.1.0"
+    },
+    {
+      "id": "gruntfuggly.todo-tree",
+      "version": "0.0.226"
+    },
+    {
+      "id": "hbenl.vscode-test-explorer",
+      "version": "2.22.1"
+    },
+    {
+      "id": "hediet.vscode-drawio",
+      "version": "1.17.0"
+    },
+    {
+      "id": "jasonnutter.search-node-modules",
+      "version": "1.3.0"
+    },
+    {
+      "id": "jawandarajbir.react-vscode-extension-pack",
+      "version": "1.0.0"
+    },
+    {
+      "id": "jinliming2.vscode-go-template",
+      "version": "0.2.1"
+    },
+    {
+      "id": "johnpapa.angular2",
+      "version": "18.0.2"
+    },
+    {
+      "id": "kevinrose.vsc-python-indent",
+      "version": "1.21.0"
+    },
+    {
+      "id": "magicstack.magicpython",
+      "version": "1.1.0"
+    },
+    {
+      "id": "maxchamps.django-commands",
+      "version": "0.1.3"
+    },
+    {
+      "id": "mechatroner.rainbow-csv",
+      "version": "3.24.1"
+    },
+    {
+      "id": "mengsicode.vscode-django-boilerplate",
+      "version": "1.6.0"
+    },
+    {
+      "id": "mikestead.dotenv",
+      "version": "1.0.1"
+    },
+    {
+      "id": "mindaro-dev.file-downloader",
+      "version": "1.0.13"
+    },
+    {
+      "id": "mindpathtechnologylimited.code-error-lens",
+      "version": "1.0.0"
+    },
+    {
+      "id": "morrislaptop.vscode-open-in-sourcetree",
+      "version": "0.6.0"
+    },
+    {
+      "id": "ms-azuretools.vscode-containers",
+      "version": "2.5.3"
+    },
+    {
+      "id": "ms-azuretools.vscode-docker",
+      "version": "2.0.0"
+    },
+    {
+      "id": "ms-ceintl.vscode-language-pack-es",
+      "version": "1.131.2026090407"
+    },
+    {
+      "id": "ms-dotnettools.csdevkit",
+      "version": "3.40.215"
+    },
+    {
+      "id": "ms-dotnettools.csharp",
+      "version": "2.160.4"
+    },
+    {
+      "id": "ms-dotnettools.vscode-dotnet-runtime",
+      "version": "3.2.0"
+    },
+    {
+      "id": "ms-edgedevtools.vscode-edge-devtools",
+      "version": "2.1.10"
+    },
+    {
+      "id": "ms-kubernetes-tools.vscode-kubernetes-tools",
+      "version": "1.4.1"
+    },
+    {
+      "id": "ms-playwright.playwright",
+      "version": "1.1.19"
+    },
+    {
+      "id": "ms-python.debugpy",
+      "version": "2026.6.0"
+    },
+    {
+      "id": "ms-python.gather",
+      "version": "2025.4.0"
+    },
+    {
+      "id": "ms-python.isort",
+      "version": "2026.6.0"
+    },
+    {
+      "id": "ms-python.python",
+      "version": "2026.10.0"
+    },
+    {
+      "id": "ms-python.vscode-pylance",
+      "version": "2026.4.1"
+    },
+    {
+      "id": "ms-python.vscode-python-envs",
+      "version": "1.40.0"
+    },
+    {
+      "id": "ms-toolsai.jupyter",
+      "version": "2025.9.1"
+    },
+    {
+      "id": "ms-toolsai.jupyter-keymap",
+      "version": "1.1.2"
+    },
+    {
+      "id": "ms-toolsai.jupyter-renderers",
+      "version": "1.3.0"
+    },
+    {
+      "id": "ms-toolsai.vscode-jupyter-cell-tags",
+      "version": "0.1.9"
+    },
+    {
+      "id": "ms-toolsai.vscode-jupyter-slideshow",
+      "version": "0.1.6"
+    },
+    {
+      "id": "ms-vscode-remote.remote-containers",
+      "version": "0.469.0"
+    },
+    {
+      "id": "ms-vscode-remote.remote-wsl",
+      "version": "0.104.4"
+    },
+    {
+      "id": "ms-vscode.azure-repos",
+      "version": "0.40.0"
+    },
+    {
+      "id": "ms-vscode.cmake-tools",
+      "version": "1.24.42"
+    },
+    {
+      "id": "ms-vscode.cpp-devtools",
+      "version": "0.6.18"
+    },
+    {
+      "id": "ms-vscode.cpptools",
+      "version": "1.35.4"
+    },
+    {
+      "id": "ms-vscode.cpptools-extension-pack",
+      "version": "1.5.1"
+    },
+    {
+      "id": "ms-vscode.cpptools-themes",
+      "version": "2.0.0"
+    },
+    {
+      "id": "ms-vscode.live-server",
+      "version": "0.4.20"
+    },
+    {
+      "id": "ms-vscode.makefile-tools",
+      "version": "0.12.17"
+    },
+    {
+      "id": "ms-vscode.powershell",
+      "version": "2025.4.0"
+    },
+    {
+      "id": "ms-vscode.remote-repositories",
+      "version": "0.42.0"
+    },
+    {
+      "id": "ms-vscode.sublime-keybindings",
+      "version": "4.1.10"
+    },
+    {
+      "id": "ms-vscode.test-adapter-converter",
+      "version": "0.2.1"
+    },
+    {
+      "id": "ms-vsliveshare.vsliveshare",
+      "version": "1.1.122"
+    },
+    {
+      "id": "neilbrayfield.php-docblocker",
+      "version": "2.7.0"
+    },
+    {
+      "id": "njpwerner.autodocstring",
+      "version": "0.6.1"
+    },
+    {
+      "id": "octref.vetur",
+      "version": "0.37.3"
+    },
+    {
+      "id": "oderwat.indent-rainbow",
+      "version": "8.3.1"
+    },
+    {
+      "id": "openai.chatgpt",
+      "version": "26.1007.21434"
+    },
+    {
+      "id": "openai.codex-audio",
+      "version": "26.1007.21434"
+    },
+    {
+      "id": "orta.vscode-jest",
+      "version": "6.4.4"
+    },
+    {
+      "id": "pkief.material-icon-theme",
+      "version": "5.39.0"
+    },
+    {
+      "id": "planbcoding.vscode-react-refactor",
+      "version": "1.1.3"
+    },
+    {
+      "id": "pmneo.tsimporter",
+      "version": "2.0.1"
+    },
+    {
+      "id": "postman.postman-for-vscode",
+      "version": "1.19.1"
+    },
+    {
+      "id": "primafuture.open-php-html-js-in-browser",
+      "version": "2.5.0"
+    },
+    {
+      "id": "pushqrdx.inline-html",
+      "version": "0.3.10"
+    },
+    {
+      "id": "qwtel.sqlite-viewer",
+      "version": "25.12.2"
+    },
+    {
+      "id": "rangav.vscode-thunder-client",
+      "version": "2.41.3"
+    },
+    {
+      "id": "redhat.fabric8-analytics",
+      "version": "1.1.0"
+    },
+    {
+      "id": "redhat.java",
+      "version": "1.58.0"
+    },
+    {
+      "id": "redhat.vscode-commons",
+      "version": "0.0.6"
+    },
+    {
+      "id": "redhat.vscode-yaml",
+      "version": "2.0.0"
+    },
+    {
+      "id": "redis.redis-for-vscode",
+      "version": "1.4.0"
+    },
+    {
+      "id": "rifi2k.format-html-in-php",
+      "version": "1.7.0"
+    },
+    {
+      "id": "ritwickdey.liveserver",
+      "version": "5.7.10"
+    },
+    {
+      "id": "robberphex.php-debug",
+      "version": "1.14.0"
+    },
+    {
+      "id": "rvest.vs-code-prettier-eslint",
+      "version": "6.0.0"
+    },
+    {
+      "id": "sdteotonio.angular-formatter",
+      "version": "1.2.0"
+    },
+    {
+      "id": "shamanu4.django-intellisense",
+      "version": "0.0.2"
+    },
+    {
+      "id": "sitoi.ai-commit",
+      "version": "0.1.2"
+    },
+    {
+      "id": "skip1.go-swagger",
+      "version": "2.0.1"
+    },
+    {
+      "id": "slightc.pip-manager",
+      "version": "1.1.4"
+    },
+    {
+      "id": "techer.open-in-browser",
+      "version": "3.1.0"
+    },
+    {
+      "id": "thebarkman.vscode-djaneiro",
+      "version": "1.4.2"
+    },
+    {
+      "id": "tomoki1207.pdf",
+      "version": "1.2.2"
+    },
+    {
+      "id": "victorzevallos.vscode-theme-django",
+      "version": "2.8.0"
+    },
+    {
+      "id": "vivaxy.vscode-conventional-commits",
+      "version": "1.31.0"
+    },
+    {
+      "id": "vscjava.migrate-java-to-azure",
+      "version": "1.24.0"
+    },
+    {
+      "id": "vscjava.vscode-gradle",
+      "version": "3.18.1"
+    },
+    {
+      "id": "vscjava.vscode-java-debug",
+      "version": "0.60.0"
+    },
+    {
+      "id": "vscjava.vscode-java-dependency",
+      "version": "0.27.7"
+    },
+    {
+      "id": "vscjava.vscode-java-pack",
+      "version": "0.31.2"
+    },
+    {
+      "id": "vscjava.vscode-java-test",
+      "version": "0.47.0"
+    },
+    {
+      "id": "vscjava.vscode-maven",
+      "version": "0.46.0"
+    },
+    {
+      "id": "vscode-icons-team.vscode-icons",
+      "version": "13.0.0"
+    },
+    {
+      "id": "wallabyjs.quokka-vscode",
+      "version": "1.0.769"
+    },
+    {
+      "id": "wholroyd.jinja",
+      "version": "0.0.8"
+    },
+    {
+      "id": "wix.vscode-import-cost",
+      "version": "3.3.0"
+    },
+    {
+      "id": "wscats.eno",
+      "version": "2.3.53"
+    },
+    {
+      "id": "xabikos.javascriptsnippets",
+      "version": "1.8.0"
+    },
+    {
+      "id": "xabikos.reactsnippets",
+      "version": "2.4.0"
+    },
+    {
+      "id": "xdebug.php-debug",
+      "version": "1.40.2"
+    },
+    {
+      "id": "xdebug.php-pack",
+      "version": "1.0.3"
+    },
+    {
+      "id": "ysemeniuk.emmet-live",
+      "version": "1.0.0"
+    },
+    {
+      "id": "zhang-renyang.chat-gpt",
+      "version": "1.8.7"
+    },
+    {
+      "id": "ziyasal.vscode-open-in-github",
+      "version": "1.3.6"
+    },
+    {
+      "id": "zobo.php-intellisense",
+      "version": "1.3.3"
+    }
+  ],
+  "packageCount": 160,
+  "uniqueExtensionCount": 159
+}

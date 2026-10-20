@@ -1,0 +1,119 @@
+{
+  "name": "ArmotuSitio y RedEvent",
+  "extensions": [
+    {
+      "id": "golang.go",
+      "version": "0.56.1",
+      "directory": "golang.go-0.56.1",
+      "dependencies": []
+    },
+    {
+      "id": "bmewburn.vscode-intelephense-client",
+      "version": "1.18.5",
+      "directory": "bmewburn.vscode-intelephense-client-1.18.5",
+      "dependencies": []
+    },
+    {
+      "id": "xdebug.php-debug",
+      "version": "1.40.2",
+      "directory": "xdebug.php-debug-1.40.2",
+      "dependencies": []
+    },
+    {
+      "id": "dbaeumer.vscode-eslint",
+      "version": "3.0.34",
+      "directory": "dbaeumer.vscode-eslint-3.0.34",
+      "dependencies": []
+    },
+    {
+      "id": "esbenp.prettier-vscode",
+      "version": "12.4.0",
+      "directory": "esbenp.prettier-vscode-12.4.0",
+      "dependencies": []
+    },
+    {
+      "id": "editorconfig.editorconfig",
+      "version": "0.18.2",
+      "directory": "editorconfig.editorconfig-0.18.2",
+      "dependencies": []
+    },
+    {
+      "id": "42crunch.vscode-openapi",
+      "version": "5.10.0",
+      "directory": "42crunch.vscode-openapi-5.10.0",
+      "dependencies": [
+        "redhat.vscode-yaml"
+      ]
+    },
+    {
+      "id": "redhat.vscode-yaml",
+      "version": "2.0.0",
+      "directory": "redhat.vscode-yaml-2.0.0",
+      "dependencies": []
+    },
+    {
+      "id": "davidanson.vscode-markdownlint",
+      "version": "0.62.1",
+      "directory": "davidanson.vscode-markdownlint-0.62.1",
+      "dependencies": []
+    },
+    {
+      "id": "github.vscode-github-actions",
+      "version": "0.32.3",
+      "directory": "github.vscode-github-actions-0.32.3",
+      "dependencies": []
+    },
+    {
+      "id": "github.vscode-pull-request-github",
+      "version": "0.170.0",
+      "directory": "github.vscode-pull-request-github-0.170.0",
+      "dependencies": [
+        "vscode.github-authentication"
+      ]
+    },
+    {
+      "id": "ms-playwright.playwright",
+      "version": "1.1.19",
+      "directory": "ms-playwright.playwright-1.1.19",
+      "dependencies": []
+    },
+    {
+      "id": "ms-vscode.powershell",
+      "version": "2025.4.0",
+      "directory": "ms-vscode.powershell-2025.4.0",
+      "dependencies": [
+        "vscode.powershell"
+      ]
+    },
+    {
+      "id": "mikestead.dotenv",
+      "version": "1.0.1",
+      "directory": "mikestead.dotenv-1.0.1",
+      "dependencies": []
+    },
+    {
+      "id": "pkief.material-icon-theme",
+      "version": "5.39.0",
+      "directory": "pkief.material-icon-theme-5.39.0",
+      "dependencies": []
+    },
+    {
+      "id": "openai.chatgpt",
+      "version": "26.1007.21434",
+      "directory": "openai.chatgpt-26.1007.21434-win32-x64",
+      "dependencies": []
+    },
+    {
+      "id": "anthropic.claude-code",
+      "version": "2.1.304",
+      "directory": "anthropic.claude-code-2.1.304-win32-x64",
+      "dependencies": []
+    },
+    {
+      "id": "bierner.markdown-mermaid",
+      "version": "1.32.1",
+      "directory": "bierner.markdown-mermaid-1.32.1",
+      "dependencies": []
+    }
+  ]
+}
