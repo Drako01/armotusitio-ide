@@ -45,7 +45,7 @@ function harness(trusted = true, notifications = 'errors') {
 	};
 	const module = { exports: {} };
 	const core = { detect: () => available ? ({ root: '/repo', name: 'RedEvent', id: 'redevent', actions }) : null, command: (_, action) => ({ executable: 'pnpm', args: ['harness:' + action], cwd: '/repo' }) };
-	vm.runInNewContext(stripTypeScriptTypes(fs.readFileSync(path.join(__dirname, '../extension.ts'), 'utf8')), { module, Date: clock, require: n => n === 'vscode' ? vscode : n === './src/core.ts' ? core : n === './src/home.ts' ? { registerHome() { } } : n === './src/activity.ts' ? { History: require('../src/activity.ts').History, registerActivity() { } } : { register() { } } });
+	vm.runInNewContext(stripTypeScriptTypes(fs.readFileSync(path.join(__dirname, '../extension.ts'), 'utf8')), { module, Date: clock, require: n => n === 'vscode' ? vscode : n === './src/core.ts' ? core : n === './src/home.ts' ? { registerHome() { } } : n === './src/mcp.ts' ? { registerMcp() { } } : n === './src/chat.ts' ? { registerChat() { } } : n === './src/activity.ts' ? { History: require('../src/activity.ts').History, registerActivity() { } } : { register() { } } });
 	module.exports.activate({ subscriptions: [], workspaceState: { get: () => [], update: async () => { } } });
 	return { controller, execution, notices, commands, executed: () => executed, advance: milliseconds => { now += milliseconds; }, confirm: value => { confirm = value; }, mode: value => { notifications = value; }, disable: () => { enabled = false; }, select: value => { selection = value; }, rejectNotification: () => { rejectNotification = true; }, trust: value => { vscode.workspace.isTrusted = value; }, available: value => { available = value; }, actions: value => { actions = value; }, failStart: value => { failStart = value; } };
 }
@@ -198,4 +198,14 @@ test('repeat releases its launch lock after a startup error and rechecks trust a
 	h.confirm(new Promise(resolve => { confirm = resolve; }));
 	const pending = h.controller.repeat(id); await tick(); h.trust(false); confirm('Run'); await pending;
 	assert.equal(h.executed(), 3); assert.equal(h.controller.launching.size, 0);
+});
+
+test('cancelled chat requests do not launch tasks before or after the confirmation dialog', async () => {
+	const h = harness(); const token = { isCancellationRequested: true };
+	await h.controller.execute(undefined, 'check', token); assert.equal(h.executed(), 0);
+	token.isCancellationRequested = false;
+	let confirm;
+	h.confirm(new Promise(resolve => { confirm = resolve; }));
+	const pending = h.controller.execute(undefined, 'check', token); await tick(); token.isCancellationRequested = true; confirm('Run');
+	await pending; assert.equal(h.executed(), 0); assert.equal(h.controller.launching.size, 0);
 });

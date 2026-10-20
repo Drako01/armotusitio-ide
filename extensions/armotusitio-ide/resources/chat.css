@@ -1,0 +1,10 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+#messages pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.6; padding: var(--vscode-spacing-size160); border-left: 2px solid var(--vscode-panel-border); }
+#messages .question { border-color: var(--vscode-focusBorder); background: var(--vscode-textBlockQuote-background); }
+#chat { margin-top: var(--vscode-spacing-size240); }
+#chat label { display: block; margin-bottom: var(--vscode-spacing-size80); }
+#prompt { box-sizing: border-box; width: 100%; resize: vertical; font: inherit; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, transparent); padding: var(--vscode-spacing-size120); margin-bottom: var(--vscode-spacing-size120); }
+#prompt:focus { outline: 1px solid var(--vscode-focusBorder); }

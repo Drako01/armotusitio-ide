@@ -53,6 +53,60 @@ La preferencia vigente al terminar la tarea determina si se muestra el aviso.
 No se notifican tareas externas ni entradas recuperadas del historial después de reiniciar.
 Desactivar `atsHarness.enabled` también silencia estos avisos.
 
+## Chat @harness y Work Management
+
+Abrí **ArmotuSitio: Chat Harness** desde la paleta o desde el inicio del IDE.
+El panel propio funciona sin Copilot ni llamadas a modelos de IA.
+Esta versión de la extensión requiere la base Code - OSS 1.143 del IDE.
+También se registra `@harness` en el chat nativo cuando ese chat tiene un proveedor predeterminado disponible.
+La integración no reemplaza al agente predeterminado ni requiere activar APIs propuestas.
+Son comandos explícitos; no es un planificador de lenguaje natural.
+
+```text
+@harness comandos
+@harness estado
+@harness check redevent
+@harness verify armotusitio
+@harness proyectos
+@harness proyecto RED
+@harness tareas RED
+@harness tarea RED-001-219
+@harness buscar autenticación
+@harness tablero RED
+@harness crear RED Revisar autenticación
+@harness mover RED-001-219 7
+@harness comentar RED-001-219 Revisar el resultado del test
+```
+
+Los comandos locales `check`, `verify` y `test` conservan confirmación, control de duplicados e historial.
+Si hay varios proyectos, indicá `armotusitio` o `redevent`.
+El MCP permite consultar proyectos, tableros, tareas y contexto con la clave del agente.
+Para `mover`, obtené el ID real de la columna con `tablero`; los ejemplos no indican una columna recomendada.
+Crear, mover y comentar requieren contexto actual, herramienta habilitada y confirmación con los argumentos completos.
+La API del servidor sigue validando el usuario de ejecución, los permisos y el alcance de proyectos.
+El chat no reintenta modificaciones ni ejecuta comandos arbitrarios.
+
+### Conexión MCP
+
+El proveedor nativo se llama **ArmotuSitio Work Management** y publica las herramientas autorizadas por el servidor.
+El endpoint es `https://armotusitio.com.ar/backend/api/mcp.php` y no puede sustituirse desde un workspace.
+Podés usar esas herramientas en un agente de chat compatible con MCP, según sus aprobaciones y permisos.
+Las herramientas de creación, edición, asignación y otras acciones dependen de las capacidades de la clave.
+
+Se utiliza primero la clave guardada en SecretStorage y luego la variable heredada `ATS_MCP_TOKEN`.
+El IDE debe iniciarse desde un entorno que contenga esa variable para poder reutilizarla.
+Como alternativa, ejecutá **ArmotuSitio: Configurar clave MCP** e ingresá la clave en el diálogo protegido.
+No pegues claves en el chat ni las guardes en `settings.json`, `mcp.json` o archivos del repositorio.
+**ArmotuSitio: Borrar clave MCP guardada** elimina la copia segura; la variable heredada sigue siendo válida.
+Para desconectar por completo, desactivá `atsHarness.mcp.enabled` en los ajustes del IDE.
+Se requiere un workspace confiable para consultas y ejecución.
+
+Las respuestas se muestran como texto sin interpretar HTML o instrucciones del servidor.
+No se persiste la conversación y cada consulta HTTP tiene límites de tiempo y tamaño.
+**Cancelar consulta** interrumpe la espera; no revierte una modificación que ya aceptó el servidor.
+Si falla una modificación, consultá el estado actual antes de repetirla.
+No se transmite contexto del editor a un modelo de IA desde este participante.
+
 ## Bienvenida y actualización local
 
 La bienvenida nativa muestra el mismo logo real que el inicio de ArmotuSitio IDE.

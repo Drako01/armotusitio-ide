@@ -51,6 +51,8 @@ function registerHome(context, controller, projects) {
 <p id="trust" class="muted" role="status"></p>
 <section aria-labelledby="projects-title"><div class="section-heading"><h2 id="projects-title">${t('Tus proyectos')}</h2><span class="muted">${t('Harness local')}</span></div><div id="projects"></div></section>
 <section aria-labelledby="tools-title"><h2 id="tools-title">${t('Herramientas')}</h2><div class="tools">
+<button class="tool" data-action="chat"><strong>Chat @harness</strong><span>${t('Consultar el Harness y gestionar proyectos y tareas')}</span></button>
+<button class="tool" data-action="mcp"><strong>MCP ArmotuSitio</strong><span>${t('Configurar la clave de Work Management')}</span></button>
 <button class="tool" data-action="agent"><strong>Claude / Codex</strong><span>${t('Enviar una tarea a tu CLI instalada')}</span></button>
 <button class="tool" data-action="context"><strong>${t('Contexto')}</strong><span>${t('Explorar el inventario del proyecto')}</span></button>
 <button class="tool" data-action="worktrees"><strong>Git worktrees</strong><span>${t('Consultar espacios de trabajo aislados')}</span></button>
@@ -79,7 +81,7 @@ function registerHome(context, controller, projects) {
 				return;
 			}
 			if (message.action === 'repeat') { if (typeof message.id === 'string') { await controller.repeat(message.id); } return; }
-			const commands = { theme: 'workbench.action.selectTheme', agent: 'atsIde.agent', context: 'atsIde.context', worktrees: 'atsIde.worktrees', github: 'atsIde.github', n8n: 'atsIde.n8n', plan: 'atsHarness.reviewPlan', cancel: 'atsHarness.cancelTask', clear: 'atsHarness.clearHistory' };
+			const commands = { theme: 'workbench.action.selectTheme', chat: 'atsIde.chat', mcp: 'atsIde.mcpConfigure', agent: 'atsIde.agent', context: 'atsIde.context', worktrees: 'atsIde.worktrees', github: 'atsIde.github', n8n: 'atsIde.n8n', plan: 'atsHarness.reviewPlan', cancel: 'atsHarness.cancelTask', clear: 'atsHarness.clearHistory' };
 			if (Object.hasOwn(commands, message.action)) { await vscode.commands.executeCommand(commands[message.action]); }
 		}));
 		disposables.push(current.onDidDispose(() => { panel = undefined; for (const disposable of disposables) { disposable.dispose(); } }));
