@@ -23,6 +23,16 @@
     "terminal.foreground": "#202c37",
     "editorLineNumber.activeForeground": "#2c3e50",
     "list.activeSelectionBackground": "#dce7ef",
-    "list.highlightForeground": "#2c3e50"
+    "list.highlightForeground": "#2c3e50",
+    "button.secondaryBackground": "#e9edf1",
+    "button.secondaryForeground": "#202c37",
+    "button.secondaryHoverBackground": "#dce7ef",
+    "textLink.foreground": "#36556e",
+    "textLink.activeForeground": "#202c37",
+    "descriptionForeground": "#52616e",
+    "activityBar.activeBorder": "#f9ed32",
+    "statusBar.noFolderBackground": "#273645",
+    "statusBar.noFolderForeground": "#f8fafc",
+    "panel.border": "#d0d7de"
   }
 }

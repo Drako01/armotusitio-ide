@@ -1,0 +1,36 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+body { margin: 0; background: var(--vscode-editor-background); color: var(--vscode-editor-foreground); font-family: var(--vscode-font-family); }
+main { max-width: 980px; margin: 0 auto; padding: 56px 36px 32px; }
+header { display: flex; align-items: center; gap: 24px; margin-bottom: 32px; }
+header img { border-radius: 20px; flex-shrink: 0; }
+.eyebrow { letter-spacing: .18em; font-size: 11px; font-weight: 600; color: var(--vscode-descriptionForeground); }
+h1 { font-weight: 500; font-size: clamp(26px, 4vw, 38px); letter-spacing: -.04em; margin: 8px 0; }
+.subtitle { margin: 0; color: var(--vscode-descriptionForeground); line-height: 1.6; }
+h2 { font-size: 16px; font-weight: 500; margin: 0 0 16px; }
+h3 { font-size: 16px; margin: 0; font-weight: 600; }
+section { margin-top: 36px; }
+.toolbar, .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+button { font: inherit; cursor: pointer; border: 1px solid transparent; border-radius: 4px; padding: 8px 14px; color: var(--vscode-button-foreground); background: var(--vscode-button-background); }
+button:hover { background: var(--vscode-button-hoverBackground); }
+button:focus-visible { outline: 2px solid var(--vscode-focusBorder); outline-offset: 3px; }
+button:disabled { opacity: .5; cursor: default; }
+.secondary { color: var(--vscode-button-secondaryForeground); background: var(--vscode-button-secondaryBackground); }
+.secondary:hover { background: var(--vscode-button-secondaryHoverBackground); }
+.muted, footer { color: var(--vscode-descriptionForeground); font-size: 12px; line-height: 1.6; }
+.path { overflow-wrap: anywhere; }
+.section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
+article { border-top: 1px solid var(--vscode-panel-border); padding: 20px 0; }
+.tools { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px 24px; }
+.tool { text-align: left; color: var(--vscode-textLink-foreground); background: transparent; padding: 16px 0; }
+.tool:hover { color: var(--vscode-textLink-activeForeground); background: var(--vscode-list-hoverBackground); }
+.tool strong, .tool span { display: block; }
+.tool strong { font-weight: 500; }
+.tool span { margin-top: 6px; font-size: 12px; color: var(--vscode-descriptionForeground); line-height: 1.5; }
+.empty { color: var(--vscode-descriptionForeground); border-left: 2px solid var(--vscode-panel-border); padding: 12px 16px; line-height: 1.6; }
+.run { display: grid; grid-template-columns: minmax(80px, .6fr) minmax(0, 1.5fr) auto; gap: 16px; align-items: baseline; padding: 12px 0; border-top: 1px solid var(--vscode-panel-border); font-size: 12px; }
+footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid var(--vscode-panel-border); }
+@media (max-width: 640px) { main { padding: 28px 20px; } header { align-items: flex-start; gap: 16px; } header img { width: 56px; height: 56px; border-radius: 12px; } .tools { grid-template-columns: 1fr 1fr; } .run { grid-template-columns: 1fr; gap: 4px; } }
+@media (forced-colors: active) { button { border-color: ButtonText; } }

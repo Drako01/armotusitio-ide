@@ -30,7 +30,16 @@
     "input.background": "#202c37",
     "input.foreground": "#e5e7eb",
     "panel.background": "#141b22",
-    "panel.border": "#2c3e50"
+    "panel.border": "#2c3e50",
+    "button.secondaryBackground": "#273645",
+    "button.secondaryForeground": "#e5e7eb",
+    "button.secondaryHoverBackground": "#3a4756",
+    "textLink.foreground": "#f9ed32",
+    "textLink.activeForeground": "#fef48a",
+    "descriptionForeground": "#a8b4bf",
+    "activityBar.activeBorder": "#f9ed32",
+    "statusBar.noFolderBackground": "#273645",
+    "statusBar.noFolderForeground": "#f8fafc"
   },
   "tokenColors": [
     {

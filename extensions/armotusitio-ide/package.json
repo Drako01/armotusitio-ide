@@ -1,6 +1,6 @@
 {
   "name": "armotusitio-ide",
-  "displayName": "ArmoTuSitio IDE",
+  "displayName": "ArmotuSitio IDE",
   "description": "Project-aware harness control for RedEvent and ArmoTuSitio 2.0",
   "version": "0.3.0",
   "publisher": "armotusitio",
@@ -8,7 +8,7 @@
   "engines": {
     "vscode": "^1.100.0"
   },
-  "main": "./extension.js",
+  "main": "./dist/extension.js",
   "activationEvents": [
     "onView:atsHarness.tasks",
     "onCommand:atsHarness.execute",
@@ -19,7 +19,8 @@
     "onCommand:atsIde.context",
     "onCommand:atsIde.github",
     "onCommand:atsIde.n8n",
-    "onCommand:atsIde.agent"
+    "onCommand:atsIde.agent",
+    "onStartupFinished"
   ],
   "contributes": {
     "configuration": {
@@ -30,15 +31,15 @@
           "default": true,
           "description": "Enable workspace-local harness detection."
         },
-        "atsHarness.confirmExecution": {
-          "type": "boolean",
-          "default": true,
-          "description": "Confirm before running a workspace harness command."
-        },
         "atsHarness.n8nUrl": {
           "type": "string",
           "default": "http://127.0.0.1:5678",
           "description": "The URL of your trusted n8n dashboard. Credentials must not be embedded in this setting."
+        },
+        "atsHarness.showWelcome": {
+          "type": "boolean",
+          "default": true,
+          "description": "Mostrar el inicio de ArmotuSitio IDE al abrir una ventana sin editores."
         }
       }
     },
@@ -60,6 +61,11 @@
       ]
     },
     "commands": [
+      {
+        "command": "atsIde.home",
+        "title": "ArmotuSitio: Inicio",
+        "icon": "$(home)"
+      },
       {
         "command": "atsHarness.refresh",
         "title": "ArmoTuSitio: Refresh Projects"
@@ -116,6 +122,11 @@
     "menus": {
       "view/title": [
         {
+          "command": "atsIde.home",
+          "when": "view == atsHarness.tasks",
+          "group": "navigation@0"
+        },
+        {
           "command": "atsHarness.refresh",
           "when": "view == atsHarness.tasks",
           "group": "navigation"
@@ -143,10 +154,28 @@
         "uiTheme": "vs",
         "path": "./themes/armotusitio-light-color-theme.json"
       }
-    ]
+    ],
+    "viewsWelcome": [
+      {
+        "view": "atsHarness.tasks",
+        "contents": "[Abrir inicio de ArmotuSitio IDE](command:atsIde.home)"
+      }
+    ],
+    "configurationDefaults": {
+      "workbench.colorTheme": "ArmoTuSitio Dark"
+    }
   },
   "scripts": {
-    "test": "node --test test/*.test.cjs",
-    "check": "node --check extension.js && node --check src/core.js && node --check src/git.js && node --check src/context.js && node --check src/integrations.js"
+    "compile": "node esbuild.mts",
+    "test": "node --test test/*.test.cts",
+    "check": "node --check extension.ts && node --check src/core.ts && node --check src/git.ts && node --check src/context.ts && node --check src/integrations.ts && node --check src/home.ts && node --check resources/home.ts",
+    "vscode:prepublish": "npm run compile"
+  },
+  "icon": "resources/logo.png",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "La ejecución de comandos requiere un workspace confiable."
+    }
   }
 }
