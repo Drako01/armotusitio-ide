@@ -1,179 +1,201 @@
-# ArmoTuSitio IDE — Código fuente y guía de Windows 11
+# ArmotuSitio IDE
 
-> **Estado:** distribución experimental basada en **Code - OSS**. El tema ArmoTuSitio y varias integraciones están en desarrollo. **No existe todavía un instalador oficial validado de ArmoTuSitio IDE.** La compilación puede producir una aplicación Code - OSS sin branding completo. Este documento diferencia desarrollo, carpeta portable y un instalador de Windows.
+<img src="extensions/armotusitio-ide/resources/logo.png" alt="ArmotuSitio IDE" width="96">
 
-Repositorio: [Drako01/vscode](https://github.com/Drako01/vscode) · Base upstream: [microsoft/vscode](https://github.com/microsoft/vscode) · Licencia del código original: [MIT](LICENSE.txt).
+Distribución personalizada de Code - OSS para trabajar con **ArmotuSitio 2.0** y **RedEvent** en Windows 11 x64.
+Conserva el editor, terminal, Git, depurador y APIs de extensiones, e incorpora herramientas para ambos proyectos.
 
-## Qué incluye actualmente
+[Repositorio](https://github.com/Drako01/armotusitio-ide) · [Upstream](https://github.com/microsoft/vscode) · [Licencia](LICENSE.txt)
 
-- Tema **ArmoTuSitio Dark** y **ArmoTuSitio Light**, con colores tomados de ArmoTuSitio.
-- Extensión experimental en `extensions/armotusitio-ide` con perfiles para `Drako01/armotusitio2.0` y `Drako01/redevent`.
-- Acciones de harness disponibles según los scripts presentes en cada proyecto, revisión de planes, tareas y cancelación.
-- Herramientas de contexto, Git/worktrees, GitHub mediante `gh`, apertura de n8n y ejecución autorizada de CLI de Claude/Codex.
+## Estado actual
 
-**Limitación importante:** la presencia de una extensión en `extensions/` **no prueba por sí sola que esté incluida y activada en el build de escritorio**. Debe verificarse en el entorno de desarrollo y en el empaquetado. El centro multiagente completo, actualizador de distribución, instalador personalizado y otras funcionalidades del roadmap siguen pendientes.
+Las personalizaciones están incorporadas en `main`.
+La compilación de desarrollo fue probada localmente, incluido el logo real en la bienvenida.
+Existen comandos para generar el instalador por usuario y el ZIP de Windows x64.
+La compilación local no publica una release automáticamente.
+Las descargas publicadas, cuando existan, estarán en [Releases](https://github.com/Drako01/armotusitio-ide/releases).
+La prueba del instalador actual en una máquina limpia y del ciclo de actualización sigue pendiente.
+El alcance completo Enterprise AAA del pedido original no se considera terminado.
 
-> **Windows 11 / Visual Studio 2026 Insiders:** antes de instalar dependencias, ejecutá `node scripts/ats-windows-preflight.mjs`. Si detecta solo VS 2026, consultá la [guía de compilación Windows](docs/armotusitio-ide/WINDOWS-BUILD.md): `npm ci` utiliza `node-gyp 11`, que puede rechazar VS 2026 aunque `cl.exe` funcione. No repitas reinstalaciones sin resolver ese requisito.
+## Funciones disponibles
 
-## 1. Requisitos para Windows 11 x64
+| Área | Implementación actual |
+| --- | --- |
+| Identidad | Nombre, logo real, iconos, bienvenida y temas ArmotuSitio Dark y Light |
+| Proyectos | Detección de ArmotuSitio 2.0 y RedEvent y sus comandos de Harness |
+| Actividad | Barra de estado y acceso al progreso e historial desde el inicio del IDE |
+| Historial | Hasta 20 tareas por proyecto, duración, resultados y persistencia por workspace |
+| Notificaciones | Avisos configurables al finalizar tareas del IDE y acceso al historial |
+| Repetición | Repetir `check`, `verify` y `test` con confirmación y bloqueo de duplicados del IDE |
+| Chat Harness | Comandos explícitos para consultar el Harness y ejecutar verificaciones |
+| MCP ArmotuSitio | Consultar proyectos y tareas de Work Management; crear, mover y comentar con confirmación |
+| Herramientas | Inventario de contexto, listado y creación de worktrees, consultas GitHub y apertura de n8n |
+| Agentes | Envío confirmado de tareas a CLI de Codex o Claude instaladas y autenticadas |
+| Extensiones | Catálogo configurado con Open VSX e instalación de VSIX compatibles |
+| Distribución | Compilación local, instalador Windows x64 por usuario y ZIP de la aplicación completa |
+| Actualizaciones | Herramientas locales para detectar upstream, preparar candidatos y distribuir releases propias |
 
-Instalá antes de compilar:
+El progreso externo de RedEvent se consulta cada 15 segundos mediante su comando nativo.
+En ArmotuSitio, la actividad e historial cubren las tareas iniciadas desde el IDE.
+Las tareas sin resultado conocido después de reiniciar se muestran como tales.
+El chat propio no llama a modelos de IA ni reemplaza al orquestador de cada proyecto.
 
-1. **Git for Windows** y PowerShell 7 o Windows PowerShell.
-2. **Node.js 24.18.0**, versión fijada actualmente en `.nvmrc` (comprobala nuevamente cuando cambie upstream). No uses una versión de Node distinta de la solicitada por el checkout.
-3. **Python 3**, accesible desde terminal, para `node-gyp`.
-4. **Visual Studio 2022 Build Tools** o Visual Studio Community, con **Desktop development with C++**, Windows SDK, MSVC C++ x64/x86 y bibliotecas Spectre-mitigated requeridas por la compilación nativa. Si `node-gyp` reclama componentes ATL/MFC/Spectre, agregalos mediante Visual Studio Installer.
-5. Espacio libre suficiente y memoria para compilar un monorepo grande. Como referencia, reservá al menos 8 GB RAM, preferiblemente más, y varias decenas de GB libres. No es un mínimo oficial garantizado.
+## Preparar el código fuente
 
-Usá **PowerShell** para los comandos siguientes. Cloná en una ruta corta **sin espacios**, por ejemplo `C:\\dev\\vscode`.
+Requisitos principales para compilar en Windows:
 
-Comprobá herramientas:
+- Git y PowerShell.
+- Node.js con la versión fijada en [.nvmrc](.nvmrc), y npm.
+- Python 3 y herramientas de C++ compatibles con las dependencias nativas.
+- Visual Studio Build Tools 2022 con Desktop development with C++, MSVC v143 y bibliotecas Spectre requeridas.
+- Windows SDK, incluido `signtool.exe` para el empaquetado.
+- Espacio y memoria suficientes para compilar Code - OSS y sus extensiones.
+
+Cloná el repositorio en una ruta corta:
 
 ```powershell
-git --version
-node --version
-npm --version
-python --version
-```
-
-La guía oficial de compilación y los requisitos actualizados están en [How to Contribute — VS Code](https://github.com/microsoft/vscode/wiki/How-to-Contribute).
-
-## 2. Descargar la rama con las personalizaciones
-
-```powershell
-New-Item -ItemType Directory -Force C:\dev | Out-Null
-cd C:\dev
-git clone https://github.com/Drako01/vscode.git
-cd vscode
-git fetch origin
-git switch feat/ats-ide-platform-v1
-git pull --ff-only origin feat/ats-ide-platform-v1
-git status --short
+git clone --branch main https://github.com/Drako01/armotusitio-ide.git
+cd armotusitio-ide
 Get-Content .nvmrc
-```
-
-**Importante:** hasta que el PR se fusione, `main` no contendrá los últimos cambios del IDE. Si tu clon ya existe, ejecutá solo `git fetch`, `git switch` y `git pull`.
-
-La carpeta `vscode` es el editor que estamos compilando. Para usar los dos proyectos, conservá clones separados de `armotusitio2.0` y `redevent`, con sus dependencias y entornos configurados.
-
-## 3. Instalar dependencias del código fuente
-
-Este checkout utiliza **npm**, no `pnpm install` ni Yarn para compilar el núcleo de Code - OSS.
-
-```powershell
+node scripts/ats-windows-preflight.mts
 npm install
 ```
 
-El paso descarga dependencias y compila módulos nativos; requiere conexión y puede fallar si falta el toolchain C++. No cambies versiones del lockfile solo para solucionar un error de instalación sin investigar su causa.
+Ejecutá los comandos en orden y continuá solo si cada paso termina correctamente.
+Si ya tenés las dependencias preparadas, no hace falta reinstalarlas para cada compilación.
+El editor utiliza **npm**; los proyectos abiertos pueden requerir sus propias versiones de pnpm y otros runtimes.
+Para problemas de herramientas nativas, consultá la [guía de Windows](docs/armotusitio-ide/WINDOWS-BUILD.md).
 
-Para comprobar la extensión propia:
+## Compilar y probar con code.bat
 
-```powershell
-npm run check --prefix extensions/armotusitio-ide
-npm test --prefix extensions/armotusitio-ide
-```
-
-Estas pruebas son parciales: **no equivalen** a compilar ni probar todo VS Code.
-
-## 4. Ejecutar una versión de desarrollo (sin instalar)
-
-Abrí una terminal PowerShell en la raíz y ejecutá:
+Cerrá las ventanas anteriores de ArmotuSitio IDE.
+Desde la raíz del checkout, actualizá `main` y compilá:
 
 ```powershell
-npm run watch
+git switch main
+git pull --ff-only origin main
+node scripts/ats-build-dev.mts
 ```
 
-Mantenela abierta hasta que finalice la compilación inicial. En otra terminal PowerShell, desde la misma carpeta:
+Cuando aparezca `Development build ready`, abrí el IDE:
 
 ```powershell
-.\scripts\code.bat
+.\scripts\code.bat --new-window
 ```
 
-Se abrirá la aplicación **Code - OSS en modo desarrollo**. Esto **no es un instalador**.
+El comando actualiza `out`, las extensiones integradas, Copilot y la extensión propia de ArmotuSitio.
+También verifica que la bienvenida compilada incluya el logo real.
+`code.bat` carga esa salida de desarrollo; no se compila el archivo `.bat`.
+Si `out` ya existe, ejecutar solamente `code.bat` no garantiza recompilar los cambios.
+El empaquetador de Windows genera otra salida y no actualiza ese `out` de desarrollo.
 
-En la aplicación, abrí la paleta de comandos con `Ctrl+Shift+P`, elegí **Preferences: Color Theme** y buscá `ArmoTuSitio Dark` o `ArmoTuSitio Light`. Si no aparecen, verificá que la extensión ArmoTuSitio esté efectivamente compilada, cargada y habilitada; no asumas que se incorporó automáticamente al bundle.
+Mantené el checkout en `main`, sin cambios versionados, y no cambies código o commits durante la compilación.
+La receta completa está en [compilación de desarrollo](scripts/README-ATS-DEVELOPMENT.md).
 
-Probá abriendo una carpeta de cada proyecto y comprobá sus comandos disponibles. Para acciones locales es necesario confiar explícitamente en el workspace.
+## Generar el instalador y el ZIP
 
-## 5. Generar un ejecutable de Windows (carpeta distribuible)
-
-Cerrá el proceso `watch` o utilizá otra consola desde la raíz del checkout. Ejecutá el empaquetado x64:
+Con `main` actualizado, sin cambios versionados ni otra compilación activa:
 
 ```powershell
-npm run gulp vscode-win32-x64
+node scripts/ats-package-windows.mts
 ```
 
-Para un paquete minificado, si ese target está disponible en la revisión que usás:
+Cuando el comando completo termine correctamente, generá los artefactos:
 
 ```powershell
-npm run gulp vscode-win32-x64-min
+node scripts/ats-autoupdate.mts artifacts
 ```
 
-Estos son **targets de empaquetado de Code - OSS**, basados en la documentación upstream. Puede requerirse configuración adicional o correcciones del fork. Buscá el directorio generado y el `.exe` real:
-
-```powershell
-Get-ChildItem -Directory -Path .. | Where-Object Name -Match 'VSCode|vscode|Code'
-Get-ChildItem -Path .. -Filter *.exe -Recurse -ErrorAction SilentlyContinue |
-  Where-Object FullName -Match 'VSCode|vscode|Code' |
-  Select-Object -First 20 FullName
-```
-
-**No hay una ruta ni nombre de ejecutable garantizados** hasta verificar una compilación exitosa. Para ejecutar la versión empaquetada, abrí el `.exe` que esté dentro de la carpeta de salida; conservá los archivos y subcarpetas que lo acompañan.
-
-### ¿Cómo instalarlo en Windows 11?
-
-Una **carpeta empaquetada con ejecutable** no es lo mismo que un **Setup.exe / MSI**. Si obtenés una carpeta ejecutable, podés utilizarla de manera local (o copiarla completa a otra ruta), pero no tendrá necesariamente instalador, registro de desinstalación, asociaciones de archivos ni actualizador.
-
-Para crear un instalador propiamente dicho hacen falta tareas y configuraciones adicionales de empaquetado Windows, identidad propia de aplicación, iconos, licencia, mecanismos de actualización y, para distribución confiable, firma de código. **Esos pasos todavía no están implementados ni verificados en esta rama. No renombres simplemente un `.exe` para presentarlo como instalador.**
-
-## 6. Extensión ArmoTuSitio y proyectos compatibles
-
-Para utilizar los comandos de harness, abrí la carpeta raíz de cada proyecto:
-
-- **ArmoTuSitio 2.0:** `package.json` con nombre `armotusitio-next` y directorio `harness/`.
-- **RedEvent:** `package.json` con nombre `redevent` y directorio `.harness/`.
-
-Cada proyecto administra **su propia versión de pnpm** y su propio harness. La compilación del editor utiliza npm, pero los comandos de los proyectos pueden utilizar pnpm.
-
-Funciones opcionales:
-- CLI `gh` autenticada para consultas de PRs y workflows.
-- CLI `codex` y/o `claude` instalada y autenticada.
-- n8n local en `http://127.0.0.1:5678` o la URL que configures.
-- Python, Go, PHP, PostgreSQL o MySQL según el proyecto abierto.
-
-No almacenes claves de API, tokens ni contraseñas en `settings.json` versionado ni en el repositorio.
-
-## 7. Problemas frecuentes
-
-| Síntoma | Qué revisar |
+| Resultado | Ruta desde la raíz del checkout |
 | --- | --- |
-| `npm install` falla en `node-gyp` | Versión Node, Python, Build Tools, Windows SDK y librerías Spectre |
-| Error de módulos Electron | Ejecutá primero `npm install` y `npm run watch` |
-| `code.bat` no inicia | Revisa logs de `preLaunch`, compilación y dependencias |
-| No aparecen los temas ArmoTuSitio | La extensión puede no estar integrada al bundle; verificá carga/compilación |
-| No aparece el harness | Abrí la raíz del proyecto correcto y comprobá `package.json` y carpeta harness |
-| `pnpm` no encontrado | Instalá/habilitá la versión solicitada por ese proyecto |
-| `gh`, `codex` o `claude` no encontrado | Instalá y autenticá la CLI correspondiente |
-| No encuentro `Setup.exe` | La tarea descrita genera una aplicación empaquetada, no asegura instalador |
-| Fallan tests del IDE | Guardá los logs y revisá los errores antes de hacer merge |
+| Aplicación empaquetada | `../VSCode-win32-x64/` |
+| Instalador intermedio | `.build/win32-x64/user-setup/VSCodeSetup.exe` |
+| Instalador con nombre de ArmotuSitio, ZIP, manifiesto firmado y hashes | `.build/releases/` |
 
-Para diagnósticos reproducibles adjuntá versión de Windows, Node, Python, las primeras líneas relevantes del error y el comando exacto que lo produjo. Evitá publicar secretos en logs.
+El paso `artifacts` requiere un build validado del mismo commit y la clave privada local de distribución.
+El manifiesto se firma con Ed25519; esto no equivale a firmar el instalador con un certificado de editor de Windows.
+Las claves privadas no se incluyen en el repositorio ni se comparten con los compañeros.
+Para compartir sin instalar, usá el ZIP completo; el EXE solo no contiene todos los archivos necesarios.
+Las extensiones personales, proyectos, bases de datos y sesiones de autenticación no se incorporan al instalador.
 
-## 8. Actualizaciones y mantenimiento del fork
+Si aparece `Source changed during packaging`, repetí el empaquetado desde un commit fijo y limpio.
+Que Inno Setup haya creado un EXE no sustituye la validación final del comando.
+Consultá [distribución](docs/armotusitio-ide/DISTRIBUTION.md) para los detalles de entrega.
 
-El remoto `origin` apunta a tu fork. Para consultar el proyecto oficial:
+## Harness, chat y gestión de tareas
 
-```powershell
-git remote add upstream https://github.com/microsoft/vscode.git
-git fetch upstream
+Abrí la carpeta raíz de uno o ambos proyectos:
+
+- **ArmotuSitio 2.0:** `package.json` con nombre `armotusitio-next` y carpeta `harness/`.
+- **RedEvent:** `package.json` con nombre `redevent` y carpeta `.harness/`.
+
+Desde `Ctrl+Shift+P`, ejecutá **ArmotuSitio: Inicio** o **ArmotuSitio: Chat Harness**.
+El chat propio funciona sin iniciar sesión en Copilot.
+El participante `@harness` también se registra en el chat nativo cuando hay un proveedor predeterminado disponible.
+
+```text
+@harness comandos
+@harness estado
+@harness check redevent
+@harness proyectos
+@harness tareas RED
+@harness tarea RED-001-219
+@harness crear RED Revisar autenticación
+@harness comentar RED-001-219 Revisar el resultado del test
 ```
 
-No hagas `git merge upstream/main` directamente en `main` sin revisión: primero abrí una rama de sincronización, compará cambios, resolvé conflictos y ejecutá pruebas. El mecanismo automatizado de actualización de binarios **no está terminado**.
+Las consultas MCP usan el servidor existente de Work Management y los permisos de tu agente.
+Para autenticación, el IDE utiliza primero la clave guardada en SecretStorage y después `ATS_MCP_TOKEN` heredada.
+Podés guardar la clave con **ArmotuSitio: Configurar clave MCP**, mediante un diálogo protegido.
+No pegues claves en el chat ni las guardes en archivos versionados.
+Las modificaciones requieren contexto actual, herramienta autorizada y confirmación explícita.
+Cancelar una consulta no revierte un cambio que ya haya aceptado el servidor.
 
-## 9. Estado de calidad y contribuciones
+Los ajustes `atsHarness.enabled`, `atsHarness.notifications` y `atsHarness.mcp.enabled` controlan cada integración.
+Consultá los comandos y límites en la [guía de la extensión](extensions/armotusitio-ide/README.md).
 
-Los cambios están en `feat/ats-ide-platform-v1`. Revisá además [la documentación de entrega](docs/armotusitio-ide/DELIVERY.md) para conocer los límites y los requisitos pendientes.
+## Instalar extensiones y herramientas opcionales
 
-Código fuente original de VS Code: [microsoft/vscode](https://github.com/microsoft/vscode). Visual Studio Code oficial incluye componentes, servicios y condiciones de distribución propios de Microsoft; este fork no adquiere automáticamente derechos sobre ellos ni sobre el Visual Studio Marketplace.
+La búsqueda de extensiones usa Open VSX.
+La disponibilidad depende de ese catálogo y de la compatibilidad de cada extensión con el editor.
+El [perfil enfocado](docs/armotusitio-ide/extensions.focused.json) conserva la selección para PHP, Next.js y Go.
+El [inventario original](docs/armotusitio-ide/extensions.snapshot.json) permite recuperar otras extensiones.
+Estos inventarios no implican que todas esas extensiones estén incluidas en el instalador.
 
-Para detalles técnicos del proyecto base: [CONTRIBUTING.md](CONTRIBUTING.md) y [guía upstream](https://github.com/microsoft/vscode/wiki/How-to-Contribute).
+Las funciones opcionales requieren herramientas propias:
+
+- `gh` autenticada para consultar PRs y ejecuciones de GitHub.
+- `codex` o `claude` instaladas y autenticadas para enviar tareas a esas CLI.
+- n8n accesible mediante `atsHarness.n8nUrl`.
+- PHP, Go, Node/pnpm y motores de bases de datos según el proyecto abierto.
+
+## Actualizaciones y GitHub Actions
+
+El IDE consulta las releases propias de ArmotuSitio; no instala directamente los binarios de Microsoft.
+La incorporación de upstream requiere preparar un candidato, revisar, validar, compilar y publicar una release propia.
+Detectar una versión nueva de VS Code no equivale a tener una actualización de ArmotuSitio lista para instalar.
+La actualización entre dos instalaciones y la prueba en una máquina limpia siguen pendientes de validación.
+
+GitHub Actions está desactivado a nivel del repositorio por decisión del propietario.
+Los comandos de compilación documentados son locales y no necesitan ejecutar workflows.
+No habilites Actions para compilar o publicar este fork sin autorización del propietario.
+
+Consultá [el flujo de actualización](docs/armotusitio-ide/AUTOUPDATE.md) y [el plan pendiente](TODO-AUTOUPDATE.md).
+
+## Validación y pendientes
+
+Para comprobar la extensión y la receta de desarrollo sin construir todo el producto:
+
+```powershell
+npm test --prefix extensions/armotusitio-ide
+npm run check --prefix extensions/armotusitio-ide
+node --test scripts/ats-build-dev.test.mts
+```
+
+Los tests focalizados no sustituyen la compilación ni las pruebas del producto empaquetado.
+Siguen pendientes el Mission Control multiagente completo, la planificación automática y el Context Engine avanzado.
+También quedan por ampliar Quality Guardian, Database Center y la gestión visual de GitHub, worktrees y n8n.
+Linux y macOS no se presentan como plataformas verificadas de esta distribución.
+
+Para contribuir, consultá [CONTRIBUTING.md](CONTRIBUTING.md).
+El código original conserva su licencia MIT; los servicios y extensiones de terceros tienen sus propias condiciones.
