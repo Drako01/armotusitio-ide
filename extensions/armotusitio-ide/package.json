@@ -61,6 +61,8 @@
       ]
     },
     "commands": [
+      { "command": "atsHarness.history", "title": "ArmotuSitio: Historial del Harness" },
+      { "command": "atsHarness.clearHistory", "title": "ArmotuSitio: Borrar historial del Harness" },
       {
         "command": "atsIde.home",
         "title": "ArmotuSitio: Inicio",
@@ -168,7 +170,7 @@
   "scripts": {
     "compile": "node esbuild.mts",
     "test": "node --test test/*.test.cts",
-    "check": "node --check extension.ts && node --check src/core.ts && node --check src/git.ts && node --check src/context.ts && node --check src/integrations.ts && node --check src/home.ts && node --check resources/home.ts",
+    "check": "node ../../node_modules/@typescript/native/bin/tsc --project tsconfig.json && node --check resources/home.ts",
     "vscode:prepublish": "npm run compile"
   },
   "icon": "resources/logo.png",

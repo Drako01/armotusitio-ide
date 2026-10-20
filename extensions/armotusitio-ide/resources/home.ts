@@ -51,6 +51,25 @@ window.addEventListener('message', event => {
 		runs.append(empty);
 	}
 	const labels = state.labels.states;
+	const progress = document.getElementById('progress');
+	progress.replaceChildren();
+	if (!state.progress.length) {
+		const empty = document.createElement('p'); empty.className = 'empty'; empty.textContent = state.labels.emptyProgress; progress.append(empty);
+	}
+	for (const task of state.progress) {
+		const article = document.createElement('article');
+		const heading = document.createElement('h3');
+		heading.textContent = task.error ? state.labels.progressError : `${task.id} \u00b7 ${labels[task.state] || task.state}${task.percent === undefined ? '' : ' \u00b7 ' + task.percent + '%'}`;
+		const root = document.createElement('p'); root.className = 'muted path'; root.textContent = task.project;
+		article.append(heading, root);
+		if (!task.error) {
+			const meter = document.createElement('progress'); meter.max = 100; meter.setAttribute('aria-label', heading.textContent);
+			if (task.percent !== undefined) { meter.value = task.percent; }
+			article.append(meter);
+			if (task.elapsedMs !== undefined) { const duration = document.createElement('p'); duration.className = 'muted'; duration.textContent = `${state.labels.duration}: ${Math.floor(task.elapsedMs / 1000)} s`; article.append(duration); }
+		}
+		progress.append(article);
+	}
 	for (const job of [...state.jobs].reverse()) {
 		const row = document.createElement('div');
 		row.className = 'run';
@@ -60,7 +79,8 @@ window.addEventListener('message', event => {
 		detail.className = 'muted path';
 		detail.textContent = job.project;
 		const status = document.createElement('span');
-		status.textContent = `${labels[job.state] || job.state} \u00b7 ${job.started}`;
+		const elapsed = job.state === 'running' ? Date.now() - job.startedAt : job.endedAt === undefined ? undefined : job.endedAt - job.startedAt;
+		status.textContent = `${labels[job.state] || job.state} \u00b7 ${new Date(job.startedAt).toLocaleString()}${elapsed === undefined ? '' : ' \u00b7 ' + state.labels.duration + ': ' + Math.max(0, Math.floor(elapsed / 1000)) + ' s'}`;
 		row.append(name, detail, status);
 		runs.append(row);
 	}
