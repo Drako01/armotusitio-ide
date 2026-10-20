@@ -27,6 +27,21 @@ Usá **ArmotuSitio: Historial del Harness** para abrirlo desde la paleta de coma
 **Borrar historial** solicita confirmación y conserva las tareas que siguen ejecutándose.
 Las tareas externas de RedEvent se muestran como progreso, sin agregarlas al historial del IDE.
 
+## Notificaciones
+
+Las tareas iniciadas desde el IDE avisan al finalizar según `atsHarness.notifications`:
+
+- `errors` (predeterminado): avisa ante fallos o cuando falta el código de salida.
+- `always`: también avisa cuando terminan correctamente o se cancelan.
+- `never`: desactiva los avisos.
+
+Cada aviso incluye acción, proyecto, duración y **Ver historial**.
+Las cancelaciones voluntarias no generan avisos en el modo `errors`.
+Podés configurar esta opción por proyecto desde los ajustes de VS Code.
+La preferencia vigente al terminar la tarea determina si se muestra el aviso.
+No se notifican tareas externas ni entradas recuperadas del historial después de reiniciar.
+Desactivar `atsHarness.enabled` también silencia estos avisos.
+
 ## Bienvenida y actualización local
 
 La bienvenida nativa muestra el mismo logo real que el inicio de ArmotuSitio IDE.
