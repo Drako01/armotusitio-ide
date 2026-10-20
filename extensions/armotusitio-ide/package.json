@@ -31,6 +31,18 @@
           "default": true,
           "description": "Enable workspace-local harness detection."
         },
+        "atsHarness.notifications": {
+          "type": "string",
+          "enum": ["always", "errors", "never"],
+          "enumDescriptions": [
+            "Avisar cuando una tarea del IDE termina, falla o se cancela.",
+            "Avisar solo ante errores o cuando no se conoce el código de salida.",
+            "No mostrar notificaciones al finalizar tareas del IDE."
+          ],
+          "default": "errors",
+          "scope": "resource",
+          "description": "Notificaciones al finalizar tareas del Harness iniciadas desde el IDE. Incluyen la duración y acceso al historial."
+        },
         "atsHarness.n8nUrl": {
           "type": "string",
           "default": "http://127.0.0.1:5678",

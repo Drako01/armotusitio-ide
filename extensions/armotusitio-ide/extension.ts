@@ -8,6 +8,7 @@ const { detect, command, validatePlan } = require('./src/core.ts');
 const integrations = require('./src/integrations.ts');
 const { registerHome } = require('./src/home.ts');
 const { History, registerActivity } = require('./src/activity.ts');
+const repeatActions = ['check', 'verify', 'test'];
 
 async function projects() {
 	if (!vscode.workspace.getConfiguration('atsHarness').get('enabled', true)) { return []; }
@@ -21,6 +22,7 @@ async function selectProject(uri = undefined) {
 }
 class Controller {
 	jobs = new Map();
+	launching = new Set();
 	events = new vscode.EventEmitter();
 	onDidChangeTreeData = this.events.event;
 	history;
@@ -39,6 +41,15 @@ class Controller {
 		if (await vscode.window.showWarningMessage(vscode.l10n.t('\u00bfQuer\u00e9s borrar el historial de este workspace? Las tareas activas van a seguir ejecut\u00e1ndose.'), { modal: true }, clear) === clear) { this.history.clear(); this.refresh(); }
 	}
 	refresh() { this.events.fire(); }
+	canRepeat(job) { return repeatActions.includes(job.action) && ['passed', 'failed', 'cancelled', 'ended'].includes(job.state); }
+	isBusy(project, action) { return this.launching.has(JSON.stringify([project, action])) || [...this.jobs.values()].some(job => job.project === project && job.action === action && job.state === 'running'); }
+	async repeat(id) {
+		const job = this.getHistory().find(row => row.id === id);
+		if (!job || !this.canRepeat(job)) { return; }
+		const project = (await projects()).find(item => item.profile.root === job.project && item.profile.actions.includes(job.action));
+		if (!project) { vscode.window.showWarningMessage(vscode.l10n.t('Abr\u00ed el proyecto original y verific\u00e1 que ese comando siga disponible.')); return; }
+		await this.execute(project.folder.uri.toString(), job.action);
+	}
 	getTreeItem(item) { return item; }
 	async getChildren(element) {
 		if (!element) {
@@ -59,15 +70,43 @@ class Controller {
 		if (!action) { return; }
 		let spec; try { spec = command(project.profile, action); } catch (e) { vscode.window.showErrorMessage(e.message); return; }
 		if (!vscode.workspace.isTrusted) { vscode.window.showWarningMessage('Trust the workspace before executing harness tasks.'); return; }
-		if (await vscode.window.showWarningMessage('Run ' + spec.executable + ' ' + spec.args.join(' ') + ' in ' + project.profile.name + '?', { modal: true }, 'Run') !== 'Run') { return; }
-		const task = new vscode.Task({ type: 'ats-harness', action }, project.folder, 'ATS ' + project.profile.id + ' ' + action, 'ArmoTuSitio IDE', new vscode.ProcessExecution(spec.executable, spec.args, { cwd: spec.cwd }));
-		task.presentationOptions = { reveal: vscode.TaskRevealKind.Always, panel: vscode.TaskPanelKind.New };
-		const execution = await vscode.tasks.executeTask(task);
-		const id = Date.now() + '-' + Math.random().toString(36).slice(2);
-		const job = { id, project: spec.cwd, action, state: 'running', started: new Date().toLocaleTimeString(), startedAt: Date.now(), endedAt: undefined };
-		this.jobs.set(execution, job);
-		this.history.put(job);
-		this.refresh();
+		const guarded = repeatActions.includes(action);
+		const launchKey = JSON.stringify([spec.cwd, action]);
+		if (guarded && this.isBusy(spec.cwd, action)) { vscode.window.showWarningMessage(vscode.l10n.t('Esa tarea ya est\u00e1 activa o esperando confirmaci\u00f3n en el IDE.')); return; }
+		if (guarded) { this.launching.add(launchKey); this.refresh(); }
+		try {
+			if (await vscode.window.showWarningMessage('Run ' + spec.executable + ' ' + spec.args.join(' ') + ' in ' + project.profile.name + '?', { modal: true }, 'Run') !== 'Run') { return; }
+			if (guarded && !(await projects()).some(item => item.profile.root === spec.cwd && item.profile.actions.includes(action))) { return; }
+			if (!vscode.workspace.isTrusted) { return; }
+			const task = new vscode.Task({ type: 'ats-harness', action }, project.folder, 'ATS ' + project.profile.id + ' ' + action, 'ArmoTuSitio IDE', new vscode.ProcessExecution(spec.executable, spec.args, { cwd: spec.cwd }));
+			task.presentationOptions = { reveal: vscode.TaskRevealKind.Always, panel: vscode.TaskPanelKind.New };
+			const execution = await vscode.tasks.executeTask(task);
+			const id = Date.now() + '-' + Math.random().toString(36).slice(2);
+			const job = { id, project: spec.cwd, projectName: project.profile.name, action, state: 'running', started: new Date().toLocaleTimeString(), startedAt: Date.now(), endedAt: undefined };
+			this.jobs.set(execution, job);
+			this.history.put(job);
+			this.refresh();
+		} finally { if (guarded) { this.launching.delete(launchKey); this.refresh(); } }
+	}
+	/** Notify once for IDE task completion, using the current project preference. */
+	async notifyCompletion(job) {
+		const config = vscode.workspace.getConfiguration('atsHarness', vscode.Uri.file(job.project));
+		const mode = config.get('notifications', 'errors');
+		if (!config.get('enabled', true) || (mode !== 'always' && !(mode === 'errors' && ['failed', 'ended'].includes(job.state)))) { return; }
+		const seconds = Math.max(0, Math.floor((job.endedAt - job.startedAt) / 1000));
+		const messages = {
+			passed: vscode.l10n.t('Harness: {0} en {1} termin\u00f3 correctamente ({2} s).', job.action, job.projectName, seconds),
+			failed: vscode.l10n.t('Harness: {0} en {1} fall\u00f3 ({2} s).', job.action, job.projectName, seconds),
+			cancelled: vscode.l10n.t('Harness: {0} en {1} se cancel\u00f3 ({2} s).', job.action, job.projectName, seconds),
+			ended: vscode.l10n.t('Harness: {0} en {1} finaliz\u00f3 sin c\u00f3digo de salida ({2} s). Revis\u00e1 el resultado en la terminal.', job.action, job.projectName, seconds)
+		};
+		const open = vscode.l10n.t('Ver historial');
+		const message = messages[job.state];
+		if (!message) { return; }
+		const selection = job.state === 'failed' ? await vscode.window.showErrorMessage(message, open)
+			: job.state === 'ended' ? await vscode.window.showWarningMessage(message, open)
+				: await vscode.window.showInformationMessage(message, open);
+		if (selection === open) { await vscode.commands.executeCommand('atsHarness.history'); }
 	}
 	finish(execution, exitCode) {
 		const job = this.jobs.get(execution); if (!job || job.state !== 'running') { return; }
@@ -75,6 +114,7 @@ class Controller {
 		job.endedAt = Date.now(); this.history.put(job);
 		for (const [key, value] of this.jobs) { if (value.state !== 'running' && !this.history.rows.some(row => row.id === value.id)) { this.jobs.delete(key); } }
 		this.refresh();
+		void this.notifyCompletion(job).catch(() => { /* Notification failures must not change the task outcome. */ });
 	}
 	async terminate() {
 		const jobs = [...this.jobs.entries()].filter(([, job]) => job.state === 'running');

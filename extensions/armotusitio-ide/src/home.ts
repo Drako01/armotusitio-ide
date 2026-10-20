@@ -12,6 +12,8 @@ function registerHome(context, controller, projects) {
 	const t = message => vscode.l10n.t(message);
 	async function update() {
 		if (!panel) { return; }
+		const all = await projects();
+		if (!panel) { return; }
 		void panel.webview.postMessage({
 			type: 'state', trusted: vscode.workspace.isTrusted,
 			labels: {
@@ -22,10 +24,11 @@ function registerHome(context, controller, projects) {
 				emptyProgress: t('Sin progreso externo disponible. Se consulta cada 15 segundos en RedEvent, con un workspace confiable.'),
 				progressError: t('No se pudo consultar el progreso. Verific\u00e1 que Node y el harness est\u00e9n disponibles y volv\u00e9 a actualizar.'),
 				duration: t('Duraci\u00f3n'),
+				repeat: t('Repetir tarea'),
 				states: { running: t('En ejecuci\u00f3n'), passed: t('Completada'), failed: t('Fall\u00f3'), cancelled: t('Cancelada'), ended: t('Finaliz\u00f3 sin c\u00f3digo de salida'), unknown: t('Resultado desconocido tras reiniciar el IDE'), completed: t('Completada'), stalled: t('Sin proceso activo'), active: t('Activa'), pending: t('Pendiente'), blocked: t('Bloqueada'), aborted: t('Abortada') }
 			},
-			projects: (await projects()).map(({ profile }) => ({ name: profile.name, root: profile.root, actions: profile.actions })),
-			jobs: controller.getHistory().map(job => ({ action: job.action, state: job.state, project: job.project, startedAt: job.startedAt, endedAt: job.endedAt })),
+			projects: all.map(({ profile }) => ({ name: profile.name, root: profile.root, actions: profile.actions })),
+			jobs: controller.getHistory().map(job => ({ id: job.id, action: job.action, state: job.state, project: job.project, startedAt: job.startedAt, endedAt: job.endedAt, repeatable: controller.canRepeat(job), repeatBlocked: controller.isBusy(job.project, job.action) || !all.some(({ profile }) => profile.root === job.project && profile.actions.includes(job.action)) })),
 			progress: controller.progress
 		});
 	}
@@ -75,6 +78,7 @@ function registerHome(context, controller, projects) {
 				}
 				return;
 			}
+			if (message.action === 'repeat') { if (typeof message.id === 'string') { await controller.repeat(message.id); } return; }
 			const commands = { theme: 'workbench.action.selectTheme', agent: 'atsIde.agent', context: 'atsIde.context', worktrees: 'atsIde.worktrees', github: 'atsIde.github', n8n: 'atsIde.n8n', plan: 'atsHarness.reviewPlan', cancel: 'atsHarness.cancelTask', clear: 'atsHarness.clearHistory' };
 			if (Object.hasOwn(commands, message.action)) { await vscode.commands.executeCommand(commands[message.action]); }
 		}));

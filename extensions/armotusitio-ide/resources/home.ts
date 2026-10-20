@@ -6,7 +6,7 @@
 const ide = acquireVsCodeApi();
 document.addEventListener('click', event => {
 	const button = event.target.closest('button[data-action]');
-	if (button) { ide.postMessage({ action: button.dataset.action, root: button.dataset.root, command: button.dataset.command }); }
+	if (button && !button.disabled) { ide.postMessage({ action: button.dataset.action, root: button.dataset.root, command: button.dataset.command, id: button.dataset.id }); }
 });
 window.addEventListener('message', event => {
 	const state = event.data;
@@ -81,7 +81,13 @@ window.addEventListener('message', event => {
 		const status = document.createElement('span');
 		const elapsed = job.state === 'running' ? Date.now() - job.startedAt : job.endedAt === undefined ? undefined : job.endedAt - job.startedAt;
 		status.textContent = `${labels[job.state] || job.state} \u00b7 ${new Date(job.startedAt).toLocaleString()}${elapsed === undefined ? '' : ' \u00b7 ' + state.labels.duration + ': ' + Math.max(0, Math.floor(elapsed / 1000)) + ' s'}`;
-		row.append(name, detail, status);
+		const outcome = document.createElement('div'); outcome.className = 'actions'; outcome.append(status);
+		if (job.repeatable) {
+			const repeat = document.createElement('button'); repeat.className = 'secondary'; repeat.textContent = state.labels.repeat;
+			repeat.dataset.action = 'repeat'; repeat.dataset.id = job.id; repeat.disabled = !state.trusted || job.repeatBlocked;
+			outcome.append(repeat);
+		}
+		row.append(name, detail, outcome);
 		runs.append(row);
 	}
 });
