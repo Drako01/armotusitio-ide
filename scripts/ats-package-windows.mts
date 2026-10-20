@@ -72,7 +72,7 @@ async function main(): Promise<void> {
 	await writeFile(path.join(state, 'build-receipt.json'), JSON.stringify({
 		commit: sourceCommit,
 		installerSha256: await fileDigest(path.join(root, '.build', 'win32-x64', 'user-setup', 'VSCodeSetup.exe')),
-		productSha256: await fileDigest(path.resolve(root, '..', 'VSCode-win32-x64', 'resources', 'app', 'product.json')),
+		productSha256: await fileDigest(path.resolve(root, '..', 'ArmotuSitio-IDE-win32-x64', 'resources', 'app', 'product.json')),
 		completedAt: new Date().toISOString()
 	}, null, 2) + '\n');
 }

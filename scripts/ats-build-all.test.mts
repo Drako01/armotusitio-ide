@@ -16,7 +16,7 @@ async function fixture() {
 	const base = await mkdtemp(path.join(os.tmpdir(), 'ats-all-'));
 	const root = path.join(base, 'repo');
 	await mkdir(path.join(root, '.build', 'ats-autoupdate'), { recursive: true });
-	await mkdir(path.join(base, 'VSCode-win32-x64'), { recursive: true });
+	await mkdir(path.join(base, 'ArmotuSitio-IDE-win32-x64'), { recursive: true });
 	await writeFile(path.join(root, 'package.json'), JSON.stringify({ version: '1.143.0' }));
 	return { base, root, zip: path.join(root, '.build', 'releases', 'ArmotuSitio-IDE-1.143.0-win32-x64.zip'), installer: path.join(root, '.build', 'releases', 'ArmotuSitio-IDE-Setup-1.143.0-x64.exe') };
 }
@@ -36,7 +36,7 @@ function mock(root: string, fail = 0, changeCommit = false) {
 			if (calls.length === fail) { throw new Error('fixture failure'); }
 			if (stage === 'ats-package-windows.mts') {
 				const setup = path.join(root, '.build', 'win32-x64', 'user-setup');
-				const app = path.resolve(root, '..', 'VSCode-win32-x64', 'resources', 'app');
+				const app = path.resolve(root, '..', 'ArmotuSitio-IDE-win32-x64', 'resources', 'app');
 				await mkdir(setup, { recursive: true }); await mkdir(app, { recursive: true });
 				await writeFile(path.join(setup, 'VSCodeSetup.exe'), 'installer fixture');
 				const { version } = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
@@ -55,7 +55,7 @@ test('unified recipe preserves package, ZIP, development order without running a
 		assert.deepEqual(deps.calls, ['ats-package-windows.mts', 'archive', 'ats-build-dev.mts']);
 		assert.equal(await readFile(f.zip, 'utf8'), 'ZIP fixture');
 		assert.equal(await readFile(f.installer, 'utf8'), 'installer fixture');
-		assert.equal(JSON.parse(await readFile(path.resolve(f.root, '..', 'VSCode-win32-x64', 'resources', 'app', 'product.json'), 'utf8')).version, '1.143.0');
+		assert.equal(JSON.parse(await readFile(path.resolve(f.root, '..', 'ArmotuSitio-IDE-win32-x64', 'resources', 'app', 'product.json'), 'utf8')).version, '1.143.0');
 	} finally { await cleanup(f.base); }
 });
 
@@ -79,7 +79,7 @@ test('release names follow the source version without removing the application d
 		const releases = path.dirname(f.zip);
 		assert.equal(await readFile(path.join(releases, 'ArmotuSitio-IDE-Setup-1.144.0-x64.exe'), 'utf8'), 'installer fixture');
 		assert.equal(await readFile(path.join(releases, 'ArmotuSitio-IDE-1.144.0-win32-x64.zip'), 'utf8'), 'ZIP fixture');
-		assert.equal(JSON.parse(await readFile(path.resolve(f.root, '..', 'VSCode-win32-x64', 'resources', 'app', 'product.json'), 'utf8')).version, '1.144.0');
+		assert.equal(JSON.parse(await readFile(path.resolve(f.root, '..', 'ArmotuSitio-IDE-win32-x64', 'resources', 'app', 'product.json'), 'utf8')).version, '1.144.0');
 	} finally { await cleanup(f.base); }
 });
 
@@ -94,7 +94,7 @@ test('mismatched application or installer stops before ZIP and preserves previou
 				if (scenario === 'installer') {
 					await writeFile(path.join(f.root, '.build', 'win32-x64', 'user-setup', 'VSCodeSetup.exe'), 'corrupted');
 				} else {
-					await writeFile(path.resolve(f.root, '..', 'VSCode-win32-x64', 'resources', 'app', 'product.json'), JSON.stringify({ version: scenario === 'version' ? '1.142.0' : '1.143.0', commit: scenario === 'commit' ? 'old' : 'fixed' }));
+					await writeFile(path.resolve(f.root, '..', 'ArmotuSitio-IDE-win32-x64', 'resources', 'app', 'product.json'), JSON.stringify({ version: scenario === 'version' ? '1.142.0' : '1.143.0', commit: scenario === 'commit' ? 'old' : 'fixed' }));
 				}
 			};
 			await assert.rejects(buildAll(f.root, deps), /does not match/);
