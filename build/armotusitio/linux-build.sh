@@ -13,6 +13,12 @@ git init -q
 git config --local safe.directory /work/source
 # The source volume is scoped to commit and architecture. A failed install never writes this marker.
 if [[ ! -f /work/dependencies-ready ]]; then
+    # Bootstrap JS tooling before the upstream Electron/Node compiler setup.
+    npm ci --ignore-scripts --no-audit --no-fund
+    export npm_config_arch="$ATS_LINUX_ARCH" VSCODE_ARCH="$ATS_LINUX_ARCH"
+    source ./build/azure-pipelines/linux/setup-env.sh
+    # Match upstream ordering: install and patch headers before native modules run in parallel.
+    node build/npm/preinstall.ts
     npm ci --no-audit --no-fund
     touch /work/dependencies-ready
 fi
