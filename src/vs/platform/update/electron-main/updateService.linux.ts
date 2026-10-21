@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { CancellationToken } from '../../../base/common/cancellation.js';
+import * as nls from '../../../nls.js';
 import { IConfigurationService } from '../../configuration/common/configuration.js';
 import { IEnvironmentMainService } from '../../environment/electron-main/environmentMainService.js';
 import { ILifecycleMainService } from '../../lifecycle/electron-main/lifecycleMainService.js';
@@ -51,12 +52,12 @@ export class LinuxUpdateService extends AbstractUpdateService {
 		const url = this.buildUpdateFeedUrl(this.quality, this.productService.commit!, { background, internalOrg });
 		this.setState(State.CheckingForUpdates(explicit));
 
-		this.requestService.request({ url, callSite: 'updateService.linux.checkForUpdates' }, CancellationToken.None)
+		this.requestService.request({ url, timeout: 15000, callSite: 'updateService.linux.checkForUpdates' }, CancellationToken.None)
 			.then<IUpdate | null>(async context => {
 				const trust = this.productService.armotusitioUpdate;
 				if (!trust) { return asJson<IUpdate>(context); }
 				if (context.res.statusCode === 404) { return null; }
-				if (context.res.statusCode !== 200) { throw new Error(`ArmotuSitio update feed returned ${context.res.statusCode}`); }
+				if (context.res.statusCode !== 200) { throw new Error(nls.localize('armotusitioFeedError', "ArmotuSitio update feed returned {0}", context.res.statusCode)); }
 				return resolveArmotusitioUpdate(await asJson<unknown>(context), trust, this.productService.version, this.productService.commit!, `linux-${process.arch}-archive`,
 					url => this.requestService.request({ url, timeout: 15000, callSite: 'updateService.linux.armotusitioManifest' }, CancellationToken.None).then(asJson<unknown>));
 			})

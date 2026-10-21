@@ -116,6 +116,12 @@ No habilites Actions solo por pushear o mergear este cambio.
 
 ## Comprobaciones de aceptación
 
+Usá el ejecutable Windows empaquetado para WSL: `scripts/code.bat` es un entorno de desarrollo y no representa
+la identidad publicada del cliente y del servidor.
+El build ARM64 en una máquina x64 requiere emulación ARM64 habilitada en Docker.
+El workflow preparado incluye esa preparación; en una instalación local verificá `linux/arm64` antes del build.
+Los paquetes Linux no incluyen el CLI Rust de túneles, que requiere un proceso de compilación independiente.
+
 - Abrir una carpeta Linux mediante **Connect to WSL** en el cliente Windows empaquetado.
 - Confirmar que terminal, Git y Node son de la distribución remota, sin copiar claves privadas de Windows.
 - Instalar ESLint, Prettier y otras extensiones de workspace del lado WSL desde Open VSX.

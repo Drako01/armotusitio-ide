@@ -3,7 +3,8 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 import * as path from 'node:path';
-import { readFile, readdir, mkdir, copyFile, stat, writeFile, rename } from 'node:fs/promises';
+import { readFile, readdir, mkdir, copyFile, stat, writeFile, rename, mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
@@ -14,7 +15,9 @@ const execute = promisify(execFile);
 const root = path.resolve(import.meta.dirname, '..');
 
 /** Validate immutable product identity before archiving or publishing any Linux output. */
-export function validateIdentity(actual: any, commit: string, version: string): void {
+export function validateIdentity(value: unknown, commit: string, version: string): void {
+	if (!value || typeof value !== 'object' || Array.isArray(value)) { throw new Error('Invalid Linux/REH product metadata.'); }
+	const actual = value as Record<string, unknown>;
 	if (!/^[a-f0-9]{40}$/.test(commit) || actual.commit !== commit || actual.version !== version || actual.quality !== product.quality
 		|| actual.serverApplicationName !== product.serverApplicationName || actual.serverDataFolderName !== product.serverDataFolderName
 		|| actual.release !== product.release || actual.serverDownloadUrlTemplate !== product.serverDownloadUrlTemplate) { throw new Error('Linux/REH product identity does not match the client build.'); }
@@ -55,7 +58,11 @@ export async function linuxArtifacts(arch: string, output: string): Promise<void
 	if (arch === 'x64') {
 		const application = path.resolve(root, '..', 'VSCode-linux-x64');
 		validateIdentity(JSON.parse(await readFile(path.join(application, 'resources', 'app', 'product.json'), 'utf8')), commit, version);
-		const clientVersion = (await execute(path.join(application, 'bin', product.applicationName), ['--version'], { timeout: 30000 })).stdout;
+		const profile = await mkdtemp(path.join(tmpdir(), 'ats-linux-version-'));
+		let clientVersion: string;
+		try {
+			clientVersion = (await execute(path.join(application, 'bin', product.applicationName), ['--version', `--user-data-dir=${profile}`], { timeout: 30000, env: { ...process.env, DONT_PROMPT_WSL_INSTALL: '1' } })).stdout;
+		} finally { await rm(profile, { recursive: true, force: true }); }
 		if (!clientVersion.includes(version) || !clientVersion.includes(commit)) { throw new Error('Linux client CLI identity mismatch.'); }
 		const stem = `ArmotuSitio-IDE-${version}-r${product.release}`;
 		await archive(application, `${stem}-linux-x64.tar.gz`); await register('linux-x64-archive', `${stem}-linux-x64.tar.gz`);

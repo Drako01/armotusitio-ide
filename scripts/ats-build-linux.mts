@@ -17,6 +17,12 @@ async function execute(args: string[], cwd: string): Promise<void> {
 }
 
 /** Build from a Git archive of one immutable commit in separate Linux architecture volumes. */
+export async function archiveLinuxSources(root: string, commit: string, destination: string): Promise<void> {
+	// Windows checkout settings must never introduce CRLF into Linux package scripts.
+	await run('git', ['-c', 'core.autocrlf=false', '-c', 'core.eol=lf', 'archive', '--format=tar.gz', '--output', destination, commit], root);
+}
+
+/** Build Linux artifacts without sharing native modules across architectures. */
 export async function buildLinux(architectures = ['x64', 'arm64'], root = path.resolve(import.meta.dirname, '..')): Promise<void> {
 	if (!architectures.length || architectures.some(arch => !['x64', 'arm64'].includes(arch))) { throw new Error('Expected Linux x64 and/or arm64.'); }
 	await withLock(path.join(root, '.build', 'ats-linux'), async () => {
@@ -28,7 +34,7 @@ export async function buildLinux(architectures = ['x64', 'arm64'], root = path.r
 		const output = path.join(root, '.build', 'releases');
 		await mkdir(directory, { recursive: true }); await mkdir(output, { recursive: true });
 		const source = path.join(directory, 'source.tar.gz');
-		await run('git', ['archive', '--format=tar.gz', '--output', source, commit], root);
+		await archiveLinuxSources(root, commit, source);
 		for (const arch of architectures) {
 			const platform = arch === 'x64' ? 'linux/amd64' : 'linux/arm64';
 			const image = `armotusitio-build:ubuntu22-node${nodeVersion}-${arch}`;

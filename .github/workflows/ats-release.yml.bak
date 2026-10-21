@@ -27,7 +27,7 @@ jobs:
           key: ats-linux-${{ matrix.arch }}-${{ hashFiles('.nvmrc', 'package-lock.json', 'remote/package-lock.json', 'build/package-lock.json', 'remote/.npmrc') }}
       - name: Enable ARM64 emulation when building the ARM64 server
         if: matrix.arch == 'arm64'
-        run: docker run --privileged --rm tonistiigi/binfmt --install arm64
+        run: docker run --privileged --rm tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0 --install arm64
       - name: Install tooling without executing Windows or native host build scripts
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Build isolated Ubuntu 22.04 artifacts
@@ -58,8 +58,19 @@ jobs:
           path: |
             **/node_modules
             .build/npm
-          key: ats-windows-x64-${{ hashFiles('.nvmrc', '.npmrc', 'remote/.npmrc', 'package-lock.json', 'remote/package-lock.json', 'build/package-lock.json', 'extensions/copilot/package-lock.json') }}
-      - run: npm run install-fast
+          key: ats-windows-x64-${{ hashFiles('.nvmrc', '**/.npmrc', '**/package-lock.json', 'build/npm/**') }}
+      - name: Restore verified dependencies or install the exact lockfiles
+        shell: pwsh
+        run: |
+          node --input-type=module -e "import { isUpToDate } from './build/npm/installStateHash.ts'; process.exit(isUpToDate() ? 0 : 1)"
+          if ($LASTEXITCODE -eq 0) {
+            npm run install-fast
+          } else {
+            node build/npm/preinstall.ts
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            npm ci --no-audit --no-fund
+          }
+          exit $LASTEXITCODE
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           pattern: ats-linux-*

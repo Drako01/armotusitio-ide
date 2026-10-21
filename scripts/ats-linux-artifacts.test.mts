@@ -7,6 +7,12 @@ import * as assert from 'node:assert/strict';
 import { armotusitioProduct as product } from '../build/lib/armotusitioProduct.ts';
 import { validateIdentity } from './ats-linux-artifacts.mts';
 import { exclusiveReleaseWorkflow } from './ats-autoupdate.mts';
+import { archiveLinuxSources } from './ats-build-linux.mts';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { mkdtemp, writeFile, readFile, mkdir, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import * as path from 'node:path';
 
 test('WSL template and server identity bind the release revision and full client commit', () => {
 	const commit = 'a'.repeat(40);
@@ -18,6 +24,27 @@ test('WSL template and server identity bind the release revision and full client
 	for (const field of ['commit', 'version', 'quality', 'release', 'serverApplicationName', 'serverDataFolderName', 'serverDownloadUrlTemplate']) {
 		assert.throws(() => validateIdentity({ ...product, commit, version: '1.143.0', [field]: 'mismatch' }, commit, '1.143.0'));
 	}
+	for (const malformed of [null, [], 'metadata', 42]) { assert.throws(() => validateIdentity(malformed, commit, '1.143.0')); }
+});
+
+test('Linux source exports preserve LF despite Windows autocrlf settings', async () => {
+	const directory = await mkdtemp(path.join(tmpdir(), 'ats-linux-export-'));
+	const execute = promisify(execFile);
+	const git = (...args: string[]) => execute('git', args, { cwd: directory });
+	try {
+		await git('init', '-q');
+		await git('config', 'core.autocrlf', 'true');
+		await writeFile(path.join(directory, '.gitattributes'), '* text=auto\n');
+		await writeFile(path.join(directory, 'postinst.template'), '#!/bin/sh\nprintf installed\\n\n');
+		await git('add', '.');
+		await git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=', 'commit', '-qm', 'fixture');
+		const archive = path.join(directory, 'source.tar.gz');
+		await archiveLinuxSources(directory, 'HEAD', archive);
+		const extracted = path.join(directory, 'extracted');
+		await mkdir(extracted);
+		await execute('tar', ['-xzf', archive, '-C', extracted]);
+		assert.equal(await readFile(path.join(extracted, 'postinst.template'), 'utf8'), '#!/bin/sh\nprintf installed\\n\n');
+	} finally { await rm(directory, { recursive: true, force: true }); }
 });
 
 test('future release CI cannot publish from a branch, another repository, or alongside an active old workflow', () => {

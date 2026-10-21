@@ -31,7 +31,9 @@ gulp() { node --experimental-strip-types --max-old-space-size=8192 node_modules/
 gulp "vscode-reh-linux-${ATS_LINUX_ARCH}-min"
 if [[ "$ATS_LINUX_ARCH" == x64 ]]; then
     gulp vscode-linux-x64-min
-    gulp vscode-linux-x64-prepare-deb vscode-linux-x64-build-deb
-    gulp vscode-linux-x64-prepare-rpm vscode-linux-x64-build-rpm
+    gulp vscode-linux-x64-prepare-deb
+    gulp vscode-linux-x64-build-deb
+    gulp vscode-linux-x64-prepare-rpm
+    gulp vscode-linux-x64-build-rpm
 fi
 node scripts/ats-linux-artifacts.mts "$ATS_LINUX_ARCH" /output
