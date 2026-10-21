@@ -52,15 +52,21 @@ test('unified recipe preserves package, ZIP, development order without running a
 	const f = await fixture(); const deps = mock(f.root);
 	try {
 		await buildAll(f.root, deps);
-		assert.deepEqual(deps.calls, ['ats-package-windows.mts', 'archive', 'ats-build-dev.mts']);
+		assert.deepEqual(deps.calls, ['ats-package-windows.mts', 'archive', 'ats-build-dev.mts', 'ats-build-linux.mts']);
 		assert.equal(await readFile(f.zip, 'utf8'), 'ZIP fixture');
 		assert.equal(await readFile(f.installer, 'utf8'), 'installer fixture');
 		assert.equal(JSON.parse(await readFile(path.resolve(f.root, '..', 'ArmotuSitio-IDE-win32-x64', 'resources', 'app', 'product.json'), 'utf8')).version, '1.143.0');
 	} finally { await cleanup(f.base); }
 });
 
+test('windows-only mode keeps the local three-stage recipe without requiring Docker', async () => {
+	const f = await fixture(); const deps = mock(f.root);
+	try { await buildAll(f.root, deps, false); assert.deepEqual(deps.calls, ['ats-package-windows.mts', 'archive', 'ats-build-dev.mts']); }
+	finally { await cleanup(f.base); }
+});
+
 test('each failed stage stops subsequent stages and a failed archive preserves the previous ZIP', async () => {
-	for (const stage of [1, 2, 3]) {
+	for (const stage of [1, 2, 3, 4]) {
 		const f = await fixture(); const deps = mock(f.root, stage);
 		try {
 			await mkdir(path.dirname(f.zip), { recursive: true }); await writeFile(f.zip, 'previous ZIP');

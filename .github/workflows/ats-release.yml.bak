@@ -1,0 +1,104 @@
+# Intentionally inactive: GitHub only discovers .yml/.yaml files.
+# Keep repository Actions disabled. See docs/ATS-WSL-LINUX.md before any future activation.
+name: ArmotuSitio Release
+on:
+  push:
+    tags: ['ats-v*-r*']
+permissions:
+  contents: read
+concurrency:
+  group: ats-release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  linux:
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: true
+      matrix:
+        arch: [x64, arm64]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .nvmrc
+      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684
+        with:
+          path: .build/cache/linux/${{ matrix.arch }}
+          key: ats-linux-${{ matrix.arch }}-${{ hashFiles('.nvmrc', 'package-lock.json', 'remote/package-lock.json', 'build/package-lock.json', 'remote/.npmrc') }}
+      - name: Enable ARM64 emulation when building the ARM64 server
+        if: matrix.arch == 'arm64'
+        run: docker run --privileged --rm tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0 --install arm64
+      - name: Install tooling without executing Windows or native host build scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Build isolated Ubuntu 22.04 artifacts
+        env:
+          ATS_LINUX_BIND_CACHE: '1'
+        run: node scripts/ats-build-linux.mts --arch ${{ matrix.arch }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ats-linux-${{ matrix.arch }}
+          path: .build/releases/*
+          if-no-files-found: error
+  windows-and-publish:
+    needs: linux
+    runs-on: windows-2022
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684
+        with:
+          path: |
+            **/node_modules
+            .build/npm
+          key: ats-windows-x64-${{ hashFiles('.nvmrc', '**/.npmrc', '**/package-lock.json', 'build/npm/**') }}
+      - name: Restore verified dependencies or install the exact lockfiles
+        shell: pwsh
+        run: |
+          node --input-type=module -e "import { isUpToDate } from './build/npm/installStateHash.ts'; process.exit(isUpToDate() ? 0 : 1)"
+          if ($LASTEXITCODE -eq 0) {
+            npm run install-fast
+          } else {
+            node build/npm/preinstall.ts
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            npm ci --no-audit --no-fund
+          }
+          exit $LASTEXITCODE
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: ats-linux-*
+          path: .build/releases
+          merge-multiple: true
+      - name: Build Windows client
+        run: node scripts/ats-package-windows.mts
+      - name: Prepare release signing key
+        shell: pwsh
+        env:
+          ATS_RELEASE_SIGNING_KEY: ${{ secrets.ATS_RELEASE_SIGNING_KEY }}
+        run: |
+          if (-not $env:ATS_RELEASE_SIGNING_KEY) { throw 'Missing release signing key' }
+          $keyPath = Join-Path $env:RUNNER_TEMP 'ats-release-private.pem'
+          [IO.File]::WriteAllText($keyPath, $env:ATS_RELEASE_SIGNING_KEY)
+          "ATS_IDE_SIGNING_KEY=$keyPath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Validate, sign and publish the matching release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/ats-autoupdate.mts validate
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/ats-autoupdate.mts artifacts
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/ats-autoupdate.mts publish --approve
+      - name: Remove temporary signing key
+        if: always()
+        shell: pwsh
+        run: |
+          $keyPath = Join-Path $env:RUNNER_TEMP 'ats-release-private.pem'
+          if (Test-Path -LiteralPath $keyPath) { Remove-Item -LiteralPath $keyPath -Force }

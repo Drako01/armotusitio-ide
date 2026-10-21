@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { CancellationToken } from '../../../base/common/cancellation.js';
+import * as nls from '../../../nls.js';
 import { IConfigurationService } from '../../configuration/common/configuration.js';
 import { IEnvironmentMainService } from '../../environment/electron-main/environmentMainService.js';
 import { ILifecycleMainService } from '../../lifecycle/electron-main/lifecycleMainService.js';
@@ -16,6 +17,8 @@ import { IApplicationStorageMainService } from '../../storage/electron-main/stor
 import { ITelemetryService } from '../../telemetry/common/telemetry.js';
 import { AvailableForDownload, IUpdate, State, StateType, UpdateType } from '../common/update.js';
 import { AbstractUpdateService, createUpdateURL, IUpdateURLOptions } from './abstractUpdateService.js';
+import { armotusitioRepository } from '../common/armotusitioUpdate.js';
+import { resolveArmotusitioUpdate } from '../node/armotusitioUpdate.js';
 
 export class LinuxUpdateService extends AbstractUpdateService {
 
@@ -35,6 +38,7 @@ export class LinuxUpdateService extends AbstractUpdateService {
 	}
 
 	protected buildUpdateFeedUrl(quality: string, commit: string, options?: IUpdateURLOptions): string {
+		if (this.productService.armotusitioUpdate) { return `https://api.github.com/repos/${armotusitioRepository}/releases/latest`; }
 		return createUpdateURL(this.productService.updateUrl!, `linux-${process.arch}`, quality, commit, options);
 	}
 
@@ -48,8 +52,15 @@ export class LinuxUpdateService extends AbstractUpdateService {
 		const url = this.buildUpdateFeedUrl(this.quality, this.productService.commit!, { background, internalOrg });
 		this.setState(State.CheckingForUpdates(explicit));
 
-		this.requestService.request({ url, callSite: 'updateService.linux.checkForUpdates' }, CancellationToken.None)
-			.then<IUpdate | null>(asJson)
+		this.requestService.request({ url, timeout: 15000, callSite: 'updateService.linux.checkForUpdates' }, CancellationToken.None)
+			.then<IUpdate | null>(async context => {
+				const trust = this.productService.armotusitioUpdate;
+				if (!trust) { return asJson<IUpdate>(context); }
+				if (context.res.statusCode === 404) { return null; }
+				if (context.res.statusCode !== 200) { throw new Error(nls.localize('armotusitioFeedError', "ArmotuSitio update feed returned {0}", context.res.statusCode)); }
+				return resolveArmotusitioUpdate(await asJson<unknown>(context), trust, this.productService.version, this.productService.commit!, `linux-${process.arch}-archive`,
+					url => this.requestService.request({ url, timeout: 15000, callSite: 'updateService.linux.armotusitioManifest' }, CancellationToken.None).then(asJson<unknown>));
+			})
 			.then(update => {
 				// If updates were disabled mid-check, ignore the result so we don't leave the Disabled state.
 				if (this.state.type !== StateType.CheckingForUpdates) {

@@ -6,6 +6,10 @@
 export const armotusitioRepository = 'Drako01/armotusitio-ide';
 export const armotusitioManifestName = 'armotusitio-update.json';
 export const armotusitioPlatforms = ['win32-x64-user', 'win32-x64-archive'] as const;
+export const armotusitioExtraAssets: Record<string, string> = {
+	'linux-x64-archive': '.tar.gz', 'linux-x64-deb': '.deb', 'linux-x64-rpm': '.rpm',
+	'server-linux-x64': '.tar.gz', 'server-linux-arm64': '.tar.gz'
+};
 
 export interface ArmotusitioAsset {
 	name: string;
@@ -61,9 +65,10 @@ export function parseArmotusitioManifest(value: unknown): ArmotusitioManifest {
 		|| !/^(main|v?\d+\.\d+\.\d+)$/.test(upstream.ref) || typeof upstream.commit !== 'string' || !/^[a-f0-9]{40}$/.test(upstream.commit))) {
 		throw new Error('Invalid upstream provenance.');
 	}
-	for (const platform of armotusitioPlatforms) {
-		const asset = value.assets[platform];
-		const extension = platform.endsWith('archive') ? '.zip' : '.exe';
+	const rawAssets = value.assets;
+	for (const platform of [...armotusitioPlatforms, ...Object.keys(armotusitioExtraAssets).filter(key => rawAssets[key] !== undefined)]) {
+		const asset = rawAssets[platform];
+		const extension = armotusitioExtraAssets[platform] ?? (platform.endsWith('archive') ? '.zip' : '.exe');
 		if (!isUpdateRecord(asset) || typeof asset.name !== 'string'
 			|| !/^[A-Za-z0-9][A-Za-z0-9._-]{0,180}$/.test(asset.name) || !asset.name.endsWith(extension)
 			|| typeof asset.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(asset.sha256)

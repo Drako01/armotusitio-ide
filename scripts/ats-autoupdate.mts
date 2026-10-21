@@ -11,7 +11,7 @@ import { access, chmod, copyFile, lstat, mkdir, open, readFile, readdir, realpat
 import { createReadStream, createWriteStream } from 'node:fs';
 import { pipeline } from 'node:stream/promises';
 import { createHash, createPublicKey, generateKeyPairSync, randomUUID, sign, verify } from 'node:crypto';
-import { armotusitioManifestName, armotusitioPlatforms, armotusitioReleaseTag, armotusitioRepository, compareArmotusitioVersions, isUpdateRecord, parseArmotusitioManifest, type ArmotusitioAsset } from '../src/vs/platform/update/common/armotusitioUpdate.ts';
+import { armotusitioManifestName, armotusitioReleaseTag, armotusitioRepository, compareArmotusitioVersions, isUpdateRecord, parseArmotusitioManifest, type ArmotusitioAsset } from '../src/vs/platform/update/common/armotusitioUpdate.ts';
 
 const execute = promisify(execFile);
 export const repositoryRoot = path.resolve(import.meta.dirname, '..');
@@ -201,8 +201,24 @@ async function prepare(): Promise<unknown> {
 	return result;
 }
 
-/** Refuse every publication mutation unless Actions is explicitly disabled. */
+/** Future CI is permitted only for the explicitly enabled release workflow, with all others disabled. */
+export function exclusiveReleaseWorkflow(environment: NodeJS.ProcessEnv, workflows: any): boolean {
+	return environment.GITHUB_ACTIONS === 'true' && environment.GITHUB_REPOSITORY === armotusitioRepository
+		&& environment.GITHUB_WORKFLOW === 'ArmotuSitio Release'
+		&& /^refs\/tags\/ats-v\d+\.\d+\.\d+-r[1-9]\d*$/.test(environment.GITHUB_REF || '')
+		&& Number.isSafeInteger(workflows?.total_count) && workflows.total_count > 0 && workflows.total_count <= 100 && Array.isArray(workflows.workflows)
+		&& workflows.workflows.length === workflows.total_count
+		&& workflows.workflows.filter((entry: any) => entry.state === 'active').length === 1
+		&& workflows.workflows.some((entry: any) => entry.state === 'active' && entry.path === '.github/workflows/ats-release.yml');
+}
+
+/** Local publication always requires Actions disabled; CI additionally requires an exclusive release workflow. */
 export async function requireActionsDisabled(): Promise<void> {
+	if (process.env.GITHUB_ACTIONS === 'true') {
+		const workflows = JSON.parse(await run('gh', ['api', `repos/${armotusitioRepository}/actions/workflows?per_page=100`]));
+		if (!exclusiveReleaseWorkflow(process.env, workflows)) { throw new Error('Publication stopped: release CI is not exclusive or the tag is invalid.'); }
+		return;
+	}
 	const permissions = JSON.parse(await run('gh', ['api', `repos/${armotusitioRepository}/actions/permissions`]));
 	if (permissions.enabled !== false) {
 		throw new Error('Publication stopped: GitHub Actions is not confirmed disabled.');
@@ -315,6 +331,18 @@ async function artifacts(): Promise<unknown> {
 		const file = path.join(output, name);
 		assets[platform] = { name, size: (await stat(file)).size, sha256: await fileDigest(file) };
 	}
+	for (const arch of ['x64', 'arm64']) {
+		const receipt = await jsonFile(path.join(output, `linux-${arch}-receipt.json`));
+		if (receipt.commit !== product.commit || receipt.version !== version || receipt.quality !== product.quality || receipt.arch !== arch || receipt.serverHelp !== true) { throw new Error(`Linux ${arch} artifacts must match this client commit. Build all platforms before signing.`); }
+		const required = arch === 'x64' ? ['linux-x64-archive', 'linux-x64-deb', 'linux-x64-rpm', 'server-linux-x64'] : ['server-linux-arm64'];
+		for (const platform of required) {
+			const asset = receipt.assets?.[platform];
+			if (!asset || typeof asset.name !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,180}$/.test(asset.name)) { throw new Error(`Missing Linux asset: ${platform}`); }
+			const file = path.join(output, asset.name);
+			if ((await stat(file)).size !== asset.size || await fileDigest(file) !== asset.sha256) { throw new Error(`Linux artifact hash mismatch: ${asset.name}`); }
+			assets[platform] = asset;
+		}
+	}
 	const manifest = parseArmotusitioManifest({ schema: 1, repository: armotusitioRepository, channel: 'stable', revision, baseVersion: version, commit: product.commit, upstream: product.armotusitioUpstream, publishedAt: new Date().toISOString(), assets });
 	const payload = Buffer.from(JSON.stringify(manifest));
 	const privateKey = await readFile(privateKeyPath);
@@ -365,6 +393,7 @@ async function publish(approved: boolean): Promise<unknown> {
 	await run('git', ['fetch', 'origin', 'main']);
 	await run('git', ['merge-base', '--is-ancestor', manifest.commit, 'origin/main']);
 	const tag = armotusitioReleaseTag(manifest);
+	if (process.env.GITHUB_ACTIONS === 'true' && process.env.GITHUB_REF !== `refs/tags/${tag}`) { throw new Error('Release tag does not match the signed manifest revision.'); }
 	const remoteTags = (await run('git', ['ls-remote', '--tags', 'origin', `refs/tags/${tag}`, `refs/tags/${tag}^{}`])).split(/\r?\n/).filter(Boolean);
 	if (remoteTags.length) {
 		const target = (remoteTags.find(ref => ref.endsWith('^{}')) ?? remoteTags[0]).split(/\s+/)[0];
@@ -373,7 +402,7 @@ async function publish(approved: boolean): Promise<unknown> {
 		}
 	}
 	const files = Object.values(manifest.assets).map(asset => path.join(directory, asset.name));
-	for (const platform of armotusitioPlatforms) {
+	for (const platform of Object.keys(manifest.assets)) {
 		const asset = manifest.assets[platform];
 		if (await fileDigest(path.join(directory, asset.name)) !== asset.sha256 || (await stat(path.join(directory, asset.name))).size !== asset.size) {
 			throw new Error(`Artifact changed after signing: ${asset.name}`);
@@ -386,7 +415,7 @@ async function publish(approved: boolean): Promise<unknown> {
 	}
 	if (!existing) {
 		await requireActionsDisabled();
-		await run('gh', ['release', 'create', tag, '--repo', armotusitioRepository, '--target', manifest.commit, '--draft', '--title', `ArmotuSitio IDE ${manifest.baseVersion} r${manifest.revision}`, '--notes', `Windows x64. Source: ${manifest.commit}. Signed update manifest; Windows executables may be unsigned.`]);
+		await run('gh', ['release', 'create', tag, '--repo', armotusitioRepository, '--target', manifest.commit, '--draft', '--title', `ArmotuSitio IDE ${manifest.baseVersion} r${manifest.revision}`, '--notes', `Windows x64, Linux x64 (.deb/.rpm/archive), Linux x64/arm64 remote servers. Source: ${manifest.commit}. Signed update manifest; Windows executables may be unsigned.`]);
 	}
 	const draft = JSON.parse(await run('gh', ['api', `repos/${armotusitioRepository}/releases/tags/${tag}`]));
 	for (const file of files) {

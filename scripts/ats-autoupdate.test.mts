@@ -24,13 +24,13 @@ const nativeJS = ts.transpileModule(nodeSource, { compilerOptions: { module: ts.
 	.replace('../common/armotusitioUpdate.js', new URL('../src/vs/platform/update/common/armotusitioUpdate.ts', import.meta.url).href);
 const { resolveArmotusitioUpdate: resolveUpdate } = await import('data:text/javascript;base64,' + Buffer.from(nativeJS).toString('base64'));
 
-function fixture() {
+function fixture(extraAssets = {}) {
 	const keys = generateKeyPairSync('ed25519', { publicKeyEncoding: { type: 'spki', format: 'pem' }, privateKeyEncoding: { type: 'pkcs8', format: 'pem' } });
 	const manifest = parseArmotusitioManifest({
 		schema: 1, repository: armotusitioRepository, channel: 'stable', revision: 2, baseVersion: '1.143.0',
 		commit: 'b'.repeat(40), upstream: { ref: 'main', commit: 'e'.repeat(40) }, publishedAt: new Date().toISOString(), assets: {
 			'win32-x64-user': { name: 'setup.exe', size: 42, sha256: 'a'.repeat(64) },
-			'win32-x64-archive': { name: 'app.zip', size: 50, sha256: 'c'.repeat(64) }
+			'win32-x64-archive': { name: 'app.zip', size: 50, sha256: 'c'.repeat(64) }, ...extraAssets
 		}
 	});
 	const tag = armotusitioReleaseTag(manifest);
@@ -63,6 +63,14 @@ test('a signed release resolves both installer and archive without executing eit
 		assert.equal(update.version, f.manifest.commit);
 		assert.equal(update.sha256hash, f.manifest.assets[platform].sha256);
 	}
+});
+
+test('signed Linux assets are optional for legacy manifests and authenticated before offering a download', async () => {
+	assert.equal(await fixture().resolve('linux-x64-archive'), null);
+	const f = fixture({ 'linux-x64-archive': { name: 'linux.tar.gz', size: 99, sha256: 'b'.repeat(64) }, 'server-linux-arm64': { name: 'reh-arm64.tar.gz', size: 88, sha256: 'e'.repeat(64) } });
+	assert.equal((await f.resolve('linux-x64-archive')).sha256hash, 'b'.repeat(64));
+	assert.equal(f.manifest.assets['server-linux-arm64'].size, 88);
+	assert.throws(() => fixture({ 'linux-x64-archive': { name: 'bad.exe', size: 99, sha256: 'b'.repeat(64) } }), /Invalid update asset/);
 });
 
 test('reject altered metadata and a different signing key', async () => {

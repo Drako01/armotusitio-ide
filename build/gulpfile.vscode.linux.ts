@@ -10,7 +10,7 @@ import { rimraf } from './lib/util.ts';
 import { getVersion } from './lib/getVersion.ts';
 import * as task from './lib/gulp/task.ts';
 import packageJson from '../package.json' with { type: 'json' };
-import product from '../product.json' with { type: 'json' };
+import { armotusitioProduct as product } from './lib/armotusitioProduct.ts';
 import { getDependencies } from './linux/dependencies-generator.ts';
 import { recommendedDeps as debianRecommendedDependencies } from './linux/debian/dep-lists.ts';
 import { recommendedDeps as rpmRecommendedDependencies } from './linux/rpm/dep-lists.ts';
