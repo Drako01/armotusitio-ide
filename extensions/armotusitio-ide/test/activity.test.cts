@@ -12,13 +12,14 @@ test('history persists bounded summaries per project and restores unfinished tas
 	const storage = { get: () => stored, update: async (_, value) => { stored = value; } };
 	const history = new History(storage, () => errors++);
 	for (let i = 0; i < 25; i++) { history.put({ id: String(i), project: '/one', action: 'check', startedAt: i, state: 'passed', endedAt: i + 10, log: 'private', command: 'private' }); }
-	history.put({ id: 'live', project: '/two', action: 'run', startedAt: 30, state: 'running' });
+	history.put({ id: 'live', project: '/two', action: 'run', host: 'claude', startedAt: 30, state: 'running' });
 	await history.pending;
 	assert.equal(stored.length, 21);
 	assert.equal(stored.filter(row => row.project === '/one').length, 20);
 	assert.doesNotMatch(JSON.stringify(stored), /private|command|log/);
 	const restored = new History(storage, () => errors++);
 	assert.equal(restored.rows.at(-1).state, 'unknown');
+	assert.equal(restored.rows.at(-1).host, 'claude');
 	assert.equal(restored.rows.at(-1).endedAt, undefined);
 	restored.clear(); await restored.pending;
 	assert.deepEqual(stored, []);

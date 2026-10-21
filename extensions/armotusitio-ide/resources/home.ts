@@ -29,6 +29,11 @@ window.addEventListener('message', event => {
 		root.textContent = project.root;
 		const actions = document.createElement('div');
 		actions.className = 'actions';
+		const provider = document.createElement('button');
+		provider.textContent = 'IA: ' + project.provider + ' \u25be';
+		provider.className = 'secondary'; provider.dataset.action = 'provider'; provider.dataset.root = project.root;
+		provider.disabled = !state.trusted || !project.providerSupported;
+		actions.append(provider);
 		for (const action of project.actions) {
 			const button = document.createElement('button');
 			button.textContent = action;
@@ -74,7 +79,7 @@ window.addEventListener('message', event => {
 		const row = document.createElement('div');
 		row.className = 'run';
 		const name = document.createElement('strong');
-		name.textContent = job.action;
+		name.textContent = job.action + (job.host ? ' \u00b7 ' + job.host : '');
 		const detail = document.createElement('span');
 		detail.className = 'muted path';
 		detail.textContent = job.project;

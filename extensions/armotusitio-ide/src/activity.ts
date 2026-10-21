@@ -15,7 +15,7 @@ const states = ['running', 'passed', 'failed', 'cancelled', 'ended', 'unknown'];
 class History {
 	storage;
 	reportError;
-	rows: { id: string; project: string; action: string; state: string; startedAt: number; endedAt?: number }[] = [];
+	rows: { id: string; project: string; action: string; host?: string; state: string; startedAt: number; endedAt?: number }[] = [];
 	pending = Promise.resolve();
 	constructor(storage, reportError) {
 		this.storage = storage;
@@ -28,7 +28,7 @@ class History {
 	put(row, restored = false) {
 		if (!row || typeof row.id !== 'string' || row.id.length > 100 || typeof row.project !== 'string' || row.project.length > 4096 || !ACTIONS.includes(row.action) || !states.includes(row.state) || !Number.isSafeInteger(row.startedAt) || row.startedAt < 0) { return; }
 		const state = restored && row.state === 'running' ? 'unknown' : row.state;
-		const entry = { id: row.id, project: row.project, action: row.action, state, startedAt: row.startedAt, endedAt: undefined };
+		const entry = { id: row.id, project: row.project, action: row.action, host: ['codex', 'claude', 'custom', 'plan'].includes(row.host) ? row.host : undefined, state, startedAt: row.startedAt, endedAt: undefined };
 		if (state !== 'running' && state !== 'unknown' && Number.isSafeInteger(row.endedAt) && row.endedAt >= row.startedAt) { entry.endedAt = row.endedAt; }
 		this.rows = this.rows.filter(item => item.id !== entry.id);
 		this.rows.push(entry);
