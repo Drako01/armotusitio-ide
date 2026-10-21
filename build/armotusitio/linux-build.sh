@@ -15,8 +15,11 @@ git config --local safe.directory /work/source
 if [[ ! -f /work/dependencies-ready ]]; then
     # Bootstrap JS tooling before the upstream Electron/Node compiler setup.
     npm ci --ignore-scripts --no-audit --no-fund
+    npm ci --prefix build --ignore-scripts --no-audit --no-fund
     export npm_config_arch="$ATS_LINUX_ARCH" VSCODE_ARCH="$ATS_LINUX_ARCH"
     source ./build/azure-pipelines/linux/setup-env.sh
+    export CC="ccache $CC" CXX="ccache $CXX"
+    export VSCODE_REMOTE_CC="ccache $VSCODE_REMOTE_CC" VSCODE_REMOTE_CXX="ccache $VSCODE_REMOTE_CXX"
     # Match upstream ordering: install and patch headers before native modules run in parallel.
     node build/npm/preinstall.ts
     npm ci --no-audit --no-fund
