@@ -14,7 +14,7 @@ import { pathToFileURL } from 'node:url';
 import { createWriteStream } from 'node:fs';
 import { pipeline } from 'node:stream/promises';
 import { armotusitioManifestName, armotusitioPlatforms, armotusitioReleaseTag, armotusitioRepository, compareArmotusitioVersions, parseArmotusitioManifest } from '../src/vs/platform/update/common/armotusitioUpdate.ts';
-import { fileDigest, selectUpstreamRelease, withLock } from './ats-autoupdate.mts';
+import { fileDigest, selectUpstreamRelease, withLock, findReleaseByTag, validateDraftRelease } from './ats-autoupdate.mts';
 
 // Load this standalone native module for focused tests without building the application.
 const require = createRequire(import.meta.url);
@@ -204,5 +204,35 @@ test('packaged bootstrap loads without build files; development merges its distr
 			process.env.VSCODE_DEV = previous;
 		}
 		await rm(directory, { recursive: true, force: true });
+	}
+});
+
+test('release lookup finds drafts on later pages without using the published-only tag endpoint', async () => {
+	const tag = 'ats-v1.143.0-r2';
+	const draft = { id: 42, tag_name: tag, draft: true, target_commitish: 'a'.repeat(40) };
+	const release = await findReleaseByTag(tag, async (command, args) => {
+		assert.deepEqual([command, args], ['gh', ['api', '--paginate', '--slurp', `repos/${armotusitioRepository}/releases?per_page=100`]]);
+		return JSON.stringify([[{ ...draft, id: 1, tag_name: 'older', draft: false }], [draft]]);
+	});
+	assert.deepEqual(release, { id: 42, draft: true, target_commitish: draft.target_commitish });
+	assert.equal(await findReleaseByTag(tag, async () => '[[]]'), undefined);
+	assert.deepEqual(await findReleaseByTag(tag, async () => JSON.stringify([[{ ...draft, draft: false }]])), { id: 42, draft: false, target_commitish: draft.target_commitish });
+});
+
+test('release lookup fails closed on API failures, malformed pages, duplicate tags and invalid IDs', async () => {
+	const tag = 'ats-v1.143.0-r2';
+	const draft = { id: 42, tag_name: tag, draft: true, target_commitish: 'a'.repeat(40) };
+	for (const pages of [{ message: 'API failure' }, [draft], [[draft, draft]], [[{ ...draft, id: '../other' }]], [[{ ...draft, draft: 'true' }]]]) {
+		await assert.rejects(findReleaseByTag(tag, async () => JSON.stringify(pages)));
+	}
+	await assert.rejects(findReleaseByTag(tag, async () => { throw new Error('API unavailable'); }), /API unavailable/);
+});
+
+test('a changed draft identity or an already published release cannot continue publication', () => {
+	const tag = 'ats-v1.143.0-r2'; const commit = 'a'.repeat(40);
+	const draft = { tag_name: tag, target_commitish: commit, draft: true, assets: [] };
+	validateDraftRelease(draft, tag, commit);
+	for (const changed of [null, { ...draft, draft: false }, { ...draft, tag_name: 'other' }, { ...draft, target_commitish: 'b'.repeat(40) }, { ...draft, assets: null }]) {
+		assert.throws(() => validateDraftRelease(changed, tag, commit), /Publication stopped/);
 	}
 });

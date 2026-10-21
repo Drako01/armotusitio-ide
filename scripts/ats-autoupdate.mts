@@ -372,6 +372,25 @@ async function validate(): Promise<unknown> {
 	return result;
 }
 
+/** Find authenticated draft and published releases without relying on the published-only tag endpoint. */
+export async function findReleaseByTag(tag: string, execute: typeof run = run): Promise<{ id: number; draft: boolean; target_commitish: string } | undefined> {
+	const pages: unknown = JSON.parse(await execute('gh', ['api', '--paginate', '--slurp', `repos/${armotusitioRepository}/releases?per_page=100`]));
+	if (!Array.isArray(pages) || pages.some(page => !Array.isArray(page))) { throw new Error('Invalid GitHub release listing.'); }
+	const matches = pages.flat().filter(entry => isUpdateRecord(entry) && entry.tag_name === tag);
+	if (matches.length > 1) { throw new Error('Ambiguous GitHub release tag.'); }
+	if (matches.length === 0) { return undefined; }
+	const release = matches[0];
+	if (!isUpdateRecord(release) || typeof release.id !== 'number' || !Number.isSafeInteger(release.id) || release.id < 1
+		|| typeof release.draft !== 'boolean' || typeof release.target_commitish !== 'string') { throw new Error('Invalid GitHub release metadata.'); }
+	return { id: release.id, draft: release.draft, target_commitish: release.target_commitish };
+}
+
+/** Recheck the immutable publication target before uploading and before making the draft public. */
+export function validateDraftRelease(release: unknown, tag: string, commit: string): void {
+	if (!isUpdateRecord(release) || release.draft !== true || release.tag_name !== tag
+		|| release.target_commitish !== commit || !Array.isArray(release.assets)) { throw new Error('Draft release identity changed. Publication stopped.'); }
+}
+
 async function publish(approved: boolean): Promise<unknown> {
 	if (!approved) {
 		throw new Error('Review and smoke-test the installer first. Publication requires publish --approve.');
@@ -409,22 +428,27 @@ async function publish(approved: boolean): Promise<unknown> {
 		}
 	}
 	files.push(path.join(directory, armotusitioManifestName), path.join(directory, 'SHA256SUMS.txt'));
-	const existing = await run('gh', ['api', `repos/${armotusitioRepository}/releases/tags/${tag}`]).then(JSON.parse, () => undefined);
+	let existing = await findReleaseByTag(tag);
 	if (existing && (existing.draft !== true || existing.target_commitish !== manifest.commit)) {
 		throw new Error('Release already exists or points at another commit; never replace published assets.');
 	}
 	if (!existing) {
 		await requireActionsDisabled();
 		await run('gh', ['release', 'create', tag, '--repo', armotusitioRepository, '--target', manifest.commit, '--draft', '--title', `ArmotuSitio IDE ${manifest.baseVersion} r${manifest.revision}`, '--notes', `Windows x64, Linux x64 (.deb/.rpm/archive), Linux x64/arm64 remote servers. Source: ${manifest.commit}. Signed update manifest; Windows executables may be unsigned.`]);
+		existing = await findReleaseByTag(tag);
 	}
-	const draft = JSON.parse(await run('gh', ['api', `repos/${armotusitioRepository}/releases/tags/${tag}`]));
+	if (!existing) { throw new Error('Created draft release could not be found.'); }
+	const releasePath = `repos/${armotusitioRepository}/releases/${existing.id}`;
+	const draft = JSON.parse(await run('gh', ['api', releasePath]));
+	validateDraftRelease(draft, tag, manifest.commit);
 	for (const file of files) {
 		if (!draft.assets.some((asset: any) => asset.name === path.basename(file))) {
 			await requireActionsDisabled();
 			await run('gh', ['release', 'upload', tag, file, '--repo', armotusitioRepository], repositoryRoot, 1800000);
 		}
 	}
-	const uploaded = JSON.parse(await run('gh', ['api', `repos/${armotusitioRepository}/releases/tags/${tag}`]));
+	const uploaded = JSON.parse(await run('gh', ['api', releasePath]));
+	validateDraftRelease(uploaded, tag, manifest.commit);
 	for (const file of files) {
 		const asset = uploaded.assets.find((entry: any) => entry.name === path.basename(file));
 		if (!asset || asset.state !== 'uploaded' || asset.size !== (await stat(file)).size || asset.digest !== `sha256:${await fileDigest(file)}`) {
