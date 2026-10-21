@@ -16,8 +16,7 @@ import * as task from './lib/gulp/task.ts';
 import { inlineMeta } from './lib/inlineMeta.ts';
 import { computeNLSMetadataHash } from './lib/nlsMetadata.ts';
 import packageJson from '../package.json' with { type: 'json' };
-import product from '../product.json' with { type: 'json' };
-import armotusitioProductOverrides from './armotusitio/product-overrides.json' with { type: 'json' };
+import { armotusitioProduct as product } from './lib/armotusitioProduct.ts';
 import * as crypto from 'crypto';
 import * as cp from 'child_process';
 import * as i18n from './lib/i18n.ts';
@@ -194,7 +193,7 @@ function packageTask(platform: string, arch: string, sourceFolderName: string, d
 		let productJsonContents: string;
 		const productJsonStream = gulp.src(['product.json'], { base: '.' })
 			.pipe(jsonEditor((json: Record<string, unknown>) => {
-				Object.assign(json, armotusitioProductOverrides);
+				Object.assign(json, product);
 				json.commit = commit;
 				json.nlsMetadataHash = computeNLSMetadataHash(path.join(import.meta.dirname, '..', out), commit);
 				json.date = readISODate(out);
@@ -439,7 +438,7 @@ function packageTask(platform: string, arch: string, sourceFolderName: string, d
 			result = es.merge(result, gulp.src('.build/policies/win32/**', { base: '.build/policies/win32' })
 				.pipe(rename(f => f.dirname = `policies/${f.dirname}`)));
 
-			if (quality === 'stable' || quality === 'insider') {
+			if ((quality === 'stable' || quality === 'insider') && (product as { win32ContextMenu?: Record<string, { clsid: string }> }).win32ContextMenu?.[arch]) {
 				result = es.merge(result, gulp.src('.build/win32/appx/**', { base: '.build/win32' }));
 				const rawVersion = version.replace(/-\w+$/, '').split('.');
 				const appxVersion = `${rawVersion[0]}.0.${rawVersion[1]}.${rawVersion[2]}`;

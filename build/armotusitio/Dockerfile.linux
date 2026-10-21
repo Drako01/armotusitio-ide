@@ -1,0 +1,23 @@
+# Linux artifacts use Ubuntu 22.04 (glibc 2.35), never the host WSL node_modules.
+FROM ubuntu:22.04
+ARG DEBIAN_FRONTEND=noninteractive
+ARG NODE_VERSION
+ARG TARGETARCH
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl git xz-utils unzip zip build-essential g++-12 python3 pkg-config ccache \
+    libx11-dev libxkbfile-dev libsecret-1-dev libkrb5-dev libssl-dev libudev-dev \
+    libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libxcomposite1 libxdamage1 \
+    libxfixes3 libxrandr2 libgbm1 libgtk-3-0 libasound2 libxss1 xvfb xauth \
+    rpm fakeroot dpkg-dev patchelf file && rm -rf /var/lib/apt/lists/*
+RUN set -eu; case "$TARGETARCH" in amd64) arch=x64;; arm64) arch=arm64;; *) exit 1;; esac; \
+    cd /tmp; file="node-v${NODE_VERSION}-linux-${arch}.tar.xz"; \
+    curl -fSLO "https://nodejs.org/dist/v${NODE_VERSION}/${file}"; \
+    curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/SHASUMS256.txt" | grep " ${file}$" | sha256sum -c -; \
+    tar -xJf "$file" -C /usr/local --strip-components=1; rm "$file"; \
+    update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-12 100; \
+    update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-12 100
+ENV PATH="/usr/lib/ccache:${PATH}" CCACHE_DIR=/cache/ccache npm_config_cache=/cache/npm \
+    ELECTRON_SKIP_BINARY_DOWNLOAD=1 NODE_OPTIONS=--max-old-space-size=8192
+COPY linux-build.sh /usr/local/bin/ats-linux-build
+RUN sed -i 's/\r$//' /usr/local/bin/ats-linux-build && chmod 755 /usr/local/bin/ats-linux-build
+ENTRYPOINT ["/usr/local/bin/ats-linux-build"]

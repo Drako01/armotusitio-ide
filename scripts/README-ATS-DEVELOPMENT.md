@@ -5,7 +5,7 @@ No se compila el archivo `.bat`: se actualizan las salidas que carga.
 El empaquetador de Windows genera otra salida y no actualiza ese `out` de desarrollo.
 Si `out` ya existe, la preparación de `code.bat` no vuelve a compilarla.
 
-## Todo en un comando: instalador, ZIP y desarrollo
+## Todo en un comando: Windows, Linux, WSL y desarrollo
 
 Cerrá las ventanas anteriores de ArmotuSitio IDE y ubicá el checkout en `main`, sin cambios versionados.
 Ejecutá desde PowerShell 7, con `pwsh.exe` disponible en `PATH`:
@@ -14,7 +14,9 @@ Ejecutá desde PowerShell 7, con `pwsh.exe` disponible en `PATH`:
 node scripts/ats-build-all.mts
 ```
 
-El orden es: empaquetar Windows e instalador, comprimir la aplicación completa y compilar la salida de `code.bat`.
+El orden es: empaquetar Windows, crear el ZIP, compilar desarrollo y generar Linux x64 y REH Linux x64/arm64.
+La etapa Linux requiere Docker Desktop en modo Linux y usa contenedores Ubuntu 22.04 aislados.
+Para conservar la receta de tres pasos sin Docker, agregá `--windows-only`.
 Si falla un paso, los siguientes no se ejecutan.
 El comando comprueba antes si hay procesos usando el ejecutable de la carpeta empaquetada; no los termina.
 El empaquetador prepara Inno Setup 7.1.0 en `.build/tools` para admitir rutas largas de Copilot al instalar.
@@ -35,6 +37,7 @@ La copia versionada se verifica contra el hash del recibo de empaquetado antes d
 El ZIP anterior se reemplaza solo después de completar la compresión.
 Este ZIP manual no genera el manifiesto firmado ni publica una release; ese flujo usa `ats-autoupdate.mts artifacts`.
 La receta no instala extensiones personales, no abre el IDE automáticamente y no ejecuta GitHub Actions.
+Consultá [Distribución Windows, Linux y WSL](../docs/ATS-WSL-LINUX.md) para servidores, paquetes Linux y publicación.
 
 ## Probar main completo
 
