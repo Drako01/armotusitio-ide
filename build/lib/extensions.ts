@@ -461,6 +461,23 @@ function doPackageLocalExtensionsStream(forWeb: boolean, native: boolean): Strea
 }
 
 /**
+ * Read mutable SDK dependencies only after extension build/postinstall has finished.
+ */
+export function packageExtensionDependenciesAfterBuild(build: Stream, dependencies: () => Stream): Stream {
+	const result = es.through();
+	let failed = false;
+	build.on('error', error => { failed = true; result.emit('error', error); });
+	build.once('end', () => {
+		if (failed) { return; }
+		try {
+			dependencies().on('error', error => result.emit('error', error)).pipe(result);
+		} catch (error) { result.emit('error', error); }
+	});
+	build.pipe(result, { end: false });
+	return result;
+}
+
+/**
  * Package the built-in copilot extension specifically.
  * This is used by non-CI local builds where copilot is not downloaded as a VSIX
  * but must be compiled from source and included in the build.
@@ -476,24 +493,25 @@ export function packageCopilotExtensionStream(): Stream {
 			.pipe(rename(p => p.dirname = `extensions/copilot/${p.dirname}`))
 	);
 
-	const productionDependencies = getProductionDependencies('extensions/copilot');
-	const dependenciesSrc = productionDependencies.map(d => path.relative(root, d)).map(d => [`${d}/**`, `!${d}/**/{test,tests}/**`]).flat();
+	return packageExtensionDependenciesAfterBuild(localExtensionsStream, () => {
+		const productionDependencies = getProductionDependencies('extensions/copilot');
+		const dependenciesSrc = productionDependencies.map(d => path.relative(root, d)).map(d => [`${d}/**`, `!${d}/**/{test,tests}/**`]).flat();
 
-	// The core moduleignore removes @github/copilot because Agent Host uses a
-	// separate runtime. The built-in chat extension still imports its own SDK.
-	const copilotSdk = gulp.src([
-		'extensions/copilot/node_modules/@github/copilot/package.json',
-		'extensions/copilot/node_modules/@github/copilot/LICENSE.md',
-		'extensions/copilot/node_modules/@github/copilot/sdk/**',
-	], { base: '.', dot: true });
+		// The core moduleignore removes @github/copilot because Agent Host uses a
+		// separate runtime. The built-in chat extension still imports its own SDK.
+		const copilotSdk = gulp.src([
+			'extensions/copilot/node_modules/@github/copilot/package.json',
+			'extensions/copilot/node_modules/@github/copilot/LICENSE.md',
+			'extensions/copilot/node_modules/@github/copilot/sdk/**',
+		], { base: '.', dot: true });
 
-	return es.merge(
-		localExtensionsStream,
-		copilotSdk,
-		gulp.src(dependenciesSrc, { base: '.' })
-			.pipe(util2.cleanNodeModules(path.join(root, 'build', '.moduleignore')))
-			.pipe(util2.cleanNodeModules(path.join(root, 'build', `.moduleignore.${process.platform}`)))
-	).pipe(util2.setExecutableBit(['**/*.sh']));
+		return es.merge(
+			copilotSdk,
+			gulp.src(dependenciesSrc, { base: '.' })
+				.pipe(util2.cleanNodeModules(path.join(root, 'build', '.moduleignore')))
+				.pipe(util2.cleanNodeModules(path.join(root, 'build', `.moduleignore.${process.platform}`)))
+		);
+	}).pipe(util2.setExecutableBit(['**/*.sh']));
 }
 
 export function packageMarketplaceExtensionsStream(forWeb: boolean): Stream {
