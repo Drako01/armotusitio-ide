@@ -48,6 +48,8 @@ export async function linuxArtifacts(arch: string, output: string): Promise<void
 	const remoteNode = /^target="([^"]+)"/m.exec(await readFile(path.join(root, 'remote', '.npmrc'), 'utf8'))?.[1];
 	const node = (await execute(path.join(server, 'node'), ['--version'])).stdout.trim();
 	if (node !== `v${remoteNode}`) { throw new Error('REH Node runtime mismatch.'); }
+	// Exercise the packaged dependency graph before publishing a server that installs signed extensions.
+	await execute(path.join(server, 'node'), ['--input-type=module', '-e', `const { verify } = await import('node-ovsx-sign'); if (typeof verify !== 'function') { throw new Error('Open VSX signature verifier is unavailable.'); }`], { cwd: server, timeout: 30000 });
 	await execute(path.join(server, 'bin', product.serverApplicationName), ['--help'], { timeout: 30000 });
 	await mkdir(output, { recursive: true });
 	const assets: Record<string, { name: string; size: number; sha256: string }> = {};
