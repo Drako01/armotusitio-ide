@@ -19,5 +19,6 @@ RUN set -eu; case "$TARGETARCH" in amd64) arch=x64;; arm64) arch=arm64;; *) exit
 ENV PATH="/usr/lib/ccache:${PATH}" CCACHE_DIR=/cache/ccache npm_config_cache=/cache/npm \
     ELECTRON_SKIP_BINARY_DOWNLOAD=1 NODE_OPTIONS=--max-old-space-size=8192
 COPY linux-build.sh /usr/local/bin/ats-linux-build
-RUN sed -i 's/\r$//' /usr/local/bin/ats-linux-build && chmod 755 /usr/local/bin/ats-linux-build
+RUN ln -s /usr/bin/python3 /usr/local/bin/python && \
+    sed -i 's/\r$//' /usr/local/bin/ats-linux-build && chmod 755 /usr/local/bin/ats-linux-build
 ENTRYPOINT ["/usr/local/bin/ats-linux-build"]
