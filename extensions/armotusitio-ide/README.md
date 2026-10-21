@@ -15,6 +15,28 @@ La consulta requiere un workspace confiable y `atsHarness.enabled` activado.
 RedEvent necesita Node disponible en el PATH y los requisitos de su propio Harness.
 El monitor no inicia, reintenta ni cancela ejecuciones.
 
+## Elegir IA por proyecto
+
+Usá **ArmotuSitio: Elegir IA del Harness**, el botón de IA del panel o la fila **IA** debajo de cada proyecto.
+El inicio del IDE también muestra la selección y permite cambiarla.
+
+- RedEvent: elegí **Codex** o **Claude Code** para guardar `HARNESS_HOST` en `.harness/.env`.
+- **Usar configuración del proyecto** conserva el valor actual sin modificarlo.
+- Se mantienen las demás variables, credenciales, comentarios y finales de línea del archivo.
+- El CLI elegido debe existir en `PATH`; la comprobación no ejecuta un agente ni valida su sesión.
+- Los cambios se aplican a futuras ejecuciones. El historial conserva la IA capturada al iniciar cada tarea del IDE.
+- Las pruebas del Harness mantienen su aislamiento: no se les inyecta `HARNESS_HOST` desde el IDE.
+
+Requiere un workspace confiable y el archivo `.env` sin cambios pendientes en el editor.
+La selección se detiene si encuentra cambios externos o un archivo enlazado.
+Si `HARNESS_AGENT_COMMAND` está definido, se muestra **Comando personalizado** y se avisa que tiene prioridad.
+Si el IDE heredó `HARNESS_HOST`, esa variable tiene prioridad sobre el archivo.
+Se informa sin cambiar el entorno global.
+
+El Harness actual de ArmotuSitio selecciona la IA en su plan de agentes y no consume `HARNESS_HOST`.
+En ese caso se muestra **IA por plan de agentes**, sin modificar archivos que el Harness ignoraría.
+Las tareas iniciadas fuera del IDE no reciben una IA estimada en el panel de progreso.
+
 ## Historial
 
 Se guardan las últimas 20 tareas por proyecto, con un máximo de 100 entradas por workspace.

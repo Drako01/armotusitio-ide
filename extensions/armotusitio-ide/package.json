@@ -104,6 +104,7 @@
       ]
     },
     "commands": [
+      { "command": "atsHarness.selectProvider", "title": "ArmotuSitio: Elegir IA del Harness", "icon": "$(hubot)" },
       { "command": "atsIde.chat", "title": "ArmotuSitio: Chat Harness", "icon": "$(comment-discussion)" },
       { "command": "atsIde.mcpConfigure", "title": "ArmotuSitio: Configurar clave MCP" },
       { "command": "atsIde.mcpClearKey", "title": "ArmotuSitio: Borrar clave MCP guardada" },
@@ -169,6 +170,7 @@
     ],
     "menus": {
       "view/title": [
+        { "command": "atsHarness.selectProvider", "when": "view == atsHarness.tasks", "group": "navigation@2" },
         { "command": "atsIde.chat", "when": "view == atsHarness.tasks", "group": "navigation@1" },
         {
           "command": "atsIde.home",
@@ -190,6 +192,9 @@
           "when": "view == atsHarness.tasks",
           "group": "navigation"
         }
+      ],
+      "view/item/context": [
+        { "command": "atsHarness.selectProvider", "when": "view == atsHarness.tasks && viewItem == atsHarness.project", "group": "inline" }
       ]
     },
     "themes": [

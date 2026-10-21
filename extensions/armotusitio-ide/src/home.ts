@@ -13,6 +13,7 @@ function registerHome(context, controller, projects) {
 	async function update() {
 		if (!panel) { return; }
 		const all = await projects();
+		const providers = await Promise.all(all.map(({ profile }) => controller.getProvider(profile)));
 		if (!panel) { return; }
 		void panel.webview.postMessage({
 			type: 'state', trusted: vscode.workspace.isTrusted,
@@ -27,8 +28,8 @@ function registerHome(context, controller, projects) {
 				repeat: t('Repetir tarea'),
 				states: { running: t('En ejecuci\u00f3n'), passed: t('Completada'), failed: t('Fall\u00f3'), cancelled: t('Cancelada'), ended: t('Finaliz\u00f3 sin c\u00f3digo de salida'), unknown: t('Resultado desconocido tras reiniciar el IDE'), completed: t('Completada'), stalled: t('Sin proceso activo'), active: t('Activa'), pending: t('Pendiente'), blocked: t('Bloqueada'), aborted: t('Abortada') }
 			},
-			projects: all.map(({ profile }) => ({ name: profile.name, root: profile.root, actions: profile.actions })),
-			jobs: controller.getHistory().map(job => ({ id: job.id, action: job.action, state: job.state, project: job.project, startedAt: job.startedAt, endedAt: job.endedAt, repeatable: controller.canRepeat(job), repeatBlocked: controller.isBusy(job.project, job.action) || !all.some(({ profile }) => profile.root === job.project && profile.actions.includes(job.action)) })),
+			projects: all.map(({ profile }, index) => ({ name: profile.name, root: profile.root, actions: profile.actions, provider: providers[index].label, providerSupported: providers[index].supported === true && !providers[index].error })),
+			jobs: controller.getHistory().map(job => ({ id: job.id, action: job.action, host: job.host, state: job.state, project: job.project, startedAt: job.startedAt, endedAt: job.endedAt, repeatable: controller.canRepeat(job), repeatBlocked: controller.isBusy(job.project, job.action) || !all.some(({ profile }) => profile.root === job.project && profile.actions.includes(job.action)) })),
 			progress: controller.progress
 		});
 	}
@@ -78,6 +79,11 @@ function registerHome(context, controller, projects) {
 				if (project && project.profile.actions.includes(message.command)) {
 					await controller.execute(project.folder.uri.toString(), message.command);
 				}
+				return;
+			}
+			if (message.action === 'provider') {
+				const project = (await projects()).find(p => p.profile.root === message.root);
+				if (project) { await vscode.commands.executeCommand('atsHarness.selectProvider', project.folder.uri.toString()); }
 				return;
 			}
 			if (message.action === 'repeat') { if (typeof message.id === 'string') { await controller.repeat(message.id); } return; }
