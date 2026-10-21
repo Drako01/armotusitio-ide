@@ -7,6 +7,7 @@ import { spawn } from 'node:child_process';
 import { access, mkdir, readdir, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { fileDigest, run, withLock } from './ats-autoupdate.mts';
+import { ensureInnoSetup } from '../build/lib/innoSetup.ts';
 
 const root = path.resolve(import.meta.dirname, '..');
 
@@ -51,6 +52,7 @@ async function main(): Promise<void> {
 		throw new Error('Release builds require clean tracked sources. Commit changes before packaging.');
 	}
 	const sourceCommit = await run('git', ['rev-parse', 'HEAD']);
+	await ensureInnoSetup(root);
 	try {
 		await access(path.join(path.dirname(require.resolve('@types/node/package.json')), 'index.d.ts'));
 	} catch {
