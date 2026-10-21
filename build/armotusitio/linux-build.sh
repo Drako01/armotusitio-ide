@@ -11,6 +11,7 @@ tar -xzf /input/source.tar.gz
 test "$(node -v)" = "v$(tr -d '\r\n' < .nvmrc)"
 git init -q
 git config --local safe.directory /work/source
+export VSCODE_QUALITY="$(node -p "require('./build/armotusitio/product-overrides.json').quality")"
 # The source volume is scoped to commit and architecture. A failed install never writes this marker.
 if [[ ! -f /work/dependencies-ready ]]; then
     # Bootstrap JS tooling before the upstream Electron/Node compiler setup.
