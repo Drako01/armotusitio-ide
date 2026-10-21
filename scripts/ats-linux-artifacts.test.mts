@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { armotusitioProduct as product } from '../build/lib/armotusitioProduct.ts';
-import { validateIdentity } from './ats-linux-artifacts.mts';
+import { validateIdentity, findLinuxPackage } from './ats-linux-artifacts.mts';
 import { exclusiveReleaseWorkflow } from './ats-autoupdate.mts';
 import { archiveLinuxSources } from './ats-build-linux.mts';
 import { execFile } from 'node:child_process';
@@ -54,4 +54,19 @@ test('future release CI cannot publish from a branch, another repository, or alo
 	for (const changed of [{ GITHUB_ACTIONS: 'false' }, { GITHUB_REPOSITORY: 'other/repo' }, { GITHUB_WORKFLOW: 'Other' }, { GITHUB_REF: 'refs/heads/main' }]) { assert.equal(exclusiveReleaseWorkflow({ ...env, ...changed }, workflows), false); }
 	assert.equal(exclusiveReleaseWorkflow(env, { ...workflows, total_count: 101 }), false);
 	assert.equal(exclusiveReleaseWorkflow(env, { total_count: 2, workflows: workflows.workflows.map(entry => ({ ...entry, state: 'active' })) }), false);
+});
+
+test('RPM selection ignores rpmbuild staging copies but rejects multiple published packages', async () => {
+	const directory = await mkdtemp(path.join(tmpdir(), 'ats-rpm-output-'));
+	try {
+		const staging = path.join(directory, 'rpmbuild', 'RPMS', 'x86_64');
+		await mkdir(staging, { recursive: true });
+		await writeFile(path.join(staging, 'armotusitio-ide.rpm'), 'internal copy');
+		await assert.rejects(findLinuxPackage(directory, '.rpm'), /Expected exactly one/);
+		const published = path.join(directory, 'armotusitio-ide.rpm');
+		await writeFile(published, 'published package');
+		assert.equal(await findLinuxPackage(directory, '.rpm'), published);
+		await writeFile(path.join(directory, 'unexpected.rpm'), 'ambiguous output');
+		await assert.rejects(findLinuxPackage(directory, '.rpm'), /Expected exactly one/);
+	} finally { await rm(directory, { recursive: true, force: true }); }
 });

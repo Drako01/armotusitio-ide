@@ -28,6 +28,15 @@ async function digest(file: string): Promise<string> {
 	const hash = createHash('sha256'); for await (const chunk of createReadStream(file)) { hash.update(chunk); } return hash.digest('hex');
 }
 
+/** Select the published package, excluding internal rpmbuild copies and rejecting ambiguous outputs. */
+export async function findLinuxPackage(directory: string, extension: string): Promise<string> {
+	const files = (await readdir(directory, { withFileTypes: true }))
+		.filter(entry => entry.isFile() && entry.name.endsWith(extension))
+		.map(entry => path.join(directory, entry.name));
+	if (files.length !== 1) { throw new Error(`Expected exactly one ${extension} package in ${directory}.`); }
+	return files[0];
+}
+
 /** Produce WSL's single-root tarballs and distribution packages with an auditable receipt. */
 export async function linuxArtifacts(arch: string, output: string): Promise<void> {
 	if (process.platform !== 'linux' || !['x64', 'arm64'].includes(arch) || process.arch !== arch) { throw new Error('Linux artifacts require the matching native architecture (or Docker emulation).'); }
@@ -66,15 +75,9 @@ export async function linuxArtifacts(arch: string, output: string): Promise<void
 		if (!clientVersion.includes(version) || !clientVersion.includes(commit)) { throw new Error('Linux client CLI identity mismatch.'); }
 		const stem = `ArmotuSitio-IDE-${version}-r${product.release}`;
 		await archive(application, `${stem}-linux-x64.tar.gz`); await register('linux-x64-archive', `${stem}-linux-x64.tar.gz`);
-		async function find(directory: string, extension: string): Promise<string[]> {
-			const result: string[] = [];
-			for (const entry of await readdir(directory, { withFileTypes: true })) { const file = path.join(directory, entry.name); if (entry.isDirectory()) { result.push(...await find(file, extension)); } else if (entry.name.endsWith(extension)) { result.push(file); } }
-			return result;
-		}
 		for (const [kind, folder, extension] of [['deb', '.build/linux/deb/amd64/deb', '.deb'], ['rpm', '.build/linux/rpm/x86_64', '.rpm']]) {
-			const files = await find(path.join(root, folder), extension);
-			if (files.length !== 1) { throw new Error(`Expected exactly one ${kind} package.`); }
-			const name = `${stem}-linux-x64${extension}`; await copyFile(files[0], path.join(output, name)); await register(`linux-x64-${kind}`, name);
+			const file = await findLinuxPackage(path.join(root, folder), extension);
+			const name = `${stem}-linux-x64${extension}`; await copyFile(file, path.join(output, name)); await register(`linux-x64-${kind}`, name);
 		}
 	}
 	await writeFile(path.join(output, `linux-${arch}-receipt.json`), JSON.stringify({ commit, version, arch, quality: metadata.quality, serverApplicationName: product.serverApplicationName, node, serverHelp: true, assets }, null, 2) + '\n');
