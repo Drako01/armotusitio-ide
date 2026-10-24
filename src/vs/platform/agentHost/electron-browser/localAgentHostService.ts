@@ -167,6 +167,7 @@ export class LocalAgentHostServiceClient extends Disposable implements IAgentHos
 
 	readonly clientId = generateUuid();
 	readonly clientConnectionKind = AgentHostClientConnectionKind.Local;
+	readonly supportsConversationImport = true;
 	get resourceUris() { return this._protocolClient?.resourceUris ?? identityAgentHostResourceUriMapper; }
 
 	private readonly _clientStore = this._register(new MutableDisposable<DisposableStore>());
@@ -700,6 +701,10 @@ export class LocalAgentHostServiceClient extends Disposable implements IAgentHos
 
 	resourceResolve(params: ResourceResolveParams): Promise<ResourceResolveResult> {
 		return this._requireClient().resourceResolve(params);
+	}
+
+	measureWorktreeDiskUsage(root: URI, token: CancellationToken): Promise<number | undefined> {
+		return this._requireClient().measureWorktreeDiskUsage(root, token);
 	}
 
 	resourceMkdir(params: ResourceMkdirParams): Promise<ResourceMkdirResult> {
