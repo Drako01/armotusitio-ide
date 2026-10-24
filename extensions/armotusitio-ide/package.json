@@ -222,7 +222,7 @@
   "scripts": {
     "compile": "node esbuild.mts",
     "test": "node --test test/*.test.cts",
-    "check": "node ../../node_modules/@typescript/native/bin/tsc --project tsconfig.json && node --check resources/home.ts && node --check resources/chat.ts",
+    "check": "node ../../node_modules/@typescript/native/bin/tsc --project tsconfig.json && node check-resources.mts",
     "vscode:prepublish": "npm run compile"
   },
   "icon": "resources/logo.png",
