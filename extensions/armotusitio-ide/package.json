@@ -2,7 +2,7 @@
   "name": "armotusitio-ide",
   "displayName": "ArmotuSitio IDE",
   "description": "Project-aware harness control for RedEvent and ArmoTuSitio 2.0",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "publisher": "armotusitio",
   "license": "MIT",
   "engines": {

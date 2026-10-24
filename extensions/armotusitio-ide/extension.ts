@@ -30,7 +30,7 @@ class Controller {
 	onDidChangeTreeData = this.events.event;
 	history;
 	progress = [];
-	refreshActivity = async () => { };
+	refreshActivity = async (_manual = false) => { };
 	constructor(context) {
 		this.history = new History(context.workspaceState, () => vscode.window.showWarningMessage(vscode.l10n.t('No se pudo guardar el historial del Harness.')));
 	}
@@ -67,6 +67,12 @@ class Controller {
 		}
 		if (!element.project) { return []; }
 		const { project } = element;
+		if (!element.advanced) {
+			const open = (label, icon) => { const item = new vscode.TreeItem(vscode.l10n.t(label)); item.iconPath = new vscode.ThemeIcon(icon); item.command = { command: 'atsIde.home', title: vscode.l10n.t(label) }; return item; };
+			const advanced = new vscode.TreeItem(vscode.l10n.t('Comandos y actividad anterior'), vscode.TreeItemCollapsibleState.Collapsed);
+			advanced.project = project; advanced.advanced = true; advanced.iconPath = new vscode.ThemeIcon('tools');
+			return [open('Nueva tarea', 'add'), open('Progreso y resultados', 'pulse'), advanced];
+		}
 		const nodes = project.profile.actions.map(action => { const item = new vscode.TreeItem(action); item.iconPath = new vscode.ThemeIcon(action === 'run' ? 'play' : 'terminal'); item.command = { command: 'atsHarness.execute', title: action, arguments: [project.folder.uri.toString(), action] }; return item; });
 		const provider = await this.getProvider(project.profile);
 		const choice = new vscode.TreeItem(vscode.l10n.t('IA: {0}', provider.label)); choice.iconPath = new vscode.ThemeIcon('hubot');
@@ -168,7 +174,7 @@ function activate(context) {
 	registerChat(context, controller, projects, mcp, vscode);
 	context.subscriptions.push(controller.events);
 	context.subscriptions.push(vscode.window.registerTreeDataProvider('atsHarness.tasks', controller));
-	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.refresh', async () => { await controller.refreshActivity(); controller.refresh(); }));
+	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.refresh', async () => { await controller.refreshActivity(true); controller.refresh(); }));
 	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.history', () => vscode.commands.executeCommand('atsIde.home')));
 	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.clearHistory', () => controller.clearHistory()));
 	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.execute', (uri, action) => controller.execute(uri, action)));

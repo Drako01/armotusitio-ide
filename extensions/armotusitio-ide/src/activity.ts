@@ -76,15 +76,28 @@ function registerActivity(context, controller, projects, vscode, reader = readPr
 	controller.progress = [];
 	function render() {
 		const running = [...controller.jobs.values()].filter(job => job.state === 'running').length;
+		const workflows = controller.getWorkflowActivity?.() || [];
+		const owned = [...workflows].reverse().find(entry => entry.owned && ['preparing', 'creating', 'running', 'stopping'].includes(entry.phase));
 		const live = controller.progress.find(row => row.live);
 		const stalled = controller.progress.find(row => row.state === 'stalled');
 		bar.text = live ? `$(sync~spin) Harness \u00b7 ${live.id}${live.percent === undefined ? '' : ' \u00b7 ' + live.percent + '%'}` : running ? `$(sync~spin) Harness \u00b7 ${running}` : '$(pulse) Harness';
 		bar.tooltip = t('Abr\u00ed el inicio para ver el progreso y el historial del Harness.');
 		if (!live && !running && stalled) { bar.text = '$(warning) Harness'; bar.tooltip = t('El Harness tiene una tarea sin proceso activo. Abr\u00ed el inicio para ver su progreso registrado.'); }
 		if (controller.progress.some(row => row.error)) { bar.text = '$(warning) Harness'; bar.tooltip = t('No se pudo consultar el progreso. Abr\u00ed el inicio para volver a intentar.'); }
+		if (owned) {
+			const stale = owned.progressError || (owned.checkedAt && Date.now() - owned.checkedAt > 15000);
+			const label = owned.phase === 'preparing' ? t('Revisando tarea') : owned.phase === 'creating' ? t('Preparando ejecuci\u00f3n') : owned.phase === 'stopping' ? t('Deteniendo tarea') : t('Ejecutando tarea');
+			bar.text = stale ? '$(warning) Harness' : `$(sync~spin) Harness \u00b7 ${owned.title ? owned.title.slice(0, 50) : label}${owned.progress?.percent === undefined ? '' : ' \u00b7 ' + owned.progress.percent + '%'}`;
+			bar.tooltip = stale ? t('El progreso no est\u00e1 actualizado. Abr\u00ed el Harness para revisar la conexi\u00f3n y la tarea actual.') : `${label}\n${owned.project}\n${owned.nativeId || ''}`;
+		}
+		const finished = [...workflows].reverse().find(entry => ['completed', 'failed'].includes(entry.phase) && entry.endedAt && Date.now() - entry.endedAt < 60000);
+		if (!owned && !live && finished && !controller.progress.some(row => row.error)) {
+			bar.text = `${finished.phase === 'completed' ? '$(check)' : '$(error)'} Harness \u00b7 ${finished.phase === 'completed' ? t('Tarea completada') : t('La tarea fall\u00f3')}`;
+			bar.tooltip = `${finished.title || ''}\n${finished.project}\n${finished.nativeId || ''}`;
+		}
 		if (!vscode.workspace.isTrusted) { bar.text = '$(lock) Harness'; bar.tooltip = t('Marc\u00e1 el workspace como confiable para consultar el progreso.'); }
 	}
-	async function refresh() {
+	async function refresh(manual = false) {
 		if (disposed || polling) { return; }
 		polling = true;
 		try {
@@ -94,19 +107,25 @@ function registerActivity(context, controller, projects, vscode, reader = readPr
 			bar.show();
 			const trusted = vscode.workspace.isTrusted;
 			const rows = trusted ? await Promise.all(all.filter(({ profile }) => profile.id === 'redevent' && profile.actions.includes('progress')).map(async ({ profile }) => {
-				try { const result = await reader(profile); return result ? { project: profile.root, ...result, error: false } : null; }
+				try {
+					const current = [...(controller.getWorkflowActivity?.() || [])].reverse().find(entry => entry.project === profile.root && entry.owned && entry.phase === 'running' && entry.progress?.live && !entry.progressError);
+					const result = current ? normalizeProgress(current.progress) : await reader(profile);
+					return result ? { project: profile.root, ...result, error: false } : null;
+				}
 				catch { return { project: profile.root, error: true }; }
 			})) : [];
 			if (disposed) { return; }
 			const current = await projects();
 			controller.progress = vscode.workspace.isTrusted ? rows.filter(row => row && current.some(({ profile }) => profile.root === row.project)) : [];
+			await controller.refreshWorkflowActivity?.(manual);
+			if (disposed) { return; }
 			if (!current.length) { bar.hide(); }
 			render(); controller.refresh();
 		} catch {
 			if (!disposed) { controller.progress = []; bar.hide(); controller.refresh(); }
 		} finally { polling = false; }
 	}
-	const timer = setInterval(() => { void refresh(); }, 15000);
+	const timer = setInterval(() => { void refresh(); }, 3000);
 	const changed = controller.onDidChangeTreeData(render);
 	context.subscriptions.push(bar, changed,
 		vscode.workspace.onDidGrantWorkspaceTrust(() => { void refresh(); }),

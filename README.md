@@ -23,7 +23,8 @@ El alcance completo Enterprise AAA del pedido original no se considera terminado
 | --- | --- |
 | Identidad | Nombre, logo real, iconos, bienvenida y temas ArmotuSitio Dark y Light |
 | Proyectos | Detección de ArmotuSitio 2.0 y RedEvent y sus comandos de Harness |
-| Actividad | Barra de estado y acceso al progreso e historial desde el inicio del IDE |
+| Harness de RedEvent | Tarea libre, preguntas, revisión del plan y ejecución con el Harness nativo |
+| Actividad | Tarea actual, progreso nativo cada 3 segundos y actualización manual mediante un ícono |
 | Historial | Hasta 20 tareas por proyecto, duración, resultados y persistencia por workspace |
 | Notificaciones | Avisos configurables al finalizar tareas del IDE y acceso al historial |
 | Repetición | Repetir `check`, `verify` y `test` con confirmación y bloqueo de duplicados del IDE |
@@ -130,8 +131,24 @@ Abrí la carpeta raíz de uno o ambos proyectos:
 - **RedEvent:** `package.json` con nombre `redevent` y carpeta `.harness/`.
 
 Desde `Ctrl+Shift+P`, ejecutá **ArmotuSitio: Inicio** o **ArmotuSitio: Chat Harness**.
+
+Para ejecutar una tarea libre en RedEvent:
+
+1. Abrí **ArmotuSitio: Inicio** y elegí el proyecto y la IA.
+2. Escribí el cambio y el resultado esperado. Elegí **Preparar tarea**.
+3. Respondé las preguntas que indique el Harness y revisá el plan.
+4. Elegí **Ejecutar con Harness** para comenzar el trabajo.
+5. Seguí los pasos y el progreso; usá el ícono de refrescar para consultar el estado manualmente.
+6. Revisá los cambios y los detalles al finalizar. Una tarea interrumpida requiere elegir **Reanudar tarea**.
+
+Las herramientas adicionales están en **Herramientas del proyecto y actividad anterior**, agrupadas por propósito.
+Cada herramienta explica su efecto. Las operaciones que ejecutan verificaciones o modifican estado piden confirmación.
+El flujo nuevo de tareas libres requiere los comandos de ciclo de vida del Harness de RedEvent.
+La integración existente de ArmotuSitio conserva sus comandos; no se presupone el mismo contrato de ejecución.
+
 El chat propio funciona sin iniciar sesión en Copilot.
 El participante `@harness` también se registra en el chat nativo cuando hay un proveedor predeterminado disponible.
+Una tarea libre enviada al chat abre un borrador en el panel para preparar y revisar su plan.
 
 ```text
 @harness comandos

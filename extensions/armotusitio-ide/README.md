@@ -1,15 +1,60 @@
-# Actividad del Harness
+# Harness de ArmotuSitio IDE
 
 La barra de estado abre el inicio de ArmotuSitio IDE con un clic.
 
+## Ejecutar una tarea en RedEvent
+
+1. Abrí **ArmotuSitio: Inicio** desde la paleta de comandos.
+2. Elegí RedEvent y la IA para esta tarea. **Configuración del proyecto** conserva la configuración existente.
+3. Describí el cambio y cómo verificarlo. Elegí **Preparar tarea**.
+4. El Harness revisa requisitos y verificaciones. Respondé sus preguntas si las hay.
+5. Revisá el plan. **Editar tarea** permite corregir la descripción antes de empezar.
+6. Elegí **Ejecutar con Harness** para crear y ejecutar la tarea nativa.
+7. Seguí el progreso y abrí **Revisar cambios** o **Ver detalles** cuando lo necesites.
+
+La selección de IA de este formulario se aplica al proceso de la tarea; no edita `.harness/.env`.
+Si hay un comando de agente personalizado, se usa **Configuración del proyecto** para respetarlo.
+La preparación no crea ni ejecuta la tarea hasta que confirmás el plan.
+El Harness conserva la autoridad sobre agentes, dependencias, verificaciones, bloqueos y recuperación.
+
+**Detener tarea** pide confirmación y solo detiene procesos iniciados por esta instancia del IDE.
+Los cambios realizados se conservan. **Reanudar tarea** y **Reintentar tarea** requieren una acción explícita.
+Al volver a abrir el IDE, se consulta el estado nativo; no se reanudan tareas automáticamente.
+Cerrar el panel no cancela la ejecución.
+
+Se conservan hasta 40 referencias de tareas nativas por workspace, sin copiar sus fuentes al historial del IDE.
+El propio Harness conserva sus registros y fuentes de acuerdo con la política del proyecto.
+Los borradores preparados se mantienen durante la sesión del IDE.
+
+## Herramientas del Harness
+
+Abrí **Herramientas del proyecto y actividad anterior** y elegí una herramienta por su propósito:
+
+- **Tareas:** listado, estado, avance, métricas e importación desde la bandeja de entrada.
+- **Calidad y diagnóstico:** entorno, conexión con IA, contratos, verificaciones, pruebas, CI y migraciones.
+- **Contexto y agentes:** contexto, inventario, cambios, tokens, lecciones y documentación de agentes.
+- **Rendimiento:** telemetría y medición del paralelismo.
+- **Mantenimiento:** consulta de caché y diagnóstico de tareas o espacios abandonados.
+
+La descripción explica qué hace cada herramienta. Las herramientas de una tarea piden su identificador.
+Las operaciones con efectos piden confirmación y los resultados aparecen en el panel.
+Las salidas estructuradas se pueden desplegar por secciones; la salida técnica queda disponible en los detalles.
+Las consultas de mantenimiento no eliminan espacios de trabajo ni limpian tareas automáticamente.
+
+La ejecución libre se habilita cuando RedEvent expone `preflight`, `run`, `execute`, `progress`,
+`resume`, `retry` y `abort`.
+ArmotuSitio conserva la integración anterior y no recibe comandos de ciclo de vida de RedEvent.
+
 ## Progreso
 
-- RedEvent: consulta `node .harness/core.mjs progress --json` cada 15 segundos.
+- RedEvent: consulta el progreso nativo cada 3 segundos, sin acumular consultas simultáneas.
 - Detecta tareas externas, incluso las iniciadas desde una terminal.
 - El porcentaje y la duración provienen del Harness; no se calculan estimaciones de avance.
 - Una tarea sin proceso activo aparece como tal, aunque conserve un porcentaje registrado.
 - ArmotuSitio: muestra actividad de las tareas lanzadas desde el IDE, sin progreso externo.
-- Un error de lectura reemplaza el progreso anterior y permite volver a consultar con **Actualizar**.
+- La tarea iniciada desde el IDE tiene prioridad sobre registros antiguos sin proceso activo.
+- Un error de lectura marca el progreso como desactualizado.
+- El ícono **Actualizar estado** consulta manualmente el estado; la tarea muestra la hora de la última lectura correcta.
 
 La consulta requiere un workspace confiable y `atsHarness.enabled` activado.
 RedEvent necesita Node disponible en el PATH y los requisitos de su propio Harness.
@@ -62,7 +107,7 @@ Este bloqueo controla ejecuciones del IDE; no detecta procesos equivalentes inic
 
 ## Notificaciones
 
-Las tareas iniciadas desde el IDE avisan al finalizar según `atsHarness.notifications`:
+Los comandos del historial anterior avisan al finalizar según `atsHarness.notifications`:
 
 - `errors` (predeterminado): avisa ante fallos o cuando falta el código de salida.
 - `always`: también avisa cuando terminan correctamente o se cancelan.

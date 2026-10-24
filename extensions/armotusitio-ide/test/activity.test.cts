@@ -89,3 +89,35 @@ test('ArmotuSitio shows IDE task activity without invoking the RedEvent progress
 		assert.equal(reads, 0); assert.deepEqual(h.controller.progress, []);
 	} finally { h.dispose(); }
 });
+
+test('current IDE execution takes priority over old tasks and stale progress is explicit', async () => {
+	const h = monitor(async () => ({ id: 'old-task', state: 'stalled', live: false, percent: 24 }));
+	try {
+		await tick(); h.trust();
+		const entry = { owned: true, phase: 'running', project: '/repo', nativeId: 'new-task', checkedAt: Date.now(), progress: { percent: 63 }, progressError: false };
+		h.controller.getWorkflowActivity = () => [entry];
+		await h.controller.refreshActivity();
+		assert.match(h.bar.text, /63%/);
+		assert.doesNotMatch(h.bar.text, /24%|old-task/);
+		assert.match(h.bar.tooltip, /new-task/);
+		entry.progressError = true; h.controller.refresh();
+		assert.match(h.bar.text, /warning/);
+		assert.doesNotMatch(h.bar.text, /63%/);
+		assert.match(h.bar.tooltip, /no está actualizado/);
+	} finally { h.dispose(); }
+});
+
+test('manual refresh is forwarded and a recent result takes priority over old interrupted work', async () => {
+	const h = monitor(async () => ({ id: 'old-task', state: 'stalled', live: false, percent: 24 }));
+	try {
+		await tick(); h.trust();
+		let manual = false;
+		h.controller.refreshWorkflowActivity = async value => { manual = value; };
+		h.controller.getWorkflowActivity = () => [{ owned: false, phase: 'completed', project: '/repo', nativeId: 'new-task', endedAt: Date.now() }];
+		await h.controller.refreshActivity(true);
+		assert.equal(manual, true);
+		assert.match(h.bar.text, /Tarea completada/);
+		assert.doesNotMatch(h.bar.text, /warning|24%/);
+		assert.match(h.bar.tooltip, /new-task/);
+	} finally { h.dispose(); }
+});
