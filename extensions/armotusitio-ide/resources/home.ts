@@ -4,13 +4,18 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 const ide = acquireVsCodeApi();
+const renderWorkflow = require('./workflow.ts').workspaceUi(ide);
+const renderTools = require('./tools.ts').toolsUi(ide);
 document.addEventListener('click', event => {
 	const button = event.target.closest('button[data-action]');
 	if (button && !button.disabled) { ide.postMessage({ action: button.dataset.action, root: button.dataset.root, command: button.dataset.command, id: button.dataset.id }); }
 });
 window.addEventListener('message', event => {
 	const state = event.data;
+	if (state.type === 'draft' && typeof state.text === 'string') { const field = document.getElementById('task-text') as HTMLTextAreaElement; field.value = state.text; field.scrollIntoView({ block: 'center' }); field.focus(); return; }
 	if (state.type !== 'state') { return; }
+	renderWorkflow(state);
+	renderTools(state);
 	document.getElementById('trust').textContent = state.trusted ? state.labels.trusted : state.labels.restricted;
 	const projects = document.getElementById('projects');
 	projects.replaceChildren();
@@ -34,7 +39,7 @@ window.addEventListener('message', event => {
 		provider.className = 'secondary'; provider.dataset.action = 'provider'; provider.dataset.root = project.root;
 		provider.disabled = !state.trusted || !project.providerSupported;
 		actions.append(provider);
-		for (const action of project.actions) {
+		for (const action of project.workflow ? [] : project.actions) {
 			const button = document.createElement('button');
 			button.textContent = action;
 			button.className = 'secondary';

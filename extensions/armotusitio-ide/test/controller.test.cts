@@ -233,11 +233,14 @@ test('Harness tree exposes a provider selector with project-scoped command argum
 	const h = harness();
 	const roots = await h.controller.getChildren();
 	assert.equal(roots[0].description, 'Codex');
-	const nodes = await h.controller.getChildren(roots[0]);
+	const primary = await h.controller.getChildren(roots[0]);
+	assert.equal(primary[0].label, 'Nueva tarea');
+	assert.equal(primary[1].label, 'Progreso y resultados');
+	const nodes = await h.controller.getChildren(primary[2]);
 	assert.equal(nodes[0].label, 'IA: Codex');
 	assert.equal(nodes[0].command.command, 'atsHarness.selectProvider');
 	assert.equal(nodes[0].command.arguments[0], 'file:///repo');
 	h.provider({ supported: true, custom: true });
-	const custom = await h.controller.getChildren(roots[0]);
+	const custom = await h.controller.getChildren(primary[2]);
 	assert.equal(custom[0].label, 'IA: Comando personalizado');
 });

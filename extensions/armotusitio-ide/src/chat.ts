@@ -54,7 +54,13 @@ function createHandler(vscode, controller, projects, mcp) {
 			if (action === 'crear' && words.length >= 2 && projectKey.test(words[0])) { name = 'create_issue'; args = { project: words[0], title: words.slice(1).join(' ') }; mutation = true; }
 			if (action === 'mover' && words.length === 2 && issueKey.test(words[0]) && /^\d+$/.test(words[1]) && Number.isSafeInteger(Number(words[1])) && Number(words[1]) > 0) { name = 'transition_issue'; args = { issue_key: words[0].toUpperCase(), board_column_id: Number(words[1]) }; mutation = true; }
 			if (action === 'comentar' && words.length >= 2 && issueKey.test(words[0])) { name = 'add_issue_comment'; args = { issue_key: words[0].toUpperCase(), content: words.slice(1).join(' ') }; mutation = true; }
-			if (!name) { return help(); }
+			if (!name) {
+				if (controller.openTask && !['check', 'verify', 'test', 'mcp', 'proyectos', 'proyecto', 'tareas', 'tarea', 'tablero', 'buscar', 'crear', 'mover', 'comentar', 'estado', 'comandos'].includes(action)) {
+					await controller.openTask(text);
+					return t('Abr\u00ed tu tarea en el panel del Harness. Revis\u00e1 el texto y eleg\u00ed \u00abPreparar tarea\u00bb para ver el plan antes de ejecutarlo.');
+				}
+				return help();
+			}
 			if (mutation) {
 				if (!(await mcp.client.tools(token)).some(tool => tool.name === name)) { return t('Tu clave MCP no tiene habilitada esa acci\u00f3n. Revis\u00e1 sus permisos en ArmotuSitio.'); }
 				await mcp.client.call(args.issue_key ? 'get_issue_context' : 'get_project_context', args.issue_key ? { issue_key: args.issue_key } : { project: args.project }, token);

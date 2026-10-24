@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 body { margin: 0; background: var(--vscode-editor-background); color: var(--vscode-editor-foreground); font-family: var(--vscode-font-family); }
-main { max-width: 980px; margin: 0 auto; padding: 56px 36px 32px; }
+main { max-width: 920px; margin: 0 auto; padding: 40px 32px 32px; }
 header { display: flex; align-items: center; gap: 24px; margin-bottom: 32px; }
 header img { border-radius: 20px; flex-shrink: 0; }
 .eyebrow { letter-spacing: .18em; font-size: 11px; font-weight: 600; color: var(--vscode-descriptionForeground); }
@@ -33,5 +33,21 @@ article { border-top: 1px solid var(--vscode-panel-border); padding: 20px 0; }
 .run { display: grid; grid-template-columns: minmax(80px, .6fr) minmax(0, 1.5fr) auto; gap: 16px; align-items: baseline; padding: 12px 0; border-top: 1px solid var(--vscode-panel-border); font-size: 12px; }
 footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid var(--vscode-panel-border); }
 progress { width: 100%; accent-color: var(--vscode-progressBar-background); }
+.task-selectors { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+label { display: block; font-size: 13px; margin-bottom: 8px; }
+select, textarea, input { box-sizing: border-box; width: 100%; font: inherit; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, var(--vscode-panel-border)); border-radius: 3px; padding: 8px; margin: 8px 0; }
+select { color: var(--vscode-dropdown-foreground); background: var(--vscode-dropdown-background); }
+textarea { resize: vertical; min-height: 112px; line-height: 1.6; }
+select:focus, textarea:focus, input:focus { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+.advanced { margin-top: 32px; border-top: 1px solid var(--vscode-panel-border); padding-top: 20px; }
+summary { cursor: pointer; color: var(--vscode-textLink-foreground); padding: 8px 0; }
+.icon-button { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 6px; }
+.notice { border-left: 2px solid var(--vscode-editorWarning-foreground); padding: 8px 12px; line-height: 1.6; }
+.step { font-size: 12px; padding-left: 12px; border-left: 2px solid var(--vscode-panel-border); }
+li { line-height: 1.8; }
+.tool-output { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 440px; overflow: auto; padding: 16px; background: var(--vscode-textCodeBlock-background); font-family: var(--vscode-editor-font-family); font-size: 12px; line-height: 1.6; }
+.task-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px 0; border-top: 1px solid var(--vscode-panel-border); }
+.task-row .muted { flex: 1; }
+@media (max-width: 640px) { .task-selectors { grid-template-columns: 1fr; gap: 4px; } }
 @media (max-width: 640px) { main { padding: 28px 20px; } header { align-items: flex-start; gap: 16px; } header img { width: 56px; height: 56px; border-radius: 12px; } .tools { grid-template-columns: 1fr 1fr; } .run { grid-template-columns: 1fr; gap: 4px; } }
 @media (forced-colors: active) { button { border-color: ButtonText; } }

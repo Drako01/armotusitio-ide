@@ -14,17 +14,18 @@ You're working on VS Code itself and you want to:
 
 This skill provides a launcher that clones an authenticated user-data-dir to a throwaway temp folder, picks free ports for every debug surface, and prints them as JSON so you can pick them up programmatically.
 
-The clone is **slim**: workspace storage, browser caches, file history, cached VSIX backups, and old logs are excluded by default. On macOS, auth tokens live in the OS keychain plus small files inside `User/globalStorage` - both of which *are* preserved. On Windows the GitHub session lives in the **shared-data-dir** instead, which the launcher seeds separately (see [Windows authentication](#windows-authentication)).
+The clone is **slim**: workspace storage, browser caches, file history, cached VSIX backups, and old logs are excluded
+by default. On macOS, auth tokens live in the OS keychain plus small files inside `User/globalStorage` - both of which
+*are* preserved. On Windows the GitHub session lives in the **shared-data-dir** instead (see [Windows
+authentication](#windows-authentication)). The manual Windows launch below starts with an empty profile.
 
 ## Prerequisites
 
 - macOS, Linux, or Windows.
   - **macOS / Linux**: the launcher is a bash script (`scripts/launch.sh`) and depends on `rsync`, `nohup`, and Node on `PATH`.
-  - **Windows**: use `scripts\launch.ps1` instead. It needs no extra tooling beyond Node on `PATH`, and works on both Windows PowerShell 5.1 and PowerShell 7+. Parse launcher output with `ConvertFrom-Json`. If Node is managed with [fnm](https://github.com/Schniz/fnm), put it on `PATH` first:
-    ```powershell
-    fnm env --use-on-cd --shell powershell | Out-String | Invoke-Expression
-    fnm use   # picks up the repo's .nvmrc
-    ```
+  - **Windows**: the PowerShell launcher was removed after an antivirus quarantine. Use the existing
+    `scripts\code.bat` entrypoint with an isolated test profile instead. It does not produce the launcher's
+    JSON result or automatically clone authenticated profiles. Keep antivirus protection enabled.
 - A VS Code checkout with `node_modules/` installed (`npm install` if missing — do **not** symlink from a sibling worktree; that breaks builds in subtle ways).
 - A VS Code checkout with sources built. Run `npm run compile` once (one-shot) or `npm run watch` for incremental rebuilds. Both build the full client **and** all built-in extensions under `extensions/`. You must build the full product to run successfully, building just the client is not enough.
   - The launcher compiles only when outputs are missing; it does **not** detect stale dependencies or `out/` files. After pulling, switching branches, or changing dependency manifests, run `npm install` when needed and rebuild before launching.
@@ -43,7 +44,8 @@ The clone is **slim**: workspace storage, browser caches, file history, cached V
 
 ## Launch
 
-The launcher script lives next to this SKILL.md at `scripts/launch.sh` (macOS/Linux) or `scripts\launch.ps1` (Windows). Resolve it relative to wherever this skill file is installed - do not hardcode an absolute path.
+The launcher script lives next to this SKILL.md at `scripts/launch.sh` (macOS/Linux). Resolve it relative to wherever
+this skill file is installed - do not hardcode an absolute path.
 
 ```bash
 # LAUNCH=<dir-of-this-SKILL.md>/scripts/launch.sh
@@ -59,24 +61,15 @@ SESSION_TITLE=<title-from-get_current_session>
 "$LAUNCH" --disable-workspace-trust          # avoid trust prompts for trusted automation inputs
 ```
 
-On Windows, invoke the PowerShell launcher with the same flags:
+On Windows, after building the current sources, launch an isolated development window manually.
+Use a unique directory for each test session and free debug ports when attaching automation:
 
 ```powershell
-$skillDir = '<dir-of-this-SKILL.md>'
-$launch = Join-Path $skillDir 'scripts\launch.ps1'
-$sessionTitle = '<title-from-get_current_session>'
-& $launch --session-title $sessionTitle         # default: workbench
-& $launch --agents --session-title $sessionTitle
-& $launch -- --use-mock-keychain               # forward extra args to code.bat
-& $launch --source-user-data-dir C:\path\to\profile
-& $launch --repo C:\path\to\vscode
-& $launch --clone-extensions
-& $launch --full
-& $launch --skip-prelaunch
-& $launch --disable-workspace-trust
+$runDir = Join-Path $env:TEMP ('ats-dev-' + [guid]::NewGuid().ToString('N'))
+.\scripts\code.bat --user-data-dir "$runDir\user-data" --extensions-dir "$runDir\extensions" --shared-data-dir "$runDir\shared-data"
 ```
 
-If the local execution policy blocks scripts, invoke it with `powershell -ExecutionPolicy Bypass -File <path-to-launch.ps1>`. The Windows implementation has the same profile isolation, slim-copy excludes, settings merge, port allocation, foreground pre-launch, and CDP-ready contract as the bash launcher; only the shell commands and path syntax differ.
+This starts with a fresh profile. It does not copy sign-in data or choose debug ports for you.
 
 ### Handle a missing sign-in
 
@@ -130,7 +123,12 @@ Windows has no shared per-app keychain for these secrets, so they live in files 
 | Encrypted GitHub session blob | `<shared-data-dir>/sharedStorage/state.vscdb` |
 | DPAPI-wrapped decryption key (`os_crypt.encrypted_key`) | `<user-data-dir>/Local State` |
 
-The launcher therefore seeds **both**: it copies the source profile *and* copies the source shared-data-dir into the run's throwaway `shared-data` dir. The source resolves the same way `IEnvironmentService.appSharedDataHome` does - `$env:CODE_OSS_DEV_AUTHED_SHARED_DATA_DIR` if set, else `$env:VSCODE_PORTABLE\shared-data` when running portable, else `~/<product.sharedDataFolderName>` (i.e. `%USERPROFILE%\.vscode-oss-shared`). It also verifies `Local State`, `machineid`, and `Network` survived the profile copy, and warns on stderr if neither database holds a GitHub session.
+The former Windows helper seeded **both**: it copied the source profile *and* copied the source shared-data-dir into the
+run's throwaway `shared-data` dir. Its source resolved the same way `IEnvironmentService.appSharedDataHome` does -
+`$env:CODE_OSS_DEV_AUTHED_SHARED_DATA_DIR` if set, else `$env:VSCODE_PORTABLE\shared-data` when running portable, else
+`~/<product.sharedDataFolderName>` (i.e. `%USERPROFILE%\.vscode-oss-shared`). It also verified `Local State`,
+`machineid`, and `Network` survived the profile copy, and warned on stderr if neither database held a GitHub session.
+This helper is no longer included; manual Windows launches do not perform this seeding.
 
 > This asymmetry is invisible on macOS/Linux, where the same token lands inside the profile. A Windows-only "always signed out" symptom is a shared-data-dir problem, **not** a profile problem: signing in against the source profile writes a perfectly good session, but before this seeding existed every launch handed Code OSS an empty shared dir and threw it away.
 
@@ -482,4 +480,8 @@ Code OSS is a full Electron app and easily eats 1-4 GB. Always clean up.
 - **`launch.sh` exits non-zero with a log tail** - either pre-launch failed, `code.sh` died before CDP came up, or CDP never opened within 90s. The tail printed to stderr is from `runDir/code.log` - read it to diagnose.
 - **Snapshot shows the wrong page or no expected controls** - use `tab-list`, switch with `tab-select <index>` if needed, then re-snapshot before interacting.
 - **CLI typing commands complete but the input stays empty** - run `playwrightScripts/focus-chat-input.ts`, use `press` or clipboard paste rather than `fill` / `type`, and verify the input state before sending.
-- **Auth missing in the launched window** - use the [missing sign-in flow](#handle-a-missing-sign-in) so the user can either finish signing into the current isolated window or choose to bootstrap the persistent source profile. **On Windows, check the shared-data-dir first**: the GitHub session blob lives in `%USERPROFILE%\.vscode-oss-shared\sharedStorage\state.vscdb`, not in the profile. The launcher logs `copying shared data: <src> -> <dst>` on stderr when it finds it, and warns `no shared-data-dir at <path>` when it doesn't.
+- **Auth missing in the launched window** - use the [missing sign-in flow](#handle-a-missing-sign-in) so the user can
+  either finish signing into the current isolated window or choose to bootstrap the persistent source profile. **On
+  Windows, check the shared-data-dir first**: the GitHub session blob lives in
+  `%USERPROFILE%\.vscode-oss-shared\sharedStorage\state.vscdb`, not in the profile. The manual Windows launch starts
+  with an empty shared-data directory and requires a separate sign-in.
