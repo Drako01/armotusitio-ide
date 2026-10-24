@@ -98,7 +98,7 @@ La receta completa está en [compilación de desarrollo](scripts/README-ATS-DEVE
 Con `main` actualizado, sin cambios versionados ni otra compilación activa:
 
 ```powershell
-node scripts/ats-package-windows.mts
+node scripts/ats-build-all.mts
 ```
 
 Cuando el comando completo termine correctamente, generá los artefactos:
@@ -109,11 +109,13 @@ node scripts/ats-autoupdate.mts artifacts
 
 | Resultado | Ruta desde la raíz del checkout |
 | --- | --- |
-| Aplicación empaquetada | `../VSCode-win32-x64/` |
+| Aplicación empaquetada | `../ArmotuSitio-IDE-win32-x64/` |
 | Instalador intermedio | `.build/win32-x64/user-setup/VSCodeSetup.exe` |
 | Instalador con nombre de ArmotuSitio, ZIP, manifiesto firmado y hashes | `.build/releases/` |
 
 El paso `artifacts` requiere un build validado del mismo commit y la clave privada local de distribución.
+La receta completa incluye Windows, desarrollo y Linux; requiere Docker Desktop con contenedores Linux.
+Para compilar y publicar r4, seguí [los comandos de entrega de r4](RELEASE-R4.md).
 El manifiesto se firma con Ed25519; esto no equivale a firmar el instalador con un certificado de editor de Windows.
 Las claves privadas no se incluyen en el repositorio ni se comparten con los compañeros.
 Para compartir sin instalar, usá el ZIP completo; el EXE solo no contiene todos los archivos necesarios.
