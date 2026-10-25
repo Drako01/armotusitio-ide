@@ -70,6 +70,11 @@ El monitor no inicia, reintenta ni cancela ejecuciones.
 ## Experiencia y recuperación
 
 El panel ofrece modo foco, vista compacta, tarea fijada y atención pendiente.
+Cada tarea indica si se inició desde este IDE, si es una ejecución externa observada o si es un objetivo preparado sin ejecutar.
+**Qué significa cada estado** explica los estados y las medidas; el estado de cada tarea también tiene su explicación.
+Los requisitos que bloquean la ejecución se separan de los avisos e indican su corrección manual.
+Las acciones deshabilitadas muestran el motivo, por ejemplo modo restringido o una tarea del proyecto en curso.
+Los errores ofrecen **Diagnóstico** y **Ver detalles** como siguiente paso.
 Los filtros permiten buscar por proyecto, estado, host y fecha.
 La paleta **ArmotuSitio: Abrir Tarea del Harness** permite navegar a una ejecución concreta.
 Las actualizaciones conservan foco, selección, formularios y secciones abiertas.

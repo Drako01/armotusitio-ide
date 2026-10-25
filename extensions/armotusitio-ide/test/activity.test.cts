@@ -43,7 +43,7 @@ test('native progress preserves real percentages and excludes arbitrary metadata
 	assert.throws(() => normalizeProgress({ id: '<script>', state: 'running' }));
 });
 
-function monitor(reader, id = 'redevent') {
+function monitor(reader, id = 'redevent', workflow = false) {
 	const subscriptions = [];
 	let trusted = false, enabled = true, changed;
 	const bar = { text: '', tooltip: '', visible: false, show() { this.visible = true; }, hide() { this.visible = false; }, dispose() { } };
@@ -52,7 +52,7 @@ function monitor(reader, id = 'redevent') {
 		window: { createStatusBarItem: () => bar },
 		workspace: { get isTrusted() { return trusted; }, onDidGrantWorkspaceTrust: noop, onDidChangeWorkspaceFolders: noop, onDidChangeConfiguration: noop } };
 	const controller = { jobs: new Map(), progress: [], refreshActivity: async () => { }, onDidChangeTreeData(fn) { changed = fn; return noop(); }, refresh() { changed(); } };
-	const projects = async () => enabled ? [{ profile: { root: '/repo', id, actions: ['progress'] } }] : [];
+	const projects = async () => enabled ? [{ profile: { root: '/repo', id, actions: ['progress'], workflow } }] : [];
 	registerActivity({ subscriptions }, controller, projects, vscode, reader);
 	return { controller, bar, trust() { trusted = true; }, disable() { enabled = false; }, dispose() { subscriptions.forEach(item => item.dispose()); } };
 }
@@ -105,6 +105,23 @@ test('current IDE execution takes priority over old tasks and stale progress is 
 		assert.match(h.bar.text, /warning/);
 		assert.doesNotMatch(h.bar.text, /63%/);
 		assert.match(h.bar.tooltip, /no est\u00e1 actualizado/);
+	} finally { h.dispose(); }
+});
+
+test('status bar and tree keep following native work while no home panel exists', async () => {
+	let reads = 0, trees = 0;
+	const h = monitor(async () => { reads++; }, 'armotusitio', true);
+	try {
+		await tick(); h.trust();
+		const entry = { owned: true, phase: 'running', project: '/repo', nativeId: 'task', title: 'Tarea en curso', checkedAt: Date.now(), progress: { percent: 10 } };
+		let observations = 0;
+		h.controller.refreshWorkflowActivity = async () => { observations++; entry.progress.percent += 40; entry.checkedAt = Date.now(); };
+		h.controller.getWorkflowActivity = () => [entry];
+		const refresh = h.controller.refresh; h.controller.refresh = () => { trees++; refresh(); };
+		await h.controller.refreshActivity();
+		const first = h.bar.text;
+		await h.controller.refreshActivity();
+		assert.deepEqual({ first, second: h.bar.text, observations, reads, treeUpdates: trees, progress: h.controller.progress.map(row => row.percent) }, { first: '$(sync~spin) Harness \u00b7 Tarea en curso \u00b7 50%', second: '$(sync~spin) Harness \u00b7 Tarea en curso \u00b7 90%', observations: 2, reads: 0, treeUpdates: 2, progress: [90] });
 	} finally { h.dispose(); }
 });
 

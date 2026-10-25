@@ -68,7 +68,44 @@ async function main() {
 		await page.getByPlaceholder(state.labels.workflow.search).fill('Registro anterior');
 		assert.equal(await page.locator('#workflow-runs article').count(), 1);
 		await page.getByPlaceholder(state.labels.workflow.search).fill('');
-		entry.progress.nodes = Array.from({ length: 100 }, (_, index) => ({ id: 'node-' + index, agent: 'verifier', domain: 'api', status: 'running' }));
+		const w = state.labels.workflow;
+		const part = (id, key) => page.locator(`#workflow-runs article[data-entry-id="${id}"] [data-key="${key}"]`).first();
+		const lastMessage = action => page.evaluate(action => window.atsMessages.filter(message => message.action === action).at(-1), action);
+		// Origin, state explanations and actionable requirements.
+		older.origin = 'external'; entry.warnings = [...entry.warnings, { id: 'node-missing', blocking: true, message: 'Node no disponible', hint: 'Instal\u00e1 Node 24' }]; await push();
+		assert.deepEqual({
+			origins: [await part('active', 'origin').textContent(), await part('old', 'origin').textContent(), await part('question', 'origin').textContent()],
+			badge: await page.locator('#workflow-runs article[data-entry-id="active"] .status-badge').getAttribute('title'),
+			legend: await page.locator('details[data-key="legend"] dt').count(),
+			requirements: [await part('active', 'requirements').textContent(), await part('active', 'node-missing').textContent(), await part('active', 'advisories').textContent()]
+		}, { origins: [w.originIde, w.originExternal, w.originPrepared], badge: w.runningHelp, legend: 13, requirements: [w.requirements, `Node no disponible \u2192 ${w.manualFix}: Instal\u00e1 Node 24`, w.advisories] });
+		await page.locator('#workflow-runs article[data-entry-id="active"] [data-key="warnings"] button[data-workflow-action="diagnoseProject"]').click();
+		assert.equal((await lastMessage('diagnoseProject')).root, '/repo');
+		// Compact view and history filters persist as workspace preferences.
+		const compact = page.getByRole('button', { name: w.compact, exact: true });
+		await compact.click();
+		assert.deepEqual([await page.locator('#workflow-runs article.compact').count(), await part('active', 'project').isVisible(), await part('active', 'origin').isVisible(), (await lastMessage('preferences')).value.compact], [3, false, true, true]);
+		await compact.click();
+		await page.locator('details[data-key="filters"] summary').click();
+		await page.locator('select[data-key="filterState"]').selectOption('interrupted');
+		assert.deepEqual([await page.locator('#workflow-runs article').evaluateAll(nodes => nodes.map(node => node.dataset.entryId)), (await lastMessage('preferences')).value.filterState, await page.locator('[data-key="history-limit"]').textContent()], [['old'], 'interrupted', w.historyLimit]);
+		await page.locator('select[data-key="filterState"]').selectOption('');
+		// Final summary, visible limits and voluntary log following.
+		const done = { ...entry, id: 'done', nativeId: 'done-native', title: 'Tarea terminada', phase: 'completed', origin: 'ide', warnings: [], progress: { state: 'completed', live: false, percent: 100, nodes: [{ id: 'tests', agent: 'tester', status: 'passed' }, { id: 'lint', agent: 'verifier', status: 'skipped' }] }, logs: Array.from({ length: 2000 }, (_, index) => 'line ' + index).join('\n').padEnd(64000, '.'), timeline: Array.from({ length: 50 }, (_, index) => ({ phase: 'running', at: 1000 + index })) };
+		state.workflows = [entry, done]; await push();
+		const summary = await part('done', 'result-summary').textContent();
+		assert.deepEqual([['PASS 1', 'FAIL 0', 'SKIP 1', w.noAttribution, w.completedNext].every(text => summary.includes(text)), await part('done', 'logs-limit').textContent(), await part('done', 'timeline-limit').textContent()], [true, w.logsLimit, w.timelineLimit]);
+		const follow = page.locator('#workflow-runs article[data-entry-id="done"] button[data-key="follow"]');
+		await follow.click(); const following = await follow.getAttribute('aria-pressed');
+		await part('done', 'log-output').evaluate(node => { node.scrollTop = 0; node.dispatchEvent(new Event('scroll')); });
+		done.logs += '\nnueva l\u00ednea'; await push();
+		assert.deepEqual([following, await follow.getAttribute('aria-pressed'), await follow.textContent()], ['true', 'false', `${w.follow} \u00b7 1 ${w.newLines}`]);
+		// Disabled actions explain why, including restricted mode and a busy project.
+		state.trusted = false; await push();
+		const restricted = [await page.locator('#prepare-reason').textContent(), await page.locator('#prepare-task').isDisabled(), await part('done', 'restricted').textContent(), await page.locator('#workflow-runs article[data-entry-id="done"] button[data-workflow-action="bindCard"]').getAttribute('title')];
+		state.trusted = true; await push();
+		assert.deepEqual([...restricted, await page.locator('#prepare-reason').textContent(), await page.locator('#prepare-task').getAttribute('aria-describedby')], [state.labels.restricted, true, state.labels.restricted, state.labels.restricted, w.busyProject, 'prepare-reason']);
+		entry.progress.nodes =Array.from({ length: 100 }, (_, index) => ({ id: 'node-' + index, agent: 'verifier', domain: 'api', status: 'running' }));
 		state.workflows = [entry]; await push();
 		const timings = await page.evaluate(state => {
 			const times = []; for (let index = 0; index < 60; index++) { const start = performance.now(); state.workflows[0].progress.percent = index; window.dispatchEvent(new MessageEvent('message', { data: state })); times.push(performance.now() - start); } return times.sort((a,b) => a-b);
@@ -89,7 +126,7 @@ async function main() {
 				await page.screenshot({ path: path.join(artifacts, `${name}-${width}.png`), fullPage: true });
 			}
 		}
-		fs.writeFileSync(path.join(artifacts, 'renderer-results.json'), JSON.stringify({ mode: 'real renderer, synthetic bridge, headless Chrome', assertions: ['stable focus and open details', 'time-driven stale warning', 'live activity first', 'duplicate click blocked', 'unsent answers preserved', 'search', 'responsive themes'], render100Nodes: { samples: 60, p95Ms: timings[56] } }, null, 2));
+		fs.writeFileSync(path.join(artifacts, 'renderer-results.json'), JSON.stringify({ mode: 'real renderer, synthetic bridge, headless Chrome', assertions: ['stable focus and open details', 'time-driven stale warning', 'live activity first', 'duplicate click blocked', 'unsent answers preserved', 'search', 'origin and state explanations', 'actionable requirements', 'compact view and persisted filters', 'final summary and visible limits', 'voluntary log following', 'disabled action reasons', 'responsive themes'], render100Nodes: { samples: 60, p95Ms: timings[56] } }, null, 2));
 
 	} finally { await browser.close(); }
 }
