@@ -9,13 +9,16 @@
 	"downloadUrl": "https://github.com/Drako01/armotusitio-ide/releases/latest",
 	"serverDownloadUrlTemplate": "https://github.com/Drako01/armotusitio-ide/releases/download/ats-v${version}-r${release}/ArmotuSitio-IDE-REH-${os}-${arch}-${commit}.tar.gz",
 	"extensionEnabledApiProposals": {
-		"jeanp413.open-remote-wsl": ["resolvers", "contribViewsRemote"]
+		"jeanp413.open-remote-wsl": [
+			"resolvers",
+			"contribViewsRemote"
+		]
 	},
 	"updateUrl": "https://api.github.com/repos/Drako01/armotusitio-ide/releases/latest",
 	"armotusitioUpdate": {
 		"repository": "Drako01/armotusitio-ide",
 		"publicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAXhmSyY9FdlYjs5y5OVnNDxtiQUrJDdsEQ/ZIqP0slGo=\n-----END PUBLIC KEY-----\n",
-		"revision": 4
+		"revision": 5
 	},
 	"armotusitioUpstream": {
 		"ref": "1.143.1",
