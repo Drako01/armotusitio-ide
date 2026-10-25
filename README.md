@@ -115,6 +115,9 @@ node scripts/ats-autoupdate.mts artifacts
 
 El paso `artifacts` requiere un build validado del mismo commit y la clave privada local de distribución.
 La receta completa incluye Windows, desarrollo y Linux; requiere Docker Desktop con contenedores Linux.
+Linux usa un volumen de trabajo por arquitectura, `ats-linux-x64-work` y `ats-linux-arm64-work`.
+Las dependencias se reinstalan solo cuando cambian los lockfiles, la versión de Node o los scripts de instalación.
+Cada build deja su registro con tiempos por etapa en `.build/ats-linux/<commit>/linux-<arch>.log`.
 Para automatizar una release de la versión actual, ejecutá [release.sh](release.sh) desde Git Bash en Windows.
 El script calcula r1 o la siguiente revisión publicada de esa versión y reutiliza las recetas existentes.
 
