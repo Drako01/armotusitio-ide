@@ -1,0 +1,190 @@
+{
+  "contract": "armotusitio-harness-ide",
+  "version": "1.0.0",
+  "schemaVersion": 1,
+  "harness": "armotusitio",
+  "entrypoint": {
+    "node": [
+      "node",
+      "harness/scripts/ide.mjs"
+    ],
+    "pnpm": [
+      "pnpm",
+      "harness:ide",
+      "--"
+    ]
+  },
+  "reference": {
+    "harness": "redevent",
+    "contract": "harness/IDE-CONTRACT.md"
+  },
+  "operations": {
+    "version": {
+      "supported": true,
+      "mutates": false,
+      "usage": "version"
+    },
+    "capabilities": {
+      "supported": true,
+      "mutates": false,
+      "usage": "capabilities"
+    },
+    "objective": {
+      "supported": true,
+      "mutates": false,
+      "usage": "objective"
+    },
+    "preflight": {
+      "supported": true,
+      "mutates": false,
+      "usage": "preflight <domain|auto> (<task>|--file <path>) [--answer id=value]... [--answers a=1,b=2]"
+    },
+    "plan": {
+      "supported": true,
+      "mutates": false,
+      "usage": "plan <domain|auto> (<task>|--file <path>)"
+    },
+    "run": {
+      "supported": true,
+      "mutates": true,
+      "usage": "run <domain|auto> (<task>|--file <path>) [--plan-digest <sha256>]"
+    },
+    "execute": {
+      "supported": true,
+      "mutates": true,
+      "usage": "execute <task-id>"
+    },
+    "progress": {
+      "supported": true,
+      "mutates": false,
+      "usage": "progress [<task-id>] [--json] [--compact] [--watch] [--interval <s>]"
+    },
+    "status": {
+      "supported": true,
+      "mutates": false,
+      "usage": "status <task-id>"
+    },
+    "list": {
+      "supported": true,
+      "mutates": false,
+      "usage": "list [--status active|completed|failed] [--limit <n>]"
+    },
+    "metrics": {
+      "supported": true,
+      "mutates": false,
+      "usage": "metrics <task-id>"
+    },
+    "source": {
+      "supported": true,
+      "mutates": false,
+      "usage": "source <task-id> [offset] [length]"
+    },
+    "abort": {
+      "supported": true,
+      "mutates": true,
+      "usage": "abort <task-id> [reason...] [--wait <s>]"
+    },
+    "retry": {
+      "supported": true,
+      "mutates": true,
+      "usage": "retry <task-id> [reason...]"
+    },
+    "resume": {
+      "supported": true,
+      "mutates": true,
+      "usage": "resume <task-id> [--dry-run]"
+    }
+  },
+  "unsupported": [
+    {
+      "id": "agents",
+      "reason": "Las tareas ejecutan gates del proyecto; no lanzan Codex/Claude. Los roles .codex/agents son guía."
+    },
+    {
+      "id": "no-preflight",
+      "reason": "run exige siempre un preflight listo y vigente."
+    },
+    {
+      "id": "child-task-ids",
+      "reason": "children de tareas multidominio son proyecciones; se consultan por el ID padre."
+    },
+    {
+      "id": "resume-reconcile",
+      "reason": "No hay efectos externos por unidad: resume no necesita --reconcile."
+    },
+    {
+      "id": "parallel-workers",
+      "reason": "Los gates corren en serie bajo el lock exclusivo de verificación."
+    },
+    {
+      "id": "eta",
+      "reason": "Sin historial confiable por gate no se estima tiempo restante."
+    },
+    {
+      "id": "dispatch",
+      "reason": "No existe bandeja de entrada de tareas."
+    }
+  ],
+  "hosts": [
+    "project"
+  ],
+  "states": [
+    "running",
+    "stalled",
+    "completed",
+    "failed"
+  ],
+  "statuses": [
+    "active",
+    "completed",
+    "failed"
+  ],
+  "outcomes": [
+    "pending",
+    "running",
+    "interrupted",
+    "unknown",
+    "retry-pending",
+    "completed",
+    "failed",
+    "cancelled"
+  ],
+  "nodeStatuses": [
+    "pending",
+    "running",
+    "passed",
+    "failed",
+    "blocked"
+  ],
+  "liveness": [
+    "alive",
+    "dead",
+    "foreign",
+    "unknown",
+    "not-running"
+  ],
+  "failureCategories": [
+    "cancelled",
+    "environment",
+    "gate-failed",
+    "interrupted",
+    "missing-executable",
+    "rejected",
+    "timeout"
+  ],
+  "exitCodes": {
+    "0": "ok",
+    "1": "operational failure (task failed, not ready, not found, busy, plan changed at execute)",
+    "2": "usage or validation error (arguments, id, missing/stale preflight, plan changed at run)",
+    "3": "pending: progress --watch stalled, or abort requested but not yet confirmed",
+    "130": "progress --watch interrupted"
+  },
+  "errorFormat": "[harness] <CODE>: <message> (stderr)",
+  "limits": {
+    "specBytes": 262144,
+    "receiptTtlSeconds": 3600,
+    "listDefault": 200,
+    "causeChars": 240,
+    "heartbeatMs": 2000
+  }
+}

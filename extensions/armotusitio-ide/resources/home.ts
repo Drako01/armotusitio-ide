@@ -12,7 +12,9 @@ document.addEventListener('click', event => {
 });
 window.addEventListener('message', event => {
 	const state = event.data;
-	if (state.type === 'draft' && typeof state.text === 'string') { const field = document.getElementById('task-text') as HTMLTextAreaElement; field.value = state.text; field.scrollIntoView({ block: 'center' }); field.focus(); return; }
+	if (state.type === 'restoreDraft') { const field = document.getElementById('task-text') as HTMLTextAreaElement; const project = document.getElementById('task-project') as HTMLSelectElement; if (project.value === state.root && !field.value && !field.dataset.userEdited && typeof state.text === 'string') { field.value = state.text; } return; }
+	if (state.type === 'reveal') { require('./workflow.ts').revealTask(state.id, state.project); ide.postMessage({ action: 'refresh' }); return; }
+	if (state.type === 'draft' && typeof state.text === 'string') { const field = document.getElementById('task-text') as HTMLTextAreaElement; const composer = document.getElementById('task-composer') as HTMLDetailsElement; if (composer) { composer.open = true; } field.value = state.text; field.dataset.userEdited = 'true'; field.scrollIntoView({ block: 'center' }); field.focus(); return; }
 	if (state.type !== 'state') { return; }
 	renderWorkflow(state);
 	renderTools(state);
@@ -38,7 +40,7 @@ window.addEventListener('message', event => {
 		provider.textContent = 'IA: ' + project.provider + ' \u25be';
 		provider.className = 'secondary'; provider.dataset.action = 'provider'; provider.dataset.root = project.root;
 		provider.disabled = !state.trusted || !project.providerSupported;
-		actions.append(provider);
+		if (project.id === 'armotusitio' && project.workflow) { const engine = document.createElement('span'); engine.className = 'muted'; engine.textContent = state.labels.workflow.projectEngine; actions.append(engine); } else { actions.append(provider); }
 		for (const action of project.workflow ? [] : project.actions) {
 			const button = document.createElement('button');
 			button.textContent = action;
@@ -80,7 +82,8 @@ window.addEventListener('message', event => {
 		}
 		progress.append(article);
 	}
-	for (const job of [...state.jobs].reverse()) {
+	const preferences = state.preferences || ide.getState?.() || {};
+	for (const job of [...state.jobs].reverse().filter(job => (!preferences.filterProject || job.project === preferences.filterProject) && (!preferences.filterState || (job.state === 'passed' ? 'completed' : job.state) === preferences.filterState) && (!preferences.filterHost || job.host === preferences.filterHost) && (!preferences.since || job.startedAt >= new Date(preferences.since + 'T00:00:00').getTime()) && (!preferences.search || `${job.action} ${job.id} ${job.project}`.toLocaleLowerCase().includes(preferences.search.toLocaleLowerCase())))) {
 		const row = document.createElement('div');
 		row.className = 'run';
 		const name = document.createElement('strong');

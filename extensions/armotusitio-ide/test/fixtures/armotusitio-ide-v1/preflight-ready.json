@@ -1,0 +1,102 @@
+{
+  "mode": "harness",
+  "modeReason": "tarea con gates del proyecto: verificación persistida y observable",
+  "ready": true,
+  "domains": [
+    "fixture"
+  ],
+  "planDigest": "9e75f8b7ef998293a39c89cb4ef0b5ef9f2198de20b44858ab25058784bb7e6b",
+  "specDigest": "3420c0bcba240f91946c063db995b84d3136b695794648e3bc215a0f96bd092e",
+  "recommendedWorkers": 1,
+  "workerRationale": "los gates del proyecto corren en serie con un lock exclusivo",
+  "plan": [
+    {
+      "domain": "fixture",
+      "agents": [
+        "verifier"
+      ],
+      "roles": [
+        {
+          "name": "explorer",
+          "file": ".codex/agents/explorer.md",
+          "executed": false
+        },
+        {
+          "name": "implementer",
+          "file": ".codex/agents/implementer.md",
+          "executed": false
+        },
+        {
+          "name": "reviewer",
+          "file": ".codex/agents/reviewer.md",
+          "executed": false
+        }
+      ],
+      "plan": {
+        "source": "gates",
+        "parallel": false
+      },
+      "risk": null,
+      "budget": null,
+      "estimate": null,
+      "dag": [
+        {
+          "id": "harness-check",
+          "agent": "verifier",
+          "kind": "gate",
+          "dependsOn": [],
+          "command": [
+            "python",
+            "harness/cli.py",
+            "check"
+          ],
+          "requiresDatabase": false
+        },
+        {
+          "id": "alpha",
+          "agent": "verifier",
+          "kind": "gate",
+          "dependsOn": [
+            "harness-check"
+          ],
+          "command": [
+            "python",
+            "gates/gate.py",
+            "alpha"
+          ],
+          "requiresDatabase": false
+        },
+        {
+          "id": "beta",
+          "agent": "verifier",
+          "kind": "gate",
+          "dependsOn": [
+            "harness-check"
+          ],
+          "command": [
+            "python",
+            "gates/gate.py",
+            "beta"
+          ],
+          "requiresDatabase": false
+        }
+      ]
+    }
+  ],
+  "questions": [],
+  "answered": [],
+  "answers": {},
+  "warnings": [],
+  "checks": [
+    {
+      "id": "gate-executables",
+      "status": "ok",
+      "severity": "blocking",
+      "message": "Ejecutables de los gates disponibles",
+      "action": "Instalar las herramientas faltantes antes de crear la tarea"
+    }
+  ],
+  "baseline": [],
+  "lessons": [],
+  "receipt": ".harness/preflight/6885bfa8db4d239301e66b1778659d5ef03c2272f302ec6fb9d94b42283fdfa6.json"
+}

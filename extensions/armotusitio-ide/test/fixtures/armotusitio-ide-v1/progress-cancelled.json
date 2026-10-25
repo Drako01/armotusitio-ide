@@ -1,0 +1,187 @@
+{
+  "contract": "armotusitio-harness-ide/1",
+  "id": "ats-20261025-123216-02d183",
+  "domain": "fixture",
+  "domains": [
+    "fixture"
+  ],
+  "title": "Ajustar gate fixture",
+  "status": "failed",
+  "state": "failed",
+  "outcome": "cancelled",
+  "live": false,
+  "liveness": "not-running",
+  "blocked": false,
+  "done": 1,
+  "total": 3,
+  "percent": 33,
+  "percentBasis": "gates passed / total gates",
+  "elapsedMs": 2535,
+  "createdAt": "2026-10-25T12:32:16.912Z",
+  "startedAt": "2026-10-25T12:32:17.869Z",
+  "updatedAt": "2026-10-25T12:32:19.447Z",
+  "finishedAt": "2026-10-25T12:32:19.447Z",
+  "nodes": [
+    {
+      "id": "harness-check",
+      "domain": "fixture",
+      "agent": "verifier",
+      "kind": "gate",
+      "phase": "verificación",
+      "status": "passed",
+      "attempt": 1,
+      "maxAttempts": null,
+      "durationMs": 507,
+      "running": false,
+      "interrupted": false,
+      "gates": null,
+      "startedAt": "2026-10-25T12:32:18.164Z",
+      "finishedAt": "2026-10-25T12:32:18.677Z",
+      "exitCode": 0,
+      "log": ".harness/logs/2026-10-25T12-32-18-40bc7354.log",
+      "command": [
+        "python",
+        "harness/cli.py",
+        "check"
+      ],
+      "requiresDatabase": false,
+      "critical": false,
+      "bottleneck": false,
+      "queued": false,
+      "previousAttempt": null,
+      "failure": null
+    },
+    {
+      "id": "alpha",
+      "domain": "fixture",
+      "agent": "verifier",
+      "kind": "gate",
+      "phase": "verificación",
+      "status": "failed",
+      "attempt": 1,
+      "maxAttempts": null,
+      "durationMs": 752,
+      "running": false,
+      "interrupted": false,
+      "gates": null,
+      "startedAt": "2026-10-25T12:32:18.682Z",
+      "finishedAt": "2026-10-25T12:32:19.441Z",
+      "exitCode": 130,
+      "log": ".harness/logs/2026-10-25T12-32-18-3c9393f0.log",
+      "command": [
+        "python",
+        "gates/gate.py",
+        "alpha"
+      ],
+      "requiresDatabase": false,
+      "critical": false,
+      "bottleneck": false,
+      "queued": false,
+      "previousAttempt": null,
+      "failure": {
+        "category": "cancelled",
+        "cause": "el gate se detuvo por una cancelación",
+        "action": "reintentar con retry cuando corresponda"
+      }
+    },
+    {
+      "id": "beta",
+      "domain": "fixture",
+      "agent": "verifier",
+      "kind": "gate",
+      "phase": "verificación",
+      "status": "pending",
+      "attempt": 0,
+      "maxAttempts": null,
+      "durationMs": null,
+      "running": false,
+      "interrupted": false,
+      "gates": null,
+      "startedAt": null,
+      "finishedAt": null,
+      "exitCode": null,
+      "log": null,
+      "command": [
+        "python",
+        "gates/gate.py",
+        "beta"
+      ],
+      "requiresDatabase": false,
+      "critical": false,
+      "bottleneck": false,
+      "queued": false,
+      "previousAttempt": null,
+      "failure": null
+    }
+  ],
+  "children": [],
+  "finalGates": null,
+  "phases": [
+    {
+      "id": "verificación",
+      "label": "Verificación",
+      "done": 1,
+      "total": 3,
+      "state": "failed"
+    }
+  ],
+  "workers": null,
+  "eta": null,
+  "currentGate": null,
+  "attempt": {
+    "number": 1,
+    "kind": "execute",
+    "outcome": "cancelled",
+    "recorded": "cancelled",
+    "startedAt": "2026-10-25T12:32:17.869Z",
+    "endedAt": "2026-10-25T12:32:19.446Z",
+    "cause": "Cancelada: Cancelada desde ArmotuSitio IDE",
+    "owner": {
+      "pid": 4242,
+      "platform": "win32",
+      "host": "<host>"
+    },
+    "reused": [],
+    "recoveredLock": false
+  },
+  "attempts": [
+    {
+      "number": 1,
+      "kind": "execute",
+      "outcome": "cancelled",
+      "recorded": "cancelled",
+      "startedAt": "2026-10-25T12:32:17.869Z",
+      "endedAt": "2026-10-25T12:32:19.446Z",
+      "cause": "Cancelada: Cancelada desde ArmotuSitio IDE",
+      "owner": {
+        "pid": 4242,
+        "platform": "win32",
+        "host": "<host>"
+      },
+      "reused": [],
+      "recoveredLock": false
+    }
+  ],
+  "lastEvent": {
+    "kind": "gate",
+    "agent": "alpha",
+    "status": "failed",
+    "attempt": 1,
+    "at": "2026-10-25T12:32:19.441Z"
+  },
+  "cause": "Aborted: Cancelada desde ArmotuSitio IDE",
+  "failure": {
+    "category": "cancelled",
+    "cause": "el gate se detuvo por una cancelación",
+    "action": "reintentar con retry cuando corresponda"
+  },
+  "alerts": [],
+  "generatedAt": "2026-10-25T12:32:20.192Z",
+  "observation": {
+    "generatedAt": "2026-10-25T12:32:20.192Z",
+    "liveness": "not-running",
+    "heartbeatAt": null,
+    "heartbeatAgeMs": null,
+    "heartbeatIntervalMs": 2000
+  }
+}

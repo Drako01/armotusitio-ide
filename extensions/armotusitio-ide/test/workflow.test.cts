@@ -14,6 +14,7 @@ const { toolArgs } = require('../src/catalog.ts');
 async function harness(t) {
 	const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-workflow-'));
 	t.after(() => fs.rm(directory, { recursive: true, force: true }));
+	await fs.mkdir(path.join(directory, '.harness'));
 	const profile = { id: 'redevent', root: directory };
 	const calls = [];
 	let trusted = true, saved = [], live = false, ready = true, questions = [], state = 'completed';
@@ -151,4 +152,95 @@ test('tool arguments are fixed, task IDs are literal and provider tests require 
 	assert.throws(() => toolArgs('status', '--no-preflight'), /HARNESS_TASK/);
 	assert.throws(() => toolArgs('smoke-host', undefined, 'codex && command'), /HARNESS_PROVIDER/);
 	assert.throws(() => toolArgs('arbitrary-command'), /HARNESS_TOOL/);
+});
+
+test('changed reviewed plan requires another explicit approval before creation', async t => {
+	const h = await harness(t);
+	const id = await h.workflow.prepare(h.profile, 'Task', 'project');
+	const run = h.workflow.run;
+	h.workflow.run = async (...args) => { const result = await run(...args); if (args[1][0] === 'preflight') { result.value.plan[0].dag.push({ id: 'new-check', agent: 'verifier' }); } return result; };
+	await h.workflow.start(id, h.profile);
+	assert.deepEqual([h.workflow.entries.get(id).phase, h.workflow.entries.get(id).error, h.calls.some(call => call.args[0] === 'run')], ['review', 'HARNESS_PLAN_CHANGED', false]);
+	await h.workflow.start(id, h.profile);
+	assert.equal(h.workflow.entries.get(id).phase, 'completed');
+});
+
+test('cancelled native outcome and native terminal time survive refresh and reload', async t => {
+	const h = await harness(t);
+	h.workflow.run = async (_, args) => ({ code: 0, value: { id: args[1], state: 'failed', outcome: 'cancelled', live: false, finishedAt: '2026-10-25T12:00:00Z', attempt: { number: 2 } } });
+	const id = await h.workflow.observe(h.profile, 'cancelled-task');
+	await h.workflow.refresh(id, h.profile); await h.workflow.persist;
+	const restored = new HarnessWorkflow(h.options);
+	assert.deepEqual([h.workflow.entries.get(id).phase, h.workflow.entries.get(id).endedAt, restored.all()[0].phase], ['cancelled', Date.parse('2026-10-25T12:00:00Z'), 'cancelled']);
+});
+
+test('ArmotuSitio forces project gates, passes reviewed digest and confirms cooperative abort', async t => {
+	const h = await harness(t); h.profile.id = 'armotusitio';
+	await assert.rejects(h.workflow.prepare(h.profile, 'Task', 'codex'), /HARNESS_REQUEST/);
+	const run = h.workflow.run;
+	let outcome = 'running';
+	h.workflow.run = async (...args) => {
+		if (args[1][0] === 'progress' && args[1][1] !== '--json') { return { code: 0, value: { id: args[1][1], state: outcome === 'cancelled' ? 'failed' : 'running', live: outcome === 'running', outcome } }; }
+		if (args[1][0] === 'abort') { outcome = 'cancelled'; return { code: 3, value: { pending: true } }; }
+		const result = await run(...args); if (args[1][0] === 'preflight') { result.value.planDigest = 'a'.repeat(64); } return result;
+	};
+	const id = await h.workflow.prepare(h.profile, 'Task', 'project');
+	await h.workflow.start(id, h.profile);
+	assert.deepEqual(h.calls.find(call => call.args[0] === 'run').args.slice(-2), ['--plan-digest', 'a'.repeat(64)]);
+	await h.workflow.stop(id, h.profile);
+	assert.equal(h.workflow.entries.get(id).phase, 'cancelled');
+});
+
+test('domain identity, final gates and attempt metadata are retained without raw commands', () => {
+	const progress = progressView({ id: 'multi', state: 'running', outcome: 'running', children: [{ domain: 'api', nodes: [{ id: 'verify', status: 'running' }] }, { domain: 'ui', nodes: [{ id: 'verify', status: 'passed' }] }], finalGates: [{ id: 'integration', status: 'pending' }], attempt: { number: 3 }, currentGate: { id: 'verify', domain: 'api', elapsedMs: 13000 }, command: 'private' });
+	assert.deepEqual([progress.nodes.map(node => node.domain), progress.finalGates[0].id, progress.attempt, progress.currentGate.elapsedMs], [['api', 'ui'], 'integration', 3, 13000]);
+	assert.doesNotMatch(JSON.stringify(progress), /private|command/);
+});
+
+test('unchanged progress does not rewrite references and active references are not evicted', async t => {
+	const h = await harness(t);
+	let writes = 0;
+	h.options.storage.update = async () => { writes++; };
+	const id = await h.workflow.observe(h.profile, 'retained');
+	await h.workflow.persist; const previous = writes;
+	await h.workflow.refresh(id, h.profile); await h.workflow.persist;
+	assert.equal(writes, previous);
+	const rows = Array.from({ length: 60 }, (_, index) => ({ id: `entry-${index}`, project: h.profile.root, nativeId: `native-${index}`, host: 'project', startedAt: index, phase: 'running' }));
+	const restored = new HarnessWorkflow({ ...h.options, storage: { get: () => rows, update: async () => {} } });
+	assert.equal(restored.all().length, 60);
+});
+
+test('a late response after trust revocation cannot replace the last confirmed state', async t => {
+	const h = await harness(t);
+	const id = await h.workflow.observe(h.profile, 'late');
+	let complete;
+	h.workflow.run = () => new Promise(resolve => { complete = resolve; });
+	const pending = h.workflow.refresh(id, h.profile); h.trust(false);
+	complete({ code: 0, value: { id: 'late', state: 'running', live: true } }); await pending;
+	assert.equal(h.workflow.entries.get(id).phase, 'completed');
+});
+
+test('uncertain creation blocks duplicate preparation across reload until explicitly reconciled', async t => {
+	const h = await harness(t);
+	const run = h.workflow.run;
+	h.workflow.run = async (...args) => { if (args[1][0] === 'run') { throw new Error('HARNESS_TIMEOUT'); } return run(...args); };
+	const id = await h.workflow.prepare(h.profile, 'Task', 'project');
+	await h.workflow.start(id, h.profile); await h.workflow.persist;
+	const restored = new HarnessWorkflow(h.options);
+	assert.deepEqual([restored.all()[0].phase, restored.all()[0].creationUncertain], ['unknown', true]);
+	await assert.rejects(restored.prepare(h.profile, 'Task', 'project'), /HARNESS_RECONCILE/);
+	assert.equal(h.workflow.view(h.workflow.entries.get(id)).editable, false);
+});
+
+test('private provider command changes invalidate approval even when the host stays project', async t => {
+	const h = await harness(t);
+	await fs.mkdir(path.join(h.profile.root, '.harness'), { recursive: true });
+	const file = path.join(h.profile.root, '.harness/.env');
+	await fs.writeFile(file, 'HARNESS_AGENT_COMMAND=first-command\n');
+	const id = await h.workflow.prepare(h.profile, 'Task', 'project');
+	await fs.writeFile(file, 'HARNESS_AGENT_COMMAND=second-command\n');
+	await h.workflow.start(id, h.profile);
+	assert.equal(h.workflow.entries.get(id).error, 'HARNESS_PLAN_CHANGED');
+	assert.equal(h.calls.some(call => call.args[0] === 'run'), false);
+	assert.doesNotMatch(JSON.stringify(h.workflow.view(h.workflow.entries.get(id))), /first-command|second-command|providerRevision/);
 });
