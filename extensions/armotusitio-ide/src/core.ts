@@ -21,8 +21,8 @@ async function detect(root) {
 	const scripts = pkg.scripts || {};
 	if (typeof scripts['harness:check'] !== 'string') { return null; }
 	const manager = String(pkg.packageManager || '').startsWith('pnpm@') ? 'pnpm' : 'npm';
-	const workflow = profile.id === 'redevent' && ['preflight', 'run', 'execute', 'progress', 'resume', 'abort', 'retry'].every(action => typeof scripts['harness:' + action] === 'string');
-	return { ...profile, root, manager, workflow, tools: profile.id === 'redevent' ? tools.filter(tool => typeof scripts['harness:' + tool.id] === 'string') : [], actions: ACTIONS.filter(a => typeof scripts['harness:' + a] === 'string') };
+	const workflow = profile.id === 'armotusitio' ? typeof scripts['harness:ide'] === 'string' : ['preflight', 'run', 'execute', 'progress', 'resume', 'abort', 'retry'].every(action => typeof scripts['harness:' + action] === 'string');
+	return { ...profile, root, manager, workflow, tools: profile.id === 'redevent' ? tools.filter(tool => typeof scripts['harness:' + tool.id] === 'string') : workflow ? tools.filter(tool => ['list', 'status', 'progress', 'metrics'].includes(tool.id)) : [], actions: ACTIONS.filter(a => typeof scripts['harness:' + a] === 'string') };
 }
 function command(project, action) {
 	if (!project || !project.actions.includes(action) || !ACTIONS.includes(action)) { throw new Error('Unsupported harness action'); }

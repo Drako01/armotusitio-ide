@@ -2,7 +2,7 @@
   "name": "armotusitio-ide",
   "displayName": "ArmotuSitio IDE",
   "description": "Project-aware harness control for RedEvent and ArmoTuSitio 2.0",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "publisher": "armotusitio",
   "license": "MIT",
   "engines": {
@@ -110,6 +110,10 @@
       { "command": "atsIde.mcpClearKey", "title": "ArmotuSitio: Borrar clave MCP guardada" },
       { "command": "atsHarness.history", "title": "ArmotuSitio: Historial del Harness" },
       { "command": "atsHarness.clearHistory", "title": "ArmotuSitio: Borrar historial del Harness" },
+      {
+        "command": "atsHarness.taskActions",
+        "title": "ArmotuSitio: Abrir Tarea del Harness"
+      },
       {
         "command": "atsIde.home",
         "title": "ArmotuSitio: Inicio",

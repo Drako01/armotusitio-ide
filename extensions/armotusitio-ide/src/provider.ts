@@ -7,6 +7,17 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { constants } = require('node:fs');
 const { parseEnv } = require('node:util');
+const { createHash } = require('node:crypto');
+
+/** Bind a reviewed plan to its private provider configuration without exposing its contents. */
+async function providerRevision(profile) {
+	try {
+		const file = await envPath(profile);
+		const info = await fs.stat(file).catch(error => { if (error.code === 'ENOENT') { return null; } throw error; });
+		if (info?.size > 65536) { throw new Error('Harness configuration too large'); }
+		return createHash('sha256').update(JSON.stringify([info ? await fs.readFile(file, 'utf8') : '', process.env.HARNESS_HOST || '', process.env.HARNESS_AGENT_COMMAND || ''])).digest('hex');
+	} catch { return 'unavailable'; }
+}
 
 /** Read only nonsecret provider metadata; inherited variables have the same precedence as Node loadEnvFile. */
 function providerState(text, inherited = process.env) {
@@ -131,4 +142,4 @@ async function selectProvider(project, vscode, available = cliAvailable) {
 	} catch { vscode.window.showErrorMessage(t('No se pudo cambiar la IA. Revis\u00e1 los permisos y los cambios pendientes de .harness/.env.')); }
 }
 
-module.exports = { providerState, hostEdits, readProvider, cliAvailable, selectProvider };
+module.exports = { providerState, hostEdits, readProvider, providerRevision, cliAvailable, selectProvider };

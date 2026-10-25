@@ -59,7 +59,7 @@ test('home publishes actual session state, reuses one panel and excludes arbitra
 	h.controller.jobs.set('task', { id: 'task', action: 'check', state: 'cancelled', project: '/repo', startedAt: 1000, endedAt: 2000 });
 	await h.receive({ action: 'ready' });
 	const state = h.calls[0];
-	assert.deepEqual(JSON.parse(JSON.stringify({ ...state, labels: undefined })), { type: 'state', trusted: true, projects: [{ name: 'RedEvent', root: '/repo', actions: ['check'], workflow: false, tools: [], provider: 'Codex', customProvider: false, providerSupported: true }], workflows: [], jobs: [{ id: 'task', action: 'check', state: 'cancelled', project: '/repo', startedAt: 1000, endedAt: 2000, repeatable: true, repeatBlocked: false }], progress: [] });
+	assert.deepEqual(JSON.parse(JSON.stringify({ ...state, labels: undefined })), { type: 'state', draftPersistence: false, trusted: true, projects: [{ name: 'RedEvent', root: '/repo', actions: ['check'], workflow: false, tools: [], provider: 'Codex', customProvider: false, providerSupported: true }], workflows: [], jobs: [{ id: 'task', action: 'check', state: 'cancelled', project: '/repo', startedAt: 1000, endedAt: 2000, repeatable: true, repeatBlocked: false }], progress: [] });
 	assert.match(h.panel.webview.html, /default-src 'none'/);
 	assert.doesNotMatch(h.panel.webview.html, /unsafe-inline|command:|\/repo/);
 	h.commands.get('atsIde.home')();

@@ -2,29 +2,33 @@
 
 La barra de estado abre el inicio de ArmotuSitio IDE con un clic.
 
-## Ejecutar una tarea en RedEvent
+## Ejecutar una tarea con el Harness
 
 1. Abrí **ArmotuSitio: Inicio** desde la paleta de comandos.
-2. Elegí RedEvent y la IA para esta tarea. **Configuración del proyecto** conserva la configuración existente.
+2. Elegí el proyecto. En RedEvent, elegí la IA o conservá **Configuración del proyecto**.
+   ArmotuSitio usa **Verificaciones del proyecto**, con el host nativo `project`.
 3. Describí el cambio y cómo verificarlo. Elegí **Preparar tarea**.
 4. El Harness revisa requisitos y verificaciones. Respondé sus preguntas si las hay.
 5. Revisá el plan. **Editar tarea** permite corregir la descripción antes de empezar.
 6. Elegí **Ejecutar con Harness** para crear y ejecutar la tarea nativa.
-7. Seguí el progreso y abrí **Revisar cambios** o **Ver detalles** cuando lo necesites.
+7. Seguí el gate activo, los dominios y los intentos. Abrí **Ver detalles** o la evidencia de cada verificación.
 
 La selección de IA de este formulario se aplica al proceso de la tarea; no edita `.harness/.env`.
 Si hay un comando de agente personalizado, se usa **Configuración del proyecto** para respetarlo.
 La preparación no crea ni ejecuta la tarea hasta que confirmás el plan.
 El Harness conserva la autoridad sobre agentes, dependencias, verificaciones, bloqueos y recuperación.
 
-**Detener tarea** pide confirmación y solo detiene procesos iniciados por esta instancia del IDE.
+**Detener tarea** confirma proyecto, tarea e intento antes de actuar.
+RedEvent permite detener procesos propios; ArmotuSitio ofrece cancelación nativa cooperativa también al observar tareas.
 Los cambios realizados se conservan. **Reanudar tarea** y **Reintentar tarea** requieren una acción explícita.
 Al volver a abrir el IDE, se consulta el estado nativo; no se reanudan tareas automáticamente.
 Cerrar el panel no cancela la ejecución.
 
-Se conservan hasta 40 referencias de tareas nativas por workspace, sin copiar sus fuentes al historial del IDE.
+Se conservan hasta 40 referencias terminales por workspace; las referencias activas no se eliminan por ese límite.
+El historial no copia las fuentes de las tareas.
 El propio Harness conserva sus registros y fuentes de acuerdo con la política del proyecto.
-Los borradores preparados se mantienen durante la sesión del IDE.
+Los borradores usan SecretStorage por workspace y las plantillas locales se guardan solo al solicitarlas.
+Los textos de borradores, respuestas y comandos privados quedan fuera de los resúmenes del historial.
 
 ## Herramientas del Harness
 
@@ -43,15 +47,18 @@ Las consultas de mantenimiento no eliminan espacios de trabajo ni limpian tareas
 
 La ejecución libre se habilita cuando RedEvent expone `preflight`, `run`, `execute`, `progress`,
 `resume`, `retry` y `abort`.
-ArmotuSitio conserva la integración anterior y no recibe comandos de ciclo de vida de RedEvent.
+ArmotuSitio requiere `harness:ide` y el contrato `armotusitio-harness-ide` v1 comprobado con `capabilities`.
+Su entrada es `node harness/scripts/ide.mjs`; `harness:run -- <comando>` conserva el uso anterior.
+Las tareas IDE de ArmotuSitio ejecutan gates del proyecto, sin iniciar agentes de IA.
 
 ## Progreso
 
-- RedEvent: consulta el progreso nativo cada 3 segundos, sin acumular consultas simultáneas.
+- Ambos productores usan lecturas compartidas por raíz, con un máximo global de dos subprocesos de consulta.
+- Los cambios de archivos invalidan el estado; el respaldo usa unos 2 s con actividad y 15 s en reposo.
 - Detecta tareas externas, incluso las iniciadas desde una terminal.
 - El porcentaje y la duración provienen del Harness; no se calculan estimaciones de avance.
 - Una tarea sin proceso activo aparece como tal, aunque conserve un porcentaje registrado.
-- ArmotuSitio: muestra actividad de las tareas lanzadas desde el IDE, sin progreso externo.
+- ArmotuSitio: descubre también ejecuciones externas y conserva su resultado por ID.
 - La tarea iniciada desde el IDE tiene prioridad sobre registros antiguos sin proceso activo.
 - Un error de lectura marca el progreso como desactualizado.
 - El ícono **Actualizar estado** consulta manualmente el estado; la tarea muestra la hora de la última lectura correcta.
@@ -59,6 +66,29 @@ ArmotuSitio conserva la integración anterior y no recibe comandos de ciclo de v
 La consulta requiere un workspace confiable y `atsHarness.enabled` activado.
 RedEvent necesita Node disponible en el PATH y los requisitos de su propio Harness.
 El monitor no inicia, reintenta ni cancela ejecuciones.
+
+## Experiencia y recuperación
+
+El panel ofrece modo foco, vista compacta, tarea fijada y atención pendiente.
+Los filtros permiten buscar por proyecto, estado, host y fecha.
+La paleta **ArmotuSitio: Abrir Tarea del Harness** permite navegar a una ejecución concreta.
+Las actualizaciones conservan foco, selección, formularios y secciones abiertas.
+Los logs capturados admiten búsqueda y seguimiento voluntario; leer líneas anteriores detiene ese seguimiento.
+Los logs nativos se abren desde referencias verificadas dentro de la raíz, con contenido acotado y redactado.
+
+Si cambia el plan o la configuración de ejecución, se exige otra revisión antes de crear la tarea.
+Una creación sin resultado confirmado bloquea nuevas preparaciones y permite revisar el listado para reconciliarla.
+La cancelación pendiente sigue visible hasta obtener confirmación nativa.
+El modo foco conserva los avisos de errores y reduce las notificaciones de éxito de tareas propias.
+
+**Más acciones** permite consultar una tarjeta MCP y exportar un resumen local con selección previa de contenido.
+La exportación abre una vista local; no publica ni envía información.
+Reutilizar una tarea o plantilla abre otro borrador y requiere preflight y aprobación nuevos.
+**Diagnóstico** consulta el contrato y el entorno sin ejecutar la tarea.
+
+La pausa segura, el presupuesto de tokens con unidades verificables y la atribución de cambios requieren soporte nativo.
+No se ofrecen controles operativos ni datos inventados para capacidades ausentes.
+La ETA de RedEvent se identifica como estimación; ArmotuSitio v1 declara que no la ofrece.
 
 ## Elegir IA por proyecto
 
@@ -78,13 +108,14 @@ Si `HARNESS_AGENT_COMMAND` está definido, se muestra **Comando personalizado** 
 Si el IDE heredó `HARNESS_HOST`, esa variable tiene prioridad sobre el archivo.
 Se informa sin cambiar el entorno global.
 
-El Harness actual de ArmotuSitio selecciona la IA en su plan de agentes y no consume `HARNESS_HOST`.
-En ese caso se muestra **IA por plan de agentes**, sin modificar archivos que el Harness ignoraría.
+El contrato IDE v1 de ArmotuSitio usa el host `project` para ejecutar verificaciones.
+Sus herramientas anteriores de planes de agentes conservan su propia configuración.
 Las tareas iniciadas fuera del IDE no reciben una IA estimada en el panel de progreso.
 
 ## Historial
 
-Se guardan las últimas 20 tareas por proyecto, con un máximo de 100 entradas por workspace.
+Se guardan las últimas 20 tareas terminales de comandos por proyecto.
+Los registros activos o desconocidos se conservan para evitar pérdidas al recargar.
 Incluye acción, proyecto, fecha de inicio, resultado y fecha de finalización cuando se conoce.
 No guarda salida de terminal, argumentos, credenciales ni títulos de tareas externas.
 Una ejecución pendiente al reiniciar figura con resultado desconocido.
@@ -92,7 +123,7 @@ El historial pertenece al workspace abierto y no se sincroniza entre workspaces 
 
 Usá **ArmotuSitio: Historial del Harness** para abrirlo desde la paleta de comandos.
 **Borrar historial** solicita confirmación y conserva las tareas que siguen ejecutándose.
-Las tareas externas de RedEvent se muestran como progreso, sin agregarlas al historial del IDE.
+Las tareas nativas externas mantienen su referencia y resultado; observarlas no concede propiedad de sus procesos.
 
 ### Repetir tareas
 

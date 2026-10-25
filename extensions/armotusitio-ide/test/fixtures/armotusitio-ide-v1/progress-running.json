@@ -1,0 +1,192 @@
+{
+  "contract": "armotusitio-harness-ide/1",
+  "id": "ats-20261025-123202-26eeec",
+  "domain": "fixture",
+  "domains": [
+    "fixture"
+  ],
+  "title": "Ajustar gate fixture",
+  "status": "active",
+  "state": "running",
+  "outcome": "running",
+  "live": true,
+  "liveness": "alive",
+  "blocked": false,
+  "done": 1,
+  "total": 3,
+  "percent": 33,
+  "percentBasis": "gates passed / total gates",
+  "elapsedMs": 5628,
+  "createdAt": "2026-10-25T12:32:02.843Z",
+  "startedAt": "2026-10-25T12:32:04.355Z",
+  "updatedAt": "2026-10-25T12:32:05.285Z",
+  "finishedAt": null,
+  "nodes": [
+    {
+      "id": "harness-check",
+      "domain": "fixture",
+      "agent": "verifier",
+      "kind": "gate",
+      "phase": "verificación",
+      "status": "passed",
+      "attempt": 1,
+      "maxAttempts": null,
+      "durationMs": 616,
+      "running": false,
+      "interrupted": false,
+      "gates": null,
+      "startedAt": "2026-10-25T12:32:04.658Z",
+      "finishedAt": "2026-10-25T12:32:05.280Z",
+      "exitCode": 0,
+      "log": ".harness/logs/2026-10-25T12-32-04-d82fdd65.log",
+      "command": [
+        "python",
+        "harness/cli.py",
+        "check"
+      ],
+      "requiresDatabase": false,
+      "critical": false,
+      "bottleneck": false,
+      "queued": false,
+      "previousAttempt": null,
+      "failure": null
+    },
+    {
+      "id": "alpha",
+      "domain": "fixture",
+      "agent": "verifier",
+      "kind": "gate",
+      "phase": "verificación",
+      "status": "running",
+      "attempt": 1,
+      "maxAttempts": null,
+      "durationMs": 3186,
+      "running": true,
+      "interrupted": false,
+      "gates": null,
+      "startedAt": "2026-10-25T12:32:05.285Z",
+      "finishedAt": null,
+      "exitCode": null,
+      "log": null,
+      "command": [
+        "python",
+        "gates/gate.py",
+        "alpha"
+      ],
+      "requiresDatabase": false,
+      "critical": false,
+      "bottleneck": false,
+      "queued": false,
+      "previousAttempt": null,
+      "failure": null
+    },
+    {
+      "id": "beta",
+      "domain": "fixture",
+      "agent": "verifier",
+      "kind": "gate",
+      "phase": "verificación",
+      "status": "pending",
+      "attempt": 0,
+      "maxAttempts": null,
+      "durationMs": null,
+      "running": false,
+      "interrupted": false,
+      "gates": null,
+      "startedAt": null,
+      "finishedAt": null,
+      "exitCode": null,
+      "log": null,
+      "command": [
+        "python",
+        "gates/gate.py",
+        "beta"
+      ],
+      "requiresDatabase": false,
+      "critical": false,
+      "bottleneck": false,
+      "queued": true,
+      "previousAttempt": null,
+      "failure": null
+    }
+  ],
+  "children": [],
+  "finalGates": null,
+  "phases": [
+    {
+      "id": "verificación",
+      "label": "Verificación",
+      "done": 1,
+      "total": 3,
+      "state": "running"
+    }
+  ],
+  "workers": {
+    "active": 1,
+    "recommended": 1,
+    "queued": 1
+  },
+  "eta": null,
+  "currentGate": {
+    "node": "alpha",
+    "command": [
+      "python",
+      "gates/gate.py",
+      "alpha"
+    ],
+    "startedAt": "2026-10-25T12:32:05.285Z",
+    "elapsedMs": 3186
+  },
+  "attempt": {
+    "number": 1,
+    "kind": "execute",
+    "outcome": "running",
+    "recorded": "running",
+    "startedAt": "2026-10-25T12:32:04.355Z",
+    "endedAt": null,
+    "cause": null,
+    "owner": {
+      "pid": 4242,
+      "platform": "win32",
+      "host": "<host>"
+    },
+    "reused": [],
+    "recoveredLock": false
+  },
+  "attempts": [
+    {
+      "number": 1,
+      "kind": "execute",
+      "outcome": "running",
+      "recorded": "running",
+      "startedAt": "2026-10-25T12:32:04.355Z",
+      "endedAt": null,
+      "cause": null,
+      "owner": {
+        "pid": 4242,
+        "platform": "win32",
+        "host": "<host>"
+      },
+      "reused": [],
+      "recoveredLock": false
+    }
+  ],
+  "lastEvent": {
+    "kind": "gate",
+    "agent": "alpha",
+    "status": "running",
+    "attempt": 1,
+    "at": "2026-10-25T12:32:05.285Z"
+  },
+  "cause": null,
+  "failure": null,
+  "alerts": [],
+  "generatedAt": "2026-10-25T12:32:08.470Z",
+  "observation": {
+    "generatedAt": "2026-10-25T12:32:08.470Z",
+    "liveness": "alive",
+    "heartbeatAt": "2026-10-25T12:32:06.688Z",
+    "heartbeatAgeMs": 1783,
+    "heartbeatIntervalMs": 2000
+  }
+}

@@ -36,8 +36,9 @@ test('history rejects malformed storage and serializes writes after a storage fa
 });
 
 test('native progress preserves real percentages and excludes arbitrary metadata', () => {
-	const row = normalizeProgress({ id: 'RED-219', state: 'running', live: true, percent: 42, elapsedMs: 12000, title: 'private', command: 'private' });
-	assert.deepEqual(row, { id: 'RED-219', state: 'running', live: true, percent: 42, elapsedMs: 12000 });
+	const row = normalizeProgress({ id: 'RED-219', state: 'running', live: true, percent: 42, elapsedMs: 12000, title: 'Current task', command: 'private' });
+	assert.deepEqual([row.id, row.state, row.live, row.percent, row.elapsedMs, row.title], ['RED-219', 'running', true, 42, 12000, 'Current task']);
+	assert.doesNotMatch(JSON.stringify(row), /private|command/);
 	assert.equal(normalizeProgress({ id: 'x', state: 'stalled', percent: 500 }).percent, undefined);
 	assert.throws(() => normalizeProgress({ id: '<script>', state: 'running' }));
 });
@@ -103,7 +104,7 @@ test('current IDE execution takes priority over old tasks and stale progress is 
 		entry.progressError = true; h.controller.refresh();
 		assert.match(h.bar.text, /warning/);
 		assert.doesNotMatch(h.bar.text, /63%/);
-		assert.match(h.bar.tooltip, /no está actualizado/);
+		assert.match(h.bar.tooltip, /no est\u00e1 actualizado/);
 	} finally { h.dispose(); }
 });
 
@@ -119,5 +120,18 @@ test('manual refresh is forwarded and a recent result takes priority over old in
 		assert.match(h.bar.text, /Tarea completada/);
 		assert.doesNotMatch(h.bar.text, /warning|24%/);
 		assert.match(h.bar.tooltip, /new-task/);
+	} finally { h.dispose(); }
+});
+
+test('manual refresh during a poll waits for a trailing native reading instead of being lost', async () => {
+	let reads = 0, finish;
+	const h = monitor(() => { reads++; return reads === 1 ? new Promise(resolve => { finish = resolve; }) : Promise.resolve(null); });
+	try {
+		await tick(); h.trust();
+		const first = h.controller.refreshActivity(); await tick();
+		const manual = h.controller.refreshActivity(true);
+		finish({ id: 'first', state: 'stalled', live: false });
+		await Promise.all([first, manual]);
+		assert.deepEqual([reads, h.controller.progress], [2, []]);
 	} finally { h.dispose(); }
 });

@@ -11,6 +11,7 @@ const { History, registerActivity } = require('./src/activity.ts');
 const { registerMcp } = require('./src/mcp.ts');
 const { registerChat } = require('./src/chat.ts');
 const { readProvider, selectProvider } = require('./src/provider.ts');
+const { sortActivity } = require('./src/adapter.ts');
 const repeatActions = ['check', 'verify', 'test'];
 
 async function projects() {
@@ -30,6 +31,11 @@ class Controller {
 	onDidChangeTreeData = this.events.event;
 	history;
 	progress = [];
+	clearWorkflowHistory = () => { };
+	getWorkflowActivity = () => [];
+	getHarnessPreferences = (): { focus?: boolean } => ({});
+	harnessBusy = (_root) => false;
+	getHarnessConnection = (_root) => undefined;
 	refreshActivity = async (_manual = false) => { };
 	constructor(context) {
 		this.history = new History(context.workspaceState, () => vscode.window.showWarningMessage(vscode.l10n.t('No se pudo guardar el historial del Harness.')));
@@ -41,12 +47,13 @@ class Controller {
 	}
 	async clearHistory() {
 		const clear = vscode.l10n.t('Borrar historial');
-		if (await vscode.window.showWarningMessage(vscode.l10n.t('\u00bfQuer\u00e9s borrar el historial de este workspace? Las tareas activas van a seguir ejecut\u00e1ndose.'), { modal: true }, clear) === clear) { this.history.clear(); this.refresh(); }
+		if (await vscode.window.showWarningMessage(vscode.l10n.t('\u00bfQuer\u00e9s borrar el historial de este workspace? Las tareas activas van a seguir ejecut\u00e1ndose.'), { modal: true }, clear) === clear) { this.history.clear(); this.clearWorkflowHistory(); this.refresh(); }
 	}
 	refresh() { this.events.fire(); }
 	async getProvider(profile) {
 		const t = message => vscode.l10n.t(message);
 		if (!vscode.workspace.isTrusted) { return { label: t('Workspace restringido'), supported: false }; }
+		if (profile.id === 'armotusitio' && profile.workflow) { return { label: t('Verificaciones del proyecto'), supported: false }; }
 		const state = await readProvider(profile);
 		const label = !state.supported ? t('IA por plan de agentes') : state.error ? t('Configuraci\u00f3n no disponible') : state.custom ? t('Comando personalizado') : state.invalid ? t('HARNESS_HOST no admitido') : state.host === 'codex' ? 'Codex' : state.host === 'claude' ? 'Claude Code' : t('Sin IA configurada');
 		return { ...state, label };
@@ -66,18 +73,29 @@ class Controller {
 			const all = await projects(); return all.length ? await Promise.all(all.map(async project => { const item = new vscode.TreeItem(project.profile.name, vscode.TreeItemCollapsibleState.Expanded); item.project = project; item.contextValue = 'atsHarness.project'; item.iconPath = new vscode.ThemeIcon('repo'); item.description = (await this.getProvider(project.profile)).label; return item; })) : [new vscode.TreeItem('Open RedEvent or ArmoTuSitio 2.0')];
 		}
 		if (!element.project) { return []; }
+		if (element.workflowEntry) {
+			return [...(element.workflowEntry.progress?.nodes || []), ...(element.workflowEntry.progress?.finalGates || [])].map(node => { const item = new vscode.TreeItem(`${node.domain ? node.domain + ' / ' : ''}${node.agent || node.id}`); item.id = element.id + '/' + (node.domain || '') + '/' + node.id; item.description = node.status; item.iconPath = new vscode.ThemeIcon(node.status === 'running' ? 'sync~spin' : node.status === 'passed' ? 'pass' : node.status === 'failed' ? 'error' : 'circle-outline'); return item; });
+		}
 		const { project } = element;
 		if (!element.advanced) {
 			const open = (label, icon) => { const item = new vscode.TreeItem(vscode.l10n.t(label)); item.iconPath = new vscode.ThemeIcon(icon); item.command = { command: 'atsIde.home', title: vscode.l10n.t(label) }; return item; };
 			const advanced = new vscode.TreeItem(vscode.l10n.t('Comandos y actividad anterior'), vscode.TreeItemCollapsibleState.Collapsed);
 			advanced.project = project; advanced.advanced = true; advanced.iconPath = new vscode.ThemeIcon('tools');
-			return [open('Nueva tarea', 'add'), open('Progreso y resultados', 'pulse'), advanced];
+			const active = sortActivity(this.getWorkflowActivity().filter(entry => entry.project === project.profile.root)).slice(0, 12).map(entry => {
+				const item = new vscode.TreeItem(entry.title || entry.nativeId || vscode.l10n.t('Nueva tarea'), entry.progress?.nodes?.length ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None);
+				item.id = 'ats-workflow/' + entry.id; item.project = project; item.workflowEntry = entry;
+				item.description = vscode.l10n.t(({ running: 'En ejecuci\u00f3n', questions: 'Falta tu respuesta', review: 'Plan listo para revisar', completed: 'Completada', failed: 'Fall\u00f3', cancelled: 'Cancelada', interrupted: 'Sin proceso activo', stopping: 'Deteniendo', pending: 'Pendiente', unknown: 'Actividad no comprobada', preparing: 'Revisando requisitos', creating: 'Creando tarea', blocked: 'Necesita atenci\u00f3n' })[entry.phase] || 'Necesita atenci\u00f3n');
+				item.tooltip = `${entry.nativeId || ''}\n${entry.project}\n${entry.progress?.currentGate?.id || ''}`;
+				item.iconPath = new vscode.ThemeIcon(entry.progress?.live ? 'sync~spin' : entry.phase === 'completed' ? 'pass' : ['blocked', 'failed'].includes(entry.phase) ? 'warning' : 'circle-outline');
+				item.command = { command: 'atsIde.home', title: item.label, arguments: [{ task: entry.nativeId || entry.id, root: entry.project }] }; return item;
+			});
+			return [...active, open('Nueva tarea', 'add'), open('Progreso y resultados', 'pulse'), advanced];
 		}
 		const nodes = project.profile.actions.map(action => { const item = new vscode.TreeItem(action); item.iconPath = new vscode.ThemeIcon(action === 'run' ? 'play' : 'terminal'); item.command = { command: 'atsHarness.execute', title: action, arguments: [project.folder.uri.toString(), action] }; return item; });
 		const provider = await this.getProvider(project.profile);
-		const choice = new vscode.TreeItem(vscode.l10n.t('IA: {0}', provider.label)); choice.iconPath = new vscode.ThemeIcon('hubot');
+		const choice = new vscode.TreeItem(project.profile.id === 'armotusitio' && project.profile.workflow ? vscode.l10n.t('Ejecuci\u00f3n: {0}', provider.label) : vscode.l10n.t('IA: {0}', provider.label)); choice.iconPath = new vscode.ThemeIcon('hubot');
 		choice.tooltip = provider.custom ? vscode.l10n.t('HARNESS_AGENT_COMMAND tiene prioridad sobre HARNESS_HOST.') : provider.inherited ? vscode.l10n.t('HARNESS_HOST proviene del entorno heredado del IDE.') : vscode.l10n.t('Eleg\u00ed la IA para las pr\u00f3ximas ejecuciones de este proyecto.');
-		choice.command = { command: 'atsHarness.selectProvider', title: vscode.l10n.t('Elegir IA del Harness'), arguments: [project.folder.uri.toString()] };
+		if (provider.supported !== false) { choice.command = { command: 'atsHarness.selectProvider', title: vscode.l10n.t('Elegir IA del Harness'), arguments: [project.folder.uri.toString()] }; }
 		nodes.unshift(choice);
 		for (const job of this.getHistory()) {
 			if (job.project !== project.profile.root) { continue; }
@@ -89,6 +107,7 @@ class Controller {
 		const project = await selectProject(uri); if (!project) { vscode.window.showWarningMessage('Supported workspace not found'); return; }
 		if (!action) { action = await vscode.window.showQuickPick(project.profile.actions, { placeHolder: vscode.l10n.t('Eleg\u00ed un comando del harness') }); }
 		if (!action) { return; }
+		if (['verify', 'test', 'run', 'dispatch', 'abort'].includes(action) && this.harnessBusy(project.profile.root)) { vscode.window.showWarningMessage(vscode.l10n.t('Hay una operaci\u00f3n del Harness en curso para este proyecto. Actualiz\u00e1 su estado antes de iniciar otra.')); return; }
 		if (token?.isCancellationRequested) { return; }
 		let spec; try { spec = command(project.profile, action); } catch (e) { vscode.window.showErrorMessage(e.message); return; }
 		if (!vscode.workspace.isTrusted) { vscode.window.showWarningMessage('Trust the workspace before executing harness tasks.'); return; }
@@ -100,6 +119,7 @@ class Controller {
 			if (await vscode.window.showWarningMessage('Run ' + spec.executable + ' ' + spec.args.join(' ') + ' in ' + project.profile.name + '?', { modal: true }, 'Run') !== 'Run') { return; }
 			if (guarded && !(await projects()).some(item => item.profile.root === spec.cwd && item.profile.actions.includes(action))) { return; }
 			if (!vscode.workspace.isTrusted) { return; }
+			if (['verify', 'test', 'run', 'dispatch', 'abort'].includes(action) && this.harnessBusy(project.profile.root)) { return; }
 			if (token?.isCancellationRequested) { return; }
 			const provider = await this.getProvider(project.profile);
 			if (!vscode.workspace.isTrusted || token?.isCancellationRequested) { return; }
@@ -120,7 +140,8 @@ class Controller {
 	/** Notify once for IDE task completion, using the current project preference. */
 	async notifyCompletion(job) {
 		const config = vscode.workspace.getConfiguration('atsHarness', vscode.Uri.file(job.project));
-		const mode = config.get('notifications', 'errors');
+		const configuredMode = config.get('notifications', 'errors');
+		const mode = configuredMode === 'always' && this.getHarnessPreferences().focus ? 'errors' : configuredMode;
 		if (!config.get('enabled', true) || (mode !== 'always' && !(mode === 'errors' && ['failed', 'ended'].includes(job.state)))) { return; }
 		const seconds = Math.max(0, Math.floor((job.endedAt - job.startedAt) / 1000));
 		const messages = {
@@ -171,6 +192,15 @@ function activate(context) {
 	registerHome(context, controller, projects);
 	registerActivity(context, controller, projects, vscode);
 	const mcp = registerMcp(context, vscode);
+	context.subscriptions.push(vscode.commands.registerCommand('atsIde.issueContext', async key => {
+		if (!mcp?.enabled() || !/^[a-z][a-z0-9-]*-\d+$/i.test(key)) { return; }
+		try { const result = await mcp.client.call('get_issue_context', { issue_key: key }); if (result.isError) { return false; } await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({ language: 'json', content: require('./src/workflow.ts').redact(JSON.stringify(result.structuredContent ?? result.content, null, 2)) })); return true; } catch { vscode.window.showErrorMessage(vscode.l10n.t('No se pudo consultar la tarjeta. Revis\u00e1 la conexi\u00f3n MCP y sus permisos.')); }
+	}));
+	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.taskActions', async () => {
+		const entries = controller.getWorkflowActivity();
+		const selected = await vscode.window.showQuickPick(entries.map(entry => ({ label: entry.title || entry.nativeId || entry.id, description: entry.project, detail: entry.phase, entry })), { title: vscode.l10n.t('Abrir una tarea del Harness') });
+		if (selected) { await vscode.commands.executeCommand('atsIde.home', { task: selected.entry.nativeId, root: selected.entry.project }); }
+	}));
 	registerChat(context, controller, projects, mcp, vscode);
 	context.subscriptions.push(controller.events);
 	context.subscriptions.push(vscode.window.registerTreeDataProvider('atsHarness.tasks', controller));

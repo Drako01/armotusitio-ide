@@ -26,7 +26,7 @@ function createHandler(vscode, controller, projects, mcp) {
 				await controller.refreshActivity();
 				if (token?.isCancellationRequested) { return t('Consulta cancelada.'); }
 				const labels = { running: t('En ejecuci\u00f3n'), passed: t('Completada'), failed: t('Fall\u00f3'), cancelled: t('Cancelada'), ended: t('Sin c\u00f3digo de salida'), unknown: t('Resultado desconocido'), stalled: t('Sin proceso activo'), completed: t('Completada') };
-				const native = controller.progress.map(row => row.error ? t('No se pudo consultar el progreso del Harness.') : `${row.id}: ${labels[row.state] || row.state}${row.percent === undefined ? '' : ' (' + row.percent + '%)'}`);
+				const native = (controller.readHarnessProgress?.() || controller.progress).map(row => row.error ? t('No se pudo consultar el progreso del Harness.') : `${row.title || row.id} [${row.id}] (${row.project || ''}): ${labels[row.outcome || row.state] || row.outcome || row.state}${row.percent === undefined ? '' : ' (' + row.percent + '%)'}`);
 				const jobs = controller.getHistory().slice(-20).reverse().map(job => `${job.action}: ${labels[job.state] || job.state} (${job.project})`);
 				return [...native, ...jobs].join('\n') || t('No hay ejecuciones registradas en este workspace.');
 			}

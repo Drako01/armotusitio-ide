@@ -115,7 +115,20 @@ node scripts/ats-autoupdate.mts artifacts
 
 El paso `artifacts` requiere un build validado del mismo commit y la clave privada local de distribución.
 La receta completa incluye Windows, desarrollo y Linux; requiere Docker Desktop con contenedores Linux.
-Para compilar y publicar r4, seguí [los comandos de entrega de r4](RELEASE-R4.md).
+Para automatizar una release de la versión actual, ejecutá [release.sh](release.sh) desde Git Bash en Windows.
+El script calcula r1 o la siguiente revisión publicada de esa versión y reutiliza las recetas existentes.
+
+```bash
+./release.sh --plan
+./release.sh
+```
+
+Desde PowerShell, usá `& 'C:\Program Files\Git\bin\bash.exe' .\release.sh`.
+Requiere main limpio y actualizado, Node Windows x64 >=24.18, Docker Linux, `gh` y la clave existente.
+La ejecución normal puede crear y mergear un PR acotado de metadata antes de validar, compilar, firmar y publicar.
+`--plan` no modifica archivos ni Git; `--no-publish` permite detenerse antes de publicar para una prueba manual.
+La guía manual anterior se conserva localmente en `plans/RELEASE-R4.md`, ignorada por Git.
+
 El manifiesto se firma con Ed25519; esto no equivale a firmar el instalador con un certificado de editor de Windows.
 Las claves privadas no se incluyen en el repositorio ni se comparten con los compañeros.
 Para compartir sin instalar, usá el ZIP completo; el EXE solo no contiene todos los archivos necesarios.
