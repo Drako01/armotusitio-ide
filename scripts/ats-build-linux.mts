@@ -22,6 +22,21 @@ export async function archiveLinuxSources(root: string, commit: string, destinat
 	await run('git', ['-c', 'core.autocrlf=false', '-c', 'core.eol=lf', 'archive', '--format=tar.gz', '--output', destination, commit], root);
 }
 
+/**
+ * One work volume per architecture: the container refreshes its sources from the archive and reinstalls
+ * dependencies only when their fingerprint changes. Logs are written next to the archive of the commit.
+ */
+export function linuxRunArgs(arch: string, commit: string, paths: { source: string; output: string; logs: string; cache?: string }, image: string): string[] {
+	const platform = arch === 'x64' ? 'linux/amd64' : 'linux/arm64';
+	return ['run', '--rm', '--platform', platform,
+		'--mount', `type=bind,source=${paths.source},target=/input/source.tar.gz,readonly`,
+		'--mount', `type=bind,source=${paths.output},target=/output`,
+		'--mount', `type=bind,source=${paths.logs},target=/logs`,
+		'--mount', `type=volume,source=ats-linux-${arch}-work,target=/work`,
+		'--mount', paths.cache ? `type=bind,source=${paths.cache},target=/cache` : `type=volume,source=ats-linux-cache-${arch},target=/cache`,
+		'-e', `BUILD_SOURCEVERSION=${commit}`, '-e', `ATS_LINUX_ARCH=${arch}`, image];
+}
+
 /** Build Linux artifacts without sharing native modules across architectures. */
 export async function buildLinux(architectures = ['x64', 'arm64'], root = path.resolve(import.meta.dirname, '..')): Promise<void> {
 	if (!architectures.length || architectures.some(arch => !['x64', 'arm64'].includes(arch))) { throw new Error('Expected Linux x64 and/or arm64.'); }
@@ -39,14 +54,10 @@ export async function buildLinux(architectures = ['x64', 'arm64'], root = path.r
 			const platform = arch === 'x64' ? 'linux/amd64' : 'linux/arm64';
 			const image = `armotusitio-build:ubuntu22-node${nodeVersion}-${arch}`;
 			await execute(['build', '--platform', platform, '--build-arg', `NODE_VERSION=${nodeVersion}`, '-f', 'build/armotusitio/Dockerfile.linux', '-t', image, 'build/armotusitio'], root);
-			const cache = path.join(root, '.build', 'cache', 'linux', arch);
-			if (process.env.ATS_LINUX_BIND_CACHE === '1') { await mkdir(cache, { recursive: true }); }
-			await execute(['run', '--rm', '--platform', platform,
-				'--mount', `type=bind,source=${source},target=/input/source.tar.gz,readonly`,
-				'--mount', `type=bind,source=${output},target=/output`,
-				'--mount', `type=volume,source=ats-linux-${arch}-${commit.slice(0, 16)},target=/work`,
-				'--mount', process.env.ATS_LINUX_BIND_CACHE === '1' ? `type=bind,source=${cache},target=/cache` : `type=volume,source=ats-linux-cache-${arch},target=/cache`,
-				'-e', `BUILD_SOURCEVERSION=${commit}`, '-e', `ATS_LINUX_ARCH=${arch}`, image], root);
+			const cache = process.env.ATS_LINUX_BIND_CACHE === '1' ? path.join(root, '.build', 'cache', 'linux', arch) : undefined;
+			if (cache) { await mkdir(cache, { recursive: true }); }
+			await execute(linuxRunArgs(arch, commit, { source, output, logs: directory, cache }, image), root);
+			console.log(`Linux ${arch} build log: ${path.join(directory, `linux-${arch}.log`)}`);
 			const receipt = JSON.parse(await readFile(path.join(output, `linux-${arch}-receipt.json`), 'utf8'));
 			if (receipt.commit !== commit || receipt.arch !== arch || receipt.quality !== 'stable' || receipt.serverHelp !== true) { throw new Error(`Linux ${arch} receipt does not match this build.`); }
 		}
