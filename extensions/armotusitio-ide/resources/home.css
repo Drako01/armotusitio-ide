@@ -72,7 +72,7 @@ li { line-height: 1.8; }
 .workflow-card .actions { margin-top: 16px; align-items: center; }
 .workflow-card [hidden], [hidden] { display: none !important; }
 .plan-domain { margin: 16px 0; }
-.focus-mode main > header, .focus-mode .advanced, .focus-mode footer { display: none; }
+.legend { margin: 8px 0; } .legend dt { font-size: 12px; font-weight: 600; } .legend dd { margin: 0 0 8px; }.focus-mode main > header, .focus-mode .advanced, .focus-mode footer { display: none; }
 @media (max-width: 360px) { main { padding: 20px 12px; } .tools { grid-template-columns: 1fr; } .workflow-card .actions > button { flex: 1 1 120px; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation: none !important; transition: none !important; } }
 

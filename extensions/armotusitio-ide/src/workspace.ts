@@ -132,7 +132,7 @@ function createWorkspace(context, controller, projects) {
 	}
 	controller.refreshWorkflowActivity = refresh;
 	context.subscriptions.push(output, { dispose() { disposed = true; controller.refreshWorkflowActivity = undefined; void workflow.dispose(); } });
-	return {
+	const bridge = {
 		refresh,
 		views: () => sortActivity(workflow.all().map(entry => ({ ...workflow.view(entry), logs: selectedLogs === entry.id ? entry.logs || '' : undefined }))),
 		toolResult: () => toolResult,
@@ -285,12 +285,16 @@ function createWorkspace(context, controller, projects) {
 				if (typeof message.root === 'string') { contracts.set(message.root, { ...contracts.get(message.root), lastOperationError: redact(error.message).slice(0, 300) }); }
 				const known = { HARNESS_ATTEMPT_CHANGED: 'El intento cambi\u00f3 o no pudo verificarse. Actualiz\u00e1 la tarea antes de repetir la acci\u00f3n.', HARNESS_RECONCILE: 'Hay una creaci\u00f3n sin confirmar. Revis\u00e1 el listado nativo antes de preparar otra tarea.', HARNESS_CONTRACT: 'No se pudo validar el contrato del Harness. Abr\u00ed Diagn\u00f3stico para revisar el entorno.', HARNESS_CAPABILITY: 'El contrato del Harness no ofrece las operaciones requeridas. Abr\u00ed Diagn\u00f3stico para revisar su versi\u00f3n.' };
 				const label = known[error.message] ? t(known[error.message]) : error.message === 'HARNESS_BUSY' ? t('Hay una operaci\u00f3n del Harness en curso. Esper\u00e1 a que termine.') : error.message === 'HARNESS_PROVIDER' ? t('Revis\u00e1 la configuraci\u00f3n de IA. Si us\u00e1s un comando personalizado, eleg\u00ed \u00abConfiguraci\u00f3n del proyecto\u00bb.') : t('No se pudo completar la operaci\u00f3n. Revis\u00e1 el estado de la tarea y los detalles del Harness.');
-				vscode.window.showErrorMessage(label);
+				// Every failure offers a concrete next step: the native diagnosis or the redacted output.
+				const diagnose = t('Diagn\u00f3stico'), details = t('Ver detalles');
+				const root = typeof message.root === 'string' && message.action !== 'diagnoseProject' ? message.root : undefined;
+				void Promise.resolve(vscode.window.showErrorMessage(label, ...(root ? [diagnose] : []), details)).then(selected => selected === details ? output.show(true) : selected === diagnose ? bridge.receive({ action: 'diagnoseProject', root }) : undefined).catch(() => undefined);
 			}
 			controller.refresh();
 			return true;
 		}
 	};
+	return bridge;
 }
 
 module.exports = { createWorkspace };

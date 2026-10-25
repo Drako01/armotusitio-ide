@@ -6,6 +6,7 @@
 const { sortActivity } = require('../src/presentation.ts');
 const { reconcile } = require('./reconcile.ts');
 let pendingNative;
+const phases = ['preparing', 'questions', 'review', 'creating', 'running', 'stopping', 'pending', 'completed', 'failed', 'cancelled', 'interrupted', 'blocked', 'unknown'];
 function revealTask(id, project) { pendingNative = { id, project }; }
 
 /** One activity surface: changes patch existing controls, while preferences belong to this workspace. */
@@ -30,6 +31,9 @@ function workspaceUi(ide) {
 
 	const element = (tag, content = '', className = '', key = '') => { const node = document.createElement(tag); node.textContent = content; node.className = className; if (key) { node.dataset.key = key; } return node; };
 	const templateActions = element('div', '', 'actions'); form.append(templateActions);
+	// Disabled controls are not focusable, so their reason is also shown as text.
+	const prepareReason = element('p', '', 'muted'); prepareReason.id = 'prepare-reason'; prepareReason.hidden = true;
+	document.getElementById('prepare-task').after(prepareReason); document.getElementById('prepare-task').setAttribute('aria-describedby', 'prepare-reason');
 	const toolbar = element('div', '', 'activity-toolbar');
 	container.before(toolbar);
 	const announcement = element('p', '', 'muted'); announcement.setAttribute('role', 'status'); container.before(announcement);
@@ -45,6 +49,7 @@ function workspaceUi(ide) {
 		const control = element('button', label, action === 'startTask' ? 'primary' : action === 'stopTask' ? 'destructive' : 'secondary', action);
 		control.dataset.workflowAction = action; control.dataset.entry = entry.id; control.type = 'button';
 		control.disabled = !latest.trusted && !['workflowLogs', 'pin', 'exportTask', 'reuseTask', 'inspectCard'].includes(action);
+		if (control.disabled) { control.title = latest.labels.restricted; }
 		control.onclick = event => {
 			if ((event.currentTarget as HTMLButtonElement).disabled) { return; }
 			if (action === 'pin') { preferences.pin = preferences.pin === entry.id ? '' : entry.id; save(); render(latest); return; }
@@ -59,8 +64,10 @@ function workspaceUi(ide) {
 		for (const option of Array.from(host.options)) { option.disabled = (selected?.customProvider || selected?.id === 'armotusitio') && option.value !== 'project'; }
 		if (selected?.customProvider || selected?.id === 'armotusitio') { host.value = 'project'; }
 		const submit = document.getElementById('prepare-task') as HTMLButtonElement;
-		submit.disabled = !latest?.trusted || !selected?.workflow || !!selected?.connection?.error || selected?.id === 'armotusitio' && !selected?.connection?.value || latest.workflows.some(entry => entry.project === project.value && (['preparing', 'creating', 'running', 'stopping'].includes(entry.phase) || entry.creationUncertain));
-		submit.title = !latest?.trusted ? latest?.labels.restricted || '' : selected?.connection?.error ? labels.connectionError : '';
+		const busy = latest?.workflows.some(entry => entry.project === project.value && (['preparing', 'creating', 'running', 'stopping'].includes(entry.phase) || entry.creationUncertain));
+		const reason = !latest?.trusted ? latest?.labels.restricted || '' : !selected?.workflow ? labels?.noProjects : selected?.connection?.error ? labels.connectionError : selected?.id === 'armotusitio' && !selected?.connection?.value ? labels.connectionPending : busy ? labels.busyProject : '';
+		submit.disabled = !!reason || !labels; submit.title = reason || '';
+		prepareReason.textContent = reason || ''; prepareReason.hidden = !reason;
 		preferences.project = project.value;
 		if (project.value && latest?.trusted && !requestedDrafts.has(project.value)) { requestedDrafts.add(project.value); ide.postMessage({ action: 'loadDraft', root: project.value }); }
 		save();
@@ -96,7 +103,7 @@ function workspaceUi(ide) {
 			const toggle = element('button', label, 'quiet', key); toggle.type = 'button'; toggle.setAttribute('aria-pressed', String(preferences[key]));
 			toggle.onclick = () => { preferences[key] = !preferences[key]; save(); render(latest); }; controls.append(toggle);
 		}
-		const diagnose = element('button', labels.diagnose, 'quiet', 'diagnose') as HTMLButtonElement; diagnose.type = 'button'; diagnose.disabled = !state.trusted || !project.value; diagnose.onclick = () => ide.postMessage({ action: 'diagnoseProject', root: project.value }); controls.append(diagnose);
+		const diagnose = element('button', labels.diagnose, 'quiet', 'diagnose') as HTMLButtonElement; diagnose.type = 'button'; diagnose.disabled = !state.trusted || !project.value; diagnose.title = !state.trusted ? state.labels.restricted : !project.value ? labels.noProjects : ''; diagnose.onclick = () => ide.postMessage({ action: 'diagnoseProject', root: project.value }); controls.append(diagnose);
 		const search = element('input', '', '', 'search') as HTMLInputElement; search.type = 'search'; search.placeholder = labels.search; search.setAttribute('aria-label', labels.search);
 		search.value = preferences.search; search.oninput = event => { preferences.search = (event.target as HTMLInputElement).value; save(); render(latest); }; controls.append(search);
 		const filters = details(controls, labels.filters, 'filters');
@@ -111,6 +118,10 @@ function workspaceUi(ide) {
 			select.value = preferences[key]; select.onchange = event => { preferences[key] = (event.target as HTMLSelectElement).value; save(); render(latest); }; filterRow.append(select);
 		}
 		const since = element('input', '', '', 'since') as HTMLInputElement; since.type = 'date'; since.setAttribute('aria-label', labels.since); since.title = labels.since; since.value = preferences.since; since.onchange = event => { preferences.since = (event.target as HTMLInputElement).value; save(); render(latest); }; filterRow.append(since);
+		filters.append(element('p', labels.historyLimit, 'muted', 'history-limit'));
+		const legend = details(controls, labels.legend, 'legend'); const terms = element('dl', '', 'legend', 'terms');
+		for (const phase of phases) { terms.append(element('dt', labels[phase], '', phase), element('dd', labels[phase + 'Help'], 'muted', phase + '/help')); }
+		legend.append(terms, element('p', labels.percentHelp, 'muted', 'percent-help'), element('p', labels.checkedHelp, 'muted', 'checked-help'));
 		// The search control remains stable, including its selection and event handler.
 		reconcile(toolbar, controls); const actualSearch = toolbar.querySelector('input'); actualSearch.oninput = search.oninput;
 		const attention = state.workflows.filter(entry => ['questions', 'review', 'blocked', 'interrupted', 'unknown'].includes(entry.phase));
@@ -128,8 +139,9 @@ function workspaceUi(ide) {
 			article.dataset.entryId = entry.id; article.dataset.nativeId = entry.nativeId || ''; article.dataset.project = entry.project;
 			const heading = element('div', '', 'section-heading', 'heading');
 			heading.append(element('h3', entry.title || labels[entry.phase] || labels.blocked));
-			const badge = element('span', labels[entry.phase] || labels.unknown, `status-badge ${entry.phase}`); heading.append(badge); article.append(heading);
+			const badge = element('span', labels[entry.phase] || labels.unknown, `status-badge ${entry.phase}`); badge.title = labels[entry.phase + 'Help'] || labels.unknownHelp; heading.append(badge); article.append(heading);
 			article.append(element('p', entry.project, 'muted path', 'project'));
+			article.append(element('p', entry.origin === 'external' ? labels.originExternal : entry.nativeId ? labels.originIde : labels.originPrepared, 'muted', 'origin'));
 			if (preferences.pin === entry.id) { article.append(element('p', labels.pinned, 'muted', 'pinned')); }
 			if (entry.error === 'HARNESS_PLAN_CHANGED') { article.append(element('p', labels.planChanged, 'notice', 'plan-change')); }
 			if (entry.phase === 'review') {
@@ -167,13 +179,21 @@ function workspaceUi(ide) {
 				if ((progress.attempts || []).length) { const attempts = details(article, labels.attempts, 'attempts'); for (const attempt of progress.attempts) { attempts.append(element('p', `${attempt.number} \u00b7 ${attempt.kind || ''} \u00b7 ${labels[attempt.outcome] || attempt.outcome || labels.unknown}${attempt.endedAt && attempt.startedAt ? ' \u00b7 ' + Math.floor((attempt.endedAt - attempt.startedAt) / 1000) + ' s' : ''}`, 'muted', String(attempt.number))); } }
 			}
 			if (['completed', 'failed', 'cancelled'].includes(entry.phase) && entry.progress) {
-				const units = [...(entry.progress.nodes || []), ...(entry.progress.finalGates || [])]; const summary = element('div', '', 'result-summary', 'result-summary'); summary.append(element('p', `${labels.result}: ${labels[entry.phase]} \u00b7 PASS ${units.filter(node => node.status === 'passed').length} \u00b7 FAIL ${units.filter(node => ['failed', 'blocked'].includes(node.status)).length} \u00b7 SKIP ${units.filter(node => node.status === 'skipped').length}`)); summary.append(element('p', labels.noAttribution, 'muted')); article.append(summary);
+				const units = [...(entry.progress.nodes || []), ...(entry.progress.finalGates || [])]; const summary = element('div', '', 'result-summary', 'result-summary'); summary.append(element('p', `${labels.result}: ${labels[entry.phase]} \u00b7 PASS ${units.filter(node => node.status === 'passed').length} \u00b7 FAIL ${units.filter(node => ['failed', 'blocked'].includes(node.status)).length} \u00b7 SKIP ${units.filter(node => node.status === 'skipped').length}`)); summary.append(element('p', labels.noAttribution, 'muted')); summary.append(element('p', labels[entry.phase + 'Next'])); article.append(summary);
 			}
 			if (entry.checkedAt) { article.append(element('p', `${labels.checked}: ${new Date(entry.checkedAt).toLocaleTimeString()}`, 'muted', 'checked')); }
 			const stale = element('p', labels.stale, 'notice', 'stale'); stale.hidden = !entry.progressError && !(entry.phase === 'running' && entry.checkedAt && Date.now() - entry.checkedAt > 15000); article.append(stale);
-			if ((entry.warnings || []).length) { const warnings = details(article, labels.environmentNotes, 'warnings'); warnings.open = entry.warnings.some(warning => warning.blocking); for (const warning of entry.warnings) { warnings.append(element('p', `${warning.blocking ? labels.requirement + ' \u00b7 ' : ''}${warning.message}${warning.hint ? ' \u2192 ' + warning.hint : ''}`, warning.blocking ? 'notice' : 'muted', warning.id || warning.message)); } }
+			if ((entry.warnings || []).length) {
+				const warnings = details(article, labels.environmentNotes, 'warnings'); warnings.open = entry.warnings.some(warning => warning.blocking);
+				for (const [blocking, key] of [[true, 'requirements'], [false, 'advisories']] as const) {
+					const items = entry.warnings.filter(warning => !!warning.blocking === blocking); if (!items.length) { continue; }
+					const list = element('ul', '', '', key + '/list'); for (const warning of items) { list.append(element('li', `${warning.message}${warning.hint ? ' \u2192 ' + labels.manualFix + ': ' + warning.hint : ''}`, blocking ? 'notice' : 'muted', warning.id || warning.message)); }
+					warnings.append(element('h4', labels[key], '', key), list);
+				}
+				if (entry.warnings.some(warning => warning.blocking)) { warnings.append(element('p', labels.noAutomaticFix, 'muted', 'no-automatic-fix')); button(warnings, labels.diagnose, 'diagnoseProject', entry); }
+			}
 			if ((entry.plan || []).some(plan => plan.nodes.some(node => node.dependencies?.length))) { const graph = details(article, labels.dependencies, 'dependencies'); for (const plan of entry.plan) { for (const node of plan.nodes) { graph.append(element('p', `${plan.domain} / ${node.id} \u2190 ${(node.dependencies || []).join(', ') || labels.noDependencies}`, 'step', `${plan.domain}/${node.id}`)); } } }
-			if (entry.timeline?.length) { const timeline = details(article, labels.timeline + ' \u00b7 ' + labels.observedTimeline, 'timeline'); for (const [index, event] of entry.timeline.entries()) { timeline.append(element('p', `${new Date(event.at).toLocaleTimeString()} \u00b7 ${labels[event.phase] || event.phase}${event.unit ? ' \u00b7 ' + event.unit : ''}${event.attempt ? ' \u00b7 ' + labels.attempt + ' ' + event.attempt : ''}`, 'muted', String(index))); } }
+			if (entry.timeline?.length) { const timeline = details(article, labels.timeline + ' \u00b7 ' + labels.observedTimeline, 'timeline'); for (const [index, event] of entry.timeline.entries()) { timeline.append(element('p', `${new Date(event.at).toLocaleTimeString()} \u00b7 ${labels[event.phase] || event.phase}${event.unit ? ' \u00b7 ' + event.unit : ''}${event.attempt ? ' \u00b7 ' + labels.attempt + ' ' + event.attempt : ''}`, 'muted', String(index))); } if (entry.timeline.length >= 50) { timeline.append(element('p', labels.timelineLimit, 'muted', 'timeline-limit')); } }
 			if (entry.phase === 'blocked') { article.append(element('p', labels[entry.error] || labels.blockedHint, 'notice', 'error')); }
 			if (entry.phase === 'unknown') { article.append(element('p', labels.unknownHint, 'notice', 'unknown')); }
 			if (entry.phase === 'questions') {
@@ -185,7 +205,7 @@ function workspaceUi(ide) {
 					if (input.tagName === 'SELECT') { for (const value of question.options) { const option = element('option', value) as HTMLOptionElement; option.value = value; input.append(option); } }
 					label.append(input); questions.append(label);
 				}
-				const submit = element('button', labels.answer) as HTMLButtonElement; submit.type = 'submit'; submit.disabled = !state.trusted; questions.append(submit);
+				const submit = element('button', labels.answer) as HTMLButtonElement; submit.type = 'submit'; submit.disabled = !state.trusted; submit.title = state.trusted ? '' : state.labels.restricted; questions.append(submit);
 				questions.onsubmit = event => { event.preventDefault(); const target = event.currentTarget as HTMLFormElement; if (target.reportValidity()) { target.querySelector('button').disabled = true; send('answerTask', entry, { answers: Object.fromEntries(new FormData(target).entries()) }); } }; article.append(questions);
 			}
 			if (entry.logs !== undefined) {
@@ -194,6 +214,7 @@ function workspaceUi(ide) {
 				const follow = element('button', labels.follow, 'quiet', 'follow') as HTMLButtonElement; const lines = entry.logs.split('\n'); if (!logSeen.has(entry.id) || following.has(entry.id)) { logSeen.set(entry.id, lines.length); } const unread = Math.max(0, lines.length - logSeen.get(entry.id)); follow.textContent = labels.follow + (unread ? ` \u00b7 ${unread} ${labels.newLines}` : '');
 				follow.type = 'button'; follow.setAttribute('aria-pressed', String(following.has(entry.id))); follow.onclick = () => { if (following.has(entry.id)) { following.delete(entry.id); } else { following.add(entry.id); } render(latest); }; logs.append(follow);
 				const query = logFilters.get(entry.id)?.toLocaleLowerCase() || ''; const output = element('pre', entry.logs ? '' : labels.noLogs, 'tool-output', 'log-output'); for (const [index, line] of lines.entries()) { if (line.toLocaleLowerCase().includes(query)) { output.append(element('span', line + '\n', '', String(index))); } } logs.append(output);
+				if (entry.logs.length >= 64000) { logs.append(element('p', labels.logsLimit, 'muted', 'logs-limit')); }
 			}
 			const actions = element('div', '', 'actions', 'actions');
 			if (state.trusted) {
@@ -202,7 +223,7 @@ function workspaceUi(ide) {
 				if (entry.editable && ['review', 'questions', 'blocked'].includes(entry.phase)) { button(actions, labels.edit, 'editTask', entry); }
 				if ((entry.owned || state.projects.find(item => item.root === entry.project)?.id === 'armotusitio') && ['preparing', 'running', 'pending'].includes(entry.phase)) { button(actions, labels.stop, 'stopTask', entry); }
 				if (entry.nativeId && entry.checkedAt && !entry.progressError && ['interrupted', 'failed', 'cancelled', 'pending'].includes(entry.phase)) { button(actions, ['failed', 'cancelled'].includes(entry.phase) ? labels.retry : labels.resume, 'resumeTask', entry); }
-			}
+			} else { actions.append(element('p', state.labels.restricted, 'muted', 'restricted')); }
 			button(actions, preferences.pin === entry.id ? labels.unpin : labels.pin, 'pin', entry);
 			button(actions, labels.logs, 'workflowLogs', entry);
 			const more = details(article, labels.moreActions, 'more-actions'); const secondary = element('div', '', 'actions'); more.append(secondary);
