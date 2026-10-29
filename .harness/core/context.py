@@ -29,11 +29,13 @@ def skill_index():
             continue
         for folder in sorted(directory.iterdir()):
             file = folder / 'SKILL.md'
-            if folder.name not in required or not folder.is_dir() or folder.name in entries or not file.is_file():
+            if not folder.is_dir() or folder.name in entries or not file.is_file():
                 continue
             relative = file.relative_to(ROOT).as_posix()
             if not contained(relative):
-                raise ValueError('Skill symlink rejected: ' + relative)
+                if folder.name in required:
+                    raise ValueError('Skill symlink rejected: ' + relative)
+                continue  # Ignore unrelated unsafe local skills without trusting their contents.
             content = file.read_bytes()
             head = content[:1800].decode('utf-8', errors='replace')
             description = re.search(r'description:\s*[>|]-?\r?\n((?:[ \t]+.*\r?\n?)+)', head, re.I)
@@ -54,7 +56,7 @@ def context_index():
     for base in ['.codex/skills', '.claude/skills']:
         directory = ROOT / base
         if directory.exists():
-            files += sorted(p for p in directory.glob('*/SKILL.md') if p.parent.name in required and contained(p.relative_to(ROOT).as_posix()))
+            files += sorted(p for p in directory.glob('*/SKILL.md') if contained(p.relative_to(ROOT).as_posix()))
     fingerprint = digest(dumps([(p.relative_to(ROOT).as_posix(), digest(p.read_bytes())) for p in files]))
     cache = H / 'runtime' / 'context-index.json'
     if cache.exists():
