@@ -104,6 +104,7 @@
       ]
     },
     "commands": [
+      { "command": "atsHarness.nativeConfigure", "title": "ArmoTuSitio: Configurar Harness nativo del proyecto" },
       { "command": "atsHarness.nativeDoctor", "title": "ArmoTuSitio: Diagnóstico del Harness nativo" },
       { "command": "atsHarness.nativeNewTask", "title": "ArmoTuSitio: Crear tarea nativa" },
       { "command": "atsHarness.nativeRunTask", "title": "ArmoTuSitio: Ejecutar tarea nativa" },
