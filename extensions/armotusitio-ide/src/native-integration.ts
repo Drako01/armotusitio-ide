@@ -7,6 +7,7 @@ import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { NativeHarness, approvalDigest, type Plan } from './native-harness.ts';
+import { proposeProjectConfig, loadProjectConfig, writeProjectConfig } from './native-project.ts';
 
 type Host = any; // vscode host is injected by the existing extension (avoid duplicating the UI layer).
 const sessions = new Map<string, NativeHarness>();
@@ -35,14 +36,31 @@ export function registerNativeHarness(context: Host, vscode: Host): void {
 			await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({ language: 'json', content: JSON.stringify(report, null, 2) }));
 		} catch (e) { showError(e); }
 	}));
+
+	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.nativeConfigure', async () => {
+		try {
+			if (!ensureTrust()) { vscode.window.showWarningMessage('Workspace trust is required for configuration.'); return; }
+			const selected = await choose();
+			if (!selected) { return; }
+			const root = await fs.realpath(selected.folder.uri.fsPath);
+			const proposal = await proposeProjectConfig(root);
+			await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({ language: 'json', content: JSON.stringify(proposal, null, 2) }), { preview: true });
+			if (proposal.existing) { vscode.window.showInformationMessage('Existing Harness configuration has not been changed.'); return; }
+			const answer = await vscode.window.showWarningMessage('Create the reviewed .ats-harness.json? This does not run commands.', { modal: true }, 'Create configuration');
+			if (answer !== 'Create configuration' || !ensureTrust()) { return; }
+			if (await fs.realpath(selected.folder.uri.fsPath) !== root) { throw Error('HARNESS_ROOT_CHANGED'); }
+			const file = await writeProjectConfig(root, proposal.config);
+			vscode.window.showInformationMessage(`Harness configuration created: ${file}`);
+		} catch (error) { showError(error); }
+	}));
 	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.nativeNewTask', async () => {
 		try {
 			if (!ensureTrust()) { vscode.window.showWarningMessage('El proyecto debe ser confiable para crear tareas ejecutables.'); return; }
 			const p = await choose(); if (!p) { return; }
 			// Suggestions are never authorizations. No package script runs until reviewed explicitly.
-			const pkg = await fs.readFile(path.join(p.folder.uri.fsPath, 'package.json'), 'utf8').then(JSON.parse).catch(() => ({}));
-			const scripts = Object.keys(pkg.scripts || {}).filter(s => /^(test|lint|check|typecheck|build)(:.*)?$/.test(s)).slice(0, 16);
-			const options = [...scripts.map(id => ({ label: `npm run ${id}`, executable: 'npm', args: ['run', id] })), { label: 'Comando personalizado', executable: '', args: [] }];
+			const existing = await loadProjectConfig(p.folder.uri.fsPath);
+			const suggested = existing || (await proposeProjectConfig(p.folder.uri.fsPath)).config;
+			const options = [...suggested.plan.gates.map(g => ({ label: `${g.executable} ${g.args.join(' ')}`, executable: g.executable, args: g.args })), { label: 'Comando personalizado', executable: '', args: [] }];
 			const selected = await vscode.window.showQuickPick(options, { title: 'Propuesta de verificaci\u00f3n (nada se ejecuta autom\u00e1ticamente)' });
 			if (!selected) { return; }
 			const executable = selected.executable || await vscode.window.showInputBox({ title: 'Ejecutable autorizado', prompt: 'Nombre del ejecutable, sin shell' });
