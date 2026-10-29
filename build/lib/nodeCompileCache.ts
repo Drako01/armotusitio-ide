@@ -76,19 +76,15 @@ export async function generateNodeCompileCache(platform: string, outputDirectory
 	await fs.promises.rm(paths.cacheDirectory, { recursive: true, force: true });
 
 	try {
-		if (platform === 'linux' && process.env.ATS_LINUX_ARCH === 'x64') {
-			// The Linux container compiles as an unprivileged user. Only the packaged
-			// chrome-sandbox helper needs root ownership and its setuid bit.
-			if (path.resolve(paths.application) !== '/work/VSCode-linux-x64/armotusitio-ide') {
-				throw new Error('Unexpected packaged Linux executable for sandbox preparation');
-			}
-			cp.execFileSync('sudo', ['-n', '/usr/local/bin/ats-prepare-chrome-sandbox'], {
-				stdio: 'pipe',
-				timeout: 15000
-			});
-		}
+		// Only the transient Linux Docker cache-generation process may omit Chromium's
+		// sandbox: Docker Desktop blocks the PID/network namespaces it requires.
+		// This flag is never written into the packaged executable or launchers.
+		const buildOnlyNoSandbox = platform === 'linux'
+			&& process.env.ATS_LINUX_ARCH === 'x64'
+			&& process.env.ATS_LINUX_CACHE_NO_SANDBOX === '1'
+			&& path.resolve(paths.application) === '/work/VSCode-linux-x64/armotusitio-ide';
 		const env = createNodeCompileCacheGenerationEnvironment(portableDirectory);
-		await runCacheGeneration(paths.application, paths.cacheDirectory, env);
+		await runCacheGeneration(paths.application, paths.cacheDirectory, env, buildOnlyNoSandbox ? ['--no-sandbox'] : []);
 		const totalCacheEntryCount = await validateNodeCompileCache(paths.cacheDirectory, process.arch);
 		console.log(`Generated ${totalCacheEntryCount} total Node.js compile cache entries in ${paths.cacheDirectory}.`);
 	} finally {
@@ -131,9 +127,9 @@ export async function validateNodeCompileCache(rootDirectory: string, architectu
 	return totalCacheEntryCount;
 }
 
-function runCacheGeneration(application: string, cacheDirectory: string, env: NodeJS.ProcessEnv): Promise<void> {
+function runCacheGeneration(application: string, cacheDirectory: string, env: NodeJS.ProcessEnv, args: readonly string[] = []): Promise<void> {
 	return new Promise((resolve, reject) => {
-		const child = cp.spawn(application, [], {
+		const child = cp.spawn(application, [...args], {
 			env,
 			stdio: ['ignore', 'pipe', 'pipe']
 		});
