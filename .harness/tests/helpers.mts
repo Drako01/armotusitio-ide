@@ -38,7 +38,20 @@ export async function fixture(t) {
   await fs.cp(path.join(root, ".harness", "core"), path.join(dir, ".harness", "core"), { recursive: true });
   await fs.cp(path.join(root, ".harness", "lib"), path.join(dir, ".harness", "lib"), { recursive: true });
   await fs.copyFile(path.join(root, ".harness", "README.md"), path.join(dir, ".harness", "README.md"));
-  await fs.cp(path.join(root, ".codex", "skills"), path.join(dir, ".codex", "skills"), { recursive: true });
+  // Fixture skills are isolated synthetic metadata: the IDE checkout does not ship RedEvent skills.
+  // Never follow host symlinks or depend on operator-specific .codex/.claude directories.
+  const agentsManifest = JSON.parse(await fs.readFile(path.join(dir, ".harness", "manifests", "agents.json"), "utf8"));
+  const domainsManifest = JSON.parse(await fs.readFile(path.join(dir, ".harness", "manifests", "domains.json"), "utf8"));
+  const skillNames = new Set([
+    ...agentsManifest.agents.flatMap((agent) => agent.skills || []),
+    ...domainsManifest.domains.flatMap((domain) => domain.skills || []),
+  ]);
+  for (const name of skillNames) {
+    if (!/^[a-z0-9][a-z0-9_-]*$/i.test(name)) throw new Error("Unsafe fixture skill name");
+    const directory = path.join(dir, ".codex", "skills", name);
+    await fs.mkdir(directory, { recursive: true });
+    await fs.writeFile(path.join(directory, "SKILL.md"), "# " + name + "\n\nSynthetic fixture metadata only.\n");
+  }
   for (const name of [
     "tasks/inbox",
     "tasks/active",
