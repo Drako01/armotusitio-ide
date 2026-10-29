@@ -9,6 +9,7 @@ import { createHash } from 'node:crypto';
 import { NativeHarness, approvalDigest, type Plan } from './native-harness.ts';
 import { proposeProjectConfig, loadProjectConfig, writeProjectConfig } from './native-project.ts';
 import { reviewAgentDraft, inspectAgentWorkspace, type NativeProvider, type AgentRole } from './native-providers.ts';
+import { buildSupportReport, exportSupportReport } from './native-support.ts';
 
 type Host = any; // vscode host is injected by the existing extension (avoid duplicating the UI layer).
 const sessions = new Map<string, NativeHarness>();
@@ -54,6 +55,21 @@ export function registerNativeHarness(context: Host, vscode: Host): void {
 		} catch (error) { showError(error); }
 	}));
 
+	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.nativeSupport', async () => {
+		try {
+			if (!ensureTrust()) { vscode.window.showWarningMessage('Workspace trust is required for support evidence.'); return; }
+			const selected = await choose(); if (!selected) { return; }
+			const report = await buildSupportReport(selected.folder.uri.fsPath, selected.engine);
+			await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({ language: 'json', content: JSON.stringify(report, null, 2) }), { preview: true });
+			const action = await vscode.window.showInformationMessage('Support summary excludes command output and agent instructions.', 'Export JSON');
+			if (action !== 'Export JSON' || !ensureTrust()) { return; }
+			const destination = await vscode.window.showSaveDialog({ filters: { 'JSON': ['json'] }, saveLabel: 'Export support evidence' });
+			if (!destination) { return; }
+			if (!ensureTrust()) { return; }
+			await exportSupportReport(destination.fsPath, report);
+			vscode.window.showInformationMessage('Support evidence exported without command output.');
+		} catch (error) { showError(error); }
+	}));
 	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.nativeDoctor', async () => {
 		try {
 			const p = await choose(); if (!p) { return; } const report = await p.engine.diagnose();
