@@ -32,5 +32,5 @@
 
 ## Verification
 
-- node .harness/core.mjs check
+- node .harness/core.mts check
 - pnpm format:check

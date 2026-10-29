@@ -181,20 +181,27 @@ def check():
             print('[harness] Legacy failed evidence ' + row['id'] + ' is not retryable: ' + str(error) + '. Run: pnpm harness:hygiene -- --quarantine-invalid --yes', file=sys.stderr)
     agents_doc(False)
     state_gate()
-    for executable, required in [('node', True), ('pnpm', True), ('git', True)]:
-        if required and not shutil.which(executable):
+    package_file = ROOT / 'package.json'
+    package = json.loads(package_file.read_text(encoding='utf-8')) if package_file.is_file() else {}
+    manager = package.get('packageManager')
+    if manager is not None and (not isinstance(manager, str) or not manager):
+        raise ValueError('Invalid packageManager')
+    for executable in ['node', 'git']:
+        if not shutil.which(executable):
             raise ValueError('Missing ' + executable)
-    # Node version is the workspace contract; pnpm's exact version is pinned by packageManager.
+    # Validate pnpm only when the workspace explicitly selects it.
+    # VS Code and npm workspaces must not be forced to adopt pnpm.
     from .runner import spawn_run
-    # Probes need the same bounded process-tree ownership as gates, especially
-    # pnpm's PowerShell -> cmd -> Node launcher chain on Windows.
     node = spawn_run('node', ['--version'], {'trusted': True, 'persist': False, 'timeoutMs': 5000})
     if node['code'] or int(node['out'].strip().lstrip('v').split('.')[0]) < 24:
         raise ValueError('Node >=24 required')
-    pnpm = spawn_run('pnpm', ['--version'], {'trusted': True, 'persist': False, 'timeoutMs': 10000})
-    expected_pnpm = json.loads((ROOT / 'package.json').read_text(encoding='utf-8'))['packageManager'].split('@')[-1] if (ROOT / 'package.json').exists() else None
-    if pnpm['code'] or expected_pnpm and pnpm['out'].strip() != expected_pnpm:
-        raise ValueError('pnpm version must match packageManager' + ('; ' + pnpm['err'] if pnpm['code'] else ''))
+    if manager and manager.startswith('pnpm@'):
+        if not shutil.which('pnpm'):
+            raise ValueError('Missing pnpm')
+        pnpm = spawn_run('pnpm', ['--version'], {'trusted': True, 'persist': False, 'timeoutMs': 10000})
+        expected_pnpm = manager.removeprefix('pnpm@').split('+', 1)[0]
+        if pnpm['code'] or pnpm['out'].strip() != expected_pnpm:
+            raise ValueError('pnpm version must match packageManager' + ('; ' + pnpm['err'] if pnpm['code'] else ''))
     print('Harness check: OK (Python ' + sys.version.split()[0] + ' via ' + python_source() + ')')
 
 

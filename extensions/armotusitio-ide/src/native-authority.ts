@@ -7,7 +7,7 @@ import * as path from 'node:path';
 
 export interface HarnessAuthority {
 	engine: 'project' | 'ide-native';
-	entry?: '.harness/core.mjs' | 'harness/scripts/ide.mjs';
+	entry?: '.harness/core.mts' | '.harness/core.mjs' | 'harness/scripts/ide.mjs';
 	reason: 'project-entry' | 'project-marker' | 'project-path-unsafe' | 'no-project-harness';
 }
 
@@ -22,7 +22,7 @@ export async function inspectHarnessAuthority(root: string): Promise<HarnessAuth
 			if (!info.isDirectory() || info.isSymbolicLink()) { return { engine: 'project', reason: 'project-path-unsafe' }; }
 		} catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') { throw error; } }
 	}
-	for (const entry of ['.harness/core.mjs', 'harness/scripts/ide.mjs'] as const) {
+	for (const entry of ['.harness/core.mts', '.harness/core.mjs', 'harness/scripts/ide.mjs'] as const) {
 		try {
 			const target = path.join(canonical, entry);
 			const info = await fs.lstat(target);

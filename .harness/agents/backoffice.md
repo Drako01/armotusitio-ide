@@ -23,8 +23,8 @@
 
 ## Skills
 
-- redevent-nextjs-16
-- redevent-frontend-portals
+- typescript-frontend
+- frontend-portals
 
 ## Context sources
 

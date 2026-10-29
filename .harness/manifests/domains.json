@@ -8,10 +8,10 @@
       "exclude": ["apps/backoffice/**"],
       "instructions": ["Preserve contracts, tenancy, RBAC, observability and Go module boundaries."],
       "skills": [
-        "redevent-go-api",
-        "redevent-api-contract-sync",
-        "redevent-tenancy-authorization",
-        "redevent-rbac-management"
+        "go-api",
+        "api-contract-sync",
+        "authorization",
+        "rbac-management"
       ],
       "contextSources": ["apps/api/go.mod", "docs/api/openapi.yaml", "verify-enterprise.sh"],
       "verification": [["bash", "./verify-enterprise.sh", "--quick"]],
@@ -27,7 +27,7 @@
       "paths": ["apps/backoffice/**"],
       "exclude": ["apps/api/internal/**"],
       "instructions": ["Next.js 16, typed API contracts, responsive enterprise UX and reusable dialogs."],
-      "skills": ["redevent-nextjs-16", "redevent-frontend-portals", "redevent-api-contract-sync"],
+      "skills": ["typescript-frontend", "frontend-portals", "api-contract-sync"],
       "contextSources": ["apps/backoffice/package.json", "docs/api/openapi.yaml"],
       "verification": [
         ["pnpm", "--dir", "apps/backoffice", "typecheck"],
@@ -47,7 +47,7 @@
       "paths": ["n8n/**"],
       "exclude": [],
       "instructions": ["Keep workflows deterministic, observable, idempotent and contract-aware."],
-      "skills": ["redevent-background-jobs", "redevent-api-contract-sync"],
+      "skills": ["background-jobs", "api-contract-sync"],
       "contextSources": ["n8n/", "docs/api/openapi.yaml"],
       "verification": [["pnpm", "format:check"]],
       "tokenBudget": 8000,
@@ -64,7 +64,7 @@
       "paths": ["infra/**", ".github/**", "docker-verify-enterprise.sh"],
       "exclude": [],
       "instructions": ["Preserve environment isolation, secrets policy, reproducibility and rollback."],
-      "skills": ["redevent-infrastructure-delivery", "redevent-runtime-config"],
+      "skills": ["infrastructure-delivery", "runtime-config"],
       "contextSources": ["infra/README.md", "docker-verify-enterprise.sh"],
       "verification": [
         ["pnpm", "harness:ci-gaps", "--", "--strict"],
@@ -86,7 +86,7 @@
       "paths": ["docs/**", "*.md", "apps/workers/README.md"],
       "exclude": [".harness/logs/**"],
       "instructions": ["Keep documentation operational, concise and aligned with implemented behavior."],
-      "skills": ["redevent-markdown-quality"],
+      "skills": ["markdown-quality"],
       "contextSources": ["docs/architecture/README.md"],
       "verification": [["pnpm", "format:check"]],
       "tokenBudget": 6000,
@@ -104,10 +104,10 @@
         "Preserve monorepo boundaries and avoid duplicated capabilities.",
         "When a new executable app under apps/* declares a dev script, wire its local startup into start.sh in the same task; harness:test enforces this invariant."
       ],
-      "skills": ["redevent-monorepo-architecture"],
+      "skills": ["workspace-architecture"],
       "contextSources": ["package.json", "pnpm-workspace.yaml"],
       "verification": [
-        ["node", ".harness/core.mjs", "check"],
+        ["node", ".harness/core.mts", "check"],
         ["pnpm", "harness:test"],
         ["pnpm", "harness:ci-gaps", "--", "--strict"],
         ["pnpm", "format:check"]
@@ -126,7 +126,7 @@
       "instructions": [
         "Placeholder application only; routing is fail-closed until executable product code and domain-specific gates exist."
       ],
-      "skills": ["redevent-frontend-portals"],
+      "skills": ["frontend-portals"],
       "contextSources": ["apps/marketplace/README.md"],
       "verification": [["pnpm", "format:check"]],
       "tokenBudget": 6000,
@@ -145,7 +145,7 @@
       "instructions": [
         "Placeholder application only; routing is fail-closed until executable product code and domain-specific gates exist."
       ],
-      "skills": ["redevent-frontend-portals"],
+      "skills": ["frontend-portals"],
       "contextSources": ["apps/planner-portal/README.md"],
       "verification": [["pnpm", "format:check"]],
       "tokenBudget": 6000,
@@ -165,10 +165,10 @@
         "Next.js 16, session/MFA and secure cookies, typed API contracts, and shared @redevent/api-client and @redevent/ui."
       ],
       "skills": [
-        "redevent-frontend-portals",
-        "redevent-nextjs-16",
-        "redevent-api-contract-sync",
-        "redevent-tenancy-authorization"
+        "frontend-portals",
+        "typescript-frontend",
+        "api-contract-sync",
+        "authorization"
       ],
       "contextSources": [
         "apps/provider-portal/README.md",
@@ -199,10 +199,10 @@
         "Next.js 16, session/MFA and secure cookies, access by capability sales.self:read, and shared @redevent/api-client and @redevent/ui."
       ],
       "skills": [
-        "redevent-frontend-portals",
-        "redevent-nextjs-16",
-        "redevent-api-contract-sync",
-        "redevent-tenancy-authorization"
+        "frontend-portals",
+        "typescript-frontend",
+        "api-contract-sync",
+        "authorization"
       ],
       "contextSources": [
         "apps/sales-portal/README.md",
@@ -238,7 +238,7 @@
         "Background jobs/outbox PostgreSQL runtime (RED-001-142); shares the apps/api Go module, config, logging and database with domain api, so never duplicate the executor or its packages.",
         "apps/workers/** remains an undeveloped placeholder documented in apps/workers/README.md; this domain is the implemented runtime, not that directory."
       ],
-      "skills": ["redevent-background-jobs", "redevent-runtime-config"],
+      "skills": ["background-jobs", "runtime-config"],
       "contextSources": ["docs/architecture/fase1-contrato-jobs-outbox.md", "apps/api/cmd/worker/main.go"],
       "verification": [
         ["go", "-C", "apps/api", "test", "./internal/platform/jobs/...", "./internal/platform/config/..."],

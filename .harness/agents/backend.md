@@ -22,8 +22,8 @@
 
 ## Skills
 
-- redevent-go-api
-- redevent-api-contract-sync
+- go-api
+- api-contract-sync
 
 ## Context sources
 

@@ -20,7 +20,7 @@
 
 ## Skills
 
-- redevent-markdown-quality
+- markdown-quality
 
 ## Context sources
 

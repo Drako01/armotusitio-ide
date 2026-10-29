@@ -21,7 +21,7 @@ from .context import manifests
 
 VERIFY_EXECUTABLES = {'pnpm', 'npm', 'npx', 'yarn', 'node', 'go', 'gofmt', 'golangci-lint', 'bash', 'sh', 'docker',
                       'python', 'python3', 'make', 'uses'}
-HARNESS_ENTRYPOINTS = ['.harness/core.mjs', '.harness/bootstrap.mjs']
+HARNESS_ENTRYPOINTS = ['.harness/core.mts', '.harness/bootstrap.mts']
 SHELL_KEYWORDS = {'if', 'then', 'else', 'elif', 'do', 'while', 'until', '!', 'time', '{', 'env'}
 PNPM_BUILTINS = {'install', 'i', 'add', 'exec', 'dlx', 'config', 'store', 'setup', 'update', 'remove', 'rebuild'}
 BLOCK_SCALAR = re.compile(r'^[|>][+-]?\d*$')

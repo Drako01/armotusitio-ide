@@ -26,7 +26,7 @@
       "reason": "Toolchain probe."
     },
     {
-      "match": "node infra/scripts/ci-scope.mjs",
+      "match": "node infra/scripts/ci-scope.mts",
       "reason": "Changed-path selection setup; writes scope outputs and performs no verification. Its actual execution is covered by infra/scripts/ci-events.test.mjs."
     },
     {

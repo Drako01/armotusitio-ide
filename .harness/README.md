@@ -15,7 +15,7 @@ separadas.
   `harness:check` falla si están desactualizados.
 - `core/` y `cli.py`: motor Python stdlib de configuración, contexto, routing, adapters, lifecycle, scope y
   verificación.
-- `lib/`: bootstrap/provisioning Node y shims de compatibilidad RPC hacia Python; `core.mjs` conserva la entrada
+- `lib/`: bootstrap/provisioning Node y shims de compatibilidad RPC hacia Python; `core.mts` conserva la entrada
   anterior.
 - `tests/python/`: contratos del core con `unittest`; tests Node conservan bootstrap, transporte y equivalencia de
   comandos.
@@ -281,7 +281,7 @@ Los límites base (`maxNodes`, `minUnitMs`, `coordinationOverheadMs`, `cancelGra
 ### Benchmark reproducible
 
 `pnpm harness:bench [-- --units N --ms M --workers 2,4 --json --out f.json --assert]` ejecuta escenarios `independent`,
-`diamond` y `chain` con un host **simulado** (`tests/fixtures/sim-agent.cjs`: sin tokens, sin red), primero con
+`diamond` y `chain` con un host **simulado** (`tests/fixtures/sim-agent.cts`: sin tokens, sin red), primero con
 `HARNESS_MAX_WORKERS=1` y luego en paralelo, y mide tiempo de pared externo y la fase de writers. `--assert` (usado por
 `verify-enterprise.sh`) falla si el paralelismo no rinde donde debe o cuesta demasiado donde no puede.
 `verify-enterprise.sh` lo invoca con `--ms 4000` para que el overhead fijo por unidad de hosts Windows/lentos no domine
@@ -317,8 +317,8 @@ pnpm harness:tokens -- --domain api
 pnpm harness:run -- api "tarea pequeña"
 pnpm harness:run -- auto "tarea que puede abarcar varios dominios"
 pnpm harness:run -- auto --file "backoffice(1).txt"
-node .harness/bootstrap.mjs source <task-id> 0 4000
-node .harness/bootstrap.mjs path-check repo architect package.json
+node .harness/bootstrap.mts source <task-id> 0 4000
+node .harness/bootstrap.mts path-check repo architect package.json
 pnpm harness:execute -- <task-id>
 pnpm harness:status -- <task-id>
 pnpm harness:list
@@ -378,7 +378,7 @@ Si el workflow tiene un job `required`, el job que cubre debe estar en su `needs
 Las excepciones viven sólo en `manifests/ci-parity.json` (`ignored`, `ciOnly`, `localOnly`; cada entrada con `match` y
 `reason` obligatorios, `withFlag` opcional) y su schema `ci-parity.schema.json` lo valida `harness:check`. `match` es un
 prefijo de tokens (con `*` por token) del comando normalizado: `pnpm --filter ./D S`/`--dir D S` → `pnpm @D S`,
-`node .harness/core.mjs X`/`pnpm harness:X` → `harness X`, Go en `working-directory` → `go -C <dir> ...`, `uses owner/action`.
+`node .harness/core.mts X`/`pnpm harness:X` → `harness X`, Go en `working-directory` → `go -C <dir> ...`, `uses owner/action`.
 No hay excepciones implícitas en el código: un comando nuevo de CI sin gate, check ni entrada queda `uncovered`.
 Las excepciones son acotadas a propósito: `ignored: node -e const*require*process.exit*scripts*` cubre sólo la sonda que lee
 `scripts` de un `package.json` (cualquier otro `node -e` es un comando de verificación); el `ciOnly` de `go test` se limita
@@ -485,9 +485,9 @@ sitecustomize y paquetes de usuario, y evitan generar bytecode. Para debug avanz
 `python -I -S -B -X utf8 .harness/cli.py context repo`; la carga directa de `.env` soporta `KEY=VALUE` simple.
 
 La resolución es idéntica para Codex y Claude, y bajo PowerShell o Git Bash: los tres lanzadores de `cli.py`
-(`bootstrap.mjs`, el hook PreToolUse `hooks/guard-orchestrator.mjs` de Claude y el RPC `lib/bridge.mjs`) usan el
+(`bootstrap.mts`, el hook PreToolUse `hooks/guard-orchestrator.mts` de Claude y el RPC `lib/bridge.mts`) usan el
 mismo `resolvePython()`, los mismos flags `-I -S -B -X utf8` y el mismo entorno de `harnessChildEnv(runtime)`;
-`runtime.test.mjs` falla si un lanzador nuevo arma un env propio. Los especialistas heredan ese `HARNESS_PYTHON`
+`runtime.test.mts` falla si un lanzador nuevo arma un env propio. Los especialistas heredan ese `HARNESS_PYTHON`
 con `HARNESS_HOST=codex`, `HARNESS_HOST=claude` o `HARNESS_AGENT_COMMAND`; los adapters nunca lo pisan y la
 redacción sólo afecta la salida capturada, no el entorno del hijo. `pnpm harness:doctor` (campo `source`) y
 `pnpm harness:check` informan el origen del intérprete: `managed` (`runtime/python`), `HARNESS_PYTHON`, `PATH`
@@ -591,7 +591,7 @@ automática.
 
 ## Guardia del orquestador
 
-`.claude/settings.json` registra el hook `PreToolUse` `.harness/hooks/guard-orchestrator.mjs` para
+`.claude/settings.json` registra el hook `PreToolUse` `.harness/hooks/guard-orchestrator.mts` para
 `Edit|MultiEdit|Write|NotebookEdit`. El host sólo puede escribir estado operacional bajo
 `.harness/{tasks,state,handoffs,logs,runtime}/` (o scratch fuera del repositorio); el runtime Python administrado queda
 protegido; un intento sobre archivos de producto devuelve exit 2 con instrucciones para delegar. Los especialistas

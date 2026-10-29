@@ -21,6 +21,8 @@ def get_domain(name):
 def skill_index():
     entries = {}
     domains = manifests(True)['domains']
+    required = {skill for domain in domains for skill in domain['skills']}
+    required.update(skill for agent in manifests(True)['agents'] for skill in agent['skills'])
     for base in ['.codex/skills', '.claude/skills']:
         directory = ROOT / base
         if not directory.is_dir():
@@ -31,7 +33,9 @@ def skill_index():
                 continue
             relative = file.relative_to(ROOT).as_posix()
             if not contained(relative):
-                raise ValueError('Skill symlink rejected: ' + relative)
+                if folder.name in required:
+                    raise ValueError('Skill symlink rejected: ' + relative)
+                continue  # Ignore unrelated unsafe local skills without trusting their contents.
             content = file.read_bytes()
             head = content[:1800].decode('utf-8', errors='replace')
             description = re.search(r'description:\s*[>|]-?\r?\n((?:[ \t]+.*\r?\n?)+)', head, re.I)
@@ -47,10 +51,12 @@ def skill_index():
 def context_index():
     # Hash only bounded discovery sources, never the repository tree. Timestamp restoration cannot hide drift.
     files = [H / 'manifests/domains.json', H / 'manifests/agents.json', H / 'manifests/policies.json']
+    required = {skill for domain in manifests(True)['domains'] for skill in domain['skills']}
+    required.update(skill for agent in manifests(True)['agents'] for skill in agent['skills'])
     for base in ['.codex/skills', '.claude/skills']:
         directory = ROOT / base
         if directory.exists():
-            files += sorted(directory.glob('*/SKILL.md'))
+            files += sorted(p for p in directory.glob('*/SKILL.md') if contained(p.relative_to(ROOT).as_posix()))
     fingerprint = digest(dumps([(p.relative_to(ROOT).as_posix(), digest(p.read_bytes())) for p in files]))
     cache = H / 'runtime' / 'context-index.json'
     if cache.exists():

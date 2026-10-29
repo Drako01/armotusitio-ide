@@ -19,7 +19,7 @@
 
 ## Skills
 
-- redevent-background-jobs
+- background-jobs
 
 ## Context sources
 

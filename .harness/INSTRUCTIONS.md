@@ -28,8 +28,8 @@ Tres ideas para tener presentes:
 - Ejecutá los comandos desde la raíz del repositorio. Usá siempre la misma terminal donde instalaste las dependencias:
   si instalaste en Windows, corré `pnpm` en Windows; en WSL, `pnpm` intentará reinstalar `node_modules`.
 
-Si `pnpm` no es una opción, invocá la CLI mediante `node .harness/bootstrap.mjs <comando>` para conservar la carga de
-`.harness/.env`. La suite completa es `pnpm harness:test` (unittest Python más tests Node). `core.mjs` conserva
+Si `pnpm` no es una opción, invocá la CLI mediante `node .harness/bootstrap.mts <comando>` para conservar la carga de
+`.harness/.env`. La suite completa es `pnpm harness:test` (unittest Python más tests Node). `core.mts` conserva
 compatibilidad y pasa por el mismo bootstrap.
 
 ## 3. Flujo básico
@@ -69,7 +69,7 @@ Para especificaciones largas, usá `--file`. El contenido no pasa por la línea 
 `tasks/sources/<id>.txt` y los agentes reciben extractos con números de línea. Para leer el original por partes:
 
 ```bash
-node .harness/bootstrap.mjs source <task-id> 0 4000
+node .harness/bootstrap.mts source <task-id> 0 4000
 ```
 
 ### Paso 3. Configurar el host local y ejecutar
@@ -101,7 +101,7 @@ Después ejecutá normalmente:
 pnpm harness:execute -- <task-id>
 ```
 
-Todos los comandos `pnpm harness:*` que pasan por la CLI entran por `.harness/bootstrap.mjs`, que carga `.harness/.env`
+Todos los comandos `pnpm harness:*` que pasan por la CLI entran por `.harness/bootstrap.mts`, que carga `.harness/.env`
 antes de inicializar el motor. La precedencia es **variable del proceso/terminal > `.harness/.env` > defaults
 internos**.
 
@@ -319,7 +319,7 @@ pnpm harness:ci-gaps               # paridad CI <-> Harness (--strict: exit 1 si
 pnpm harness:agents-doc            # regenera .harness/agents/*.md desde agents.json
 pnpm harness:context -- api        # ver el contexto que recibiría un agente del dominio
 pnpm harness:tokens -- --domain api
-node .harness/bootstrap.mjs path-check repo architect package.json   # ¿este agente puede escribir ese path?
+node .harness/bootstrap.mts path-check repo architect package.json   # ¿este agente puede escribir ese path?
 ```
 
 Si cambiás `manifests/agents.json`, corré `harness:agents-doc`; `harness:check` falla si los contratos quedaron

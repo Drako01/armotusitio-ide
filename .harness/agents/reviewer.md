@@ -21,7 +21,7 @@
 
 ## Skills
 
-- redevent-grug-review
+- code-review
 
 ## Context sources
 
