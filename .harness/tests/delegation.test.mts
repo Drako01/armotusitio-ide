@@ -123,13 +123,13 @@ test("domain context lists skills by reference for the CLI context command", asy
 
 test("temporary agents count as implementers and missing role skills fail closed", async () => {
   const task = { id: "t-temp", domain: "api", task: "temporary agent" };
-  const temporary = { name: "temp-migrator", role: "implementer", skills: ["redevent-database-migrations"] };
+  const temporary = { name: "temp-migrator", role: "implementer", skills: ["database-migrations"] };
   const names = (await delegationContext(task, temporary, "temp-migrator")).skills.map((skill) => skill.name);
-  assert.equal(names[0], "redevent-database-migrations", "role skills come first");
+  assert.equal(names[0], "database-migrations", "role skills come first");
   for (const skill of (await getDomain("api")).skills) assert.ok(names.includes(skill), skill);
   await assert.rejects(
-    delegationContext(task, { ...temporary, skills: ["redevent-does-not-exist"] }, "temp-migrator"),
-    /Skill faltante: redevent-does-not-exist/,
+    delegationContext(task, { ...temporary, skills: ["missing-fixture-skill"] }, "temp-migrator"),
+    /Skill faltante: missing-fixture-skill/,
   );
 });
 
