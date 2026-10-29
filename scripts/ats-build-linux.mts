@@ -32,7 +32,7 @@ export function linuxRunArgs(arch: string, commit: string, paths: { source: stri
 		'--mount', `type=bind,source=${paths.source},target=/input/source.tar.gz,readonly`,
 		'--mount', `type=bind,source=${paths.output},target=/output`,
 		'--mount', `type=bind,source=${paths.logs},target=/logs`,
-		'--mount', `type=volume,source=ats-linux-${arch}-work,target=/work`,
+		'--mount', `type=volume,source=ats-linux-${arch}-${commit.slice(0, 16)},target=/work`,
 		'--mount', paths.cache ? `type=bind,source=${paths.cache},target=/cache` : `type=volume,source=ats-linux-cache-${arch},target=/cache`,
 		'-e', `BUILD_SOURCEVERSION=${commit}`, '-e', `ATS_LINUX_ARCH=${arch}`, image];
 }
