@@ -219,7 +219,7 @@ test("every cli.py launcher (bootstrap, Claude hook, RPC bridge) shares harnessC
       const file = path.join(dir, item.name);
       if (item.isDirectory()) {
         if (!["runtime", "node_modules", "tests", "logs", "state", "handoffs", "tasks"].includes(item.name)) walk(file);
-      } else if (item.name.endsWith(".mjs") && /"cli\.py"/.test(fs.readFileSync(file, "utf8"))) {
+      } else if (item.name.endsWith(".mts") && /"cli\.py"/.test(fs.readFileSync(file, "utf8"))) {
         launchers.push(path.relative(".harness", file).replaceAll("\\", "/"));
       }
     }
@@ -228,7 +228,7 @@ test("every cli.py launcher (bootstrap, Claude hook, RPC bridge) shares harnessC
   assert.deepEqual(launchers.sort(), ["bootstrap.mts", "hooks/guard-orchestrator.mts", "lib/bridge.mts"]);
   for (const launcher of launchers) {
     const source = fs.readFileSync(path.join(".harness", launcher), "utf8");
-    assert.match(source, /import \{[^}]*\bharnessChildEnv\b[^}]*\} from "[./]+(lib\/)?python-runtime\.mjs"/, launcher);
+    assert.match(source, /import \{[^}]*\bharnessChildEnv\b[^}]*\} from "[./]+(lib\/)?python-runtime\.mts"/, launcher);
     assert.match(source, /"-I",\s*"-S",\s*"-B",\s*"-X",\s*"utf8",/, launcher);
     const envs = source.match(/(?<![\w.])env:\s*[^\n]+/g) || [];
     assert.ok(envs.length > 0, launcher + " must pass an env");
