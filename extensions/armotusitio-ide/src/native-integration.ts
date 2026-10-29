@@ -8,6 +8,7 @@ import * as fs from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { NativeHarness, approvalDigest, type Plan } from './native-harness.ts';
 import { proposeProjectConfig, loadProjectConfig, writeProjectConfig } from './native-project.ts';
+import { reviewAgentDraft, inspectAgentWorkspace, type NativeProvider, type AgentRole } from './native-providers.ts';
 
 type Host = any; // vscode host is injected by the existing extension (avoid duplicating the UI layer).
 const sessions = new Map<string, NativeHarness>();
@@ -30,6 +31,29 @@ export function registerNativeHarness(context: Host, vscode: Host): void {
 	const ensureTrust = (): boolean => vscode.workspace.isTrusted === true;
 	const running = new Map<string, { engine: NativeHarness; taskId: string }>();
 	const showError = (e: unknown): void => { void vscode.window.showErrorMessage(`Harness nativo: ${e instanceof Error ? e.message : String(e)}`); };
+	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.nativeAgentReview', async () => {
+		try {
+			if (!ensureTrust()) { vscode.window.showWarningMessage('Workspace trust is required to prepare agents.'); return; }
+			const chosen = await choose();
+			if (!chosen) { return; }
+			const root = await fs.realpath(chosen.folder.uri.fsPath);
+			const provider = await vscode.window.showQuickPick(['codex', 'claude'], { title: 'Select AI provider (review only)' }) as NativeProvider | undefined;
+			if (!provider) { return; }
+			const role = await vscode.window.showQuickPick(['planner', 'implementer', 'reviewer'], { title: 'Select agent role' }) as AgentRole | undefined;
+			if (!role) { return; }
+			const instruction = await vscode.window.showInputBox({ title: 'Agent instruction (not submitted to the provider)', prompt: 'Describe the proposed task. No AI execution will occur.' });
+			if (!instruction) { return; }
+			const readOnly = role !== 'implementer';
+			const draft = { schemaVersion: 1 as const, provider, role, projectRoot: root, instruction, readOnly };
+			const reviewed = reviewAgentDraft(draft);
+			const inventory = await inspectAgentWorkspace(root);
+			if (!ensureTrust() || await fs.realpath(chosen.folder.uri.fsPath) !== root) { return; }
+			const preview = JSON.stringify({ review: reviewed, inventory, executionEnabled: false }, null, 2);
+			await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({ language: 'json', content: preview }), { preview: true });
+			vscode.window.showInformationMessage('Agent proposal reviewed locally. No provider was invoked.');
+		} catch (error) { showError(error); }
+	}));
+
 	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.nativeDoctor', async () => {
 		try {
 			const p = await choose(); if (!p) { return; } const report = await p.engine.diagnose();
