@@ -21,8 +21,8 @@
 
 ## Skills
 
-- redevent-tenancy-authorization
-- redevent-rbac-management
+- authorization
+- rbac-management
 
 ## Context sources
 
