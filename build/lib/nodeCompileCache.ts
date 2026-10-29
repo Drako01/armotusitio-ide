@@ -54,6 +54,7 @@ export function getNodeCompileCachePaths(platform: string, outputDirectory: stri
 export function createNodeCompileCacheGenerationEnvironment(portableDirectory: string, parentEnvironment: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
 	const env = { ...parentEnvironment };
 	delete env.ELECTRON_RUN_AS_NODE;
+	delete env.NODE_OPTIONS;
 	delete env.NODE_COMPILE_CACHE;
 	delete env.NODE_COMPILE_CACHE_PORTABLE;
 	delete env.NODE_COMPILE_CACHE_READONLY;

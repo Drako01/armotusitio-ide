@@ -44,7 +44,8 @@ node extensions/armotusitio-ide/esbuild.mts
 gulp() { node --experimental-strip-types --max-old-space-size=8192 node_modules/gulp/bin/gulp.js "$@"; }
 gulp "vscode-reh-linux-${ATS_LINUX_ARCH}-min"
 if [[ "$ATS_LINUX_ARCH" == x64 ]]; then
-    gulp vscode-linux-x64-min
+    # Electron cache generation starts a real browser process in this headless container.
+    xvfb-run -a node --experimental-strip-types --max-old-space-size=8192 node_modules/gulp/bin/gulp.js vscode-linux-x64-min
     gulp vscode-linux-x64-prepare-deb
     gulp vscode-linux-x64-build-deb
     gulp vscode-linux-x64-prepare-rpm
