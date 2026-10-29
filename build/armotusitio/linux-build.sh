@@ -36,6 +36,7 @@ dependency_fingerprint() {
 }
 
 main() {
+    if [[ "$(id -u)" -eq 0 ]]; then echo "Refusing to compile Linux desktop or launch Electron as root" >&2; exit 1; fi
     : "${BUILD_SOURCEVERSION:?A fixed source commit is required}"
     : "${ATS_LINUX_ARCH:?A Linux architecture is required}"
     [[ "$BUILD_SOURCEVERSION" =~ ^[a-f0-9]{40}$ ]]
