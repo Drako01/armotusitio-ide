@@ -26,7 +26,7 @@ test('Linux builds isolate work volumes by architecture and immutable commit', (
 
 test('Linux bootstrap extracts immutable source and installs dependencies on first use', async () => {
     const script = await readFile(path.join(root, 'build/armotusitio/linux-build.sh'), 'utf8');
-    assert.match(script, /tar -xzf "\/input\/source\.tar\.gz"/);
+    assert.match(script, /tar -xzf \/input\/source\.tar\.gz/);
     assert.match(script, /npm ci --ignore-scripts --no-audit --no-fund/);
     assert.match(script, /npm ci --no-audit --no-fund/);
     assert.match(script, /touch \/work\/dependencies-ready/);
