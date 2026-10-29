@@ -1,0 +1,123 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
+import { validateNativePlan, type Plan } from './native-harness.ts';
+
+export const PROJECT_CONFIG = '.ats-harness.json';
+export interface ProjectConfig {
+	schemaVersion: 1;
+	runtime: 'ide-native';
+	profile: 'node' | 'go' | 'php' | 'custom';
+	plan: Plan;
+}
+export interface ProjectProposal {
+	config: ProjectConfig;
+	signals: string[];
+	caveats: string[];
+	existing: boolean;
+}
+
+const MAX_CONFIG_BYTES = 64 * 1024;
+const MAX_PROJECT_FILE_BYTES = 256 * 1024;
+const SAFE_SCRIPT = /^(test|lint|check|typecheck|build)(:[a-zA-Z0-9_-]+)*$/;
+
+async function readRegular(root: string, name: string, limit: number): Promise<string | undefined> {
+	const target = path.join(root, name);
+	try {
+		const stat = await fs.lstat(target);
+		if (!stat.isFile() || stat.isSymbolicLink() || stat.size > limit) {
+			throw new Error('HARNESS_PROJECT_FILE_UNSAFE');
+		}
+		return await fs.readFile(target, 'utf8');
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+			return undefined;
+		}
+		throw error;
+	}
+}
+
+export function validateProjectConfig(value: unknown): ProjectConfig {
+	if (!value || typeof value !== 'object' || Array.isArray(value)) {
+		throw new Error('HARNESS_CONFIG_SCHEMA');
+	}
+	const config = value as ProjectConfig;
+	if (config.schemaVersion !== 1 || config.runtime !== 'ide-native' || !['node', 'go', 'php', 'custom'].includes(config.profile)) {
+		throw new Error('HARNESS_CONFIG_SCHEMA');
+	}
+	validateNativePlan(config.plan);
+	return config;
+}
+
+export async function loadProjectConfig(root: string): Promise<ProjectConfig | undefined> {
+	const canonical = await fs.realpath(root);
+	const raw = await readRegular(canonical, PROJECT_CONFIG, MAX_CONFIG_BYTES);
+	return raw === undefined ? undefined : validateProjectConfig(JSON.parse(raw));
+}
+
+export async function proposeProjectConfig(root: string): Promise<ProjectProposal> {
+	const canonical = await fs.realpath(root);
+	const existing = await loadProjectConfig(canonical);
+	if (existing) {
+		return { config: existing, existing: true, signals: [PROJECT_CONFIG], caveats: ['Existing configuration is authoritative; no overwrite'] };
+	}
+	const signals: string[] = [];
+	const caveats = ['Detected tooling is a suggestion, not a successful tool check', 'No commands or providers are invoked during detection'];
+	let profile: ProjectConfig['profile'] = 'custom';
+	let executable = 'git';
+	let args = ['--version'];
+	const packageText = await readRegular(canonical, 'package.json', MAX_PROJECT_FILE_BYTES);
+	if (packageText !== undefined) {
+		signals.push('package.json');
+		const pkg = JSON.parse(packageText) as { scripts?: Record<string, unknown> };
+		const scripts = pkg.scripts && typeof pkg.scripts === 'object' && !Array.isArray(pkg.scripts) ? pkg.scripts : {};
+		const script = ['test', 'check', 'typecheck', 'lint', 'build'].find(s => typeof scripts[s] === 'string')
+			|| Object.keys(scripts).sort().find(s => SAFE_SCRIPT.test(s) && typeof scripts[s] === 'string');
+		if (script) {
+			profile = 'node';
+			executable = 'npm';
+			args = ['run', script];
+		} else {
+			caveats.push('Node project has no recognized verification script');
+		}
+	}
+	if (profile === 'custom' && await readRegular(canonical, 'go.mod', MAX_PROJECT_FILE_BYTES) !== undefined) {
+		signals.push('go.mod');
+		profile = 'go';
+		executable = 'go';
+		args = ['test', './...'];
+	}
+	if (profile === 'custom' && await readRegular(canonical, 'composer.json', MAX_PROJECT_FILE_BYTES) !== undefined) {
+		signals.push('composer.json');
+		profile = 'php';
+		executable = 'php';
+		args = ['-v'];
+		caveats.push('php -v checks runtime availability, not project correctness');
+	}
+	if (profile === 'custom') {
+		caveats.push('Custom fallback only checks Git availability');
+	}
+	const config: ProjectConfig = { schemaVersion: 1, runtime: 'ide-native', profile, plan: { schemaVersion: 1, gates: [{ id: 'verify', executable, args, cwd: '.' }] } };
+	validateProjectConfig(config);
+	return { config, signals, caveats, existing: false };
+}
+
+export async function writeProjectConfig(root: string, config: ProjectConfig): Promise<string> {
+	validateProjectConfig(config);
+	const canonical = await fs.realpath(root);
+	const target = path.join(canonical, PROJECT_CONFIG);
+	const raw = JSON.stringify(config, null, 2) + '\n';
+	if (Buffer.byteLength(raw) > MAX_CONFIG_BYTES) {
+		throw new Error('HARNESS_CONFIG_TOO_LARGE');
+	}
+	const handle = await fs.open(target, 'wx', 0o600);
+	try {
+		await handle.writeFile(raw, 'utf8');
+	} finally {
+		await handle.close();
+	}
+	return target;
+}
