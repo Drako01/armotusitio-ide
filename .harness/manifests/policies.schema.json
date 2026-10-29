@@ -1,0 +1,236 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "contextBudget",
+    "gateTimeoutMs",
+    "agentTimeoutMs",
+    "maxRetries",
+    "outputLimitBytes",
+    "tailBytes",
+    "runnerExecutables",
+    "deniedCommands",
+    "highRiskPattern",
+    "sensitivePaths",
+    "fullChecks",
+    "generatedArtifacts",
+    "parallel"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "contextBudget": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "gateTimeoutMs": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "agentTimeoutMs": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "maxRetries": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "outputLimitBytes": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "tailBytes": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "runnerExecutables": {
+      "type": "array"
+    },
+    "deniedCommands": {
+      "type": "array"
+    },
+    "highRiskPattern": {
+      "type": "string"
+    },
+    "sensitivePaths": {
+      "type": "array"
+    },
+    "fullChecks": {
+      "type": "array"
+    },
+    "riskPipeline": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "apply": {
+          "type": "boolean"
+        },
+        "gateMs": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "disproportionMs": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "tinyDiffFiles": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "fallbackMs": {
+          "type": "object"
+        }
+      }
+    },
+    "flakyPatterns": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "flaky": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "quarantineDays": { "type": "integer", "minimum": 1 },
+        "rehabilitationPasses": { "type": "integer", "minimum": 1 },
+        "autoQuarantine": { "type": "boolean" },
+        "owner": { "type": "string", "minLength": 1 },
+        "criticalPatterns": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "generatedArtifacts": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "retention": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "failedDays": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "graceMinutes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "seedDays": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "completedLogKinds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "parallel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "maxWorkers",
+        "roleLimit",
+        "hostLimit",
+        "maxNodes",
+        "queueLimit",
+        "minUnitMs",
+        "coordinationOverheadMs",
+        "cancelGraceMs"
+      ],
+      "properties": {
+        "maxWorkers": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "autoMaxWorkers": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "roleLimit": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "hostLimit": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "maxNodes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "queueLimit": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "minUnitMs": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "coordinationOverheadMs": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "cancelGraceMs": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "gateConcurrency": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "longNodeWarningMs": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "gateCache": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "ttlSeconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "maxEntries": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "envAllowlist": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "incremental": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "escalatePaths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

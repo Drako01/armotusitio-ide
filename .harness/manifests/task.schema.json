@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://redevent.local/harness/task.schema.json",
+  "type": "object",
+  "required": ["schemaVersion", "id", "status", "task", "domain"],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "id": {
+      "type": "string",
+      "minLength": 8
+    },
+    "status": {
+      "enum": ["inbox", "active", "completed", "failed"]
+    },
+    "task": {
+      "type": "string",
+      "minLength": 1
+    },
+    "domain": {
+      "type": "string",
+      "minLength": 1
+    },
+    "dag": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "agent", "dependsOn", "status", "attempts"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Unique, filesystem-safe node id. Equals the agent for historical nodes."
+          },
+          "agent": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Agent contract that executes the node."
+          },
+          "dependsOn": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "status": {
+            "enum": ["pending", "running", "passed", "failed", "blocked"]
+          },
+          "attempts": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "unit": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Planner work unit; required when id differs from agent."
+          },
+          "kind": {
+            "enum": ["write", "external"]
+          },
+          "owns": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "description": "Exclusive ownership globs; the node may write only inside them."
+          },
+          "reads": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "weight": {
+            "type": "number",
+            "minimum": 0
+          },
+          "timeoutMs": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "runId": {
+            "type": "string"
+          },
+          "claim": {
+            "type": ["string", "null"]
+          },
+          "isolation": {
+            "type": "object"
+          },
+          "integration": {
+            "type": "object"
+          },
+          "queueMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "activeMs": {
+            "type": ["integer", "null"]
+          },
+          "failureCategory": {
+            "type": "string"
+          },
+          "conflicts": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "plan": {
+      "type": "object",
+      "description": "Planner decision (absent for the historical chain): source, parallel, units, estimate, notes, planMs."
+    },
+    "metrics": {
+      "type": "object",
+      "description": "Wall-clock evidence of the last executions: mode, workers, speedup, criticalPathMs, per-node timings."
+    }
+  },
+  "additionalProperties": true
+}

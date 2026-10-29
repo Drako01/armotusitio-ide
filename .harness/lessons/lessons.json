@@ -1,0 +1,779 @@
+{
+  "schemaVersion": 1,
+  "lessons": [
+    {
+      "id": "L001",
+      "title": "Escribir solo por ruta relativa al worktree",
+      "trigger": "security-denial",
+      "advice": "Escribe unicamente por rutas relativas al worktree de la tarea; nunca por una ruta absoluta al checkout principal, porque se detecta como escritura fuera de alcance.",
+      "appliesTo": {
+        "domains": [],
+        "agents": []
+      },
+      "severity": "high",
+      "count": 3
+    },
+    {
+      "id": "L002",
+      "title": "No crear archivos de diagnostico fuera de owns",
+      "trigger": "undeclared actual write|outside allowed scope",
+      "advice": "No crees archivos de diagnostico, scratch ni temporales fuera de las rutas de node.owns; si necesitas evidencia, citala en decisions o verification.",
+      "appliesTo": {
+        "domains": [],
+        "agents": []
+      },
+      "severity": "high",
+      "count": 2
+    },
+    {
+      "id": "L003",
+      "title": "Worktrees huerfanos rompen la higiene del verifier",
+      "trigger": "worktree|hygiene|huerfan",
+      "advice": "Los worktrees huerfanos de tareas abortadas rompen el test de higiene del verifier: limpialos con `pnpm harness:hygiene -- --prune-worktrees --yes` y no mates procesos del Harness sin limpiar despues.",
+      "appliesTo": {
+        "domains": [],
+        "agents": []
+      },
+      "severity": "medium",
+      "count": 2
+    },
+    {
+      "id": "L004",
+      "title": "Formatear con prettier el Markdown y YAML tocado",
+      "trigger": "prettier|format(?:ting)? check|lint-md",
+      "advice": "Formatea con prettier todo Markdown/YAML que toques (por ejemplo docs/api/openapi.yaml) antes de correr el verifier; solo sobre tus archivos, nunca con --write sobre todo el repositorio.",
+      "appliesTo": {
+        "domains": [],
+        "agents": []
+      },
+      "severity": "medium",
+      "count": 1
+    },
+    {
+      "id": "L005",
+      "title": "Las pruebas e2e usan la base dedicada _e2e",
+      "trigger": "_e2e|e2e_dsn|e2e dsn",
+      "advice": "Las pruebas e2e usan la base dedicada cuyo nombre termina en _e2e (REDEVENT_E2E_DSN); nunca apuntes a la base de desarrollo.",
+      "appliesTo": {
+        "domains": [],
+        "agents": [
+          "tester",
+          "backend"
+        ]
+      },
+      "severity": "high",
+      "count": 1
+    },
+    {
+      "id": "L006",
+      "title": "Una tarea no se reintenta si el workspace cambio",
+      "trigger": "workspace (?:changed|cambi)|cannot be retried|no puede reintentarse",
+      "advice": "Una tarea no puede reintentarse si el workspace cambio: crea una tarea nueva con solo lo pendiente y reutiliza lo ya generado.",
+      "appliesTo": {
+        "domains": [],
+        "agents": []
+      },
+      "severity": "medium",
+      "count": 2
+    },
+    {
+      "id": "L007",
+      "title": "Los tests de tiempo son sensibles a la carga",
+      "trigger": "timing|elapsed|flaky|demasiado lento",
+      "advice": "Los tests de tiempo del Harness son sensibles a la carga de la maquina: deja margen generoso en los umbrales y no los ajustes al limite.",
+      "appliesTo": {
+        "domains": [],
+        "agents": [
+          "tester"
+        ]
+      },
+      "severity": "low",
+      "count": 1
+    },
+    {
+      "id": "L008",
+      "title": "El tester no repara codigo de producto",
+      "trigger": "defect|defecto|bug",
+      "advice": "Si un tester descubre un defecto de codigo, lo reporta en risks; lo repara una unidad con ownership sobre ese codigo, no el tester.",
+      "appliesTo": {
+        "domains": [],
+        "agents": [
+          "tester"
+        ]
+      },
+      "severity": "medium",
+      "count": 1
+    },
+    {
+      "id": "L009",
+      "title": "Planificar con harness:plan antes de una tarea extensa",
+      "trigger": "parallel|paralelo|unit:",
+      "advice": "Planifica con `pnpm harness:plan` y confirma parallel:true antes de crear una tarea extensa; una tarea extensa se parte en unidades con ownership disjunto. Si se habilita routing de portales, actualizar la expectativa de dominios habilitados en test_impact.RoutingTests y conservar el rechazo por enabled=false; verificar ese modulo junto a los tests nuevos del router.",
+      "appliesTo": {
+        "domains": [],
+        "agents": []
+      },
+      "severity": "medium",
+      "count": 1
+    },
+    {
+      "id": "L010",
+      "title": "Los agentes no escriben en .harness/core ni .harness/tests",
+      "trigger": "[.]harness/(?:core|tests)",
+      "advice": "Los agentes delegados no pueden escribir en .harness/core ni .harness/tests: esos cambios los hace el host; reportalos en nextAction.",
+      "appliesTo": {
+        "domains": [],
+        "agents": []
+      },
+      "severity": "high",
+      "count": 2
+    },
+    {
+      "id": "L011",
+      "title": "Fixtures y medición paralela aislados del entorno local",
+      "trigger": "",
+      "advice": "Los fixtures deben fijar HARNESS_PREFLIGHT=off, HARNESS_IGNORE_ENV_FILE=1 y HARNESS_KEEP_ARTIFACTS=1 con overrides explícitos en tests dedicados. Para medir speedup en Windows usar carga simulada significativa frente al costo de worktrees, manteniendo las aserciones de concurrencia y aceleración; no debilitar el preflight real.",
+      "appliesTo": {
+        "domains": [],
+        "agents": []
+      },
+      "severity": "medium",
+      "count": 1
+    },
+    {
+      "id": "L012",
+      "title": "Incluir route handlers del proxy en owns",
+      "trigger": "",
+      "advice": "Si la spec agrega rutas al proxy de un portal, una unidad debe poseer src/app/api/proxy/**/route.ts además de la lib de reglas; si no, el tester detecta el handler incompleto (método no exportado, validación sin método/ruta) y ninguna unidad puede corregirlo.",
+      "appliesTo": {
+        "domains": [],
+        "agents": []
+      },
+      "severity": "medium",
+      "count": 1
+    },
+    {
+      "id": "L013",
+      "title": "Specs con LF antes del preflight",
+      "trigger": "",
+      "advice": "Guardá la spec con fines de línea LF: preflight normaliza CRLF y harness:run lee bytes crudos, y el recibo no coincide (falla 'no tiene preflight').",
+      "appliesTo": {
+        "domains": [],
+        "agents": []
+      },
+      "severity": "medium",
+      "count": 1
+    },
+    {
+      "id": "L014",
+      "title": "Reservar numeración de migraciones antes de editar SQL",
+      "trigger": "migration|migrations-numbering|migrations-open-prs",
+      "advice": "Antes de crear una migración ejecutar pnpm harness:migrations; considerar origin/qa y PRs abiertos. Si GitHub está offline, verificar manualmente reservas antes del PR.",
+      "appliesTo": {
+        "domains": [
+          "api"
+        ],
+        "agents": []
+      },
+      "severity": "high",
+      "count": 1
+    },
+    {
+      "id": "L015",
+      "title": "Baselines huerfanos bloquean al host y a harness:test",
+      "trigger": "",
+      "advice": "Si harness:preflight falla en el gate harness:test con 'orchestrator guard hook ... 2 !== 0', buscar .harness/runtime/*-baseline.json de tareas interrumpidas (security.py orchestrator_guard los trata como ejecucion pendiente) y locks .harness/state/*.lock cuyo PID fue reutilizado por otro proceso. Inspeccionar la evidencia, apartarla (mover, no borrar) y repetir el preflight antes de usar --no-preflight.",
+      "appliesTo": {
+        "domains": [],
+        "agents": []
+      },
+      "severity": "medium",
+      "count": 1
+    },
+    {
+      "id": "L016",
+      "title": "Preflight con dominio explicito, nunca auto, para cards de una app",
+      "trigger": "",
+      "advice": "El recibo de preflight es por dominio y 'auto' puede enrutar a repo si hay cambios en .harness/ (p. ej. lessons.json sin commitear). Para cards de una sola app usar el dominio explicito (provider-portal, backoffice, api) en preflight y en run, y registrar lecciones despues de crear la tarea o con el arbol limpio.",
+      "appliesTo": {
+        "domains": [],
+        "agents": []
+      },
+      "severity": "medium",
+      "count": 1
+    },
+    {
+      "id": "L017",
+      "title": "Specs sin harness:* ni next build para especialistas",
+      "trigger": "",
+      "advice": "No pedir en el spec que el especialista ejecute pnpm harness:verify/harness:* (escribe .harness/state/gate-cache.json, estado protegido) ni next build/dev (reescribe next-env.d.ts): ambas son violaciones de scope y la tarea no se reabre. El especialista valida con typecheck, lint y test:critical; build y verify los hacen los gates del verifier.",
+      "appliesTo": {
+        "domains": [],
+        "agents": []
+      },
+      "severity": "medium",
+      "count": 1
+    },
+    {
+      "id": "L018",
+      "title": "Consultar reservas actuales antes de renumerar migraciones",
+      "trigger": "migracion|migration",
+      "advice": "Antes de crear o renumerar migraciones ejecutar node .harness/core.mjs migrations next, actualizar origin/qa y consultar PR abiertos. Una reserva nueva en qa puede invalidar la numeracion de una etapa pendiente. Renumerar SOLO las migraciones propias sin aplicar, conservando su orden de dependencias; actualizar referencias y declarar por separado rutas viejas/nuevas. No integrar qa sobre archivos locales con el mismo numero ni eliminar contenido.",
+      "appliesTo": {
+        "agents": [
+          "backend",
+          "tester"
+        ],
+        "domains": [
+          "api"
+        ]
+      },
+      "severity": "high",
+      "count": 1
+    },
+    {
+      "id": "L019",
+      "title": "En Windows nunca usar os.kill(pid,0) para probar liveness",
+      "trigger": "KeyboardInterrupt|checkpoint|interrump",
+      "advice": "En Windows signal 0 equivale a CTRL_C_EVENT: os.kill(pid,0) puede interrumpir la consola y el propio Harness. Reutilizar core.state.alive (OpenProcess sin senales) y rechazar PID nulo/no positivo. Probar que no se invoca os.kill. Ante interrupciones repetidas capturar traceback antes de reintentar; no atribuirlas a cuota o concurrencia sin evidencia.",
+      "appliesTo": {
+        "agents": [],
+        "domains": []
+      },
+      "severity": "high",
+      "count": 1
+    },
+    {
+      "id": "L020",
+      "title": "Renumerar una migracion ya aplicada localmente deja huerfano el version id viejo",
+      "trigger": "checksum mismatch|migration \\d+ checksum",
+      "advice": "Si una migracion local se renumera (p.ej. 000031_x -> 000034_x) despues de haberse aplicado ya en una base de desarrollo, schema_migrations sigue teniendo la fila con el version id viejo y choca con el nuevo contenido que qa reservo para ese numero. No borrar la fila ni resetear la base: demostrar la equivalencia exacta comparando el checksum SHA-256 de la fila existente contra el checksum del archivo renombrado (deben coincidir byte a byte); si coinciden, es la misma migracion con otro numero. Reconciliar SOLO esa fila con un UPDATE schema_migrations SET version=<nuevo> WHERE version=<viejo> AND checksum=<coincidente>, dentro de una transaccion, y despues dejar que el bootstrap normal aplique las migraciones realmente pendientes que quedaron liberadas en el numero viejo. Confirmar antes que exista un backup valido (pg_restore --list) de una version de pg_restore compatible con la version del servidor que genero el dump. Nunca desactivar la validacion de checksums ni forzar la migracion sobre un esquema incompatible.",
+      "appliesTo": {
+        "domains": [
+          "api"
+        ],
+        "agents": []
+      },
+      "severity": "high",
+      "count": 1
+    },
+    {
+      "id": "L021",
+      "title": "golangci-lint debe quedar fijado a la version exacta que usa CI",
+      "trigger": "golangci-lint|staticcheck|SA1019|lint.*version",
+      "advice": "CI fija golangci-lint a una version exacta (ver .github/workflows/ci.yml, step 'Run golangci-lint', input version: vX.Y). Instalar localmente @latest trae una version mas nueva con reglas de staticcheck distintas (por ejemplo nuevas deprecaciones SA1019) que puede marcar como fallo algo que CI nunca marcaria, en archivos que la tarea en curso ni toco. Antes de confiar en un fallo de golangci-lint local, comparar `golangci-lint version` contra el pin de CI y reinstalar con `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@<version-de-CI>` si no coincide. Nunca editar un archivo fuera del scope de la tarea para silenciar un hallazgo que resulta ser solo deriva de version de la herramienta.",
+      "appliesTo": {
+        "domains": [
+          "api"
+        ],
+        "agents": []
+      },
+      "severity": "high",
+      "count": 1
+    },
+    {
+      "id": "L022",
+      "title": "HygieneTests lee el registro global de worktrees, no el fixture aislado",
+      "trigger": "leftover-worktree|HygieneTests|list_registry",
+      "advice": "test_core.HygieneTests.test_main_json_report_and_dry_run_output (y cualquier test que llame hygiene.report()/hygiene.main() sin pasar un root) usa internamente worktree.list_registry(), que lee el registro real en .harness/runtime/worktrees/*.json del checkout vigente, NO el root aislado que crea el fixture() del test. Si la sesion en curso tiene intentos reintentados/abortados de una tarea real (por ejemplo despues de varios host-quota), sus entradas de registro contaminan este test aunque corra dentro de un fixture, y lo hacen fallar con findings 'leftover-worktree' inesperados que no tienen nada que ver con el cambio que se esta verificando. No es una regresion de producto: antes de declarar fallo real, correr `pnpm harness:hygiene -- --json` y comparar el resumen contra uno limpio. Si aparecen 'leftover-worktree' de una tarea activa con intentos ya superados (el nodo paso en un intento posterior), `git worktree remove --force <path>` cada worktree abandonado (confirmar antes con `git worktree list` que esta en la misma base que HEAD y no tiene commits propios) y borrar a mano el JSON de registro correspondiente en .harness/runtime/worktrees/ (hygiene --prune-worktrees se niega a tocar estos mientras la tarea siga activa, por diseno). Correccion real pendiente para otra tarea: hygiene.report()/main() deberian aceptar un root inyectable (o list_registry() deberia poder apuntar a un directorio de registro parametrizado) para que HygieneTests quede genuinamente aislado del checkout real; hasta entonces, limpiar el registro real antes de confiar en un fallo de este test.",
+      "appliesTo": {
+        "domains": [],
+        "agents": []
+      },
+      "severity": "medium",
+      "count": 1
+    },
+    {
+      "id": "L023",
+      "title": "Editar cualquier archivo del checkout principal mientras un execute esta activo corrompe el nodo en curso",
+      "trigger": "security-denial|Actual write outside allowed scope|Unresolved scope violation|workspace.lock",
+      "advice": "snapshot() en .harness/core/snapshot.py escanea TODO el repo principal (git ls-files cached+others+ignored), no el worktree aislado del nodo. Cualquier escritura del host al checkout principal (editar .harness/core/*.py, .harness/.env, o incluso un side-effect de herramientas propias como el lock de ScheduleWakeup en .claude/scheduled_tasks.lock) mientras un execute esta corriendo se le atribuye por error al nodo activo como security-denial (\"Actual write outside allowed scope\"), descartando minutos u horas de trabajo real del agente. Ademas, una vez detectado un scope violation no contenido (contained=False), snapshot.py guarda un restoration latch persistente que exige que el archivo vuelva EXACTO al antes del intento (verify_scope_restoration) antes de aceptar cualquier retry nuevo; si el archivo violado era codigo propio del agente ya integrado de un intento anterior exitoso, revertirlo significa perder ese trabajo. Correccion de proceso (nunca de codigo salvo que el usuario lo autorice aparte): antes de llamar a ScheduleWakeup, Edit/Write sobre .harness/** o cualquier archivo de apps/**/packages/**, verificar que .harness/state/workspace.lock no exista o pertenezca a un PID muerto. Si hay un execute activo, esperar a que termine (sleep-poll sobre el lock o sobre el log) y recien ahi tocar archivos. Para notificaciones periodicas durante una ejecucion activa, preferir un wait bloqueante sobre un marcador de archivo/log en lugar de ScheduleWakeup, ya que ScheduleWakeup escribe su propio lock de estado en el checkout.",
+      "appliesTo": {
+        "domains": [],
+        "agents": []
+      },
+      "severity": "high",
+      "count": 1
+    },
+    {
+      "id": "drako_20261018121619",
+      "title": "Windows no puede correr go test -race (falta gcc/cgo)",
+      "trigger": "-race|cgo|gcc.*not found|data race",
+      "advice": "Usar 'docker run --rm --network host -v \"F:/redevent:/repo\" -w /repo/apps/api -e CGO_ENABLED=1 -e REDEVENT_E2E_DSN=... golang:1.27 go test -race ...' para reproducir localmente lo que corre go-race/go-e2e-race en CI antes de pushear.",
+      "appliesTo": {
+        "domains": [],
+        "agents": []
+      },
+      "severity": "medium",
+      "count": 1
+    },
+    {
+      "id": "drako_20261018121620",
+      "title": "leftover-worktree de hygiene viene del registro .harness/runtime/worktrees, no de git worktree list",
+      "trigger": "leftover-worktree|baseline-gates|verify-enterprise.*security.*FAIL",
+      "advice": "Para tareas failed (no completed/aborted) harness:hygiene no las poda automaticamente. El host puede marcar aborted:{at,reason} directo en .harness/tasks/failed/<id>.json (estado operacional, permitido) y despues correr harness:hygiene -- --prune-worktrees --yes.",
+      "appliesTo": {
+        "domains": [],
+        "agents": []
+      },
+      "severity": "medium",
+      "count": 1
+    },
+    {
+      "id": "drako_20261018121621",
+      "title": "Varios checks de CI fallan en segundos simultaneamente en jobs no relacionados",
+      "trigger": "payments have failed|spending limit|billing",
+      "advice": "Antes de asumir un error de codigo, revisar las annotations del run (gh run view <id>): puede ser un corte de facturacion/billing de GitHub Actions a nivel cuenta ('recent account payments have failed'), no un fallo real. Confirmar con el usuario y re-lanzar con gh run rerun --failed una vez resuelto.",
+      "appliesTo": {
+        "domains": [],
+        "agents": []
+      },
+      "severity": "medium",
+      "count": 1
+    },
+    {
+      "id": "drako_20261018152848",
+      "title": "Un control de auth que fuerza un paso al usuario debe entregarse con su UI en todos los portales",
+      "trigger": "",
+      "advice": "Si el backend obliga enrolamiento/challenge (p.ej. MFA obligatorio), el mismo PR debe incluir la pantalla que lo completa en backoffice, ventas y prestadores y una prueba del flujo completo; mergear solo el backend dejo a platform_admin sin poder loguearse (RED-001-205).",
+      "appliesTo": {
+        "domains": [],
+        "agents": []
+      },
+      "severity": "high",
+      "count": 1
+    },
+    {
+      "id": "drako_20261018152855",
+      "title": "Tests e2e nuevos hay que sumarlos a verify-enterprise.sh y correr lint en cada paquete tocado",
+      "trigger": "",
+      "advice": "verify-enterprise.sh filtra el e2e de identity con -run explicito: un test nuevo no se certifica hasta agregarlo ahi (con chequeo de SKIP/PASS). Ademas correr eslint en packages/ui y golangci-lint en apps/api antes de subir; typecheck no alcanza (set-state-in-effect, ineffassign).",
+      "appliesTo": {
+        "domains": [],
+        "agents": []
+      },
+      "severity": "medium",
+      "count": 1
+    },
+    {
+      "id": "drako_20261018191504",
+      "title": "El bootstrap repo de una tarea multi puede trabarse si su tester/reviewer no pasa trivial ante diff vacio",
+      "trigger": "",
+      "advice": "Cuando harness:run auto agrega un dominio repo como bootstrap de una tarea multi, sus hijos de dominio dependen de que el bootstrap llegue a PASS. Si el bootstrap no tiene cambios reales, su tester/reviewer puede razonar correctamente que no hay nada que verificar pero reportarse 'blocked' esperando a que los hermanos terminen -- y los hermanos nunca arrancan porque dependen del bootstrap. Deadlock silencioso: cada execute reintenta el mismo nodo indefinidamente. Diagnostico: tras 1-2 ejecuciones los hijos de dominio siguen en pending con dag vacio; leer el ultimo handoff del bootstrap (tester/reviewer) buscando 'nada que revisar todavia' o 'el host debe lanzar los tasks pendientes'. Solucion: si el bootstrap genuinamente no tiene diff y los hermanos ya tenian el trabajo resuelto en un PR previo (confirmarlo con el propio handoff del reviewer), abortar la tarea multi completa (el abort de un parent cierra sus children activos, no deja huerfanos) y recrear como tareas de dominio simple enfocadas solo en lo que realmente falta.",
+      "appliesTo": {
+        "domains": [],
+        "agents": []
+      },
+      "severity": "high",
+      "count": 1
+    },
+    {
+      "id": "drako_20261018213332",
+      "title": "Scope violations por binario de air en apps/api/tmp (resuelto en codigo, no solo con una lesson)",
+      "trigger": "",
+      "advice": "El binario regenerado por 'air' (apps/api/tmp/air/redevent-api.exe) esta gitignored pero no estaba exento del snapshot del Harness, por lo que correr 'make run' con air mientras un execute estaba activo lo marcaba como escritura fuera de alcance y descartaba trabajo real. Una lesson de texto no evita esto porque el proceso de air no la lee: la correccion real fue agregar apps/api/tmp/air/.+ a la regex EPHEMERAL de .harness/core/snapshot.py. Regla de proceso que SI aplica: nunca correr servidores locales (next dev, make run/air) mientras un harness:execute esta activo; si ya corrio y genero una scope violation por un artefacto de build no fuente, preferir extender EPHEMERAL en snapshot.py (cuando el archivo es gitignored y no es codigo fuente) en vez de solo anotar una lesson de texto.",
+      "appliesTo": {
+        "domains": [],
+        "agents": []
+      },
+      "severity": "high",
+      "count": 1
+    },
+    {
+      "id": "drako_20261018213353",
+      "title": "Verificar el estado de una tarea antes de reintentarla o relanzar su execute",
+      "trigger": "",
+      "advice": "Varias veces esta sesion se corrio pnpm harness:execute sobre una tarea sin chequear antes .harness/state/<id>.json (status, nextStep, scopeViolation): esto repitio ejecuciones completas (implementer/tester/reviewer/security-auditor) sobre trabajo que ya estaba hecho o que necesitaba un abort en vez de un retry, gastando tokens y tiempo real. Antes de harness:execute, harness:retry o de relanzar una cadena en background sobre una tarea existente, leer primero su JSON de estado (status, nextStep, scopeViolation, metrics.nodes) y decidir la accion minima necesaria (retomar, retry, o abort+verificar directo) en vez de asumir y relanzar.",
+      "appliesTo": {
+        "domains": [],
+        "agents": []
+      },
+      "severity": "medium",
+      "count": 1
+    },
+    {
+      "id": "drako_20261019203012",
+      "title": "Reanudar con el host nativo instalado",
+      "trigger": "",
+      "advice": "En Windows, bash puede resolver a WSL y encontrar el wrapper npm de Codex sin codex-linux-x64. Verificar codex --version en el entorno elegido; si Codex esta instalado en Windows, ejecutar el Harness desde PowerShell y transferir las variables de prueba sin imprimir valores.",
+      "appliesTo": {
+        "domains": [],
+        "agents": []
+      },
+      "severity": "medium",
+      "count": 1
+    },
+    {
+      "id": "drako_20261019205614",
+      "title": "No bloquear un ownership por hallazgos de otro nodo",
+      "trigger": "",
+      "advice": "Un nodo reabierto por feedback debe corregir solo los hallazgos dentro de owns y reportar lo no aplicable sin bloquear por un defecto de otro writer. Si golangci-lint informa no go files pero go list reconoce los paquetes, diagnosticar cwd, GOCACHE, GOLANGCI_LINT_CACHE y entorno; conservar los PASS previos y no declararlos invalidados sin impacto demostrado.",
+      "appliesTo": {
+        "domains": [],
+        "agents": []
+      },
+      "severity": "medium",
+      "count": 1
+    },
+    {
+      "id": "drako_20261019212516",
+      "title": "Consolidar verificacion final despues de completar scripts de certificacion",
+      "trigger": "",
+      "advice": "Si una continuacion API depende de extender verificadores fuera de su ownership, planificar primero todos los writers y ejecutar una sola certificacion integrada posterior. Conservar resultados de pruebas/reviewer/security validos y no contar como PASS un verifier interrumpido. En este entorno verify-enterprise bajo runner Windows quedo sin subprocesos de herramientas ni reportes por varios minutos; diagnosticar lifecycle/watchdog al extenderlo.",
+      "appliesTo": {
+        "domains": [],
+        "agents": []
+      },
+      "severity": "medium",
+      "count": 1
+    },
+    {
+      "id": "drako_20261019215015",
+      "title": "Comprobar el motor S3 real y la disponibilidad de la imagen",
+      "trigger": "",
+      "advice": "El nombre TestS3StoreAgainstMinIO y el alias red130-s3 no prueban que el servicio sea MinIO: inspeccionar Config.Image y registrar el motor real. Aqui era RustFS. Cuando el criterio exige MinIO, certificar contra MinIO real. Verificar manifests antes de fijar imagen; si la release oficial pide compilar fuente, usar release/commit fijado y no una etiqueta remota inexistente.",
+      "appliesTo": {
+        "domains": [],
+        "agents": []
+      },
+      "severity": "medium",
+      "count": 1
+    },
+    {
+      "id": "drako_20261019215958",
+      "title": "Enviar correccion mediante un handoff de dependencia estable",
+      "trigger": "",
+      "advice": "task.feedback con el mismo nodo writer no entrega su handoff previo: execute_node incrementa attempts antes de resolver handoff_name, por lo que busca el intento actual aun inexistente. Para nueva evidencia del host, usar una spec explicita en una tarea acotada o un handoff de dependencia estable; nunca asumir que el writer recibio feedback sin verificar el prompt/resultado.",
+      "appliesTo": {
+        "domains": [],
+        "agents": []
+      },
+      "severity": "medium",
+      "count": 1
+    },
+    {
+      "id": "drako_20261020094752",
+      "title": "El preflight autenticado debe completar MFA real",
+      "trigger": "",
+      "advice": "La certificacion performance fallo tras 66 PASS porque esperaba access_token directo del login de platform_admin. El runner debe seguir seleccion/MFA/enrolamiento contra su API y DB efimeras, luego usar la credencial trust_device de un solo uso con User-Agent consistente para el probe de login. Nunca desactivar MFA, resetear factores externos ni marcar el gate PASS con challenge en lugar de sesion.",
+      "appliesTo": {
+        "domains": [],
+        "agents": []
+      },
+      "severity": "medium",
+      "count": 1
+    },
+    {
+      "id": "drako_20261020095127",
+      "title": "Escribir specs del Harness con LF y UTF-8 sin BOM",
+      "trigger": "",
+      "advice": "En Windows, preflight normaliza CRLF al leer texto pero run calcula el recibo desde bytes. Una spec escrita con Set-Content CRLF puede producir ready=true y luego Esta tarea no tiene preflight. Normalizar el archivo a LF UTF-8 sin BOM y repetir preflight; no omitirlo ni modificar hashes para forzar el recibo.",
+      "appliesTo": {
+        "domains": [],
+        "agents": []
+      },
+      "severity": "medium",
+      "count": 1
+    },
+    {
+      "id": "drako_20261020142502",
+      "title": "Preparar temporales y herramientas antes del gate nativo",
+      "trigger": "",
+      "advice": "En Windows, verificar espacio libre del volumen TEMP/TMP y resolver golangci-lint/govulncheck desde GOPATH/bin antes del gate autoritativo. Si C: no alcanza el umbral de worktrees, usar TEMP/TMP, HARNESS_WORKTREE_DIR y cache de lint en el volumen de trabajo; nunca relajar el umbral ni borrar datos del usuario. Formatear probes JS con Prettier antes de declarar PASS.",
+      "appliesTo": {
+        "domains": [],
+        "agents": []
+      },
+      "severity": "medium",
+      "count": 1
+    },
+    {
+      "id": "claude_20261019152159",
+      "title": "Specs de solo documentacion van con dominio docs, no repo",
+      "trigger": "",
+      "advice": "El dominio repo (agente architect) no permite escribir docs/**: una spec de runbooks o docs/security corre con 'harness:run -- docs' (agente documentation). Con repo la tarea termina en failed por scope violation aunque el contenido sea correcto, y el latch exige restaurar el workspace exacto antes de reintentar.",
+      "appliesTo": {
+        "domains": [],
+        "agents": []
+      },
+      "severity": "medium",
+      "count": 1
+    },
+    {
+      "id": "claude_20261019153210",
+      "title": "El tester no lanza harness:verify en segundo plano",
+      "trigger": "",
+      "advice": "No ejecutes 'pnpm harness:verify' ni el verify-enterprise.sh en segundo plano ni los dejes pendientes: tardan mas que el timeout de herramienta y el tester termina en blocked. Los gates autoritativos los corre el verifier; el tester usa solo comprobaciones acotadas (prettier --check, go test dirigido) y reporta passed si el contenido es correcto.",
+      "appliesTo": {
+        "domains": [],
+        "agents": []
+      },
+      "severity": "medium",
+      "count": 1
+    },
+    {
+      "id": "claude_20261019153516",
+      "title": "Specs de docs: validacion acotada, sin harness:verify",
+      "trigger": "",
+      "advice": "En la seccion Validacion de una spec de documentacion pedi solo prettier --check y enlaces; si pedis harness:verify el tester lo lanza en segundo plano, queda blocked y se repite el bloqueo en cada reintento.",
+      "appliesTo": {
+        "domains": [],
+        "agents": []
+      },
+      "severity": "medium",
+      "count": 1
+    },
+    {
+      "id": "claude_20261019194253",
+      "title": "Revalidar el numero de migracion antes de publicar el PR",
+      "trigger": "",
+      "advice": "harness:migrations devolvio openPrs vacio aunque otro PR abierto reservaba el mismo numero y qa lo integro antes de mi merge: la rama quedo con dos migraciones 000037 y el job Go PostgreSQL E2E de CI fallo sin mostrar el test. Antes de abrir el PR: git fetch, rebasar sobre origin/qa y correr pnpm harness:migrations; si hay colision, renumerar. Si el preflight bloquea por esa colision, la tarea de renumeracion necesita --no-preflight aprobado por el usuario.",
+      "appliesTo": {
+        "domains": [],
+        "agents": []
+      },
+      "severity": "medium",
+      "count": 1
+    },
+    {
+      "id": "drako_20261020152318",
+      "title": "Comprobar Gitleaks real antes de publicar fixtures de autenticacion",
+      "trigger": "",
+      "advice": "La politica local de nombres de archivos sensibles no equivale al escaneo de contenido de CI. Antes de publicar fixtures TOTP o tokens, ejecutar la misma version/configuracion y rango de Gitleaks con --redact. Un vector publico puede exceptuarse por declaracion literal anclada; nunca excluir todo el archivo. Probar que otro valor, incluso junto al fixture, siga detectandose. Un EPERM de Prettier sobre temporales previos requiere distinguir permisos del entorno y verificar el comando real con acceso autorizado; no declararlo defecto de formato.",
+      "appliesTo": {
+        "domains": [],
+        "agents": []
+      },
+      "severity": "medium",
+      "count": 1
+    },
+    {
+      "id": "claude_20261022023330",
+      "title": "Verificar que existe lo que la spec manda reutilizar",
+      "trigger": "",
+      "advice": "Antes de escribir 'reutilizar el mecanismo X' en una spec, buscar X con grep dentro del dominio destino. Si no existe, la spec debe pedir construirlo (con su contrato) y no asumirlo: el especialista se bloquea con razon cuando la premisa es falsa. Ejemplo: el backoffice no tenia ningun flujo de subida de archivos aunque la API si.",
+      "appliesTo": {
+        "domains": [],
+        "agents": []
+      },
+      "severity": "medium",
+      "count": 1
+    },
+    {
+      "id": "claude_20261022023331",
+      "title": "Base e2e local con btree_gist preinstalada",
+      "trigger": "",
+      "advice": "La migracion 31 hace CREATE EXTENSION IF NOT EXISTS btree_gist y varios paquetes de test migran en paralelo la misma base: sin la extension ya instalada compiten y fallan con 'operator class concurrently dropped'. Antes de usar una base *_e2e local ejecutar una vez CREATE EXTENSION btree_gist en ella, y asi el gate base de preflight no se bloquea.",
+      "appliesTo": {
+        "domains": [],
+        "agents": []
+      },
+      "severity": "medium",
+      "count": 1
+    },
+    {
+      "id": "claude_20261022023333",
+      "title": "No nombrar otras cards en PR ni commits, tampoco en fuera de alcance",
+      "trigger": "",
+      "advice": "La automatizacion del tablero pasa a Done toda card cuya clave aparezca en un PR que se mergea, aunque solo se la mencione como pendiente o futura. Antes de gh pr create correr grep -o RED-001-[0-9]* sobre titulo y cuerpo y dejar solo la clave propia; despues del merge verificar por MCP que ninguna otra card se haya movido y devolverla a su columna si paso.",
+      "appliesTo": {
+        "domains": [],
+        "agents": []
+      },
+      "severity": "high",
+      "count": 1
+    },
+    {
+      "id": "claude_20261022023334",
+      "title": "Lanzar harness:execute con el background de la herramienta",
+      "trigger": "",
+      "advice": "Un harness:execute lanzado con & dentro de un subshell muere al terminar la llamada de shell y no avisa al terminar. Usar siempre run_in_background de la herramienta para recibir la notificacion; si se interrumpio, harness:resume retoma la misma tarea con el trabajo ya escrito.",
+      "appliesTo": {
+        "domains": [],
+        "agents": []
+      },
+      "severity": "medium",
+      "count": 1
+    },
+    {
+      "id": "claude_20261022023336",
+      "title": "Acotar go test en specs de api y reanudar si no confirma",
+      "trigger": "",
+      "advice": "En tareas del dominio api pedir go test de los paquetes tocados y de internal/app con la base e2e, no go test ./... completo: el especialista puede quedar sin confirmar la corrida final y bloquearse aunque el codigo este bien. Si pasa, revisar el arbol y reanudar con harness:resume en vez de rehacer la tarea.",
+      "appliesTo": {
+        "domains": [],
+        "agents": []
+      },
+      "severity": "low",
+      "count": 1
+    },
+    {
+      "id": "drako_20261024011437",
+      "title": "Exportar HARNESS_HOST al lanzar drivers propios",
+      "trigger": "",
+      "advice": "Los drivers .py de tarea no leen .harness/.env; sin HARNESS_HOST exportado (claude o codex) el primer nodo queda blocked sin escribir nada.",
+      "appliesTo": {
+        "domains": [],
+        "agents": []
+      },
+      "severity": "medium",
+      "count": 1
+    },
+    {
+      "id": "drako_20261024011439",
+      "title": "Partir tareas de portal grandes en unidades con unit:",
+      "trigger": "",
+      "advice": "Un solo agente sobre todo el portal agota el timeout sin escribir. Dividir por archivos con unit:, y dejar locales y tests en una unidad final con after= para no serializar las demas por ownership solapado.",
+      "appliesTo": {
+        "domains": [],
+        "agents": []
+      },
+      "severity": "medium",
+      "count": 1
+    },
+    {
+      "id": "drako_20261025221816",
+      "title": "Cambios en packages/** requieren unit: agent=architect en dominio repo",
+      "trigger": "",
+      "advice": "El dominio repo (architect) solo hace bootstrap raiz: sin lineas unit: con owns=packages/ui/** el architect responde sin cambios y el tester queda blocked porque no hay implementer. Para editar packages/ui declarar unit: <id> | agent=architect | owns=packages/ui/<subruta>/** (ownership disjunto) y lanzar con harness:run repo --file. En un multi (auto) el child repo se trata como bootstrap y bloquea a las apps: separar packages/ui en una tarea repo previa y luego los portales en otra.",
+      "appliesTo": {
+        "domains": [],
+        "agents": []
+      },
+      "severity": "high",
+      "count": 1
+    },
+    {
+      "id": "claude_20261021181430",
+      "title": "Spec que mezcla .github y docs/README: dividir en dos tareas por dominio",
+      "trigger": "",
+      "advice": "Con dominio auto el planner rechaza units fuera de los paths del dominio (docs no cubre .github/**; infra no cubre docs/**). Una card que toca .github/CODEOWNERS y SECURITY.md/docs va en dos tareas: harness:run docs (md/docs) e infra (.github), cada una con su spec LF y criterios de aceptacion. No incluir harness:verify en el spec ni lanzarlo en foreground desde el host: --full tarda ~30 min.",
+      "appliesTo": {
+        "domains": [],
+        "agents": []
+      },
+      "severity": "medium",
+      "count": 1
+    },
+    {
+      "id": "claude_20261024141329",
+      "title": "El tester no cierra su turno con go test en segundo plano",
+      "trigger": "",
+      "advice": "Ejecutar go test ./internal/app en primer plano (con timeout largo) y reportar su resultado en verification; si termina el turno con una corrida pendiente el nodo queda blocked y bloquea al reviewer.",
+      "appliesTo": {
+        "domains": [],
+        "agents": []
+      },
+      "severity": "medium",
+      "count": 1
+    },
+    {
+      "id": "claude_20261024214700",
+      "title": "Cards de QA por errores: pedir usuario/rol/ambiente antes de delegar",
+      "trigger": "",
+      "advice": "Si la card reporta un 404 de detalle con listado visible y deja usuario, rol y ambiente sin completar, el especialista no puede reproducir el sintoma real y termina arreglando otra inconsistencia. Pedir esos datos al responsable (o el permiso/scope efectivo del principal) antes de lanzar harness:execute, y exigir en el spec que la causa raiz del sintoma reportado se reproduzca con un test o se declare no reproducida.",
+      "appliesTo": {
+        "domains": [],
+        "agents": []
+      },
+      "severity": "medium",
+      "count": 1
+    },
+    {
+      "id": "claude_20261025010834",
+      "title": "Verifier cortado por tope de 2400s en maquinas lentas con Windows",
+      "trigger": "",
+      "advice": "En Windows con carga, verify-enterprise.sh --security puede superar el tope global de 2400s y cortar el ultimo gate (golangci-lint) sin que haya fallo de codigo; ademas el triage del Harness puede caerse con WinError 145 al borrar su copia temporal en node_modules. No reiniciar la tarea: harness:retry sobre la tarea fallida y relanzar harness:execute con REDEVENT_VERIFY_TIMEOUT_SECONDS=0, con el checkout quieto. harness:resume vuelve a juzgar todos los nodos en planes historicos sin ownership por unidad; preferir retry.",
+      "appliesTo": {
+        "domains": [],
+        "agents": []
+      },
+      "severity": "medium",
+      "count": 1
+    },
+    {
+      "id": "claude_20261026142215",
+      "title": "La spec de un dominio no debe citar rutas de otro dominio",
+      "trigger": "",
+      "advice": "Si el contexto de la spec menciona archivos de otro dominio (p. ej. apps/provider-portal desde backoffice) el especialista los edita y la tarea termina failed por scope. Una spec por dominio: citar el otro dominio solo como 'se corrige en otra tarea, no tocar'.",
+      "appliesTo": {
+        "domains": [],
+        "agents": []
+      },
+      "severity": "medium",
+      "count": 1
+    },
+    {
+      "id": "drako_20261026141657",
+      "title": "Smoke Windows: separar disponibilidad del host de permisos del fixture",
+      "trigger": "",
+      "advice": "Un smoke puede ejecutar writer y reviewer correctamente y fallar luego en verifier por PermissionError al leer el artefacto temporal. Registrar esos estados exactos; no llamarlo cuota ni PASS. Ejecutar desde entorno con permisos adecuados y usar preflight real, sin relajar gates.",
+      "appliesTo": {
+        "domains": [],
+        "agents": []
+      },
+      "severity": "medium",
+      "count": 1
+    },
+    {
+      "id": "drako_20261026144846",
+      "title": "Preflight Windows: verificar herramientas antes del gate caro",
+      "trigger": "",
+      "advice": "Antes de un preflight no trivial, resolver govulncheck y golangci-lint con las versiones fijadas en CI/Docker y el toolchain de go.mod; un verificador con SKIP devuelve SKIPPED_ENVIRONMENT y obliga a repetir el gate agregado. No convertir skips en PASS ni relajar lint; conservar scanners como advisory.",
+      "appliesTo": {
+        "domains": [],
+        "agents": []
+      },
+      "severity": "medium",
+      "count": 1
+    },
+    {
+      "id": "drako_20261026144859",
+      "title": "CIM no reconstruye por completo arboles MSYS",
+      "trigger": "",
+      "advice": "En Windows, el parentesco CIM de Git Bash puede omitir sh/pnpm y sus hijos aun cuando la suite sigue viva. Antes de cancelar por supuesto bloqueo, buscar tambien comandos exactos del repo/fixture y nuevas fechas de procesos o logs; no inferir inactividad solo de un arbol CIM incompleto.",
+      "appliesTo": {
+        "domains": [],
+        "agents": []
+      },
+      "severity": "medium",
+      "count": 1
+    },
+    {
+      "id": "claude_20261026190313",
+      "title": "Correr pnpm format:check antes del PR en tareas de portal",
+      "trigger": "",
+      "advice": "El verifier del Harness no ejecuta format:check y los archivos nuevos del especialista pueden salir sin formatear; correr pnpm format:check antes del commit y formatear solo los archivos listados con prettier --write.",
+      "appliesTo": {
+        "domains": [],
+        "agents": []
+      },
+      "severity": "medium",
+      "count": 1
+    },
+    {
+      "id": "claude_20261026193628",
+      "title": "Correr test:critical despues de formatear con prettier",
+      "trigger": "",
+      "advice": "Los tests estaticos de apps/backoffice comparan el texto del codigo con regex; prettier --write puede partir lineas y romperlos aunque el verifier haya pasado antes. Tras formatear, volver a correr pnpm --dir apps/backoffice test:critical y escribir las regex tolerantes a espacios (\\\\s*) entre tokens.",
+      "appliesTo": {
+        "domains": [],
+        "agents": []
+      },
+      "severity": "medium",
+      "count": 1
+    },
+    {
+      "id": "claude_20261026214317",
+      "title": "No partir en unidades una tarea cuyos tests cruzan unidades",
+      "trigger": "",
+      "advice": "Si el test de una unidad exige archivos de otra (por ejemplo claves de idioma que usan los componentes), declararlas como unidades con after= deja la primera bloqueada por su gate y la tarea sin salida. Dejar ese trabajo en una sola unidad o asignar el archivo compartido a la unidad que lo prueba. Si el preflight pide unidades y no hay ownership realmente disjunto, responder --answers large-without-units=Ejecutar secuencial a propósito. Si la linea base falla por el test que la propia tarea corrige, harness:run requiere --no-preflight y debe informarse.",
+      "appliesTo": {
+        "domains": [],
+        "agents": []
+      },
+      "severity": "medium",
+      "count": 1
+    }
+  ]
+}
