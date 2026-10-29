@@ -12,6 +12,7 @@ const { registerMcp } = require('./src/mcp.ts');
 const { registerChat } = require('./src/chat.ts');
 const { readProvider, selectProvider } = require('./src/provider.ts');
 const { sortActivity } = require('./src/adapter.ts');
+const { registerNativeHarness } = require('./src/native-integration.ts');
 const repeatActions = ['check', 'verify', 'test'];
 
 async function projects() {
@@ -188,6 +189,7 @@ async function reviewPlan() {
 }
 function activate(context) {
 	const controller = new Controller(context);
+	registerNativeHarness(context, vscode);
 	integrations.register(context, projects);
 	registerHome(context, controller, projects);
 	registerActivity(context, controller, projects, vscode);

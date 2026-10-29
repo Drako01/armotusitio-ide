@@ -104,6 +104,12 @@
       ]
     },
     "commands": [
+      { "command": "atsHarness.nativeDoctor", "title": "ArmoTuSitio: Diagnóstico del Harness nativo" },
+      { "command": "atsHarness.nativeNewTask", "title": "ArmoTuSitio: Crear tarea nativa" },
+      { "command": "atsHarness.nativeRunTask", "title": "ArmoTuSitio: Ejecutar tarea nativa" },
+      { "command": "atsHarness.nativeStatus", "title": "ArmoTuSitio: Estado de tareas nativas" },
+      { "command": "atsHarness.nativeReconcile", "title": "ArmoTuSitio: Reconciliar estado nativo" },
+      { "command": "atsHarness.nativeCancel", "title": "ArmoTuSitio: Cancelar tarea nativa" },
       { "command": "atsHarness.selectProvider", "title": "ArmotuSitio: Elegir IA del Harness", "icon": "$(hubot)" },
       { "command": "atsIde.chat", "title": "ArmotuSitio: Chat Harness", "icon": "$(comment-discussion)" },
       { "command": "atsIde.mcpConfigure", "title": "ArmotuSitio: Configurar clave MCP" },
