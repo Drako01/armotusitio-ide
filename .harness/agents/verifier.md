@@ -20,7 +20,7 @@
 
 ## Skills
 
-- redevent-testing-delivery
+- testing-delivery
 
 ## Context sources
 
