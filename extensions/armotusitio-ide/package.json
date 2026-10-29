@@ -104,6 +104,7 @@
       ]
     },
     "commands": [
+      { "command": "atsHarness.nativeAgentReview", "title": "ArmoTuSitio: Revisar propuesta de agente nativo" },
       { "command": "atsHarness.nativeConfigure", "title": "ArmoTuSitio: Configurar Harness nativo del proyecto" },
       { "command": "atsHarness.nativeDoctor", "title": "ArmoTuSitio: Diagnóstico del Harness nativo" },
       { "command": "atsHarness.nativeNewTask", "title": "ArmoTuSitio: Crear tarea nativa" },
