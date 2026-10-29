@@ -16,6 +16,16 @@ test "$(node -v)" = "v$(tr -d '\r\n' < .nvmrc)"
 git init -q
 git config --local safe.directory /work/source
 export VSCODE_QUALITY="$(node -p "require('./build/armotusitio/product-overrides.json').quality")"
+# Docker Desktop disallows Chromium namespace creation even when SUID is available.
+# Restrict the override to cache generation; it is not a product runtime setting.
+if [[ "$ATS_LINUX_ARCH" == x64 ]]; then
+    if unshare -Ur true >/dev/null 2>&1; then
+        echo "[ats] User namespaces available; retain Electron sandbox for cache generation"
+    else
+        export ATS_LINUX_CACHE_NO_SANDBOX=1
+        echo "[ats] Namespace sandbox blocked; transient cache generation only will use --no-sandbox"
+    fi
+fi
 # The source volume is scoped to commit and architecture. A failed install never writes this marker.
 if [[ ! -f /work/dependencies-ready ]]; then
     # Bootstrap JS tooling before the upstream Electron/Node compiler setup.
