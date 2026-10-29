@@ -79,7 +79,7 @@ export async function generateNodeCompileCache(platform: string, outputDirectory
 		if (platform === 'linux' && process.env.ATS_LINUX_ARCH === 'x64') {
 			// The Linux container compiles as an unprivileged user. Only the packaged
 			// chrome-sandbox helper needs root ownership and its setuid bit.
-			if (path.resolve(paths.application) !== '/work/VSCode-linux-x64/code') {
+			if (path.resolve(paths.application) !== '/work/VSCode-linux-x64/armotusitio-ide') {
 				throw new Error('Unexpected packaged Linux executable for sandbox preparation');
 			}
 			cp.execFileSync('sudo', ['-n', '/usr/local/bin/ats-prepare-chrome-sandbox'], {
