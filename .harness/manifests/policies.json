@@ -1,0 +1,86 @@
+{
+  "schemaVersion": 1,
+  "contextBudget": 16000,
+  "gateTimeoutMs": 600000,
+  "agentTimeoutMs": 1800000,
+  "maxRetries": 2,
+  "outputLimitBytes": 33554432,
+  "tailBytes": 4096,
+  "runnerExecutables": ["git", "node", "pnpm", "npm", "python", "python3", "go", "bash"],
+  "deniedCommands": [
+    "rm",
+    "rmdir",
+    "del",
+    "erase",
+    "format",
+    "diskpart",
+    "shutdown",
+    "reboot",
+    "Remove-Item",
+    "Stop-Computer",
+    "mkfs",
+    "dd",
+    "curl",
+    "wget",
+    "Invoke-Expression"
+  ],
+  "highRiskPattern": "auth|rbac|tenan|migration|migraci|secret|security|permission|permiso|infra|aislamiento|organizacion|openapi|contrat",
+  "sensitivePaths": [
+    ".env",
+    ".env.*",
+    "*.pem",
+    "*.key",
+    ".netrc",
+    "**/.netrc",
+    "**/id_rsa",
+    "**/id_ed25519",
+    "**/*.p12",
+    "**/*.pfx",
+    "secrets",
+    "**/.env",
+    "**/.env.*",
+    "secrets/**",
+    "**/secrets/**",
+    "**/*.pem",
+    "**/*.key",
+    ".harness/runtime/python/**"
+  ],
+  "fullChecks": [
+    ["pnpm", "format:check"],
+    ["pnpm", "harness:test"],
+    ["bash", "./verify-enterprise.sh", "--full"]
+  ],
+  "flakyPatterns": ["test_timeout_and_overflow_terminate_real_descendants", "test_main_json_report_and_dry_run_output"],
+  "flaky": {
+    "quarantineDays": 14,
+    "rehabilitationPasses": 10,
+    "autoQuarantine": false,
+    "criticalPatterns": ["security", "auth", "rbac", "tenan", "isolation", "migrat", "permission", "integrity"]
+  },
+  "riskPipeline": {
+    "apply": true,
+    "gateMs": 120000,
+    "disproportionMs": 1200000,
+    "tinyDiffFiles": 3
+  },
+  "retention": {
+    "enabled": true,
+    "failedDays": 7,
+    "graceMinutes": 10,
+    "seedDays": 7,
+    "completedLogKinds": ["execution", "errors"]
+  },
+  "generatedArtifacts": ["*.tsbuildinfo", "**/*.tsbuildinfo", "next-env.d.ts", "**/next-env.d.ts"],
+  "parallel": {
+    "maxWorkers": 2,
+    "autoMaxWorkers": 8,
+    "roleLimit": 2,
+    "hostLimit": 2,
+    "maxNodes": 24,
+    "queueLimit": 24,
+    "minUnitMs": 60000,
+    "coordinationOverheadMs": 20000,
+    "cancelGraceMs": 3000,
+    "longNodeWarningMs": 900000
+  }
+}

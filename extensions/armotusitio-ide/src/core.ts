@@ -6,6 +6,7 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { tools } = require('./catalog.ts');
+const { inspectHarnessAuthority } = require('./native-authority.ts');
 
 const profiles = Object.freeze({
 	redevent: Object.freeze({ id: 'redevent', name: 'RedEvent', packageName: 'redevent', harnessDir: '.harness', repo: 'Drako01/redevent' }),
@@ -13,10 +14,12 @@ const profiles = Object.freeze({
 });
 const ACTIONS = Object.freeze(['doctor', 'check', 'status', 'context', 'verify', 'report', 'run', 'dispatch', 'plan', 'progress', 'abort', 'metrics', 'tokens', 'changes', 'ci-gaps', 'test', 'handoff', 'memory']);
 async function detect(root) {
+	const authority = await inspectHarnessAuthority(root);
+	const generic = () => authority.engine === 'project' ? { id: 'project-native', name: path.basename(root), root, workflow: !!authority.entry, authority, actions: [], tools: authority.entry ? tools.filter(tool => ['list', 'status', 'progress', 'metrics'].includes(tool.id)) : [] } : null;
 	let pkg;
-	try { pkg = JSON.parse(await fs.readFile(path.join(root, 'package.json'), 'utf8')); } catch { return null; }
+	try { pkg = JSON.parse(await fs.readFile(path.join(root, 'package.json'), 'utf8')); } catch { return generic(); }
 	const profile = Object.values(profiles).find(p => p.packageName === pkg.name);
-	if (!profile) { return null; }
+	if (!profile) { return generic(); }
 	try { if (!(await fs.stat(path.join(root, profile.harnessDir))).isDirectory()) { return null; } } catch { return null; }
 	const scripts = pkg.scripts || {};
 	if (typeof scripts['harness:check'] !== 'string') { return null; }

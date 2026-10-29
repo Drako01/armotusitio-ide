@@ -1,0 +1,25 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "version", "release", "minimum", "maximum", "artifacts"],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "version": {
+      "type": "string"
+    },
+    "release": {
+      "type": "string"
+    },
+    "minimum": {
+      "type": "array"
+    },
+    "maximum": {
+      "type": "array"
+    },
+    "artifacts": {
+      "type": "object"
+    }
+  }
+}

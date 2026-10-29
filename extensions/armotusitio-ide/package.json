@@ -30,31 +30,70 @@
         "fullName": "ArmotuSitio Harness",
         "description": "Harness local y Work Management de ArmotuSitio, sin llamadas a modelos de IA.",
         "commands": [
-          { "name": "estado", "description": "Consultar el progreso y el historial del Harness" },
-          { "name": "comandos", "description": "Listar comandos de los proyectos abiertos" },
-          { "name": "check", "description": "Confirmar e iniciar check [armotusitio o redevent]" },
-          { "name": "verify", "description": "Confirmar e iniciar verify [armotusitio o redevent]" },
-          { "name": "test", "description": "Confirmar e iniciar test [armotusitio o redevent]" },
-          { "name": "mcp", "description": "Consultar la conexión y las herramientas del MCP" },
-          { "name": "proyectos", "description": "Listar proyectos de Work Management" },
-          { "name": "tareas", "description": "Listar tareas de un proyecto" },
-          { "name": "tarea", "description": "Obtener contexto de una tarea por su clave" },
-          { "name": "crear", "description": "Crear una tarea con confirmación" },
-          { "name": "mover", "description": "Cambiar de columna una tarea con confirmación" },
-          { "name": "comentar", "description": "Agregar un comentario con confirmación" }
+          {
+            "name": "estado",
+            "description": "Consultar el progreso y el historial del Harness"
+          },
+          {
+            "name": "comandos",
+            "description": "Listar comandos de los proyectos abiertos"
+          },
+          {
+            "name": "check",
+            "description": "Confirmar e iniciar check [armotusitio o redevent]"
+          },
+          {
+            "name": "verify",
+            "description": "Confirmar e iniciar verify [armotusitio o redevent]"
+          },
+          {
+            "name": "test",
+            "description": "Confirmar e iniciar test [armotusitio o redevent]"
+          },
+          {
+            "name": "mcp",
+            "description": "Consultar la conexión y las herramientas del MCP"
+          },
+          {
+            "name": "proyectos",
+            "description": "Listar proyectos de Work Management"
+          },
+          {
+            "name": "tareas",
+            "description": "Listar tareas de un proyecto"
+          },
+          {
+            "name": "tarea",
+            "description": "Obtener contexto de una tarea por su clave"
+          },
+          {
+            "name": "crear",
+            "description": "Crear una tarea con confirmación"
+          },
+          {
+            "name": "mover",
+            "description": "Cambiar de columna una tarea con confirmación"
+          },
+          {
+            "name": "comentar",
+            "description": "Agregar un comentario con confirmación"
+          }
         ]
       }
     ],
     "mcpServerDefinitionProviders": [
-      { "id": "atsIde.armotusitioMcp", "label": "ArmotuSitio Work Management" }
+      {
+        "id": "atsIde.armotusitioMcp",
+        "label": "ArmotuSitio Work Management"
+      }
     ],
     "configuration": {
       "title": "ArmoTuSitio Harness",
       "properties": {
         "atsHarness.mcp.enabled": {
           "type": "boolean",
-          "default": true,
-          "scope": "application",
+          "default": false,
+          "scope": "window",
           "description": "Conectar el MCP de Work Management de ArmotuSitio. Requiere workspace confiable y clave de agente."
         },
         "atsHarness.enabled": {
@@ -64,7 +103,11 @@
         },
         "atsHarness.notifications": {
           "type": "string",
-          "enum": ["always", "errors", "never"],
+          "enum": [
+            "always",
+            "errors",
+            "never"
+          ],
           "enumDescriptions": [
             "Avisar cuando una tarea del IDE termina, falla o se cancela.",
             "Avisar solo ante errores o cuando no se conoce el código de salida.",
@@ -104,12 +147,72 @@
       ]
     },
     "commands": [
-      { "command": "atsHarness.selectProvider", "title": "ArmotuSitio: Elegir IA del Harness", "icon": "$(hubot)" },
-      { "command": "atsIde.chat", "title": "ArmotuSitio: Chat Harness", "icon": "$(comment-discussion)" },
-      { "command": "atsIde.mcpConfigure", "title": "ArmotuSitio: Configurar clave MCP" },
-      { "command": "atsIde.mcpClearKey", "title": "ArmotuSitio: Borrar clave MCP guardada" },
-      { "command": "atsHarness.history", "title": "ArmotuSitio: Historial del Harness" },
-      { "command": "atsHarness.clearHistory", "title": "ArmotuSitio: Borrar historial del Harness" },
+      {
+        "command": "atsHarness.nativeRemoveConfiguration",
+        "title": "ArmoTuSitio: Retirar Configuraci\u00f3n Generada del Harness"
+      },
+      {
+        "command": "atsHarness.nativeSupport",
+        "title": "ArmoTuSitio: Diagnósticos y evidencias del Harness nativo"
+      },
+      {
+        "command": "atsHarness.nativeAgentReview",
+        "title": "ArmoTuSitio: Revisar propuesta de agente nativo"
+      },
+      {
+        "command": "atsHarness.nativeConfigure",
+        "title": "ArmoTuSitio: Configurar Harness nativo del proyecto"
+      },
+      {
+        "command": "atsHarness.nativeDoctor",
+        "title": "ArmoTuSitio: Diagnóstico del Harness nativo"
+      },
+      {
+        "command": "atsHarness.nativeNewTask",
+        "title": "ArmoTuSitio: Crear tarea nativa"
+      },
+      {
+        "command": "atsHarness.nativeRunTask",
+        "title": "ArmoTuSitio: Ejecutar tarea nativa"
+      },
+      {
+        "command": "atsHarness.nativeStatus",
+        "title": "ArmoTuSitio: Estado de tareas nativas"
+      },
+      {
+        "command": "atsHarness.nativeReconcile",
+        "title": "ArmoTuSitio: Reconciliar estado nativo"
+      },
+      {
+        "command": "atsHarness.nativeCancel",
+        "title": "ArmoTuSitio: Cancelar tarea nativa"
+      },
+      {
+        "command": "atsHarness.selectProvider",
+        "title": "ArmotuSitio: Elegir IA del Harness",
+        "icon": "$(hubot)"
+      },
+      {
+        "command": "atsIde.chat",
+        "title": "ArmotuSitio: Chat Harness",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "atsIde.mcpConfigure",
+        "title": "ArmotuSitio: Configurar clave MCP"
+      },
+      {
+        "command": "atsIde.mcpClearKey",
+        "title": "ArmotuSitio: Borrar clave MCP guardada"
+      },
+      {
+        "command": "atsHarness.history",
+        "title": "ArmotuSitio: Historial del Harness"
+      },
+      {
+        "command": "atsHarness.clearHistory",
+        "title": "ArmotuSitio: Borrar historial del Harness"
+      },
       {
         "command": "atsHarness.taskActions",
         "title": "ArmotuSitio: Abrir Tarea del Harness"
@@ -174,8 +277,16 @@
     ],
     "menus": {
       "view/title": [
-        { "command": "atsHarness.selectProvider", "when": "view == atsHarness.tasks", "group": "navigation@2" },
-        { "command": "atsIde.chat", "when": "view == atsHarness.tasks", "group": "navigation@1" },
+        {
+          "command": "atsHarness.selectProvider",
+          "when": "view == atsHarness.tasks",
+          "group": "navigation@2"
+        },
+        {
+          "command": "atsIde.chat",
+          "when": "view == atsHarness.tasks",
+          "group": "navigation@1"
+        },
         {
           "command": "atsIde.home",
           "when": "view == atsHarness.tasks",
@@ -198,7 +309,11 @@
         }
       ],
       "view/item/context": [
-        { "command": "atsHarness.selectProvider", "when": "view == atsHarness.tasks && viewItem == atsHarness.project", "group": "inline" }
+        {
+          "command": "atsHarness.selectProvider",
+          "when": "view == atsHarness.tasks && viewItem == atsHarness.project",
+          "group": "inline"
+        }
       ]
     },
     "themes": [
@@ -225,9 +340,10 @@
   },
   "scripts": {
     "compile": "node esbuild.mts",
-    "test": "node --test test/*.test.cts",
+    "test": "node --test test/*.test.cts test/native-*.test.mts",
     "check": "node ../../node_modules/@typescript/native/bin/tsc --project tsconfig.json && node check-resources.mts",
-    "vscode:prepublish": "npm run compile"
+    "vscode:prepublish": "npm run compile",
+    "check:native-package": "node check-native-package.mts"
   },
   "icon": "resources/logo.png",
   "capabilities": {

@@ -77,15 +77,31 @@ class McpClient {
 function registerMcp(context, vscode) {
 	const t = message => vscode.l10n.t(message);
 	const events = new vscode.EventEmitter();
-	const enabled = () => vscode.workspace.isTrusted && vscode.workspace.getConfiguration('atsHarness').get('mcp.enabled', true);
+	const enabled = () => vscode.workspace.isTrusted && vscode.workspace.getConfiguration('atsHarness').get('mcp.enabled', false);
 	const getKey = async () => {
 		if (!enabled()) { return; }
 		const key = (await context.secrets.get(secretKey)) || process.env.ATS_MCP_TOKEN;
 		return enabled() && key?.trim() && key.length <= 8192 && !/[\r\n]/.test(key) ? key.trim() : undefined;
 	};
 	const client = new McpClient(getKey);
-	async function configure() {
-		if (!enabled()) { vscode.window.showWarningMessage(t('Habilit\u00e1 el MCP y marc\u00e1 el workspace como confiable antes de conectar.')); return; }
+	const credentialState = async () => {
+		if (!vscode.workspace.isTrusted) { return { configured: false, enabled: false, locked: true }; }
+		const key = (await context.secrets.get(secretKey)) || process.env.ATS_MCP_TOKEN;
+		return { configured: !!key?.trim(), enabled: enabled(), locked: false };
+	};
+	async function enable() {
+		if (!vscode.workspace.isTrusted) { vscode.window.showWarningMessage(t('Marc\u00e1 el workspace como confiable antes de conectar Work Management.')); return false; }
+		if (enabled()) { return true; }
+		if (!vscode.workspace.workspaceFolders?.length && !vscode.workspace.workspaceFile) { vscode.window.showWarningMessage(t('Abr\u00ed una carpeta para habilitar Work Management en este workspace.')); return false; }
+		const accept = t('Habilitar en este workspace');
+		if (await vscode.window.showWarningMessage(t('\u00bfQuer\u00e9s conectar ArmotuSitio Work Management en este workspace? Es opcional para el Harness.'), { modal: true }, accept) !== accept || !vscode.workspace.isTrusted) { return false; }
+		await vscode.workspace.getConfiguration('atsHarness').update('mcp.enabled', true, vscode.ConfigurationTarget.Workspace);
+		events.fire(); return enabled();
+	}
+	async function configure(replace = false) {
+		if (!await enable()) { return; }
+		if (!replace && (await credentialState()).configured) { events.fire(); return; }
+
 		const key = await vscode.window.showInputBox({ password: true, ignoreFocusOut: true, prompt: t('Clave del agente MCP de ArmotuSitio. Se guarda en el almacenamiento seguro del IDE.'), validateInput: value => !value.trim() || /[\r\n]/.test(value) || value.length > 8192 ? t('Ingres\u00e1 una clave v\u00e1lida.') : undefined });
 		if (key === undefined) { return; }
 		if (!key.trim() || /[\r\n]/.test(key) || key.length > 8192 || !enabled()) { return; }
@@ -105,12 +121,14 @@ function registerMcp(context, vscode) {
 	};
 	context.subscriptions.push(events,
 		vscode.lm.registerMcpServerDefinitionProvider('atsIde.armotusitioMcp', provider),
-		vscode.commands.registerCommand('atsIde.mcpConfigure', configure),
+		vscode.commands.registerCommand('atsIde.mcpConfigure', () => configure()),
+		vscode.commands.registerCommand('atsIde.mcpChangeKey', () => configure(true)),
+		vscode.commands.registerCommand('atsIde.mcpEnable', enable),
 		vscode.commands.registerCommand('atsIde.mcpClearKey', async () => { await context.secrets.delete(secretKey); client.reset(); events.fire(); }),
 		vscode.workspace.onDidGrantWorkspaceTrust(() => events.fire()),
 		vscode.workspace.onDidChangeConfiguration(e => { if (e.affectsConfiguration('atsHarness.mcp')) { client.reset(); events.fire(); } }),
 		context.secrets.onDidChange(e => { if (e.key === secretKey) { client.reset(); events.fire(); } }));
-	return { client, enabled };
+	return { client, enabled, credentialState, onDidChange: events.event };
 }
 
 module.exports = { McpClient, registerMcp, endpoint };

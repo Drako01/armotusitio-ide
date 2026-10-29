@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://redevent.local/harness/ci-parity.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "ignored", "ciOnly", "localOnly"],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "ignored": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["match", "reason"],
+        "properties": {
+          "match": {
+            "type": "string",
+            "minLength": 1
+          },
+          "withFlag": {
+            "type": "string",
+            "minLength": 1
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "ciOnly": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["match", "reason"],
+        "properties": {
+          "match": {
+            "type": "string",
+            "minLength": 1
+          },
+          "withFlag": {
+            "type": "string",
+            "minLength": 1
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "localOnly": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["match", "reason"],
+        "properties": {
+          "match": {
+            "type": "string",
+            "minLength": 1
+          },
+          "withFlag": {
+            "type": "string",
+            "minLength": 1
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://redevent.local/harness/handoff.schema.json",
+  "type": "object",
+  "required": ["schemaVersion", "taskId", "domain", "agent", "status", "attempt", "nextAction", "at"],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "taskId": {
+      "type": "string"
+    },
+    "domain": {
+      "type": "string"
+    },
+    "agent": {
+      "type": "string"
+    },
+    "status": {
+      "enum": ["passed", "failed", "blocked"]
+    },
+    "attempt": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "changes": {
+      "type": "array"
+    },
+    "files": {
+      "type": "array"
+    },
+    "decisions": {
+      "type": "array"
+    },
+    "risks": {
+      "type": "array"
+    },
+    "verification": {
+      "type": "array"
+    },
+    "nextAction": {
+      "type": ["string", "null"]
+    },
+    "at": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": true
+}

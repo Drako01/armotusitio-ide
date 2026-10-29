@@ -58,3 +58,31 @@ dist
 
 reports/
 /plans/
+
+
+# tracked; `harness:check` fails when anything else under these paths is in the git index.
+.harness/runtime/*
+!.harness/runtime/.gitkeep
+.harness/tasks/*
+!.harness/tasks/*/
+.harness/tasks/*/*
+!.harness/tasks/*/.gitkeep
+.harness/handoffs/*
+!.harness/handoffs/.gitkeep
+.harness/state/*
+!.harness/state/.gitkeep
+.harness/logs/*
+!.harness/logs/*/
+.harness/logs/*/*
+!.harness/logs/*/.gitkeep
+.harness/specs/
+.harness/**/__pycache__/
+*.pyc
+
+
+# env files
+.env
+.harness/.env
+
+# Local Harness verification output
+/test.log

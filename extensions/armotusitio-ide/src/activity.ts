@@ -63,7 +63,7 @@ function registerActivity(context, controller, projects, vscode, reader = readPr
 	controller.progress = [];
 	function render() {
 		const progress = controller.readHarnessProgress?.() || controller.progress;
-		const running = [...controller.jobs.values()].filter(job => job.state === 'running').length;
+		const running = [...controller.jobs.values()].filter(job => job.state === 'running').length + (controller.nativeRunning?.() || 0);
 		const workflows = controller.getWorkflowActivity?.() || [];
 		const owned = sortActivity(workflows).find(entry => (entry.owned || entry.progress?.live || ['preparing', 'creating', 'stopping'].includes(entry.phase)) && ['preparing', 'creating', 'running', 'stopping'].includes(entry.phase));
 		const live = progress.find(row => row.live);
@@ -89,7 +89,8 @@ function registerActivity(context, controller, projects, vscode, reader = readPr
 		try {
 			const all = await projects();
 			if (disposed) { return; }
-			if (!all.length) { controller.progress = []; bar.hide(); controller.refresh(); return; }
+			const native = await controller.nativeProjects?.() || [];
+			if (!all.length && !native.length) { controller.progress = []; bar.hide(); controller.refresh(); return; }
 			bar.show();
 			await controller.refreshWorkflowActivity?.(manual);
 			const rows = vscode.workspace.isTrusted ? await Promise.all(all.map(async ({ profile }) => {
@@ -103,7 +104,7 @@ function registerActivity(context, controller, projects, vscode, reader = readPr
 			if (disposed) { return; }
 			const current = await projects();
 			controller.progress = vscode.workspace.isTrusted ? rows.flat().filter(row => current.some(({ profile }) => profile.root === row.project)) : [];
-			if (!current.length) { bar.hide(); }
+			if (!current.length && !native.length) { bar.hide(); }
 			render(); controller.refresh();
 		} catch { if (!disposed) { render(); controller.refresh(); } }
 	}

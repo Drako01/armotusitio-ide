@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "version": "3.13.7",
+  "release": "20250918",
+  "minimum": [3, 11],
+  "maximum": [3, 14],
+  "artifacts": {
+    "win32-x64": {
+      "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20250918/cpython-3.13.7%2B20250918-x86_64-pc-windows-msvc-install_only_stripped.tar.gz",
+      "sha256": "bc229e5364699a8456b6ceabde8348c75e62312ffd62631dd1e494a1755a45ed",
+      "executable": "python/python.exe"
+    },
+    "win32-arm64": {
+      "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20250918/cpython-3.13.7%2B20250918-aarch64-pc-windows-msvc-install_only_stripped.tar.gz",
+      "sha256": "0442aee25951ee16af3ac2227cf4a8a6e3d5b6530030fbf6cd1305ff3d3fc0d3",
+      "executable": "python/python.exe"
+    },
+    "linux-x64": {
+      "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20250918/cpython-3.13.7%2B20250918-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz",
+      "sha256": "888fb7e192caafdb33e028f865b7da68dce5e924cfe58fcef96323e175a70e3e",
+      "executable": "python/bin/python3"
+    },
+    "linux-arm64": {
+      "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20250918/cpython-3.13.7%2B20250918-aarch64-unknown-linux-gnu-install_only_stripped.tar.gz",
+      "sha256": "0af6c9a17df4d5afdef37825d0cc703264c1a0a94dad825b2b6b6975b524c0d5",
+      "executable": "python/bin/python3"
+    },
+    "darwin-x64": {
+      "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20250918/cpython-3.13.7%2B20250918-x86_64-apple-darwin-install_only_stripped.tar.gz",
+      "sha256": "e640143d4dde2edff1865c3e88e44b046478b790af4f8b3ac4d228e53952dda0",
+      "executable": "python/bin/python3"
+    },
+    "darwin-arm64": {
+      "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20250918/cpython-3.13.7%2B20250918-aarch64-apple-darwin-install_only_stripped.tar.gz",
+      "sha256": "10f26ea5fc7c4d9c012faf372898a801f34b8fd7730c677576263224d56835fe",
+      "executable": "python/bin/python3"
+    }
+  }
+}

@@ -1,0 +1,122 @@
+{
+  "schemaVersion": 1,
+  "ignored": [
+    {
+      "match": "uses actions/*",
+      "reason": "GitHub-hosted setup action; not a verification command."
+    },
+    {
+      "match": "uses pnpm/setup",
+      "reason": "Toolchain setup; not a verification command."
+    },
+    {
+      "match": "pnpm install",
+      "reason": "Dependency installation (setup)."
+    },
+    {
+      "match": "pnpm --version",
+      "reason": "Toolchain probe."
+    },
+    {
+      "match": "node -e const*require*process.exit*scripts*",
+      "reason": "Inline probe that only reads a package.json `scripts` entry to detect declared scripts (`node -e \"const p=require(...); process.exit(p.scripts?.<name> ? 0 : 1)\"`); any other `node -e` is a verification command and stays uncovered."
+    },
+    {
+      "match": "node --version",
+      "reason": "Toolchain probe."
+    },
+    {
+      "match": "node infra/scripts/ci-scope.mjs",
+      "reason": "Changed-path selection setup; writes scope outputs and performs no verification. Its actual execution is covered by infra/scripts/ci-events.test.mjs."
+    },
+    {
+      "match": "go mod download",
+      "reason": "Dependency installation (setup)."
+    }
+  ],
+  "ciOnly": [
+    {
+      "match": "pnpm @apps/marketplace",
+      "reason": "apps/marketplace is a documentation-only placeholder; its CI job is guarded by a workspace-presence check until the app becomes executable."
+    },
+    {
+      "match": "go -C apps/api test",
+      "withFlag": "-race",
+      "reason": "Race detector: heavy; CI-only."
+    },
+    {
+      "match": "go -C apps/api test",
+      "withFlag": "-fuzz*",
+      "reason": "Fuzz smoke: heavy; CI-only."
+    },
+    {
+      "match": "go -C apps/api test",
+      "withFlag": "-run=TestSMTP*",
+      "reason": "SMTP delivery tests (TestSMTPMailpitDelivery, TestSMTPRealDelivery) need the Mailpit CI service container or real provider secrets."
+    },
+    {
+      "match": "go -C apps/api test",
+      "withFlag": "jobs_integration",
+      "reason": "Jobs/outbox PostgreSQL runtime E2E (RED-001-142, opt-in build tag jobs_integration: claim/fence/lease/retry/outbox/shutdown) needs the PostgreSQL CI service container; verify-enterprise.sh runs the equivalent gate locally against a disposable E2E database."
+    },
+    {
+      "match": "go -C apps/api test",
+      "withFlag": "^(TestDomainPostgresE2E|TestUserAdministrationPostgresHTTPAcceptance)$",
+      "reason": "Domain PostgreSQL E2E (TestDomainPostgresE2E, TestUserAdministrationPostgresHTTPAcceptance) requires the PostgreSQL CI service container."
+    },
+    {
+      "match": "go -C apps/api build",
+      "reason": "Compilation of cmd/... binaries; the enterprise verifier builds on demand."
+    },
+    {
+      "match": "uses golangci/golangci-lint-action",
+      "reason": "golangci-lint needs the pinned action and cache; CI-only."
+    },
+    {
+      "match": "uses github/codeql-action/*",
+      "reason": "CodeQL analysis runs only on GitHub."
+    },
+    {
+      "match": "node scripts/check-pr-card-refs.mjs",
+      "reason": "PR card-key guard (job `pr-card-refs`, \"PR / Card references\"): reads PR_TITLE/PR_BODY/PR_HEAD_REF/PR_BASE_REF from the actual pull_request event, which only exists in CI. Local verification already covers its pure logic via `node --test scripts/check-pr-card-refs.test.mjs` in verify-enterprise.sh."
+    },
+    {
+      "match": "go -C apps/api run golang.org/x/vuln/cmd/govulncheck@v1.1.4",
+      "reason": "Pinned govulncheck (RED-001-195, job `go-vulncheck`): CI runs it through `go run` at the exact version as an advisory; verify-enterprise.sh --security reports scanner findings as WARN; verify.Dockerfile pins the same version."
+    },
+    {
+      "match": "pnpm audit --audit-level high --prod",
+      "reason": "Production dependency audit (RED-001-195, job `pnpm-audit`): needs registry access; both CI and verify-enterprise.sh --security run it as non-blocking advisory and preserve evidence."
+    },
+    {
+      "match": "node --input-type=commonjs",
+      "reason": "CI / Required runs inline Node.js to validate change-scope policy against GitHub Actions needs job results. The required status check fails on missing, unexpected or failed checks; this has no local equivalent without the GitHub event context."
+    }
+  ],
+  "localOnly": [
+    {
+      "match": "bash ./verify-enterprise.sh --quick",
+      "reason": "Declared gate (feedback rápido) for the api and workers domains, which share the apps/api Go module, config and database; CI runs its constituent gates (format, vet, test, build, lint) as separate jobs."
+    },
+    {
+      "match": "bash ./verify-enterprise.sh --security",
+      "reason": "Escalated api gate for auth/RBAC/tenancy/migrations/OpenAPI changes; CI runs constituent gates separately; vulnerability scans are advisory and not required to pass implementation checks."
+    },
+    {
+      "match": "bash ./verify-enterprise.sh --full",
+      "reason": "Global fullChecks gate; needs the full local toolchain and services, CI runs its constituent gates as separate jobs."
+    },
+    {
+      "match": "go -C apps/api build ./cmd/worker",
+      "reason": "Workers domain gate naming the RED-001-142 worker binary explicitly; CI's go-build job already compiles every apps/api/cmd/* binary via `go build ./cmd/...`, a superset covering cmd/worker."
+    },
+    {
+      "match": "go -C apps/api test ./internal/platform/jobs/... ./internal/platform/config/...",
+      "reason": "Workers domain gate naming the RED-001-142 jobs/config packages explicitly; CI's go-test job already runs `go -C apps/api test ./...`, a superset covering those packages."
+    },
+    {
+      "match": "go -C apps/api vet ./cmd/worker/... ./internal/platform/jobs/... ./internal/platform/config/...",
+      "reason": "Workers domain gate naming the RED-001-142 worker/jobs/config packages explicitly; CI's go-vet job already runs `go -C apps/api vet ./...`, a superset covering those packages."
+    }
+  ]
+}

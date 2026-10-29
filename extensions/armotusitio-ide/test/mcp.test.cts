@@ -9,13 +9,15 @@ const { McpClient, registerMcp, endpoint } = require('../src/mcp.ts');
 
 function transport(tools = ['list_projects']) {
 	const calls = [];
-	return { calls, async fetch(url, options) {
-		const rpc = JSON.parse(options.body); calls.push({ url, options, rpc });
-		if (rpc.method === 'notifications/initialized') { return new Response(null, { status: 202 }); }
-		const result = rpc.method === 'initialize' ? { protocolVersion: '2025-03-26', capabilities: { tools: {} }, serverInfo: { name: 'armotusitio-work' } }
-			: rpc.method === 'tools/list' ? { tools: tools.map(name => ({ name })) } : { structuredContent: { projects: [] }, isError: false };
-		return Response.json({ jsonrpc: '2.0', id: rpc.id, result });
-	} };
+	return {
+		calls, async fetch(url, options) {
+			const rpc = JSON.parse(options.body); calls.push({ url, options, rpc });
+			if (rpc.method === 'notifications/initialized') { return new Response(null, { status: 202 }); }
+			const result = rpc.method === 'initialize' ? { protocolVersion: '2025-03-26', capabilities: { tools: {} }, serverInfo: { name: 'armotusitio-work' } }
+				: rpc.method === 'tools/list' ? { tools: tools.map(name => ({ name })) } : { structuredContent: { projects: [] }, isError: false };
+			return Response.json({ jsonrpc: '2.0', id: rpc.id, result });
+		}
+	};
 }
 
 test('MCP performs the real handshake, pins the endpoint, keeps the key out of RPC and checks tool availability', async () => {
@@ -59,7 +61,7 @@ test('MCP cancellation aborts requests and removes its listener', async () => {
 });
 
 test('native MCP discovery contains no credentials, resolves secure storage and respects trust and endpoint identity', async () => {
-	let provider, trusted = true;
+	let provider, trusted = true, connected = false;
 	const commands = new Map(), subscriptions = [];
 	const disposable = { dispose() { } }, noop = () => disposable;
 	const vscode = {
@@ -67,11 +69,14 @@ test('native MCP discovery contains no credentials, resolves secure storage and 
 		Uri: { parse: url => ({ toString: () => url }) },
 		McpHttpServerDefinition: class { constructor(label, uri, headers = {}) { Object.assign(this, { label, uri, headers }); } },
 		lm: { registerMcpServerDefinitionProvider(_, value) { provider = value; return disposable; } },
-		workspace: { get isTrusted() { return trusted; }, getConfiguration: () => ({ get: (_, fallback) => fallback }), onDidGrantWorkspaceTrust: noop, onDidChangeConfiguration: noop },
+		workspace: { get isTrusted() { return trusted; }, getConfiguration: () => ({ get: (_, fallback) => connected ? true : fallback }), onDidGrantWorkspaceTrust: noop, onDidChangeConfiguration: noop },
 		commands: { registerCommand(id, handler) { commands.set(id, handler); return disposable; } }
 	};
 	const secrets = { get: async () => 'unit-only', onDidChange: noop, async delete() { this.deleted = true; } };
-	registerMcp({ subscriptions, secrets }, vscode);
+	const integration = registerMcp({ subscriptions, secrets }, vscode);
+	assert.deepEqual(await integration.credentialState(), { configured: true, enabled: false, locked: false });
+	assert.deepEqual(provider.provideMcpServerDefinitions(), []);
+	connected = true;
 	const definition = provider.provideMcpServerDefinitions()[0];
 	assert.deepEqual(definition.headers, {});
 	const resolved = await provider.resolveMcpServerDefinition(definition, { isCancellationRequested: false });
