@@ -26,6 +26,8 @@ async function selectProject(uri = undefined) {
 	return (await vscode.window.showQuickPick(all.map(x => ({ label: x.profile.name, description: x.profile.root, project: x })), { placeHolder: 'Select project' }))?.project;
 }
 class Controller {
+	nativeProjects = async () => [];
+	nativeRunning = () => 0;
 	jobs = new Map();
 	launching = new Set();
 	events = new vscode.EventEmitter();
@@ -54,7 +56,7 @@ class Controller {
 	async getProvider(profile) {
 		const t = message => vscode.l10n.t(message);
 		if (!vscode.workspace.isTrusted) { return { label: t('Workspace restringido'), supported: false }; }
-		if (profile.id === 'armotusitio' && profile.workflow) { return { label: t('Verificaciones del proyecto'), supported: false }; }
+		if (['armotusitio', 'project-native'].includes(profile.id)) { return { label: t('Verificaciones del proyecto'), supported: false }; }
 		const state = await readProvider(profile);
 		const label = !state.supported ? t('IA por plan de agentes') : state.error ? t('Configuraci\u00f3n no disponible') : state.custom ? t('Comando personalizado') : state.invalid ? t('HARNESS_HOST no admitido') : state.host === 'codex' ? 'Codex' : state.host === 'claude' ? 'Claude Code' : t('Sin IA configurada');
 		return { ...state, label };
@@ -71,7 +73,13 @@ class Controller {
 	getTreeItem(item) { return item; }
 	async getChildren(element) {
 		if (!element) {
-			const all = await projects(); return all.length ? await Promise.all(all.map(async project => { const item = new vscode.TreeItem(project.profile.name, vscode.TreeItemCollapsibleState.Expanded); item.project = project; item.contextValue = 'atsHarness.project'; item.iconPath = new vscode.ThemeIcon('repo'); item.description = (await this.getProvider(project.profile)).label; return item; })) : [new vscode.TreeItem('Open RedEvent or ArmoTuSitio 2.0')];
+			const all = await projects(); const native = await this.nativeProjects?.() || []; const bundled = native.map(project => { const item = new vscode.TreeItem(project.name, vscode.TreeItemCollapsibleState.Expanded); item.nativeProject = project; item.description = vscode.l10n.t('Harness incluido en el IDE'); item.iconPath = new vscode.ThemeIcon('repo'); return item; }); return all.length || bundled.length ? await Promise.all(all.map(async project => { const item = new vscode.TreeItem(project.profile.name, vscode.TreeItemCollapsibleState.Expanded); item.project = project; item.contextValue = 'atsHarness.project'; item.iconPath = new vscode.ThemeIcon('repo'); item.description = (await this.getProvider(project.profile)).label; return item; })).then(items => [...items, ...bundled]) : [new vscode.TreeItem(vscode.l10n.t('Abr\u00ed una carpeta para configurar su Harness.'))];
+		}
+		if (element.nativeProject) {
+			const project = element.nativeProject;
+			const actions = ['nativeConfigure', 'nativeNewTask', 'nativeRunTask', 'nativeStatus', 'nativeSupport', 'nativeCancel', 'nativeReconcile'];
+			const commands = actions.map(action => { const item = new vscode.TreeItem(vscode.l10n.t(({ nativeConfigure: 'Configurar Harness', nativeNewTask: 'Nueva tarea local', nativeRunTask: 'Ejecutar tarea local', nativeStatus: 'Planes e historial', nativeSupport: 'Diagn\u00f3sticos y evidencias', nativeCancel: 'Cancelar tarea local', nativeReconcile: 'Reconciliar estado' })[action])); item.command = { command: 'atsHarness.' + action, title: item.label, arguments: [project.root] }; return item; });
+			return [...project.tasks.map(task => { const item = new vscode.TreeItem(task.title); item.description = task.reconciliationRequired ? vscode.l10n.t('Resultado incierto') : task.status; item.iconPath = new vscode.ThemeIcon(task.status === 'running' && !task.reconciliationRequired ? 'sync~spin' : task.status === 'passed' ? 'pass' : 'circle-outline'); item.command = { command: 'atsHarness.nativeStatus', title: item.label, arguments: [project.root] }; return item; }), ...commands];
 		}
 		if (!element.project) { return []; }
 		if (element.workflowEntry) {
@@ -189,7 +197,7 @@ async function reviewPlan() {
 }
 function activate(context) {
 	const controller = new Controller(context);
-	registerNativeHarness(context, vscode);
+	registerNativeHarness(context, vscode, controller);
 	integrations.register(context, projects);
 	registerHome(context, controller, projects);
 	registerActivity(context, controller, projects, vscode);

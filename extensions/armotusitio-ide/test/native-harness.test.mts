@@ -168,3 +168,96 @@ test('symbolic task files fail closed', async () => {
 		await assert.rejects(f.engine.get(t.id), /HARNESS_INVALID_TASK_FILE/);
 	} finally { await f.cleanup(); }
 });
+
+
+test('configuration changes expire approval before any attempt starts', async () => {
+	const f = await fixture(); try {
+		const plan = { schemaVersion: 1 as const, gates: [{ id: 'verify', executable: 'node', args: ['--version'] }] };
+		const task = await f.engine.create('config approval', plan);
+		await fs.writeFile(path.join(f.project, '.ats-harness.json'), '{}');
+		const reviewed = await f.engine.reviewDigest(plan);
+		await fs.writeFile(path.join(f.project, '.ats-harness.json'), '{"changed":true}');
+		await assert.rejects(f.engine.execute(task.id, reviewed, () => true), /HARNESS_APPROVAL_EXPIRED/);
+		assert.equal((await f.engine.get(task.id)).attempts.length, 0);
+	} finally { await f.cleanup(); }
+});
+
+test('project Harness introduced after task creation prevents bundled execution', async () => {
+	const f = await fixture(); try {
+		const plan = { schemaVersion: 1 as const, gates: [{ id: 'verify', executable: 'node', args: ['--version'] }] };
+		const task = await f.engine.create('priority', plan);
+		await fs.mkdir(path.join(f.project, '.harness'));
+		await assert.rejects(f.engine.execute(task.id, await f.engine.reviewDigest(plan), () => true), /HARNESS_PROJECT_AUTHORITY/);
+		await assert.rejects(f.engine.create('duplicate', plan), /HARNESS_PROJECT_AUTHORITY/);
+		assert.equal((await f.engine.get(task.id)).attempts.length, 0);
+	} finally { await f.cleanup(); }
+});
+
+test('execution records evidence and invalidates it when declared inputs change', async () => {
+	const f = await fixture(); try {
+		await fs.writeFile(path.join(f.project, 'input.txt'), 'first');
+		const plan = { schemaVersion: 1 as const, inputs: ['input.txt'], gates: [{ id: 'verify', executable: 'node', args: ['--version'] }] };
+		const task = await f.engine.create('evidence', plan);
+		const result = await f.engine.execute(task.id, await f.engine.reviewDigest(plan), () => true);
+		assert.equal(result.attempts.at(-1)?.evidence?.state, 'recorded');
+		assert.equal((await f.engine.evidenceStatus(task.id))[0].state, 'current-declared-inputs');
+		await fs.writeFile(path.join(f.project, 'input.txt'), 'second');
+		assert.equal((await f.engine.evidenceStatus(task.id))[0].state, 'changed');
+		await assert.rejects(f.engine.execute(task.id, 'bad-approval', () => true), /HARNESS_APPROVAL_EXPIRED/);
+	} finally { await f.cleanup(); }
+});
+
+test('evidence persistence failures preserve the actual gate outcome', async () => {
+	const f = await fixture(); try {
+		await fs.writeFile(path.join(f.project, 'input.txt'), 'safe');
+		await fs.mkdir(path.join(path.dirname(f.project), 'state'), { recursive: true });
+		await fs.writeFile(path.join(path.dirname(f.project), 'state', 'evidence'), 'collision');
+		const plan = { schemaVersion: 1 as const, inputs: ['input.txt'], gates: [{ id: 'verify', executable: 'node', args: ['--version'] }] };
+		const task = await f.engine.create('evidence failure', plan);
+		const result = await f.engine.execute(task.id, await f.engine.reviewDigest(plan), () => true);
+		assert.deepEqual({ status: result.attempts[0].status, evidence: result.attempts[0].evidence }, { status: 'passed', evidence: { state: 'unavailable', error: 'HARNESS_EVIDENCE_PERSISTENCE' } });
+	} finally { await f.cleanup(); }
+});
+
+test('changed inputs during execution cannot become current evidence', async () => {
+	const f = await fixture(); try {
+		await fs.writeFile(path.join(f.project, 'input.txt'), 'before');
+		const plan = { schemaVersion: 1 as const, inputs: ['input.txt'], gates: [{ id: 'mutate', executable: 'node', args: ['-e', 'require("node:fs").writeFileSync("input.txt", "after")'] }] };
+		const task = await f.engine.create('mutated input', plan);
+		const result = await f.engine.execute(task.id, await f.engine.reviewDigest(plan), () => true);
+		assert.deepEqual({ status: result.attempts[0].status, evidence: result.attempts[0].evidence }, { status: 'passed', evidence: { state: 'changed' } });
+	} finally { await f.cleanup(); }
+});
+
+test('secrets split across stdout chunks are redacted before persistence', async () => {
+	const f = await fixture(); try {
+		const plan = { schemaVersion: 1 as const, gates: [{ id: 'redact', executable: 'node', args: ['-e', 'process.stdout.write("api_key=");setTimeout(()=>process.stdout.write("fixture-private-value"),50)'] }] };
+		const task = await f.engine.create('redaction', plan);
+		await f.engine.execute(task.id, await f.engine.reviewDigest(plan), () => true);
+		const stored = await f.engine.get(task.id);
+		assert.deepEqual(stored.attempts[0].results.map(result => result.output), ['api_key=[redacted]']);
+	} finally { await f.cleanup(); }
+});
+
+test('missing tools fail with an actionable result and never leave an active lock', async () => {
+	const f = await fixture(); try {
+		const plan = { schemaVersion: 1 as const, gates: [{ id: 'missing', executable: 'ats-tool-that-does-not-exist', args: [] }] };
+		const task = await f.engine.create('missing tool', plan);
+		const result = await f.engine.execute(task.id, await f.engine.reviewDigest(plan), () => true);
+		assert.deepEqual({ status: result.attempts[0].status, output: result.attempts[0].results[0].output, lock: (await f.engine.diagnose()).lock }, { status: 'failed', output: 'HARNESS_EXECUTABLE_UNAVAILABLE', lock: 'none' });
+	} finally { await f.cleanup(); }
+});
+
+
+test('explicit reconciliation recovers an uncertain attempt whose lock is missing', async () => {
+	const f = await fixture(); try {
+		const plan = { schemaVersion: 1 as const, gates: [{ id: 'verify', executable: 'node', args: ['--version'] }] };
+		const task = await f.engine.create('missing lock', plan);
+		const result = await f.engine.execute(task.id, await f.engine.reviewDigest(plan), () => true);
+		result.attempts[0].status = 'running';
+		await fs.writeFile(path.join(path.dirname(f.project), 'state', 'tasks', task.id + '.json'), JSON.stringify(result));
+		assert.equal((await f.engine.status(task.id)).reconciliationRequired, true);
+		assert.equal(await f.engine.reconcile(), true);
+		assert.equal((await f.engine.get(task.id)).attempts[0].status, 'interrupted');
+	} finally { await f.cleanup(); }
+});

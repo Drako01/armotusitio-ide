@@ -20,7 +20,8 @@ function createHandler(vscode, controller, projects, mcp) {
 		try {
 			if (action === 'comandos' && !words.length) {
 				const all = await projects();
-				return all.length ? all.map(({ profile }) => profile.name + ': ' + profile.actions.join(', ')).join('\n') : t('Abr\u00ed ArmotuSitio o RedEvent para detectar su Harness.');
+				const local = await controller.nativeProjects?.() || [];
+				return [...all.map(({ profile }) => profile.name + ': ' + (profile.actions.join(', ') || t('Preparar una tarea con el Harness del proyecto'))), ...local.map(project => project.name + ': ' + t('Configurar, preparar y revisar verificaciones locales desde el panel del Harness'))].join('\n') || t('Abr\u00ed una carpeta para detectar su Harness o configurar el incluido en el IDE.');
 			}
 			if (action === 'estado' && !words.length) {
 				await controller.refreshActivity();
@@ -28,7 +29,9 @@ function createHandler(vscode, controller, projects, mcp) {
 				const labels = { running: t('En ejecuci\u00f3n'), passed: t('Completada'), failed: t('Fall\u00f3'), cancelled: t('Cancelada'), ended: t('Sin c\u00f3digo de salida'), unknown: t('Resultado desconocido'), stalled: t('Sin proceso activo'), completed: t('Completada') };
 				const native = (controller.readHarnessProgress?.() || controller.progress).map(row => row.error ? t('No se pudo consultar el progreso del Harness.') : `${row.title || row.id} [${row.id}] (${row.project || ''}): ${labels[row.outcome || row.state] || row.outcome || row.state}${row.percent === undefined ? '' : ' (' + row.percent + '%)'}`);
 				const jobs = controller.getHistory().slice(-20).reverse().map(job => `${job.action}: ${labels[job.state] || job.state} (${job.project})`);
-				return [...native, ...jobs].join('\n') || t('No hay ejecuciones registradas en este workspace.');
+				const local = await controller.nativeProjects?.() || [];
+				const tasks = local.flatMap(project => project.tasks.map(task => `${project.name}: ${task.title} \u2014 ${task.reconciliationRequired ? t('Requiere reconciliaci\u00f3n') : labels[task.status] || task.status}`));
+				return [...native, ...jobs, ...tasks].join('\n') || t('No hay ejecuciones registradas en este workspace.');
 			}
 			if (['check', 'verify', 'test'].includes(action) && words.length <= 1) {
 				const all = await projects();
@@ -37,7 +40,12 @@ function createHandler(vscode, controller, projects, mcp) {
 				const id = await controller.execute(project.folder.uri.toString(), action, token);
 				return id ? t('Tarea iniciada. Pod\u00e9s seguir el resultado en la barra de estado y en el historial.') : t('No se inici\u00f3 una tarea nueva. Revis\u00e1 la confirmaci\u00f3n o si ya est\u00e1 activa.');
 			}
-			if (!mcp.enabled()) { return t('El MCP est\u00e1 desactivado en los ajustes del IDE.'); }
+			const localCommands = ['check', 'verify', 'test', 'mcp', 'proyectos', 'proyecto', 'tareas', 'tarea', 'tablero', 'buscar', 'crear', 'mover', 'comentar', 'estado', 'comandos'];
+			if (controller.openTask && !localCommands.includes(action)) {
+				await controller.openTask(text);
+				return t('Abr\u00ed tu tarea en el panel del Harness. Revis\u00e1 el texto y eleg\u00ed \u00abPreparar tarea\u00bb para ver el plan antes de ejecutarlo.');
+			}
+			if (!mcp.enabled()) { return t('Work Management es opcional y est\u00e1 desactivado en este workspace. Pod\u00e9s preparar tareas y consultar su estado sin conectarlo. Para usar tarjetas y tableros, habilit\u00e1 ArmotuSitio Work Management en las opciones de este chat.'); }
 			if (action === 'mcp' && !words.length) {
 				const tools = await mcp.client.tools(token);
 				return t('Conectado a ArmotuSitio Work Management. Herramientas disponibles para tu clave: {0}.', tools.map(tool => tool.name).join(', '));
@@ -55,10 +63,6 @@ function createHandler(vscode, controller, projects, mcp) {
 			if (action === 'mover' && words.length === 2 && issueKey.test(words[0]) && /^\d+$/.test(words[1]) && Number.isSafeInteger(Number(words[1])) && Number(words[1]) > 0) { name = 'transition_issue'; args = { issue_key: words[0].toUpperCase(), board_column_id: Number(words[1]) }; mutation = true; }
 			if (action === 'comentar' && words.length >= 2 && issueKey.test(words[0])) { name = 'add_issue_comment'; args = { issue_key: words[0].toUpperCase(), content: words.slice(1).join(' ') }; mutation = true; }
 			if (!name) {
-				if (controller.openTask && !['check', 'verify', 'test', 'mcp', 'proyectos', 'proyecto', 'tareas', 'tarea', 'tablero', 'buscar', 'crear', 'mover', 'comentar', 'estado', 'comandos'].includes(action)) {
-					await controller.openTask(text);
-					return t('Abr\u00ed tu tarea en el panel del Harness. Revis\u00e1 el texto y eleg\u00ed \u00abPreparar tarea\u00bb para ver el plan antes de ejecutarlo.');
-				}
 				return help();
 			}
 			if (mutation) {
@@ -86,8 +90,18 @@ function createHandler(vscode, controller, projects, mcp) {
 /** Expose the same command handler in native chat and a standalone panel without an AI dependency. */
 function registerChat(context, controller, projects, mcp, vscode) {
 	const handle = createHandler(vscode, controller, projects, mcp);
+	const updateCredential = async () => { if (panel && mcp.credentialState) { const status = await mcp.credentialState(); await panel?.webview.postMessage({ type: 'credential', ...status }); } };
 	const t = message => vscode.l10n.t(message);
 	let panel, active;
+	if (vscode.window?.createStatusBarItem) {
+		const shortcut = vscode.window.createStatusBarItem('atsHarness.chat', vscode.StatusBarAlignment.Left, 19);
+		context.subscriptions.push(shortcut);
+		shortcut.name = t('Chat del Harness'); shortcut.text = '$(comment-discussion) Chat Harness';
+		shortcut.tooltip = t('Abrir el chat del Harness para preparar tareas y consultar su avance.'); shortcut.command = 'atsIde.chat';
+		const update = () => vscode.workspace.getConfiguration('atsHarness').get('enabled', true) ? shortcut.show() : shortcut.hide();
+		update();
+		context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => { if (event.affectsConfiguration('atsHarness.enabled')) { update(); } }));
+	}
 	if (vscode.chat?.createChatParticipant) {
 		const participant = vscode.chat.createChatParticipant('atsIde.harness', async (request, _context, stream, token) => {
 			const output = await handle((request.command ? request.command + ' ' : '') + request.prompt, token);
@@ -103,11 +117,20 @@ function registerChat(context, controller, projects, mcp, vscode) {
 		const current = panel;
 		const nonce = randomBytes(24).toString('base64');
 		const uri = name => current.webview.asWebviewUri(vscode.Uri.joinPath(resources, name)).toString();
-		current.webview.html = `<!doctype html><html lang="es-AR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${current.webview.cspSource}; style-src ${current.webview.cspSource}; script-src 'nonce-${nonce}';"><link rel="stylesheet" href="${uri('home.css')}"><link rel="stylesheet" href="${uri('chat.css')}"><title>Chat Harness</title></head><body><main><header><img src="${uri('logo.png')}" width="56" height="56" alt=""><div><h1>Chat Harness</h1><p>${t('Tu Harness y Work Management, desde el IDE.')}</p></div></header><p class="muted">${t('Prob\u00e1 @harness comandos, @harness estado o @harness proyectos. Para gestionar tareas: tareas RED, tarea RED-123, crear RED t\u00edtulo, tablero RED, mover RED-123 columnaId o comentar RED-123 texto.')}</p><div id="messages" role="log" aria-live="polite"></div><form id="chat"><label for="prompt">${t('Mensaje para @harness')}</label><textarea id="prompt" maxlength="10000" rows="3" required></textarea><div class="actions"><button id="send" type="submit">${t('Enviar')}</button><button id="cancel" class="secondary" type="button" disabled>${t('Cancelar consulta')}</button><button id="configure" class="secondary" type="button">${t('Configurar clave MCP')}</button></div></form></main><script nonce="${nonce}" src="${current.webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'dist', 'chat.js'))}"></script></body></html>`;
+		current.webview.html = `<!doctype html><html lang="es-AR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${current.webview.cspSource}; style-src ${current.webview.cspSource}; script-src 'nonce-${nonce}';"><link rel="stylesheet" href="${uri('home.css')}"><link rel="stylesheet" href="${uri('chat.css')}"><title>Chat Harness</title></head><body><main class="chat-workspace"><header class="workspace-header"><img src="${uri('logo.png')}" width="32" height="32" alt=""><div><h1>${t('Chat Harness')}</h1><p class="subtitle">${t('Prepar\u00e1 tareas y consult\u00e1 su avance desde el IDE.')}</p></div></header>
+<p id="chat-help" class="muted">${t('Describ\u00ed una tarea para revisar su plan. La ejecuci\u00f3n usa las capacidades del Harness elegido y requiere tu aprobaci\u00f3n.')}</p>
+<div class="actions chat-shortcuts" aria-label="${t('Accesos r\u00e1pidos')}"><button class="secondary" type="button" data-prompt="estado">${t('Ver estado')}</button><button class="secondary" type="button" data-prompt="comandos">${t('Qu\u00e9 puedo hacer')}</button><button class="secondary" type="button" id="home">${t('Abrir panel de tareas')}</button></div>
+<div id="messages" role="log" aria-live="polite" aria-label="${t('Conversaci\u00f3n del Harness')}"></div>
+<p id="chat-status" class="muted" role="status" aria-live="polite" data-pending="${t('Consultando\u2026')}"></p>
+<form id="chat"><label for="prompt">${t('\u00bfQu\u00e9 necesit\u00e1s hacer?')}</label><textarea id="prompt" maxlength="10000" rows="3" required aria-describedby="chat-help chat-keyboard" placeholder="${t('Ejemplo: corregir la validaci\u00f3n del formulario de contacto')}"></textarea><p id="chat-keyboard" class="muted">${t('Enter para enviar \u00b7 Shift+Enter para una nueva l\u00ednea')}</p><div class="actions"><button id="send" type="submit">${t('Enviar')}</button><button id="cancel" class="secondary" type="button" disabled>${t('Cancelar consulta')}</button></div></form>
+<details class="advanced"><summary>${t('ArmotuSitio Work Management \u00b7 opcional')}</summary><p class="muted">${t('Conectalo si este proyecto usa tarjetas o tableros de ArmotuSitio. Las tareas locales funcionan sin esta integraci\u00f3n.')}</p><p id="credential-status" class="muted" role="status" data-configured="${t('Clave configurada')}" data-missing="${t('No hay una clave configurada')}" data-disabled="${t('Integraci\u00f3n desactivada en este workspace')}"></p><div class="actions"><button id="configure" class="secondary" type="button" disabled>${t('Configurar clave')}</button><button id="enable-mcp" class="secondary" type="button" hidden>${t('Habilitar en este workspace')}</button><button id="change-key" class="secondary" type="button" hidden>${t('Cambiar clave')}</button></div><p class="muted">${t('Consultas disponibles: proyectos, tareas CLAVE, tarea CLAVE-123 o tablero CLAVE.')}</p></details>
+</main><script nonce="${nonce}" src="${current.webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'dist', 'chat.js'))}"></script></body></html>`;
 		const subscriptions = [];
 		subscriptions.push(current.webview.onDidReceiveMessage(async message => {
+			if (message?.action === 'ready') { await updateCredential(); return; }
 			if (message?.action === 'cancel') { active?.cancel(); return; }
-			if (message?.action === 'configure' && !active) { await vscode.commands.executeCommand('atsIde.mcpConfigure'); return; }
+			if (message?.action === 'home' && !active) { await vscode.commands.executeCommand('atsIde.home'); return; }
+			if (['configure', 'changeKey', 'enableMcp'].includes(message?.action) && !active) { await vscode.commands.executeCommand(({ configure: 'atsIde.mcpConfigure', changeKey: 'atsIde.mcpChangeKey', enableMcp: 'atsIde.mcpEnable' })[message.action]); await updateCredential(); return; }
 			if (message?.action !== 'send' || typeof message.text !== 'string' || !message.text.trim() || message.text.length > 10000 || active) { return; }
 			const source = new vscode.CancellationTokenSource(); active = source;
 			try {
@@ -117,6 +140,7 @@ function registerChat(context, controller, projects, mcp, vscode) {
 		}));
 		subscriptions.push(current.onDidDispose(() => { active?.cancel(); active = undefined; panel = undefined; subscriptions.forEach(item => item.dispose()); }));
 	}));
+	if (mcp.onDidChange) { context.subscriptions.push(mcp.onDidChange(() => { void updateCredential(); })); }
 	context.subscriptions.push({ dispose() { active?.cancel(); panel?.dispose(); } });
 }
 

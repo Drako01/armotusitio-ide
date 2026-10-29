@@ -8,3 +8,12 @@
 #chat label { display: block; margin-bottom: var(--vscode-spacing-size80); }
 #prompt { box-sizing: border-box; width: 100%; resize: vertical; font: inherit; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, transparent); padding: var(--vscode-spacing-size120); margin-bottom: var(--vscode-spacing-size120); }
 #prompt:focus { outline: 1px solid var(--vscode-focusBorder); }
+.chat-workspace { max-width: 760px; }
+.chat-shortcuts { margin: 20px 0; }
+#messages:empty { display: none; }
+#messages pre { margin: 16px 0; padding: 12px 16px; }
+#messages .answer { border-left: 0; padding-left: 0; }
+#chat { margin-top: 24px; }
+#chat-keyboard { margin: 0 0 12px; }
+#chat-status:empty { display: none; }
+#prompt { padding: 12px; min-height: 96px; }

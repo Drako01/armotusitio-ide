@@ -60,7 +60,7 @@ async function nativeRun(profile, args, options: NativeOptions = {}): Promise<{ 
 /** Invoke only the native Harness entrypoint, with literal arguments and bounded output. */
 async function executeNative(profile, args, options: NativeOptions = {}): Promise<{ code: number; value?: NativeData; error: string; output?: string }> {
 	const { root, entry } = await nativeEntry(profile);
-	if (profile.id === 'armotusitio' && options.host && options.host !== 'project') { throw new Error('HARNESS_PROVIDER'); }
+	if (profile.id !== 'redevent' && options.host && options.host !== 'project') { throw new Error('HARNESS_PROVIDER'); }
 	if (options.host && profile.id === 'redevent') {
 		const provider = await readProvider(profile);
 		if (!['codex', 'claude'].includes(options.host) || provider.custom || provider.error) { throw new Error('HARNESS_PROVIDER'); }
@@ -69,7 +69,7 @@ async function executeNative(profile, args, options: NativeOptions = {}): Promis
 	return new Promise((resolve, reject) => {
 		const child = spawn(options.node || 'node', [entry, ...args], {
 			cwd: root, shell: false, windowsHide: true, detached: process.platform !== 'win32',
-			env: { ...process.env, HARNESS_ORIGIN: 'ide', ...(profile.id === 'armotusitio' ? { HARNESS_HOST: 'project' } : options.host ? { HARNESS_HOST: options.host } : {}) },
+			env: { ...process.env, HARNESS_ORIGIN: 'ide', ...(profile.id !== 'redevent' ? { HARNESS_HOST: 'project' } : options.host ? { HARNESS_HOST: options.host } : {}) },
 			stdio: ['ignore', 'pipe', 'pipe']
 		});
 		options.started?.(child);
@@ -235,7 +235,7 @@ class HarnessWorkflow {
 		}).finally(() => this.children.delete(entry.id));
 	}
 	async prepare(profile, text, host) {
-		if (!this.options.allowed(profile) || !['redevent', 'armotusitio'].includes(profile.id) || profile.id === 'armotusitio' && host !== 'project' || !['codex', 'claude', 'project'].includes(host) || typeof text !== 'string' || !text.trim() || text.length > 32000 || text.includes('\0')) { throw new Error('HARNESS_REQUEST'); }
+		if (!this.options.allowed(profile) || !['redevent', 'armotusitio'].includes(profile.id) || profile.id !== 'redevent' && host !== 'project' || !['codex', 'claude', 'project'].includes(host) || typeof text !== 'string' || !text.trim() || text.length > 32000 || text.includes('\0')) { throw new Error('HARNESS_REQUEST'); }
 		if (this.all().some(entry => entry.project === profile.root && entry.creationUncertain)) { throw new Error('HARNESS_RECONCILE'); }
 		if (this.busy.has(profile.root) || this.all().some(entry => entry.project === profile.root && entry.phase === 'stopping')) { throw new Error('HARNESS_BUSY'); }
 		this.busy.add(profile.root);
@@ -308,7 +308,7 @@ class HarnessWorkflow {
 			if (entry.phase !== 'review') { return; }
 			entry.phase = 'creating'; entry.creationUncertain = true; this.changed();
 			const created = await this.call(entry, 'run', ['auto', '--file', entry.file, ...(entry.planDigest ? ['--plan-digest', entry.planDigest] : [])], 1800000);
-			if (created.code !== 0 || !identityPattern.test(created.value?.id || '')) { if (profile.id === 'armotusitio' && created.code === 2) { entry.creationUncertain = false; } throw new Error('HARNESS_CREATE'); }
+			if (created.code !== 0 || !identityPattern.test(created.value?.id || '')) { if (profile.id !== 'redevent' && created.code === 2) { entry.creationUncertain = false; } throw new Error('HARNESS_CREATE'); }
 			entry.nativeId = created.value.id; entry.creationUncertain = false; this.changed();
 			await this.execute(entry, 'execute');
 		} catch (error) { if (!['stopping', 'cancelled'].includes(entry.phase)) { entry.phase = entry.creationUncertain ? 'unknown' : 'blocked'; entry.error = entry.creationUncertain ? 'HARNESS_CREATE_UNKNOWN' : error.message; this.changed(); } }
@@ -395,7 +395,7 @@ class HarnessWorkflow {
 	async stop(id, profile) {
 		const entry = this.entry(id, profile);
 		const child = this.children.get(id);
-		if (profile.id === 'armotusitio' && entry.nativeId && ['running', 'pending', 'interrupted', 'stopping'].includes(entry.phase)) {
+		if (profile.id !== 'redevent' && entry.nativeId && ['running', 'pending', 'interrupted', 'stopping'].includes(entry.phase)) {
 			if (this.stops.has(profile.root)) { throw new Error('HARNESS_BUSY'); }
 			this.stops.add(profile.root);
 			const ownsBusy = !this.busy.has(profile.root); if (ownsBusy) { this.busy.add(profile.root); }

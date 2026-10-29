@@ -15,7 +15,7 @@ function harness() {
 	const controller = { progress: [{ id: 'RED-1', state: 'running', percent: 42 }], getHistory: () => [], async refreshActivity() { }, async execute(...args) { calls.push(['execute', ...args]); return 'started'; } };
 	const client = { tools: async () => names.map(name => ({ name })), async call(...args) { calls.push(args); return { structuredContent: { ok: true } }; } };
 	const projects = async () => [{ profile: { name: 'RedEvent', id: 'redevent', root: '/repo', actions: ['check'] }, folder: { uri: { toString: () => 'file:///repo' } } }];
-	return { handle: createHandler(vscode, controller, projects, { client, enabled: () => enabled }), calls, confirmations, names, client, trust: value => { trusted = value; }, enable: value => { enabled = value; }, confirm: value => { confirm = value; } };
+	return { controller, handle: createHandler(vscode, controller, projects, { client, enabled: () => enabled }), calls, confirmations, names, client, trust: value => { trusted = value; }, enable: value => { enabled = value; }, confirm: value => { confirm = value; } };
 }
 
 test('chat uses actual progress and controller tasks without executing arbitrary instructions', async () => {
@@ -73,10 +73,12 @@ test('cancelling during confirmation prevents a Work Management mutation', async
 test('native chat participant dispatches explicit slash commands as escaped text without a model API', async () => {
 	let handler, response;
 	const noop = () => ({ dispose() { } });
-	const vscode = { l10n: { t: value => value }, workspace: { isTrusted: true },
+	const vscode = {
+		l10n: { t: value => value }, workspace: { isTrusted: true },
 		chat: { createChatParticipant(id, fn) { assert.equal(id, 'atsIde.harness'); handler = fn; return noop(); } },
 		Uri: { joinPath: (base, ...parts) => base + '/' + parts.join('/') }, commands: { registerCommand: noop },
-		MarkdownString: class { value = ''; appendText(value) { this.value += value; } } };
+		MarkdownString: class { value = ''; appendText(value) { this.value += value; } }
+	};
 	const projects = async () => [{ profile: { name: '<untrusted>', actions: ['check'] } }];
 	const context = { extensionUri: 'extension', subscriptions: [] };
 	registerChat(context, {}, projects, { enabled: () => false }, vscode);
@@ -84,4 +86,16 @@ test('native chat participant dispatches explicit slash commands as escaped text
 	assert.equal(response.value, '<untrusted>: check');
 	assert.equal(response.isTrusted, undefined);
 	context.subscriptions.forEach(item => item.dispose());
+});
+
+
+test('task preparation and local status work without optional Work Management', async () => {
+	const h = harness(); h.enable(false);
+	h.controller.openTask = async text => { h.calls.push(['prepare', text]); };
+	h.controller.nativeProjects = async () => [{ name: 'Generic', tasks: [{ title: 'Local verification', status: 'passed' }] }];
+	assert.match(await h.handle('Corregir el formulario'), /Preparar tarea/);
+	assert.match(await h.handle('estado'), /Generic: Local verification.*Completada/);
+	assert.match(await h.handle('comandos'), /Generic/);
+	assert.match(await h.handle('proyectos'), /opcional/);
+	assert.deepEqual(h.calls, [['prepare', 'Corregir el formulario']]);
 });

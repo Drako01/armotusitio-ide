@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { proposeProjectConfig, writeProjectConfig, loadProjectConfig, validateProjectConfig } from '../src/native-project.ts';
+import { proposeProjectConfig, writeProjectConfig, loadProjectConfig, validateProjectConfig, generatedConfigDigest, removeGeneratedProjectConfig } from '../src/native-project.ts';
 
 async function fixture(run: (root: string) => Promise<void>): Promise<void> {
 	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-native-project-'));
@@ -52,4 +52,24 @@ test('reject incompatible schema and unsafe symlink manifest', async () => fixtu
 	} finally {
 		await fs.rm(external, { recursive: true, force: true });
 	}
+}));
+
+
+test('configuration generation yields to any project Harness marker', async () => fixture(async root => {
+	const proposal = await proposeProjectConfig(root);
+	await fs.mkdir(path.join(root, 'harness'));
+	await assert.rejects(writeProjectConfig(root, proposal.config), /HARNESS_PROJECT_AUTHORITY/);
+	assert.equal(await loadProjectConfig(root), undefined);
+}));
+
+test('remove only the generated unchanged configuration, preserve foreign files', async () => fixture(async root => {
+	const config = (await proposeProjectConfig(root)).config;
+	await writeProjectConfig(root, config);
+	const digest = generatedConfigDigest(config);
+	await fs.writeFile(path.join(root, 'foreign.txt'), 'keep');
+	await fs.appendFile(path.join(root, '.ats-harness.json'), ' ');
+	await assert.rejects(removeGeneratedProjectConfig(root, digest), /HARNESS_CONFIG_CHANGED/);
+	await fs.writeFile(path.join(root, '.ats-harness.json'), JSON.stringify(config, null, 2) + '\n');
+	await removeGeneratedProjectConfig(root, digest);
+	assert.deepEqual({ config: await loadProjectConfig(root), foreign: await fs.readFile(path.join(root, 'foreign.txt'), 'utf8') }, { config: undefined, foreign: 'keep' });
 }));

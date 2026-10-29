@@ -78,3 +78,25 @@ li { line-height: 1.8; }
 
 .diff-added { color: var(--vscode-gitDecoration-addedResourceForeground, var(--vscode-foreground)); }
 .diff-removed { color: var(--vscode-gitDecoration-deletedResourceForeground, var(--vscode-foreground)); }
+.workspace-header { gap: 16px; margin-bottom: 24px; }
+.workspace-header img { width: 32px; height: 32px; border-radius: 6px; }
+.workspace-header h1 { font-size: 24px; letter-spacing: -.02em; margin: 4px 0; }
+.workspace-header .eyebrow { margin: 0; letter-spacing: .08em; }
+.project-overview:first-child { border-top: 0; padding-top: 0; }
+.project-overview h3 { font-size: 15px; overflow-wrap: anywhere; }
+.engine-label { margin: 6px 0; font-size: 12px; color: var(--vscode-descriptionForeground); }
+.project-overview > .muted { margin: 8px 0 16px; max-width: 65ch; }
+.project-options { margin-top: 16px; }
+.project-options summary { font-size: 12px; color: var(--vscode-descriptionForeground); }
+.project-options summary:hover { color: var(--vscode-textLink-foreground); }
+summary:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 3px; }
+.project-options > .actions { margin-top: 12px; }
+.local-task-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 0 4px; }
+.local-task-row > div { min-width: 0; overflow-wrap: anywhere; }
+.local-task-row strong { font-size: 13px; font-weight: 500; }
+.local-task-row p { margin: 4px 0; }
+.local-task-row > button { flex-shrink: 0; }
+#task-composer { margin-top: 24px; border-top: 1px solid var(--vscode-panel-border); padding-top: 12px; }
+#task-composer > summary { font-weight: 500; }
+#task-composer section { margin-top: 16px; }
+@media (max-width: 360px) { .local-task-row { align-items: flex-start; flex-direction: column; gap: 8px; } }

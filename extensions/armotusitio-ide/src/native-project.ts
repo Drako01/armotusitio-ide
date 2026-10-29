@@ -4,7 +4,9 @@
  *--------------------------------------------------------------------------------------------*/
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import { createHash } from 'node:crypto';
 import { validateNativePlan, type Plan } from './native-harness.ts';
+import { inspectHarnessAuthority } from './native-authority.ts';
 
 export const PROJECT_CONFIG = '.ats-harness.json';
 export interface ProjectConfig {
@@ -67,7 +69,7 @@ export async function proposeProjectConfig(root: string): Promise<ProjectProposa
 	const signals: string[] = [];
 	const caveats = ['Detected tooling is a suggestion, not a successful tool check', 'No commands or providers are invoked during detection'];
 	let profile: ProjectConfig['profile'] = 'custom';
-	let executable = 'git';
+	let executable = 'node';
 	let args = ['--version'];
 	const packageText = await readRegular(canonical, 'package.json', MAX_PROJECT_FILE_BYTES);
 	if (packageText !== undefined) {
@@ -98,7 +100,7 @@ export async function proposeProjectConfig(root: string): Promise<ProjectProposa
 		caveats.push('php -v checks runtime availability, not project correctness');
 	}
 	if (profile === 'custom') {
-		caveats.push('Custom fallback only checks Git availability');
+		caveats.push('Custom fallback only checks the bundled runtime; configure project verifications explicitly');
 	}
 	const config: ProjectConfig = { schemaVersion: 1, runtime: 'ide-native', profile, plan: { schemaVersion: 1, gates: [{ id: 'verify', executable, args, cwd: '.' }] } };
 	validateProjectConfig(config);
@@ -108,6 +110,7 @@ export async function proposeProjectConfig(root: string): Promise<ProjectProposa
 export async function writeProjectConfig(root: string, config: ProjectConfig): Promise<string> {
 	validateProjectConfig(config);
 	const canonical = await fs.realpath(root);
+	if ((await inspectHarnessAuthority(canonical)).engine === 'project') { throw Error('HARNESS_PROJECT_AUTHORITY'); }
 	const target = path.join(canonical, PROJECT_CONFIG);
 	const raw = JSON.stringify(config, null, 2) + '\n';
 	if (Buffer.byteLength(raw) > MAX_CONFIG_BYTES) {
@@ -120,4 +123,18 @@ export async function writeProjectConfig(root: string, config: ProjectConfig): P
 		await handle.close();
 	}
 	return target;
+}
+
+export function generatedConfigDigest(config: ProjectConfig): string {
+	return createHash('sha256').update(JSON.stringify(config, null, 2) + '\n').digest('hex');
+}
+
+/** Remove only the byte-identical configuration whose creation this IDE recorded. */
+export async function removeGeneratedProjectConfig(root: string, expectedDigest: string): Promise<void> {
+	if (!/^[a-f0-9]{64}$/.test(expectedDigest)) { throw Error('HARNESS_CONFIG_NOT_GENERATED'); }
+	const canonical = await fs.realpath(root);
+	if ((await inspectHarnessAuthority(canonical)).engine === 'project') { throw Error('HARNESS_PROJECT_AUTHORITY'); }
+	const raw = await readRegular(canonical, PROJECT_CONFIG, MAX_CONFIG_BYTES);
+	if (raw === undefined || createHash('sha256').update(raw).digest('hex') !== expectedDigest) { throw Error('HARNESS_CONFIG_CHANGED'); }
+	await fs.unlink(path.join(canonical, PROJECT_CONFIG));
 }

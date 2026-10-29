@@ -12,12 +12,12 @@ const { stripTypeScriptTypes } = require('node:module');
 const { chromium } = require('playwright-core');
 const test = require('node:test');
 const root = path.resolve(__dirname, '..');
-const noop = () => ({ dispose() {} });
+const noop = () => ({ dispose() { } });
 async function main() {
 	const commands = new Map();
 	let state, receive;
-	const panel = { reveal() {}, onDidDispose: noop, webview: { cspSource: 'https://audit.invalid', asWebviewUri: value => value, onDidReceiveMessage: fn => { receive = fn; return noop(); }, postMessage: value => { state = value; } } };
-	const vscode = { l10n: { t: value => value }, ViewColumn: { One: 1 }, Uri: { joinPath: (base, ...parts) => base + '/' + parts.join('/') }, workspace: { isTrusted: true, onDidGrantWorkspaceTrust: noop }, window: { createWebviewPanel: () => panel }, commands: { registerCommand: (id, fn) => { commands.set(id, fn); return noop(); }, executeCommand() {} } };
+	const panel = { reveal() { }, onDidDispose: noop, webview: { cspSource: 'https://audit.invalid', asWebviewUri: value => value, onDidReceiveMessage: fn => { receive = fn; return noop(); }, postMessage: value => { state = value; } } };
+	const vscode = { l10n: { t: value => value }, ViewColumn: { One: 1 }, Uri: { joinPath: (base, ...parts) => base + '/' + parts.join('/') }, workspace: { isTrusted: true, onDidGrantWorkspaceTrust: noop }, window: { createWebviewPanel: () => panel }, commands: { registerCommand: (id, fn) => { commands.set(id, fn); return noop(); }, executeCommand() { } } };
 	const workspace = { views: () => [], toolResult: () => undefined, receive: async () => false };
 	const module = { exports: {} };
 	vm.runInNewContext(fs.readFileSync(path.join(root, 'src/home.ts'), 'utf8'), { module, require: name => name === 'vscode' ? vscode : name === './workspace.ts' ? { createWorkspace: () => workspace } : require(name) });
@@ -105,12 +105,19 @@ async function main() {
 		const restricted = [await page.locator('#prepare-reason').textContent(), await page.locator('#prepare-task').isDisabled(), await part('done', 'restricted').textContent(), await page.locator('#workflow-runs article[data-entry-id="done"] button[data-workflow-action="bindCard"]').getAttribute('title')];
 		state.trusted = true; await push();
 		assert.deepEqual([...restricted, await page.locator('#prepare-reason').textContent(), await page.locator('#prepare-task').getAttribute('aria-describedby')], [state.labels.restricted, true, state.labels.restricted, state.labels.restricted, w.busyProject, 'prepare-reason']);
-		entry.progress.nodes =Array.from({ length: 100 }, (_, index) => ({ id: 'node-' + index, agent: 'verifier', domain: 'api', status: 'running' }));
+		entry.progress.nodes = Array.from({ length: 100 }, (_, index) => ({ id: 'node-' + index, agent: 'verifier', domain: 'api', status: 'running' }));
 		state.workflows = [entry]; await push();
 		const timings = await page.evaluate(state => {
-			const times = []; for (let index = 0; index < 60; index++) { const start = performance.now(); state.workflows[0].progress.percent = index; window.dispatchEvent(new MessageEvent('message', { data: state })); times.push(performance.now() - start); } return times.sort((a,b) => a-b);
+			const times = []; for (let index = 0; index < 60; index++) { const start = performance.now(); state.workflows[0].progress.percent = index; window.dispatchEvent(new MessageEvent('message', { data: state })); times.push(performance.now() - start); } return times.sort((a, b) => a - b);
 		}, state);
 		assert.ok(timings[56] < 150, '100-node renderer p95 must stay under 150ms');
+		state.nativeProjects = [{ root: '/generic', name: 'Generic project', configured: true, tasks: [{ id: 'local', title: 'Local verification', status: 'running', attempts: 1 }] }]; await push();
+		await page.locator('.project-options').last().locator('summary').click();
+		const nativeCreate = page.locator('button[data-command="nativeNewTask"]'); await nativeCreate.focus(); await push();
+		assert.equal(await nativeCreate.evaluate(button => button === document.activeElement), true);
+		await nativeCreate.click();
+		assert.deepEqual(await lastMessage('native'), { action: 'native', root: '/generic', command: 'nativeNewTask', id: undefined });
+		state.trusted = false; await push(); assert.equal(await nativeCreate.isDisabled(), true); state.trusted = true; await push();
 		const artifacts = path.resolve(root, '../../.build/harness-upgrade'); fs.mkdirSync(artifacts, { recursive: true });
 		const themes = {
 			dark: '--vscode-editor-background:#181818;--vscode-editor-foreground:#ddd;--vscode-foreground:#ddd;--vscode-focusBorder:#0078d4;--vscode-button-secondaryForeground:#ddd;--vscode-list-hoverBackground:#2a2d2e',

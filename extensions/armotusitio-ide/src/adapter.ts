@@ -6,10 +6,11 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { activityRank, sortActivity } = require('./presentation.ts');
+const { inspectHarnessAuthority } = require('./native-authority.ts');
 
 /** Resolve a producer-owned regular entrypoint without following links outside the authorized root. */
 async function nativeEntry(profile) {
-	const relative = profile.id === 'redevent' ? '.harness/core.mjs' : profile.id === 'armotusitio' ? 'harness/scripts/ide.mjs' : undefined;
+	const relative = profile.id === 'redevent' ? '.harness/core.mjs' : profile.id === 'armotusitio' ? 'harness/scripts/ide.mjs' : profile.id === 'project-native' ? (await inspectHarnessAuthority(profile.root)).entry : undefined;
 	if (!relative) { throw new Error('HARNESS_UNSUPPORTED'); }
 	try {
 		const root = await fs.realpath(profile.root);

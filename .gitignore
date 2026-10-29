@@ -83,3 +83,6 @@ reports/
 # env files
 .env
 .harness/.env
+
+# Local Harness verification output
+/test.log

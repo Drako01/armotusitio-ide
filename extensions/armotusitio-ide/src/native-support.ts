@@ -23,9 +23,12 @@ export interface SupportReport {
 }
 
 export function assertSupportSchema(raw: unknown): asserts raw is SupportReport {
-	if (!raw || typeof raw !== 'object' || Array.isArray(raw) || (raw as { schemaVersion?: unknown }).schemaVersion !== SUPPORT_SCHEMA_VERSION) {
-		throw Error('HARNESS_SUPPORT_INCOMPATIBLE_SCHEMA');
-	}
+	if (!raw || typeof raw !== 'object' || Array.isArray(raw) || (raw as SupportReport).schemaVersion !== SUPPORT_SCHEMA_VERSION) { throw Error('HARNESS_SUPPORT_INCOMPATIBLE_SCHEMA'); }
+	const report = raw as SupportReport;
+	const id = (value: string): boolean => typeof value === 'string' && /^[a-z0-9][a-z0-9_-]{0,63}$/i.test(value);
+	const date = (value: string): boolean => typeof value === 'string' && value.length <= 40 && Number.isFinite(Date.parse(value));
+	if (report.engine !== 'ide-native' || !date(report.generatedAt) || !/^[a-f0-9]{20}$/.test(report.projectKey) || !['present', 'absent'].includes(report.configuration) || !['none', 'active', 'stale', 'unknown'].includes(report.lock)
+		|| !Array.isArray(report.tasks) || report.tasks.length > 250 || !report.tasks.every(task => task && id(task.id) && date(task.createdAt) && Array.isArray(task.attempts) && task.attempts.length <= 25 && task.attempts.every(attempt => attempt && id(attempt.id) && ['running', 'passed', 'failed', 'interrupted', 'cancelled'].includes(attempt.status) && Array.isArray(attempt.results) && attempt.results.length <= 64 && attempt.results.every(result => result && id(result.id) && ['passed', 'failed', 'cancelled'].includes(result.status) && (result.exitCode === null || Number.isSafeInteger(result.exitCode)))))) { throw Error('HARNESS_SUPPORT_INVALID_REPORT'); }
 }
 
 function summarize(tasks: Task[]): SupportReport['tasks'] {
@@ -54,7 +57,9 @@ export async function buildSupportReport(root: string, harness: NativeHarness): 
 export async function exportSupportReport(target: string, report: SupportReport): Promise<void> {
 	assertSupportSchema(report);
 	if (path.extname(target).toLowerCase() !== '.json') { throw Error('HARNESS_SUPPORT_EXTENSION'); }
-	const payload = JSON.stringify(report, null, 2) + '\n';
+	// Project only the support contract; extra caller properties must never enter exports.
+	const safe: SupportReport = { schemaVersion: 1, generatedAt: report.generatedAt, projectKey: report.projectKey, engine: report.engine, configuration: report.configuration, lock: report.lock, tasks: report.tasks.map(task => ({ id: task.id, createdAt: task.createdAt, attempts: task.attempts.map(attempt => ({ id: attempt.id, status: attempt.status, results: attempt.results.map(result => ({ id: result.id, status: result.status, exitCode: result.exitCode })) })) })) };
+	const payload = JSON.stringify(safe, null, 2) + '\n';
 	if (Buffer.byteLength(payload) > MAX_REPORT_BYTES) { throw Error('HARNESS_SUPPORT_TOO_LARGE'); }
 	const handle = await fs.open(target, 'wx', 0o600);
 	try { await handle.writeFile(payload, 'utf8'); }

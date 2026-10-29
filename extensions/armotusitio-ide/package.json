@@ -92,8 +92,8 @@
       "properties": {
         "atsHarness.mcp.enabled": {
           "type": "boolean",
-          "default": true,
-          "scope": "application",
+          "default": false,
+          "scope": "window",
           "description": "Conectar el MCP de Work Management de ArmotuSitio. Requiere workspace confiable y clave de agente."
         },
         "atsHarness.enabled": {
@@ -147,6 +147,10 @@
       ]
     },
     "commands": [
+      {
+        "command": "atsHarness.nativeRemoveConfiguration",
+        "title": "ArmoTuSitio: Retirar Configuraci\u00f3n Generada del Harness"
+      },
       {
         "command": "atsHarness.nativeSupport",
         "title": "ArmoTuSitio: Diagnósticos y evidencias del Harness nativo"
@@ -336,7 +340,7 @@
   },
   "scripts": {
     "compile": "node esbuild.mts",
-    "test": "node --test test/*.test.cts",
+    "test": "node --test test/*.test.cts test/native-*.test.mts",
     "check": "node ../../node_modules/@typescript/native/bin/tsc --project tsconfig.json && node check-resources.mts",
     "vscode:prepublish": "npm run compile",
     "check:native-package": "node check-native-package.mts"

@@ -10,3 +10,16 @@ const { detect, command, validatePlan } = require('../src/core.ts');
 function fixture(name, dir) { const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ats-ide-')); fs.mkdirSync(path.join(root, dir)); fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name, packageManager: 'pnpm@11.23.0', scripts: { 'harness:check': 'node check', 'harness:verify': 'node verify' } })); return root; }
 test('profiles distinguish actual harness roots', async () => { for (const [name, dir, id] of [['redevent', '.harness', 'redevent'], ['armotusitio-next', 'harness', 'armotusitio']]) { const root = fixture(name, dir); try { const p = await detect(root); assert.equal(p.id, id); assert.deepEqual(p.actions, ['check', 'verify']); assert.deepEqual(command(p, 'verify').args, ['harness:verify']); assert.throws(() => command(p, 'deploy')); } finally { fs.rmSync(root, { recursive: true, force: true }); } } });
 test('reject malformed cyclic and dangerous agent plans', () => { const task = { id: 'a', host: 'codex', command: ['codex', 'exec'], scope: ['apps/api'], dependencies: [], budget: 100, resource: 'read' }; assert.deepEqual(validatePlan({ tasks: [task] }), { tasks: 1, budget: 100 }); assert.throws(() => validatePlan({ tasks: [{ ...task, command: ['codex', '--yolo'] }] })); assert.throws(() => validatePlan({ tasks: [{ ...task, dependencies: ['a'] }] })); assert.throws(() => validatePlan({ tasks: [task, { ...task, id: 'b', dependencies: ['a'] }, { ...task, id: 'c', dependencies: ['b', 'c'] }] })); });
+
+
+test('generic project Harness takes priority without a package name or package manifest', async () => {
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ats-generic-'));
+	try {
+		fs.mkdirSync(path.join(root, '.harness'));
+		fs.writeFileSync(path.join(root, '.harness', 'core.mjs'), 'throw Error("detection must never execute")');
+		const profile = await detect(root);
+		assert.deepEqual({ id: profile.id, workflow: profile.workflow, entry: profile.authority.entry, actions: profile.actions }, { id: 'project-native', workflow: true, entry: '.harness/core.mjs', actions: [] });
+		fs.unlinkSync(path.join(root, '.harness', 'core.mjs'));
+		assert.equal((await detect(root)).workflow, false);
+	} finally { fs.rmSync(root, { recursive: true, force: true }); }
+});

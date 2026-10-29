@@ -18,7 +18,8 @@ function createWorkspace(context, controller, projects) {
 	const output = vscode.window.createOutputChannel('ArmotuSitio Harness');
 	let generation = 0;
 	const generations = new WeakMap();
-	const allowed = profile => (generations.get(profile) === undefined || generations.get(profile) === generation) && ['redevent', 'armotusitio'].includes(profile?.id) && vscode.workspace.isTrusted && vscode.workspace.getConfiguration('atsHarness').get('enabled', true) &&
+	const projectConnections = new Set();
+	const allowed = profile => (generations.get(profile) === undefined || generations.get(profile) === generation) && ['redevent', 'armotusitio', 'project-native'].includes(profile?.id) && vscode.workspace.isTrusted && vscode.workspace.getConfiguration('atsHarness').get('enabled', true) &&
 		(vscode.workspace.workspaceFolders || []).some(folder => folder.uri.scheme === 'file' && path.resolve(folder.uri.fsPath) === path.resolve(profile.root));
 	const draftKey = 'atsHarness.drafts.v1.' + createHash('sha256').update((context.storageUri || context.globalStorageUri).fsPath).digest('hex');
 	let draftWrite = Promise.resolve();
@@ -64,7 +65,7 @@ function createWorkspace(context, controller, projects) {
 	controller.harnessBusy = root => workflow.busy.has(root) || toolsBusy.has(root) || workflow.all().some(entry => entry.project === root && ['preparing', 'creating', 'running', 'stopping'].includes(entry.phase));
 	const contracts = new Map();
 	const discoveries = new Map();
-	const invalidate = () => { generation++; contracts.clear(); discoveries.clear(); };
+	const invalidate = () => { generation++; contracts.clear(); discoveries.clear(); projectConnections.clear(); };
 	for (const event of [vscode.workspace.onDidChangeWorkspaceFolders, vscode.workspace.onDidGrantWorkspaceTrust]) { if (event) { context.subscriptions.push(event(invalidate)); } }
 	if (vscode.workspace.onDidChangeConfiguration) { context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => { if (event.affectsConfiguration('atsHarness')) { invalidate(); } })); }
 	async function negotiate(profile) {
@@ -89,7 +90,7 @@ function createWorkspace(context, controller, projects) {
 		nativeRoots = new Set(all.filter(item => item.profile.workflow).map(item => item.profile.root));
 		for (const { profile } of all) {
 			generations.set(profile, pollGeneration);
-			if (!profile.workflow || !allowed(profile)) { continue; }
+			if (!profile.workflow || !allowed(profile) || profile.id === 'project-native' && !projectConnections.has(profile.root)) { continue; }
 			try {
 				if (manual) { contracts.delete(profile.root); }
 				await negotiate(profile);
@@ -154,8 +155,13 @@ function createWorkspace(context, controller, projects) {
 				if (requestGeneration !== generation) { throw new Error('HARNESS_WORKSPACE'); }
 				if (project?.profile) { generations.set(project.profile, generation); }
 				if (!project?.profile.workflow || !allowed(project.profile)) { throw new Error('HARNESS_WORKSPACE'); }
+				if (project.profile.id === 'project-native' && !projectConnections.has(project.profile.root)) {
+					const connect = t('Conectar Harness del proyecto');
+					if (await vscode.window.showWarningMessage(`${t('Se ejecutar\u00e1 la entrada del Harness de este proyecto para comprobar su contrato. Revis\u00e1 su c\u00f3digo antes de continuar.')}\n${project.profile.root}\n${project.profile.authority?.entry || ''} capabilities`, { modal: true }, connect) !== connect || !allowed(project.profile)) { return true; }
+					projectConnections.add(project.profile.root);
+				}
 				if (message.action === 'diagnoseProject') {
-					const operations = project.profile.id === 'armotusitio' ? ['version', 'capabilities'] : ['progress'];
+					const operations = project.profile.id !== 'redevent' ? ['version', 'capabilities'] : ['progress'];
 					const readings = await Promise.allSettled(operations.map(operation => nativeRun(project.profile, [operation, ...(operation === 'progress' ? ['--json'] : [])], { timeout: 15000, authorize: () => allowed(project.profile) })));
 					if (!allowed(project.profile)) { return true; }
 					const report = { project: project.profile.id, extensionHost: { platform: process.platform, node: process.version }, connection: contracts.get(project.profile.root), readings: readings.map((reading, index) => reading.status === 'fulfilled' ? { operation: operations[index], code: reading.value.code, detail: reading.value.error || reading.value.output } : { operation: operations[index], error: String(reading.reason?.message || 'HARNESS_PROGRESS').slice(0, 300) }) };
@@ -212,7 +218,7 @@ function createWorkspace(context, controller, projects) {
 							const value = { task: entry.nativeId, title: entry.title, phase: entry.phase, host: entry.host, issueKey: entry.issueKey, ...(selected.includes(choices[0]) ? { progress: entry.progress ? Object.fromEntries(Object.entries(entry.progress).filter(([key]) => key !== 'attempts')) : undefined } : {}), ...(selected.includes(choices[1]) ? { attempts: entry.progress?.attempts } : {}), ...(selected.includes(choices[2]) ? { timeline: entry.timeline } : {}) };
 							await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({ language: 'json', content: redact(JSON.stringify(value, null, 2)) }));
 						} else if (message.action === 'reuseTask') {
-							if (project.profile.id === 'armotusitio' && negotiated.operations.includes('source')) {
+							if (project.profile.id !== 'redevent' && negotiated.operations.includes('source')) {
 								const source = await nativeRun(project.profile, ['source', entry.nativeId, '0', '12000'], { timeout: 15000, authorize: () => allowed(project.profile) });
 								if (source.code !== 0 || typeof source.value?.text !== 'string' || source.value.complete !== true) { throw new Error('HARNESS_SOURCE'); }
 								await controller.openTask(source.value.text);
@@ -232,7 +238,7 @@ function createWorkspace(context, controller, projects) {
 				if (toolsBusy.has(project.profile.root) && ['prepareTask', 'answerTask', 'startTask', 'resumeTask'].includes(message.action)) { throw new Error('HARNESS_BUSY'); }
 				if (message.action === 'invokeTool') {
 					const tool = project.profile.tools?.find(item => item.id === message.tool);
-					if (!tool || project.profile.id === 'armotusitio' && !negotiated.operations.includes(tool.id) || toolsBusy.has(project.profile.root)) { throw new Error('HARNESS_BUSY'); }
+					if (!tool || project.profile.id !== 'redevent' && !negotiated.operations.includes(tool.id) || toolsBusy.has(project.profile.root)) { throw new Error('HARNESS_BUSY'); }
 					if ((tool.input === 'confirm' || tool.input === 'host') && workflow.busy.has(project.profile.root)) { throw new Error('HARNESS_BUSY'); }
 					const args = toolArgs(tool.id, message.task, message.host);
 					if (tool.input === 'confirm' || tool.input === 'host') {
@@ -256,10 +262,10 @@ function createWorkspace(context, controller, projects) {
 				}
 				if (message.action === 'prepareTask') {
 					if ([...(controller.jobs?.values() || [])].some(job => job.project === project.profile.root && job.state === 'running' && ['verify', 'test', 'run', 'dispatch', 'abort'].includes(job.action))) { throw new Error('HARNESS_BUSY'); }
-					const provider = project.profile.id === 'armotusitio' ? {} : await controller.getProvider(project.profile);
+					const provider = project.profile.id !== 'redevent' ? {} : await controller.getProvider(project.profile);
 					if (toolsBusy.has(project.profile.root)) { throw new Error('HARNESS_BUSY'); }
 					if (provider.error || (provider.custom && message.host !== 'project')) { throw new Error('HARNESS_PROVIDER'); }
-					await workflow.prepare(project.profile, message.text, project.profile.id === 'armotusitio' ? 'project' : message.host);
+					await workflow.prepare(project.profile, message.text, project.profile.id !== 'redevent' ? 'project' : message.host);
 				} else if (message.action === 'answerTask') { await workflow.answer(message.id, project.profile, message.answers); }
 				else if (message.action === 'editTask') { await controller.openTask(await workflow.edit(message.id, project.profile)); }
 				else if (message.action === 'startTask') { await workflow.start(message.id, project.profile); }
@@ -270,7 +276,7 @@ function createWorkspace(context, controller, projects) {
 					const validateAttempt = async () => {
 						if (!entry.nativeId) { return; }
 						await workflow.refresh(entry.id, project.profile);
-						if (entry.progressError || Number.isSafeInteger(message.attempt) && message.attempt !== entry.progress?.attempt || message.attempt === undefined && project.profile.id === 'armotusitio' && entry.progress?.attempt && !workflow.children.has(entry.id)) { throw new Error('HARNESS_ATTEMPT_CHANGED'); }
+						if (entry.progressError || Number.isSafeInteger(message.attempt) && message.attempt !== entry.progress?.attempt || message.attempt === undefined && project.profile.id !== 'redevent' && entry.progress?.attempt && !workflow.children.has(entry.id)) { throw new Error('HARNESS_ATTEMPT_CHANGED'); }
 					};
 					await validateAttempt();
 					const label = message.action === 'stopTask' ? t('Detener tarea') : t('Reanudar tarea');

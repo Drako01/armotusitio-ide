@@ -30,7 +30,7 @@ export async function fingerprintEvidence(root: string, planRevision: string, fi
 	}
 	const canonical = await fs.realpath(root);
 	const inputs: EvidenceFingerprint['inputs'] = [];
-	for (const relativePath of files.sort()) {
+	for (const relativePath of [...files].sort()) {
 		if (typeof relativePath !== 'string' || !relativePath || path.isAbsolute(relativePath) || relativePath.includes('\\') || relativePath.split('/').some(part => part === '..' || part === '.' || part === '')) {
 			throw Error('HARNESS_EVIDENCE_PATH');
 		}
@@ -65,21 +65,25 @@ export async function saveEvidenceMetadata(storage: string, fingerprint: Evidenc
 		throw Error('HARNESS_EVIDENCE_RECORD');
 	}
 	const key = evidenceKey(fingerprint);
-	const target = path.join(storage, `${key}.json`);
 	await fs.mkdir(storage, { recursive: true });
+	if ((await fs.lstat(storage)).isSymbolicLink()) { throw Error('HARNESS_EVIDENCE_SYMLINK'); }
 	const payload: EvidenceRecord = { schemaVersion: 1, fingerprint: key, ...record, recordedAt: new Date().toISOString() };
-	const temp = `${target}.${randomUUID()}.tmp`;
-	try {
-		await fs.writeFile(temp, JSON.stringify(payload), { flag: 'wx', mode: 0o600 });
-		await fs.rename(temp, target);
-	} finally {
-		await fs.rm(temp, { force: true });
+	for (const name of [`${key}.${record.taskId}.${record.attemptId}.json`, `${key}.json`]) {
+		const target = path.join(storage, name);
+		const temp = `${target}.${randomUUID()}.tmp`;
+		try {
+			await fs.writeFile(temp, JSON.stringify(payload), { flag: 'wx', mode: 0o600 });
+			await fs.rename(temp, target);
+		} finally {
+			await fs.rm(temp, { force: true });
+		}
 	}
 }
 
-export async function readEvidenceMetadata(storage: string, fingerprint: EvidenceFingerprint): Promise<EvidenceRecord | undefined> {
+export async function readEvidenceMetadata(storage: string, fingerprint: EvidenceFingerprint, identity?: { taskId: string; attemptId: string }): Promise<EvidenceRecord | undefined> {
 	const key = evidenceKey(fingerprint);
-	const target = path.join(storage, `${key}.json`);
+	if (identity && (!IDENTIFIER.test(identity.taskId) || !IDENTIFIER.test(identity.attemptId))) { throw Error('HARNESS_EVIDENCE_RECORD'); }
+	const target = path.join(storage, identity ? `${key}.${identity.taskId}.${identity.attemptId}.json` : `${key}.json`);
 	let stat;
 	try { stat = await fs.lstat(target); }
 	catch (error) {
@@ -89,7 +93,9 @@ export async function readEvidenceMetadata(storage: string, fingerprint: Evidenc
 	if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 16 * 1024) { throw Error('HARNESS_EVIDENCE_FILE'); }
 	const data: unknown = JSON.parse(await fs.readFile(target, 'utf8'));
 	if (!data || typeof data !== 'object' || (data as EvidenceRecord).schemaVersion !== 1 || (data as EvidenceRecord).fingerprint !== key
-		|| !IDENTIFIER.test((data as EvidenceRecord).taskId) || !IDENTIFIER.test((data as EvidenceRecord).attemptId)) {
+		|| !IDENTIFIER.test((data as EvidenceRecord).taskId) || !IDENTIFIER.test((data as EvidenceRecord).attemptId)
+		|| !['passed', 'failed', 'cancelled', 'interrupted'].includes((data as EvidenceRecord).status)
+		|| typeof (data as EvidenceRecord).recordedAt !== 'string' || !Number.isFinite(Date.parse((data as EvidenceRecord).recordedAt))) {
 		throw Error('HARNESS_EVIDENCE_INCOMPATIBLE');
 	}
 	return data as EvidenceRecord;

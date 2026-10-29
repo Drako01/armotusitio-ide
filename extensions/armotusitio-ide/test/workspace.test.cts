@@ -120,13 +120,13 @@ test('background refresh never drops the active task behind newer stale records;
 test('drafts are serialized in secret storage and never create native work', async () => {
 	let secret; const storage = { get: async () => secret, store: async (_, value) => { secret = value; } };
 	const h = harness(storage); let restored;
-	h.controller.restoreHarnessDraft = (root, text) => { restored = {root,text}; };
-	await Promise.all([h.bridge.receive({action:'saveDraft',root:'/repo',text:'First draft'}),h.bridge.receive({action:'saveDraft',root:'/repo',text:'Latest draft'})]);
-	await h.bridge.receive({action:'loadDraft',root:'/repo'});
-	assert.deepEqual(restored,{root:'/repo',text:'Latest draft'});
-	assert.equal(h.calls.length,0);
-	h.trust(false); await h.bridge.receive({action:'loadDraft',root:'/repo'});
-	assert.equal(h.errors.length,1);
+	h.controller.restoreHarnessDraft = (root, text) => { restored = { root, text }; };
+	await Promise.all([h.bridge.receive({ action: 'saveDraft', root: '/repo', text: 'First draft' }), h.bridge.receive({ action: 'saveDraft', root: '/repo', text: 'Latest draft' })]);
+	await h.bridge.receive({ action: 'loadDraft', root: '/repo' });
+	assert.deepEqual(restored, { root: '/repo', text: 'Latest draft' });
+	assert.equal(h.calls.length, 0);
+	h.trust(false); await h.bridge.receive({ action: 'loadDraft', root: '/repo' });
+	assert.equal(h.errors.length, 1);
 });
 
 test('an attempt changing during confirmation cannot cancel a newer execution', async () => {
@@ -220,4 +220,21 @@ test('drafts of several projects survive a reload separately and never create na
 	await second.bridge.receive({ action: 'loadDraft', root: '/repo' });
 	await second.bridge.receive({ action: 'loadDraft', root: '/other' });
 	assert.deepEqual({ restored, calls: [...first.calls, ...second.calls] }, { restored: [['/repo', 'Borrador del repo'], ['/other', 'Borrador del otro proyecto']], calls: [] });
+});
+
+
+test('generic project producer requires connection approval and a compatible handshake', async () => {
+	const h = harness(); h.profile.id = 'project-native'; h.profile.authority = { entry: '.harness/core.mjs' };
+	h.confirm(false);
+	await h.bridge.receive({ action: 'prepareTask', root: '/repo', text: 'local task', host: 'codex' });
+	assert.deepEqual(h.calls, []);
+	h.confirm(true);
+	h.native(() => ({ code: 0, value: { contract: 'unknown-producer', schemaVersion: 9 } }));
+	await h.bridge.receive({ action: 'prepareTask', root: '/repo', text: 'local task', host: 'codex' });
+	assert.deepEqual(h.calls.map(call => call[0]), ['native']);
+	assert.ok(h.errors.length > 0);
+	const compatible = harness(); compatible.profile.id = 'project-native'; compatible.confirm(true);
+	compatible.native(() => ({ code: 0, value: { contract: 'armotusitio-harness-ide', schemaVersion: 1, version: '1.0.0', hosts: ['project'], operations: Object.fromEntries(['preflight', 'run', 'execute', 'progress', 'list', 'status', 'resume', 'retry', 'abort'].map(name => [name, { supported: true }])) } }));
+	await compatible.bridge.receive({ action: 'prepareTask', root: '/repo', text: 'local task', host: 'codex' });
+	assert.deepEqual(plain(compatible.calls.at(-1)), ['prepare', compatible.profile, 'local task', 'project']);
 });

@@ -11,7 +11,7 @@ const manifest = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf
 	main: string;
 	contributes: { commands: { command: string }[] };
 };
-const required = ['atsHarness.nativeDoctor', 'atsHarness.nativeConfigure', 'atsHarness.nativeSupport', 'atsHarness.nativeNewTask', 'atsHarness.nativeStatus', 'atsHarness.nativeRunTask', 'atsHarness.nativeReconcile', 'atsHarness.nativeCancel'];
+const required = ['atsHarness.nativeDoctor', 'atsHarness.nativeConfigure', 'atsHarness.nativeRemoveConfiguration', 'atsHarness.nativeSupport', 'atsHarness.nativeAgentReview', 'atsHarness.nativeNewTask', 'atsHarness.nativeStatus', 'atsHarness.nativeRunTask', 'atsHarness.nativeReconcile', 'atsHarness.nativeCancel'];
 for (const command of required) {
 	if (!manifest.contributes.commands.some(entry => entry.command === command)) {
 		throw Error(`HARNESS_PACKAGE_COMMAND_MISSING: ${command}`);
@@ -25,7 +25,8 @@ for (const artifact of artifacts) {
 	if (!file.isFile() || file.size === 0) { throw Error(`HARNESS_PACKAGE_RESOURCE_INVALID: ${artifact}`); }
 }
 const code = await readFile(path.resolve(root, manifest.main), 'utf8');
-if (!code.includes('atsHarness.nativeSupport') || !code.includes('atsHarness.nativeConfigure')) {
+if (!required.every(command => code.includes(command))) {
 	throw Error('HARNESS_PACKAGE_COMMAND_NOT_BUNDLED');
 }
+if (['HARNESS_PROJECT_AUTHORITY', 'HARNESS_APPROVAL_EXPIRED', 'HARNESS_EVIDENCE_PERSISTENCE'].some(marker => !code.includes(marker)) || /require\(["']\.\/.+\.ts["']\)/.test(code)) { throw Error('HARNESS_PACKAGE_RUNTIME_INCOMPLETE'); }
 process.stdout.write('Native Harness package resource checks: PASS\n');

@@ -1,0 +1,51 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { spawn } from 'node:child_process';
+
+const root = path.resolve(import.meta.dirname, '..');
+const extension = 'extensions/armotusitio-ide';
+const logPath = path.join(root, 'test.log');
+const log = fs.createWriteStream(logPath, { flags: 'w' });
+const results: Array<{ name: string; result: string }> = [];
+const write = (value: string): void => { process.stdout.write(value); log.write(value); };
+
+async function run(name: string, args: string[], executable = process.execPath): Promise<boolean> {
+	write(`\n--- ${name} ---\n`);
+	return new Promise(resolve => {
+		const child = spawn(executable, args, { cwd: root, shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+		child.stdout.on('data', chunk => write(chunk.toString()));
+		child.stderr.on('data', chunk => write(chunk.toString()));
+		child.once('error', error => write(`No se pudo iniciar: ${error.message}\n`));
+		child.once('close', code => {
+			const passed = code === 0;
+			results.push({ name, result: passed ? 'PASS' : `FAIL (exit ${code})` });
+			resolve(passed);
+		});
+	});
+}
+
+write(`Harness checks | ${new Date().toISOString()} | ${process.platform}/${process.arch} | ${process.version}\n`);
+write('Focused checks only. No release, Git mutation, remote CI or AI provider is invoked.\n');
+try {
+	await run('TypeScript', ['node_modules/@typescript/native/bin/tsc', '--project', `${extension}/tsconfig.json`]);
+	await run('Webview resources', [`${extension}/check-resources.mts`]);
+	await run('UI bridge and renderer', ['--test', `${extension}/test/home.test.cts`, `${extension}/test/renderer.test.cts`, `${extension}/test/native-integration.test.mts`]);
+	const compiled = await run('Extension bundle', [`${extension}/esbuild.mts`]);
+	if (compiled) { await run('Native package resources', [`${extension}/check-native-package.mts`]); }
+	else { results.push({ name: 'Native package resources', result: 'SKIP (bundle failed)' }); }
+	const files = ['extension.ts', 'src/home.ts', 'resources/home.ts', 'src/native-integration.ts', 'src/native-evidence.ts', 'src/native-harness.ts', 'test/renderer.test.cts'].map(file => `${extension}/${file}`);
+	await run('Focused hygiene', ['build/hygiene.ts', ...files, `${extension}/resources/home.css`, 'scripts/ats-harness-check.mts']);
+	await run('Diff whitespace', ['diff', '--check'], 'git');
+} catch (error) {
+	results.push({ name: 'Runner', result: 'FAIL' });
+	write(`${error instanceof Error ? error.message : 'Unexpected runner error'}\n`);
+} finally {
+	write('\nRESULTS\n' + results.map(result => `${result.result} | ${result.name}`).join('\n') + '\n');
+	write(`\nLog: ${logPath}\n`);
+	await new Promise<void>(resolve => log.end(resolve));
+	if (results.some(result => result.result !== 'PASS')) { process.exitCode = 1; }
+}
