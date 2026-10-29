@@ -18,7 +18,7 @@ import { pathToFileURL } from 'node:url';
 const flags = process.argv.slice(2);
 if (flags.includes('--help') || flags.includes('-h')) {
 	console.log(`Usage: ./release.sh [--plan|--dry-run] [--no-publish]
-Requires Git Bash, Windows x64 Node >=24.18, git, gh authentication, pwsh.exe,
+Requires Git Bash, Windows x64 Node matching .nvmrc, git, gh authentication, pwsh.exe,
 dependencies, Docker Desktop (Linux containers), and the existing signing key.
 Start on clean, current main. This script never switches away from dirty sources.
 The version comes from package.json, checked against product/upstream metadata.
@@ -120,9 +120,12 @@ async function recipe() {
 		console.log(`Stages: ${config.revision === selected.revision ? '' : 'metadata-only commit, push, PR and protected squash merge; '}validate; build-all (Windows + Linux); artifacts${flags.includes('--no-publish') ? '' : '; publish --approve'}.`);
 		return;
 	}
-	if (process.platform !== 'win32' || process.arch !== 'x64' || Number(process.versions.node.split('.')[0]) < 24
-		|| (Number(process.versions.node.split('.')[0]) === 24 && Number(process.versions.node.split('.')[1]) < 18)) {
-		throw new Error('Use Git Bash with Windows x64 Node >=24.18; Linux/WSL Node cannot run the existing Windows build.');
+	const requiredNode = (await readFile(path.join(root, '.nvmrc'), 'utf8')).trim();
+	const required = requiredNode.split('.').map(Number);
+	const actual = process.versions.node.split('.').map(Number);
+	if (!/^\d+\.\d+\.\d+$/.test(requiredNode) || process.platform !== 'win32' || process.arch !== 'x64'
+		|| actual[0] !== required[0] || actual[1] < required[1] || (actual[1] === required[1] && actual[2] < required[2])) {
+		throw new Error(`Use Git Bash with Windows x64 Node >=${requiredNode} of the same major version; Linux/WSL Node cannot run the existing Windows build.`);
 	}
 	await command('pwsh.exe', ['-NoProfile', '-NonInteractive', '-Command', '$PSVersionTable.PSVersion.ToString()']);
 	if ((await command('docker', ['info', '--format', '{{.OSType}}'])).trim() !== 'linux') { throw new Error('Start Docker Desktop with Linux containers.'); }
