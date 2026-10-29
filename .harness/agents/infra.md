@@ -22,7 +22,7 @@
 
 ## Skills
 
-- redevent-infrastructure-delivery
+- infrastructure-delivery
 
 ## Context sources
 
