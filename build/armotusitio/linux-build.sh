@@ -19,7 +19,7 @@ export VSCODE_QUALITY="$(node -p "require('./build/armotusitio/product-overrides
 # Docker Desktop disallows Chromium namespace creation even when SUID is available.
 # Restrict the override to cache generation; it is not a product runtime setting.
 if [[ "$ATS_LINUX_ARCH" == x64 ]]; then
-    if runuser -u "$(id -un)" -- unshare -Ur true >/dev/null 2>&1; then
+    if unshare -Ur true >/dev/null 2>&1; then
         echo "[ats] User namespaces available; retain Electron sandbox for cache generation"
     else
         export ATS_LINUX_CACHE_NO_SANDBOX=1
