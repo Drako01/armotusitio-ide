@@ -1,6 +1,6 @@
 import path from "node:path";
 import { promises as fs } from "node:fs";
-import { rpc } from "./bridge.mjs";
+import { rpc } from "./bridge.mts";
 export const root = process.cwd(),
   H = path.join(root, ".harness");
 export const MAX_BUFFER_BYTES = 33554432,

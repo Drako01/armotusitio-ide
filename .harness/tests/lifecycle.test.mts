@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fixture, passedResult, fixtureAgent, readHandoffs, snapshotEntries } from "./helpers.mjs";
+import { fixture, passedResult, fixtureAgent, readHandoffs, snapshotEntries } from "./helpers.mts";
 
 test("run persists resumable lifecycle state and DAG with sequential tester", async (t) => {
   const { dir, run } = await fixture(t);

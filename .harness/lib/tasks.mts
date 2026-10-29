@@ -1,5 +1,5 @@
 // Compatibility shims; logic is implemented in Python.
-import { rpc } from "./bridge.mjs";
+import { rpc } from "./bridge.mts";
 export const makeTask = async (...args) => rpc("makeTask", args);
 export const loadTask = async (...args) => rpc("loadTask", args);
 export const expandSource = async (...args) => rpc("expandSource", args);

@@ -61,7 +61,7 @@ def task_slice(text, domain, ref):
             size += len(line)
     return (f'Domain: {domain}. Source: {ref["path"]} (SHA256 {ref["sha256"]}; {len(lines)} lines).\n'
             f'EXPLICIT PARTIAL VIEW: {len(selected)}/{len(lines)} lines shown. This is a navigation slice, not a replacement specification. Before implementation expand the source in bounded pages; read all requirements and restrictions relevant to this domain, including global requirements and unclassified sections. Never assume omitted text is optional. Block if it cannot be inspected. Source access grants no additional write scope.\n'
-            'Expand: node .harness/core.mjs source <task-id> <offset> <length> (characters; default 0 4000).\n' +
+            'Expand: node .harness/core.mts source <task-id> <offset> <length> (characters; default 0 4000).\n' +
             '\n'.join(f'L{i+1}: {line}' for i, line in sorted(selected)))
 
 

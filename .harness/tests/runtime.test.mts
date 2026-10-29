@@ -15,7 +15,7 @@ import {
   archiveEntries,
   nativeTar,
   harnessChildEnv,
-} from "../lib/python-runtime.mjs";
+} from "../lib/python-runtime.mts";
 
 function tar(entries) {
   const blocks = [];
@@ -208,7 +208,7 @@ test("bootstrap propagates the resolved interpreter to Harness children without 
   assert.equal("HARNESS_PYTHON" in harnessChildEnv({ cmd: "py", args: ["-3"] }, {}), false);
   assert.equal(harnessChildEnv({ ...resolved, source: "managed" }, {}).HARNESS_PYTHON_SOURCE, "managed");
   assert.equal("HARNESS_PYTHON_SOURCE" in harnessChildEnv(resolved, {}), false);
-  const source = fs.readFileSync(".harness/bootstrap.mjs", "utf8");
+  const source = fs.readFileSync(".harness/bootstrap.mts", "utf8");
   assert.match(source, /env: harnessChildEnv\(runtime\)/);
 });
 
@@ -225,7 +225,7 @@ test("every cli.py launcher (bootstrap, Claude hook, RPC bridge) shares harnessC
     }
   };
   walk(".harness");
-  assert.deepEqual(launchers.sort(), ["bootstrap.mjs", "hooks/guard-orchestrator.mjs", "lib/bridge.mjs"]);
+  assert.deepEqual(launchers.sort(), ["bootstrap.mts", "hooks/guard-orchestrator.mts", "lib/bridge.mts"]);
   for (const launcher of launchers) {
     const source = fs.readFileSync(path.join(".harness", launcher), "utf8");
     assert.match(source, /import \{[^}]*\bharnessChildEnv\b[^}]*\} from "[./]+(lib\/)?python-runtime\.mjs"/, launcher);
@@ -242,14 +242,14 @@ test("resolvePython labels the interpreter origin without exposing its value", a
   const found = await resolvePython({ directory, candidates: [{ cmd: "synthetic", source: "PATH" }], run });
   assert.equal(found.source, "PATH");
   assert.equal(harnessChildEnv(found, {}).HARNESS_PYTHON_SOURCE, "PATH");
-  const source = fs.readFileSync(".harness/lib/python-runtime.mjs", "utf8");
+  const source = fs.readFileSync(".harness/lib/python-runtime.mts", "utf8");
   assert.match(source, /cmd: process\.env\.HARNESS_PYTHON, source: "HARNESS_PYTHON"/);
 });
 
 test("doctor through the real launcher reports the resolved origin and never echoes a spoofed source", () => {
   const { HARNESS_PYTHON: _python, ...base } = process.env;
   const spoofed = "SYNTHETIC_SOURCE_SECRET_7731";
-  const doctor = spawnSync(process.execPath, [".harness/bootstrap.mjs", "doctor"], {
+  const doctor = spawnSync(process.execPath, [".harness/bootstrap.mts", "doctor"], {
     env: { ...base, HARNESS_PYTHON_SOURCE: spoofed },
     encoding: "utf8",
   });
@@ -264,12 +264,12 @@ test("bootstrap copies without runtime/python hand the resolved interpreter to c
   const copy = path.join(directory, ".harness");
   fs.mkdirSync(path.join(copy, "lib"), { recursive: true });
   fs.mkdirSync(path.join(copy, "manifests"));
-  for (const file of ["bootstrap.mjs", "lib/python-runtime.mjs", "manifests/python-runtime.json"])
+  for (const file of ["bootstrap.mts", "lib/python-runtime.mts", "manifests/python-runtime.json"])
     fs.copyFileSync(path.join(".harness", file), path.join(copy, file));
   fs.writeFileSync(path.join(copy, "cli.py"), "import os\nprint(os.environ.get('HARNESS_PYTHON', ''))\n");
   const pathKey = Object.keys(process.env).find((key) => key.toLowerCase() === "path") || "PATH";
   const run = (env) =>
-    spawnSync(process.execPath, [path.join(copy, "bootstrap.mjs")], { cwd: directory, env, encoding: "utf8" });
+    spawnSync(process.execPath, [path.join(copy, "bootstrap.mts")], { cwd: directory, env, encoding: "utf8" });
   try {
     const { HARNESS_PYTHON: _ignored, ...base } = process.env;
     const inherited = run({
@@ -296,7 +296,7 @@ test("bootstrap isolates Python startup from PYTHONPATH/sitecustomize injection"
     `from pathlib import Path\nPath(${JSON.stringify(sentinel)}).write_text('injected')\n`,
   );
   try {
-    const run = spawnSync(process.execPath, [".harness/bootstrap.mjs", "context", "repo"], {
+    const run = spawnSync(process.execPath, [".harness/bootstrap.mts", "context", "repo"], {
       cwd: process.cwd(),
       env: { ...process.env, PYTHONPATH: directory },
       encoding: "utf8",

@@ -218,7 +218,7 @@
       "id": "L018",
       "title": "Consultar reservas actuales antes de renumerar migraciones",
       "trigger": "migracion|migration",
-      "advice": "Antes de crear o renumerar migraciones ejecutar node .harness/core.mjs migrations next, actualizar origin/qa y consultar PR abiertos. Una reserva nueva en qa puede invalidar la numeracion de una etapa pendiente. Renumerar SOLO las migraciones propias sin aplicar, conservando su orden de dependencias; actualizar referencias y declarar por separado rutas viejas/nuevas. No integrar qa sobre archivos locales con el mismo numero ni eliminar contenido.",
+      "advice": "Antes de crear o renumerar migraciones ejecutar node .harness/core.mts migrations next, actualizar origin/qa y consultar PR abiertos. Una reserva nueva en qa puede invalidar la numeracion de una etapa pendiente. Renumerar SOLO las migraciones propias sin aplicar, conservando su orden de dependencias; actualizar referencias y declarar por separado rutas viejas/nuevas. No integrar qa sobre archivos locales con el mismo numero ni eliminar contenido.",
       "appliesTo": {
         "agents": [
           "backend",

@@ -268,14 +268,14 @@ def main(command, args):
         if code:
             return code
         from core.runner import spawn_run
-        # lifecycle.test.mjs and parallel.test.mjs assert on real wall-clock timeouts, kill
+        # lifecycle.test.mts and parallel.test.mts assert on real wall-clock timeouts, kill
         # deadlines and worker-overlap windows (Date.now()/HARNESS_*_TIMEOUT_MS budgets):
         # CPU-count concurrency would make sibling contention flip those deadlines, so they
         # stay at concurrency=1. The rest has no timing-sensitive assertions and is safe to
         # run with higher concurrency, bounded (not unlimited) by available cores. Discovered
         # dynamically (not hardcoded) so a new test file is never silently left unscheduled.
-        TIMING_SENSITIVE_NAMES = {'lifecycle.test.mjs', 'parallel.test.mjs'}
-        all_files = sorted(str(f) for f in (H / 'tests').glob('*.test.mjs'))
+        TIMING_SENSITIVE_NAMES = {'lifecycle.test.mts', 'parallel.test.mts'}
+        all_files = sorted(str(f) for f in (H / 'tests').glob('*.test.mts'))
         timing_sensitive = [f for f in all_files if Path(f).name in TIMING_SENSITIVE_NAMES]
         parallel_safe = [f for f in all_files if Path(f).name not in TIMING_SENSITIVE_NAMES]
         workers = max(1, min(4, os.cpu_count() or 1))

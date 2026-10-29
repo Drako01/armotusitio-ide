@@ -1,5 +1,5 @@
 // Compatibility shims; logic is implemented in Python.
-import { rpc } from "./bridge.mjs";
+import { rpc } from "./bridge.mts";
 export const verifyScopeRestoration = async (...args) => rpc("verifyScopeRestoration", args);
 export const clearRestoredScope = async (...args) => rpc("clearRestoredScope", args);
 export const verifyInterrupted = async (...args) => rpc("verifyInterrupted", args);

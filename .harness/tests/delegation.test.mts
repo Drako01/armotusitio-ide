@@ -2,10 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { root } from "./helpers.mjs";
-import { manifests, getDomain, context } from "../lib/context.mjs";
-import { delegationContext, delegationPrompt, compactHandoff } from "../lib/delegation.mjs";
-import { tokenize } from "../lib/util.mjs";
+import { root } from "./helpers.mts";
+import { manifests, getDomain, context } from "../lib/context.mts";
+import { delegationContext, delegationPrompt, compactHandoff } from "../lib/delegation.mts";
+import { tokenize } from "../lib/util.mts";
 
 const contractFor = async (name) => (await manifests()).agents.find((agent) => agent.name === name);
 const handoffFile = (taskId, agent, attempt) =>

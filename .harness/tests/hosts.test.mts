@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { call, fixture, passedResult, readHandoffs, fakeClaudeBinary, claudePathEnv } from "./helpers.mjs";
+import { call, fixture, passedResult, readHandoffs, fakeClaudeBinary, claudePathEnv } from "./helpers.mts";
 
 test("codex host launcher uses exec with sandbox, schema, result file and stdin prompt", async (t) => {
   const { dir, run } = await fixture(t);

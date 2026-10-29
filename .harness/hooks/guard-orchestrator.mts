@@ -3,7 +3,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
-import { harnessChildEnv, resolvePython } from "../lib/python-runtime.mjs";
+import { harnessChildEnv, resolvePython } from "../lib/python-runtime.mts";
 const harness = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const chunks = [];
 let bytes = 0;

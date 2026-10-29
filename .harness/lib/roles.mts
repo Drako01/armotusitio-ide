@@ -1,4 +1,4 @@
-import { rpc } from "./bridge.mjs";
+import { rpc } from "./bridge.mts";
 export const { readOnlyAgents, downstreamAgents, nonImplementerAgents, fixedAgents, deterministicAgents } =
   rpc("constants");
 export const protectedStatePattern = /^\.harness\/(tasks|state|handoffs|logs)\//;

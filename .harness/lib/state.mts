@@ -1,5 +1,5 @@
 // Compatibility shims; logic is implemented in Python.
-import { rpc } from "./bridge.mjs";
+import { rpc } from "./bridge.mts";
 export const persistTask = async (...args) => rpc("persistTask", args);
 export const moveTask = async (task, status) => {
   Object.assign(task, rpc("moveTask", [task, status]));

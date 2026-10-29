@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { root, call, fixture } from "./helpers.mjs";
+import { root, call, fixture } from "./helpers.mts";
 
 test("context is bounded and domain-specific", () => {
   const r = call(["context", "api", "small validation task"]);

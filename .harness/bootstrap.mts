@@ -3,7 +3,7 @@ import { loadEnvFile } from "node:process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
-import { harnessChildEnv, resolvePython } from "./lib/python-runtime.mjs";
+import { harnessChildEnv, resolvePython } from "./lib/python-runtime.mts";
 
 const harnessDir = path.dirname(fileURLToPath(import.meta.url));
 const envFile = path.join(harnessDir, ".env");

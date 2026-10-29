@@ -5,7 +5,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { root, call, fixture } from "./helpers.mjs";
+import { root, call, fixture } from "./helpers.mts";
 
 test("check validates fixed agents, domains and skills", () => {
   const r = call(["check"]);
@@ -37,7 +37,7 @@ test("check rejects manifests that violate their schema and stale agent contract
 
 test("orchestrator guard hook blocks host product writes but allows Harness state and delegated specialists", async (t) => {
   const { dir } = await fixture(t);
-  const hook = path.join(root, ".harness", "hooks", "guard-orchestrator.mjs");
+  const hook = path.join(root, ".harness", "hooks", "guard-orchestrator.mts");
   const attempt = (file, env = {}) =>
     spawnSync(process.execPath, [hook], {
       cwd: dir,
@@ -73,7 +73,7 @@ test("check rejects malformed completed task state instead of trusting historica
 });
 
 test("guard hook denies unreadable input instead of failing open", () => {
-  const hook = path.join(root, ".harness", "hooks", "guard-orchestrator.mjs");
+  const hook = path.join(root, ".harness", "hooks", "guard-orchestrator.mts");
   const result = spawnSync(process.execPath, [hook], {
     input: "not json",
     encoding: "utf8",
@@ -98,7 +98,7 @@ test("active guard rejects operational junctions to core, managed runtime and ex
   ])
     await fs.symlink(target, path.join(state, name), process.platform === "win32" ? "junction" : "dir");
   const attempt = (file) =>
-    spawnSync(process.execPath, [path.join(root, ".harness", "hooks", "guard-orchestrator.mjs")], {
+    spawnSync(process.execPath, [path.join(root, ".harness", "hooks", "guard-orchestrator.mts")], {
       cwd: root,
       encoding: "utf8",
       input: JSON.stringify({ tool_input: { file_path: file } }),
@@ -112,7 +112,7 @@ test("active guard rejects operational junctions to core, managed runtime and ex
 });
 
 test("schema keywords outside the supported subset are reported instead of ignored", async () => {
-  const { validateSchema } = await import(pathToFileURL(path.join(root, ".harness", "lib", "util.mjs")).href);
+  const { validateSchema } = await import(pathToFileURL(path.join(root, ".harness", "lib", "util.mts")).href);
   const errors = validateSchema("x", { type: "string", pattern: "^y$" });
   assert.ok(errors.some((message) => /unsupported schema keyword pattern/.test(message)));
   assert.deepEqual(validateSchema("x", { $schema: "s", $id: "i", type: "string" }), []);
@@ -121,7 +121,7 @@ test("schema keywords outside the supported subset are reported instead of ignor
 test("moveTask compatibility shim updates its supplied task object", async (t) => {
   const { dir, run } = await fixture(t);
   const task = JSON.parse(run(["run", "repo", "by-reference compatibility fixture"]).stdout);
-  const uri = pathToFileURL(path.join(dir, ".harness", "lib", "state.mjs")).href;
+  const uri = pathToFileURL(path.join(dir, ".harness", "lib", "state.mts")).href;
   const script = `import {moveTask} from ${JSON.stringify(uri)}; const task=JSON.parse(process.argv[1]); await moveTask(task,"failed"); if(task.status!=="failed") throw Error("task mutation lost");`;
   const result = spawnSync(process.execPath, ["--input-type=module", "-e", script, JSON.stringify(task)], {
     cwd: dir,

@@ -107,7 +107,7 @@
       "skills": ["redevent-monorepo-architecture"],
       "contextSources": ["package.json", "pnpm-workspace.yaml"],
       "verification": [
-        ["node", ".harness/core.mjs", "check"],
+        ["node", ".harness/core.mts", "check"],
         ["pnpm", "harness:test"],
         ["pnpm", "harness:ci-gaps", "--", "--strict"],
         ["pnpm", "format:check"]

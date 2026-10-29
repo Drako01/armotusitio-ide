@@ -6,7 +6,7 @@ import test from "node:test";
 import { spawnSync } from "node:child_process";
 
 test("bootstrap loads local env before importing Harness core", async () => {
-  const source = await readFile(new URL("../bootstrap.mjs", import.meta.url), "utf8");
+  const source = await readFile(new URL("../bootstrap.mts", import.meta.url), "utf8");
   assert.ok(source.indexOf("loadEnvFile(envFile)") < source.indexOf("await resolvePython()"));
 });
 

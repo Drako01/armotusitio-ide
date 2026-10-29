@@ -1,4 +1,4 @@
-import { rpc } from "./bridge.mjs";
+import { rpc } from "./bridge.mts";
 const payload = (map) => ({ files: [...map], ignored: [...(map.ignored || [])] });
 export const snapshot = async () => {
   const v = rpc("snapshot");

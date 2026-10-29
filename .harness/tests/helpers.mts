@@ -21,7 +21,7 @@ export const gitIn =
   (cwd) =>
   (...args) =>
     spawnSync("git", args, { cwd, encoding: "utf8", env: { ...process.env, ...gitEnv } });
-export const core = path.join(root, ".harness", "core.mjs");
+export const core = path.join(root, ".harness", "core.mts");
 export const call = (args) => spawnSync(process.execPath, [core, ...args], { cwd: root, encoding: "utf8" });
 
 // Every test that creates tasks runs in an isolated temporary copy of the Harness so that
@@ -32,8 +32,8 @@ export async function fixture(t) {
   // transient filesystem cleanup errors; persistent failures still fail the test.
   t.after(() => fs.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
   await fs.cp(path.join(root, ".harness", "manifests"), path.join(dir, ".harness", "manifests"), { recursive: true });
-  await fs.copyFile(core, path.join(dir, ".harness", "core.mjs"));
-  await fs.copyFile(path.join(root, ".harness", "bootstrap.mjs"), path.join(dir, ".harness", "bootstrap.mjs"));
+  await fs.copyFile(core, path.join(dir, ".harness", "core.mts"));
+  await fs.copyFile(path.join(root, ".harness", "bootstrap.mts"), path.join(dir, ".harness", "bootstrap.mts"));
   await fs.copyFile(path.join(root, ".harness", "cli.py"), path.join(dir, ".harness", "cli.py"));
   await fs.cp(path.join(root, ".harness", "core"), path.join(dir, ".harness", "core"), { recursive: true });
   await fs.cp(path.join(root, ".harness", "lib"), path.join(dir, ".harness", "lib"), { recursive: true });
@@ -58,7 +58,7 @@ export async function fixture(t) {
   for (const domain of manifest.domains) domain.verification = [[process.execPath, "-e", "process.exit(0)"]];
   await fs.writeFile(file, JSON.stringify(manifest));
   const run = (args, env = {}) =>
-    spawnSync(process.execPath, [path.join(dir, ".harness", "core.mjs"), ...args], {
+    spawnSync(process.execPath, [path.join(dir, ".harness", "core.mts"), ...args], {
       cwd: dir,
       encoding: "utf8",
       // Lifecycle fixtures are independent of the operator's readiness receipts
@@ -158,7 +158,7 @@ export async function snapshotEntries(dir) {
     [
       "--input-type=module",
       "-e",
-      "import { snapshot, serializeSnapshot } from './.harness/lib/snapshot.mjs'; console.log(serializeSnapshot(await snapshot()));",
+      "import { snapshot, serializeSnapshot } from './.harness/lib/snapshot.mts'; console.log(serializeSnapshot(await snapshot()));",
     ],
     { cwd: dir, encoding: "utf8", maxBuffer: 32 * 1024 * 1024 },
   );

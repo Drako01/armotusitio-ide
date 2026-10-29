@@ -19,7 +19,7 @@ from pathlib import Path
 from .config import H, ROOT, UsageError
 
 HARNESS = Path(__file__).resolve().parents[1]
-SIM = HARNESS / 'tests' / 'fixtures' / 'sim-agent.cjs'
+SIM = HARNESS / 'tests' / 'fixtures' / 'sim-agent.cts'
 GIT_ENV = {'GIT_CONFIG_COUNT': '2', 'GIT_CONFIG_KEY_0': 'maintenance.auto', 'GIT_CONFIG_VALUE_0': 'false',
            'GIT_CONFIG_KEY_1': 'gc.auto', 'GIT_CONFIG_VALUE_1': '0', 'GIT_CONFIG_NOSYSTEM': '1'}
 
@@ -38,7 +38,7 @@ def make_repo(directory):
     shutil.copytree(HARNESS / 'manifests', directory / '.harness/manifests')
     shutil.copytree(HARNESS / 'core', directory / '.harness/core', ignore=shutil.ignore_patterns('__pycache__'))
     shutil.copytree(HARNESS / 'lib', directory / '.harness/lib')
-    for name in ['cli.py', 'bootstrap.mjs', 'core.mjs', 'README.md']:
+    for name in ['cli.py', 'bootstrap.mts', 'core.mts', 'README.md']:
         shutil.copy(HARNESS / name, directory / '.harness' / name)
     shutil.copytree(ROOT / '.codex/skills', directory / '.codex/skills')
     for name in ['tasks/inbox', 'tasks/active', 'tasks/completed', 'tasks/failed', 'state', 'handoffs', 'runtime', 'logs/execution', 'logs/errors', 'logs/audit', 'logs/completed']:
@@ -107,7 +107,7 @@ def benchmark(units=4, ms=1000, workers=(4,), weight=2):
                 parallel['writerPhaseSpeedup'] = round(sequential['writerPhaseMs'] / max(parallel['writerPhaseMs'], 1), 2)
                 row['parallel'].append(parallel)
             results.append(row)
-    return {'schemaVersion': 1, 'host': 'simulated (tests/fixtures/sim-agent.cjs): no tokens, no network', 'python': sys.version.split()[0],
+    return {'schemaVersion': 1, 'host': 'simulated (tests/fixtures/sim-agent.cts): no tokens, no network', 'python': sys.version.split()[0],
             'platform': sys.platform, 'cpuCount': os.cpu_count(), 'results': results}
 
 

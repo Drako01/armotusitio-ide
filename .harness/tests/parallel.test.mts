@@ -1,4 +1,4 @@
-// End-to-end proof of the parallel scheduler. The "host" is tests/fixtures/sim-agent.cjs: deterministic, tokenless,
+// End-to-end proof of the parallel scheduler. The "host" is tests/fixtures/sim-agent.cts: deterministic, tokenless,
 // and it logs every start/end so overlap is measured from outside the Harness, never inferred from it.
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -6,9 +6,9 @@ import { spawn, spawnSync } from "node:child_process";
 import { promises as fs, existsSync, readFileSync, readdirSync, realpathSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fixture, root, gitEnv, gitIn, fakeClaudeBinary, claudePathEnv } from "./helpers.mjs";
+import { fixture, root, gitEnv, gitIn, fakeClaudeBinary, claudePathEnv } from "./helpers.mts";
 
-const SIM = path.join(root, ".harness", "tests", "fixtures", "sim-agent.cjs");
+const SIM = path.join(root, ".harness", "tests", "fixtures", "sim-agent.cts");
 const IGNORES = [
   ".harness/runtime/*",
   "!.harness/runtime/.gitkeep",
@@ -374,7 +374,7 @@ test(
       },
     });
     const task = plan(f, unitsTask(threeUnits.slice(0, 2)));
-    const child = spawn(process.execPath, [path.join(f.dir, ".harness", "core.mjs"), "execute", task.id], {
+    const child = spawn(process.execPath, [path.join(f.dir, ".harness", "core.mts"), "execute", task.id], {
       cwd: f.dir,
       detached: true,
       env: { ...process.env, ...gitEnv, HARNESS_HOST: "", ...f.baseEnv },
@@ -430,7 +430,7 @@ test(
       },
     });
     const task = plan(f, unitsTask(threeUnits.slice(0, 2)));
-    const child = spawn(process.execPath, [path.join(f.dir, ".harness", "core.mjs"), "execute", task.id], {
+    const child = spawn(process.execPath, [path.join(f.dir, ".harness", "core.mts"), "execute", task.id], {
       cwd: f.dir,
       detached: true,
       env: { ...process.env, ...gitEnv, HARNESS_HOST: "", ...f.baseEnv },

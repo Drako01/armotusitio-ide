@@ -31,7 +31,7 @@
       "contextSources": ["package.json", "pnpm-workspace.yaml", "packages/README.md", "docs/adr/README.md"],
       "inputs": ["task", "dependencies", "selected skills", "context slice"],
       "outputs": ["structured handoff"],
-      "verification": ["node .harness/core.mjs check", "pnpm format:check"],
+      "verification": ["node .harness/core.mts check", "pnpm format:check"],
       "tokenBudget": 8000
     },
     {

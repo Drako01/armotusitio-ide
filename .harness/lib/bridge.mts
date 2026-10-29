@@ -2,7 +2,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
-import { harnessChildEnv, resolvePython } from "./python-runtime.mjs";
+import { harnessChildEnv, resolvePython } from "./python-runtime.mts";
 
 const directory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const runtime = await resolvePython();

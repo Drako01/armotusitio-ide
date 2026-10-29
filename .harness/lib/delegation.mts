@@ -1,5 +1,5 @@
 // Compatibility shims; logic is implemented in Python.
-import { rpc } from "./bridge.mjs";
+import { rpc } from "./bridge.mts";
 export const runGate = async (...args) => rpc("runGate", args);
 export const delegationContext = async (...args) => rpc("delegationContext", args);
 export const compactHandoff = (...args) => rpc("compactHandoff", args);

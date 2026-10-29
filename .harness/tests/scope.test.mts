@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { fixture, passedResult, fixtureAgent, readHandoffs, interruptedTask, gitIn } from "./helpers.mjs";
+import { fixture, passedResult, fixtureAgent, readHandoffs, interruptedTask, gitIn } from "./helpers.mts";
 
 test("actual writes within scope are auto-declared and audited", async (t) => {
   const { dir, run } = await fixture(t);
