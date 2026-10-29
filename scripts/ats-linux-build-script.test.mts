@@ -33,3 +33,14 @@ test('Linux bootstrap extracts immutable source and installs dependencies on fir
     assert.doesNotMatch(script, /refresh_sources|dependency_fingerprint|source\.keep/);
     assert.match(script, /Refusing Linux build as root/);
 });
+
+test('Linux build scopes the sandbox override to transient Node compile-cache generation', async () => {
+    const script = await readFile(path.join(root, 'build/armotusitio/linux-build.sh'), 'utf8');
+    const cache = await readFile(path.join(root, 'build/lib/nodeCompileCache.ts'), 'utf8');
+    const docker = await readFile(path.join(root, 'build/armotusitio/Dockerfile.linux'), 'utf8');
+    assert.match(script, /unshare -Ur true/);
+    assert.match(script, /ATS_LINUX_CACHE_NO_SANDBOX=1/);
+    assert.match(cache, /process\.env\.ATS_LINUX_CACHE_NO_SANDBOX === '1'/);
+    assert.match(cache, /buildOnlyNoSandbox \? \['--no-sandbox'\] : \[\]/);
+    assert.doesNotMatch(docker, /ats-prepare-chrome-sandbox|sudoers|--privileged/);
+});
