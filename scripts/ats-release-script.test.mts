@@ -65,6 +65,7 @@ async function fixture(settings: object, revision = 4, version = '1.143.1') {
 	const directory = await mkdtemp(path.join(os.tmpdir(), 'ats-release-script-'));
 	const keys = generateKeyPairSync('ed25519', { publicKeyEncoding: { type: 'spki', format: 'pem' }, privateKeyEncoding: { type: 'pkcs8', format: 'pem' } });
 	const files: Record<string, string> = {
+		'.nvmrc': process.versions.node,
 		'package.json': JSON.stringify({ version }), 'product.json': '{}',
 		'fixture.json': JSON.stringify(settings),
 		'build/armotusitio/product-overrides.json': JSON.stringify({ quality: 'stable', armotusitioUpdate: { repository: 'example/ide', revision, publicKey: keys.publicKey }, armotusitioUpstream: { ref: version } }),
@@ -120,6 +121,17 @@ test('new version starts at r1 even when metadata has a higher old revision', as
 	const f = await fixture({ pages: [[published('ats-v1.143.1-r40')]] }, 4, '1.144.0');
 	try { const result = await f.invoke(['--dry-run']); assert.equal(result.code, 0, result.output); assert.match(result.output, /Metadata revision: 4 -> 1/); }
 	finally { await f.close(); }
+});
+
+test('release rejects an older Node than .nvmrc before metadata or build writes', async () => {
+	const f = await fixture({ pages: [[]] });
+	try {
+		await writeFile(path.join(f.directory, '.nvmrc'), '24.99.0\n');
+		const result = await f.invoke([]);
+		assert.equal(result.code, 1, result.output);
+		assert.match(result.output, /Node >=24\.99\.0/);
+		assert.ok((await f.calls()).every(call => call[0] !== 'update' && !(call[0] === 'git' && ['switch', 'add', 'commit', 'push'].includes(call[1]))));
+	} finally { await f.close(); }
 });
 
 test('plan fails closed on dirty source, remote drift, invalid API data, inconsistent version and enabled Actions', async () => {

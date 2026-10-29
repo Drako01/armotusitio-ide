@@ -49,7 +49,8 @@ export async function resolveArmotusitioUpdate(
 	if (release.tag_name !== tag || metadata[0].browser_download_url !== `${prefix}${tag}/${armotusitioManifestName}`) {
 		throw new Error('The update does not belong to this release.');
 	}
-	if (manifest.revision <= trust.revision || compareArmotusitioVersions(manifest.baseVersion, currentVersion) < 0 || manifest.commit === currentCommit) {
+	const versionOrder = compareArmotusitioVersions(manifest.baseVersion, currentVersion);
+	if (versionOrder < 0 || (versionOrder === 0 && manifest.revision <= trust.revision) || manifest.commit === currentCommit) {
 		return null;
 	}
 	const artifact = manifest.assets[platform];

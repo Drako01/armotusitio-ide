@@ -91,8 +91,11 @@ En el candidato indicado por `prepare`, resolvé conflictos y revisá el diff an
 Protegé la identidad, el catálogo Open VSX, las claves públicas, la extensión propia y los cambios de empaquetado.
 Revisá especialmente Electron, Node, SDK de Windows, archivos de lock y scripts de instalación recibidos de upstream.
 
-Para la siguiente release incrementá la revisión propia, incluso si no cambió la versión base de VS Code.
-La versión puente inicial usa revisión 1; la siguiente debe usar al menos 2.
+Dentro de la misma versión base, incrementá la revisión propia para cada release.
+Con una nueva versión base, `release.sh` reinicia la revisión en `r1`.
+
+El primer salto desde clientes con el comparador anterior requiere instalación manual o una versión puente.
+Consultá los detalles de [compatibilidad con 1.144.0](UPSTREAM-1.144.md#revisiones-por-versión).
 
 ```powershell
 node scripts/ats-autoupdate.mts revision 2

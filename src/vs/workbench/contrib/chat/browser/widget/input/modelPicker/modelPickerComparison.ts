@@ -4,6 +4,10 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { IObservable } from '../../../../../../../base/common/observable.js';
+import { RawContextKey } from '../../../../../../../platform/contextkey/common/contextkey.js';
+
+export const ModelComparisonAvailableContext = new RawContextKey<boolean>('chatModelComparisonAvailable', false);
+export const ModelComparisonPickerFocusedContext = new RawContextKey<boolean>('chatModelComparisonPickerFocused', false);
 
 /** Comparison selection controller rendered by the shared tabbed model picker. */
 export interface IModelPickerComparison {
@@ -12,6 +16,9 @@ export interface IModelPickerComparison {
 	readonly summary: IObservable<string | undefined>;
 	readonly state: IObservable<IModelPickerComparisonState | undefined>;
 	readonly label: string;
+	readonly description?: IObservable<string>;
+	readonly startCommandId?: string;
+	readonly showPickerHint?: IObservable<boolean>;
 	start(): void;
 	cancel(): void;
 	reset(): void;
@@ -58,6 +65,8 @@ export interface IModelPickerComparisonState {
 	readonly canFinish: boolean;
 	/** Whether this step is followed by another; Next then stays visible and is disabled until `canGoNext`. Defaults to `canGoNext`. */
 	readonly hasNextStep?: boolean;
+	readonly backLabel?: string;
+	readonly nextLabel?: string;
 	/** A short footer status, such as how many models are selected or what must change before continuing. */
 	readonly status?: { readonly text: string; readonly warning?: boolean };
 	readonly count?: { readonly label: string; readonly value: number; readonly min: number; readonly max: number };

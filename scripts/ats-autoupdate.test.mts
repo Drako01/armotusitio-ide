@@ -24,10 +24,10 @@ const nativeJS = ts.transpileModule(nodeSource, { compilerOptions: { module: ts.
 	.replace('../common/armotusitioUpdate.js', new URL('../src/vs/platform/update/common/armotusitioUpdate.ts', import.meta.url).href);
 const { resolveArmotusitioUpdate: resolveUpdate } = await import('data:text/javascript;base64,' + Buffer.from(nativeJS).toString('base64'));
 
-function fixture(extraAssets = {}) {
+function fixture(extraAssets = {}, baseVersion = '1.143.0', revision = 2) {
 	const keys = generateKeyPairSync('ed25519', { publicKeyEncoding: { type: 'spki', format: 'pem' }, privateKeyEncoding: { type: 'pkcs8', format: 'pem' } });
 	const manifest = parseArmotusitioManifest({
-		schema: 1, repository: armotusitioRepository, channel: 'stable', revision: 2, baseVersion: '1.143.0',
+		schema: 1, repository: armotusitioRepository, channel: 'stable', revision, baseVersion,
 		commit: 'b'.repeat(40), upstream: { ref: 'main', commit: 'e'.repeat(40) }, publishedAt: new Date().toISOString(), assets: {
 			'win32-x64-user': { name: 'setup.exe', size: 42, sha256: 'a'.repeat(64) },
 			'win32-x64-archive': { name: 'app.zip', size: 50, sha256: 'c'.repeat(64) }, ...extraAssets
@@ -62,6 +62,15 @@ test('a signed release resolves both installer and archive without executing eit
 		const update = await f.resolve(platform);
 		assert.equal(update.version, f.manifest.commit);
 		assert.equal(update.sha256hash, f.manifest.assets[platform].sha256);
+	}
+});
+
+test('newer bases accept r1 while the same base still requires a higher revision', async () => {
+	for (const baseVersion of ['1.143.0', '1.143.1', '1.144.0']) {
+		const f = fixture({}, baseVersion, 1);
+		f.trust.revision = 5;
+		const update = await f.resolve('win32-x64-user', '1.143.1');
+		assert.equal(update?.version ?? null, baseVersion === '1.144.0' ? f.manifest.commit : null);
 	}
 });
 
