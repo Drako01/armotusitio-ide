@@ -311,6 +311,15 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 - [ ] **Nueva validación local:** verificar TypeScript, higiene y suites en Windows, y comprobar el smoke de Claude en el mismo entorno. Ningún resultado anterior certifica esta corrección recién publicada.
 - [ ] **E2E Claude autenticado, CI multiplataforma y sandbox OS:** pendientes.
 
+### Claude Code: ejecución alcanzada, E2E bloqueado por cuota (2026-10-30, 17:51 ART)
+
+**Evidencia:** log `Texto pegado(20261030-205153).txt` y resultado del smoke manual: proveedor `claude`, `status=failed`, `exitCode=1`, `failureCategory=provider-failed`, `scopeVerified=true`, `scopeViolation=false`, `responseTruncated=false`, duración 15.328 ms y `tokenUsageReported=true`. El operador confirma que actualmente **no dispone de tokens/cuota de Claude**.
+
+- [x] **Detección y lanzamiento de Claude CLI:** resueltos; desapareció `HARNESS_EXECUTABLE_UNAVAILABLE`.
+- [ ] **E2E Claude exitoso:** pendiente por disponibilidad de cuota; el mensaje genérico `provider-failed` no demuestra por sí solo que la cuota sea la causa exacta. No repetir llamadas reales hasta contar con cuota.
+- [x] **Validación local Windows del último cambio de resolución:** `npm test --prefix extensions/armotusitio-ide` **188 PASS, 0 FAIL, 1 SKIP** de 189; `ats-harness-check.mts --fix` y sin `--fix` con todos los gates PASS (incluida higiene), `npm run check` PASS; sin cambios rastreados, `script_test.log` sin seguimiento.
+- [ ] **Próximo foco independiente de cuota:** CI multiplataforma, fixtures de error/limitación del proveedor sin red, aislamiento OS, recuperación transaccional y protocolo de motores.
+
 ## Validación local obligatoria
 
 Desde la raíz del repositorio, con las dependencias instaladas:
