@@ -243,6 +243,28 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 - [ ] **CI Linux/macOS/Windows del último SHA:** todavía sin evidencia verificada. 
 - [ ] **Sandbox OS real:** sin implementar. Las restricciones de modelo y verificación Git no equivalen a aislamiento de procesos, filesystem y red.
 
+### Validación Windows del smoke opt-in y negativa de consentimiento (2026-10-30, 17:39–17:40 ART)
+
+**Evidencia del operador:** `Texto pegado(20261030-204012).txt` y transcripción de la ejecución manual. Sistema `win32/x64`, Node `v24.22.1`, rama `feat/native-harness-enterprise-upgrade`.
+
+| Validación | Resultado observado |
+|---|---|
+| `node scripts/ats-harness-check.mts --fix` | **PASS**, incluidas pruebas, formato, bundle, higiene y diff |
+| `node scripts/ats-harness-check.mts` | **PASS** en sus siete controles sin `--fix` |
+| `npm test --prefix extensions/armotusitio-ide` | **184 PASS / 0 FAIL / 1 SKIP** (185 tests) |
+| `npm run check --prefix extensions/armotusitio-ide` | **PASS** |
+| `git status --short` | Solo `script_test.log` sin seguimiento; sin cambios rastreados |
+| Smoke Codex con respuesta `hola` | **Rechazado correctamente**: `HARNESS_REAL_SMOKE_NOT_APPROVED`, antes de invocar modelo |
+
+- [x] **Validación automatizada local del runner de consentimiento:** cerrada; los tests nuevos de argumentos obligatorios y help pasaron.
+- [x] **Rechazo de consentimiento incorrecto:** demostrado manualmente al ingresar `hola`, distinto de la confirmación literal requerida `RUN`.
+- [ ] **E2E autenticado Codex:** no ejecutado; la prueba se detuvo deliberadamente antes de invocar el modelo. Para realizarla se requiere una nueva ejecución y escribir `RUN` conscientemente (puede consumir cuota).
+- [ ] **E2E autenticado Claude:** no ejecutado.
+- [ ] **CI de Windows, Linux y macOS sobre el SHA final:** sin evidencia confirmada de éxito.
+- [ ] **Sandbox OS, recuperación transaccional, protocolo común de motores e instaladores:** mantienen sus bloqueos de certificación.
+
+**Alcance:** 184 pruebas locales aprobadas y un bloqueo de consentimiento correctamente aplicado **no** acreditan una invocación autenticada real de Codex ni seguridad OS. El test de symlink sensible permanece omitido en Windows.
+
 ## Validación local obligatoria
 
 Desde la raíz del repositorio, con las dependencias instaladas:
