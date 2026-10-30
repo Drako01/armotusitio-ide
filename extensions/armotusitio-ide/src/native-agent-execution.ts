@@ -6,13 +6,14 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { resolveNativeCommand } from './native-runtime.ts';
+import { captureAgentScope, scopeChanged } from './native-agent-scope.ts';
 import { reviewAgentDraft, validateReviewedAgent, type AgentDraft, type AgentReview } from './native-providers.ts';
 
 const MAX_OUTPUT_BYTES = 256 * 1024;
 const MAX_DURATION_MS = 30 * 60 * 1000;
 const AUTH_ENV = ['PATH', 'Path', 'PATHEXT', 'SystemRoot', 'WINDIR', 'HOME', 'USERPROFILE', 'TEMP', 'TMP', 'TMPDIR', 'LANG', 'LC_ALL', 'CODEX_HOME', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY'];
 export interface AgentInvocation { executable: 'codex' | 'claude'; args: string[]; stdin: string; }
-export interface AgentOutcome { status: 'passed' | 'failed' | 'cancelled' | 'timeout'; exitCode: number | null; durationMs: number; output: string; truncated: boolean; }
+export interface AgentOutcome { status: 'passed' | 'failed' | 'cancelled' | 'timeout'; exitCode: number | null; durationMs: number; output: string; truncated: boolean; scopeViolation?: boolean; scopeVerified?: boolean; }
 export interface AgentExecution { outcome: Promise<AgentOutcome>; cancel(): void; }
 
 export function buildAgentInvocation(draft: AgentDraft): AgentInvocation {
@@ -72,6 +73,7 @@ export async function executeReviewedAgent(review: AgentReview, current: AgentDr
   const canonical = await fs.realpath(current.projectRoot);
   if (canonical !== current.projectRoot || !(await fs.stat(canonical)).isDirectory()) { throw Error('HARNESS_AGENT_ROOT_CHANGED'); }
   const invocation = buildAgentInvocation(current);
+  const initialScope = current.readOnly ? await captureAgentScope(canonical) : undefined;
   const command = await resolveNativeCommand(invocation.executable, invocation.args);
   const env: NodeJS.ProcessEnv = {};
   for (const key of AUTH_ENV) { if (process.env[key]) { env[key] = process.env[key]; } }
@@ -98,8 +100,24 @@ export async function executeReviewedAgent(review: AgentReview, current: AgentDr
     const finish = (exitCode: number | null): void => {
       if (ended) { return; }
       ended = true; clearTimeout(timer);
-      resolve({ status: timedOut ? 'timeout' : cancelled ? 'cancelled' : exitCode === 0 ? 'passed' : 'failed',
-        exitCode, durationMs: Date.now() - started, truncated, output: redactOutput(output) });
+      void (async () => {
+        let status: AgentOutcome['status'] = timedOut ? 'timeout' : cancelled ? 'cancelled' : exitCode === 0 ? 'passed' : 'failed';
+        let scopeViolation = false;
+        let scopeVerified = false;
+        if (initialScope) {
+          try {
+            const finalScope = await captureAgentScope(canonical);
+            scopeViolation = scopeChanged(initialScope, finalScope);
+            scopeVerified = initialScope.source === 'git' && finalScope.source === 'git';
+            if (scopeViolation) { status = 'failed'; }
+          } catch {
+            // Fail closed: a reader that cannot be checked is never reported as successful.
+            status = 'failed';
+          }
+        }
+        resolve({ status, exitCode, durationMs: Date.now() - started, truncated,
+          output: redactOutput(output), scopeViolation, scopeVerified });
+      })();
     };
     child.once('error', () => finish(null));
     child.once('close', finish);
