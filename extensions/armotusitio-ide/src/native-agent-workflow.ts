@@ -210,6 +210,16 @@ export class NativeAgentWorkflow {
 		return records.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, limit);
 	}
 
+	/** A recovery guard is separate from the writer lock so stale writers can be inspected safely. */
+	private async assertNoReconciliation(): Promise<void> {
+		try {
+			await fs.lstat(path.join(this.storage, 'reconcile.guard'));
+			throw Error('HARNESS_WORKFLOW_RECONCILIATION_ACTIVE');
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== 'ENOENT') { throw error; }
+		}
+	}
+
 	/** The IDE shows only recent records; recovery must inspect every bounded stored record. */
 	async history(): Promise<WorkflowRecord[]> {
 		return this.readHistory(MAX_HISTORY);
@@ -225,7 +235,29 @@ export class NativeAgentWorkflow {
 	/** Explicit stale-state reconciliation. Never kills an agent or silently retries an interrupted step. */
 	async reconcile(): Promise<number> {
 		if (this.running) { throw Error('HARNESS_WORKFLOW_ALREADY_RUNNING'); }
-		// Validate all visible persisted records before changing the stale lock.
+		await this.assertSafeStorage(true);
+		const guardFile = path.join(this.storage, 'reconcile.guard');
+		const guard = await fs.open(guardFile, 'wx', 0o600).catch(error => {
+			if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+				throw Error('HARNESS_WORKFLOW_RECONCILIATION_ACTIVE');
+			}
+			throw error;
+		});
+		let guardRecorded = false;
+		try {
+			await guard.writeFile(JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }));
+			await guard.sync();
+			guardRecorded = true;
+			return await this.reconcileLocked();
+		} finally {
+			await guard.close();
+			// Failed guard initialization leaves its evidence in place for manual recovery.
+			if (guardRecorded) { await fs.rm(guardFile); }
+		}
+	}
+
+	private async reconcileLocked(): Promise<number> {
+		// Validate every stored record before changing the stale lock.
 		// A corrupt history must not unlock an uncertain workflow for a new writer.
 		const history = await this.readHistory(MAX_STORED);
 		const projectKey = createHash('sha256').update(await fs.realpath(this.root)).digest('hex');
@@ -393,11 +425,18 @@ export class NativeAgentWorkflow {
 		if (ordered.length > MAX_WORKFLOW_PROVIDER_CALLS) { throw Error('HARNESS_WORKFLOW_CALL_BUDGET_EXCEEDED'); }
 		if (planAgentWaves(plan).some(wave => wave.ids.length > 1)) { validateDAGReviewCoverage(plan); }
 		await this.assertSafeStorage(true);
+		await this.assertNoReconciliation();
 		const lockFile = path.join(this.storage, 'execution.lock');
 		const lock = await fs.open(lockFile, 'wx', 0o600).catch(error => {
 			if ((error as NodeJS.ErrnoException).code === 'EEXIST') { throw Error('HARNESS_WORKFLOW_RECONCILIATION_REQUIRED'); }
 			throw error;
 		});
+		try { await this.assertNoReconciliation(); }
+		catch (error) {
+			await lock.close();
+			await fs.rm(lockFile);
+			throw error;
+		}
 		this.cancelled = false;
 		this.running = true;
 		const record: WorkflowRecord = {
