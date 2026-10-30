@@ -55,8 +55,12 @@ test('executes three stages in order with fake provider; persists only metadata'
 		const flow = new NativeAgentWorkflow(canonical, path.join(root, 'private'));
 		let verified = 0;
 		let metrics = 0;
+		const events: Array<{ kind: string; stepId?: string }> = [];
+		const unsubscribe = flow.onEvent(event => { assert.equal(JSON.stringify(event).includes('PRIVATETASK'), false); events.push(event); });
 		const run = await flow.start(plan, workflowDigest(canonical, plan), () => true, async () => { verified++; return true; }, async () => { metrics++; });
 		const outcome = await run.result;
+		unsubscribe();
+		assert.deepEqual(events.map(event => event.kind), ['workflow-started', 'step-started', 'step-finished', 'step-started', 'step-finished', 'step-started', 'step-finished', 'verification-finished', 'workflow-finished']);
 		assert.equal(outcome.status, 'passed');
 		assert.equal(outcome.verification, 'passed');
 		assert.equal(verified, 1);
