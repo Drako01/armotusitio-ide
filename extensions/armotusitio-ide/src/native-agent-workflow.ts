@@ -182,7 +182,7 @@ export class NativeAgentWorkflow {
 			const stat = await fs.lstat(file);
 			if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_STATE_BYTES) { throw Error('HARNESS_WORKFLOW_UNSAFE_STATE'); }
 			const record: unknown = JSON.parse(await fs.readFile(file, 'utf8'));
-			if (!validRecord(record)) { throw Error('HARNESS_WORKFLOW_INVALID_STATE'); }
+			if (!validRecord(record) || name !== record.id + '.json') { throw Error('HARNESS_WORKFLOW_INVALID_STATE'); }
 			records.push(record);
 		}
 		return records.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, limit);
