@@ -35,6 +35,7 @@ export interface WorkflowRun {
   cancel(): void;
 }
 const MAX_HISTORY = 40;
+const MAX_STORED = 500;
 const MAX_STATE_BYTES = 128 * 1024;
 const IDENTIFIER = /^[a-z0-9][a-z0-9_-]{0,63}$/i;
 
@@ -107,7 +108,9 @@ export class NativeAgentWorkflow {
       throw error;
     }
     const records: WorkflowRecord[] = [];
-    for (const name of files.filter(name => /^[a-f0-9-]{36}\.json$/i.test(name)).slice(-MAX_HISTORY)) {
+    const recordFiles = files.filter(name => /^[a-f0-9-]{36}\.json$/i.test(name));
+    if (recordFiles.length > MAX_STORED) { throw Error('HARNESS_WORKFLOW_HISTORY_TOO_LARGE'); }
+    for (const name of recordFiles) {
       const file = path.join(this.storage, name);
       const stat = await fs.lstat(file);
       if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_STATE_BYTES) { throw Error('HARNESS_WORKFLOW_UNSAFE_STATE'); }
@@ -115,12 +118,45 @@ export class NativeAgentWorkflow {
       if (!validRecord(record)) { throw Error('HARNESS_WORKFLOW_INVALID_STATE'); }
       records.push(record);
     }
-    return records.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    return records.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, MAX_HISTORY);
   }
 
   cancel(): void {
     this.cancelled = true;
     this.active?.cancel();
+  }
+
+  /** Explicit stale-state reconciliation. Never kills an agent or silently retries an interrupted step. */
+  async reconcile(): Promise<number> {
+    if (this.running) { throw Error('HARNESS_WORKFLOW_ALREADY_RUNNING'); }
+    const lockFile = path.join(this.storage, 'execution.lock');
+    try {
+      const stat = await fs.lstat(lockFile);
+      if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 4096) { throw Error('HARNESS_WORKFLOW_UNSAFE_LOCK'); }
+      const lock = JSON.parse(await fs.readFile(lockFile, 'utf8')) as { pid?: number };
+      if (!Number.isSafeInteger(lock.pid) || lock.pid! < 1) { throw Error('HARNESS_WORKFLOW_UNSAFE_LOCK'); }
+      try {
+        process.kill(lock.pid!, 0);
+        throw Error('HARNESS_WORKFLOW_ACTIVE_LOCK');
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ESRCH') { throw error; }
+      }
+      await fs.rm(lockFile);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') { throw error; }
+    }
+    let recovered = 0;
+    for (const record of await this.history()) {
+      if (record.status !== 'running') { continue; }
+      record.status = 'interrupted';
+      record.endedAt = new Date().toISOString();
+      for (const step of record.steps) {
+        if (step.status === 'running') { step.status = 'interrupted'; step.endedAt = record.endedAt; }
+      }
+      await atomicWrite(path.join(this.storage, record.id + '.json'), record);
+      recovered++;
+    }
+    return recovered;
   }
 
   async start(plan: HandoffPlan, approvedDigest: string, trusted: () => boolean): Promise<WorkflowRun> {
