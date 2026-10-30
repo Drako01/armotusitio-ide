@@ -9,7 +9,7 @@
 
 Esta guía documenta el alcance acordado y diferencia **código agregado a la rama** de funcionalidad realmente certificada. Una casilla marcada no significa que el comportamiento haya pasado pruebas reales de extremo a extremo.
 
-**Inventario funcional:** 34 ítems implementados en código, 5 parciales y 15 pendientes (54 ítems de distinto tamaño y riesgo; no representan un porcentaje técnico de certificación). **Última validación automatizada local Windows aportada:** 191 tests aprobados, 0 fallidos, 1 omitido (192 total), con TypeScript, bundle, recursos e higiene en PASS, sobre el commit previo al refuerzo de liberación de locks. Esto no equivale a CI multiplataforma ni a E2E completo.
+**Inventario funcional:** 34 ítems implementados en código, 5 parciales y 15 pendientes (54 ítems de distinto tamaño y riesgo; no representan un porcentaje técnico de certificación). **Última validación automatizada local Windows aportada:** 192 tests aprobados, 0 fallidos, 1 omitido (193 total), con TypeScript, bundle, recursos e higiene en PASS, sobre el commit `a5ec430ef523` anterior a la actual ronda de endurecimiento. Esto no equivale a CI multiplataforma ni a E2E completo.
 
 **Calificación:** no asignar una nueva nota 1–10 ni declarar nivel AAA hasta disponer de pruebas reproducibles y resultados E2E. El 70% mencionado en el seguimiento conversacional fue una apreciación de cobertura, **no** una medición auditada.
 
@@ -354,19 +354,27 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 - [ ] **Pruebas:** ejecución sin Redis, Redis disponible, caída durante operaciones, recuperación y separación entre instancias. No iniciar contenedores ni instalar Redis automáticamente.
 - [x] **Validación sin GitHub Actions:** el responsable descarta Actions por consumo. Se retiró el workflow específico del Harness de esta rama. Los controles deben seguir ejecutándose localmente.
 
-### Recuperación de estados antiguos fuera de la vista de historial (pendiente de retest)
+### Recuperación de estados antiguos fuera de la vista de historial (validado Windows)
 
 - [x] La vista de historial conserva un límite de 40 entradas recientes para el IDE.
 - [x] `reconcile()` ahora lee hasta el máximo interno de 500 registros almacenados antes de liberar locks y marcar interrupciones; un workflow antiguo no queda excluido por el límite de visualización.
 - [x] Nueva prueba offline con 41 registros: el workflow más antiguo está oculto para la UI y debe reconciliarse igualmente.
 - [ ] Repetir tests locales y verificar el commit `6f5040690035`. Los 190 PASS reportados son anteriores a esta modificación.
 
-### Recuperación segura: liberar lock después de persistir estados (pendiente de retest)
+### Recuperación segura: liberar lock después de persistir estados (validado Windows)
 
 - [x] **Orden de reconciliación reforzado:** `reconcile()` mantiene el lock obsoleto hasta finalizar todos los `atomicWrite` de los workflows interrumpidos. Ante errores de persistencia, conserva el lock en lugar de permitir nuevas escrituras.
 - [x] **Regresión offline añadida:** comprobar que, tras una recuperación satisfactoria, el lock se elimina y los estados pasan a `interrupted`.
 - [ ] **Validación local posterior:** correr el verificador, suite completa y check TypeScript; el último log del operador (**191 PASS / 0 FAIL / 1 SKIP**) es anterior a estos dos commits.
 - [ ] **Sigue pendiente:** journal transaccional real, recuperación ante fallas de disco a mitad de una serie de registros, y sandbox OS. No confundir esta protección de lock con rollback transaccional completo.
+
+### Lote P0: integridad de locks, estado y worktrees (2026-10-30; pendiente de retest)
+
+- [x] **Estado terminal durable antes de desbloquear:** `NativeAgentWorkflow.start()` solo retira `execution.lock` cuando se confirmó la persistencia del registro final. Ante un fallo de escritura, retiene el lock para reconciliación explícita. Nueva prueba simula que el archivo de estado deja de ser escribible y verifica que un segundo writer queda bloqueado.
+- [x] **Vinculación archivo–workflow:** `readHistory()` rechaza cualquier registro cuyo `id` no coincida exactamente con el nombre de archivo. `reconcile()` no podrá escribir sobre un registro distinto al inspeccionado. Nueva prueba de identidad alterada y conservación de evidencia.
+- [x] **Limpieza de worktrees:** `removeCleanAgentWorktree()` valida formato del ID, nombre de directorio esperado y `git-common-dir` compartido con el repositorio raíz antes de ejecutar `git worktree remove`. Nueva prueba de descriptor falsificado.
+- [ ] **Retest obligatorio:** prueba focalizada de workflow y worktree, `ats-harness-check.mts`, suite completa, TypeScript, recursos y `git diff --check`. Los 192 PASS provienen del log *anterior* a este lote.
+- [ ] **Aún no implementado:** journal transaccional, merge/rollback reversible, aislamiento filesystem/proceso/red a nivel OS, pruebas adversariales E2E; los controles aquí agregados no justifican declararlos completos.
 
 ## Validación local obligatoria
 
