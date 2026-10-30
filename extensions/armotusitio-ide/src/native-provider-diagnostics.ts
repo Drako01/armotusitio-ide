@@ -34,6 +34,38 @@ export function inspectProviderHelp(provider: NativeProvider, help: string): { c
 }
 
 
+/** Queries local static help only; this operation never passes a prompt to a provider. */
+export async function probeProviderCommandFlags(provider: NativeProvider): Promise<{ compatibility: 'verified' | 'unsupported' | 'unknown'; missingFlags: string[] }> {
+	if (provider !== 'codex' && provider !== 'claude') { throw Error('HARNESS_PROVIDER_UNSUPPORTED'); }
+	let resolved;
+	try { resolved = await resolveNativeCommand(provider, provider === 'codex' ? ['exec', '--help'] : ['--help']); }
+	catch { return { compatibility: 'unknown', missingFlags: [] }; }
+	const env: NodeJS.ProcessEnv = {};
+	for (const key of ['PATH', 'Path', 'PATHEXT', 'SystemRoot', 'WINDIR', 'HOME', 'USERPROFILE', 'TEMP', 'TMP']) {
+		if (process.env[key]) { env[key] = process.env[key]; }
+	}
+	if (resolved.embeddedNode) { env.ELECTRON_RUN_AS_NODE = '1'; }
+	return await new Promise(resolve => {
+		let settled = false;
+		let help = '';
+		let bytes = 0;
+		const child = spawn(resolved.executable, resolved.args, { env, shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+		const finish = (compatible: boolean): void => {
+			if (settled) { return; }
+			settled = true;
+			clearTimeout(timer);
+			if (!compatible) { child.kill(); }
+			resolve(compatible ? inspectProviderHelp(provider, help) : { compatibility: 'unknown', missingFlags: [] });
+		};
+		const timer = setTimeout(() => finish(false), VERSION_TIMEOUT);
+		timer.unref();
+		child.stdout?.on('data', (part: Buffer) => { bytes += part.length; help += part.toString('utf8'); if (bytes > 32 * 1024) { finish(false); } });
+		child.stderr?.on('data', (part: Buffer) => { bytes += part.length; help += part.toString('utf8'); if (bytes > 32 * 1024) { finish(false); } });
+		child.once('error', () => finish(false));
+		child.once('close', code => finish(code === 0));
+	});
+}
+
 export async function diagnoseProvider(provider: NativeProvider): Promise<ProviderDiagnostic> {
 	if (provider !== 'codex' && provider !== 'claude') { throw Error('HARNESS_PROVIDER_UNSUPPORTED'); }
 	let resolved;
@@ -73,9 +105,11 @@ export async function diagnoseProvider(provider: NativeProvider): Promise<Provid
 			finish(code === 0 ? match?.[1] || null : null);
 		});
 	});
+	const command = version ? await probeProviderCommandFlags(provider) : { compatibility: 'unknown' as const, missingFlags: [] as string[] };
 	return {
 		provider, installed: true, version,
 		protocolVerified: false, modelAuthenticated: false,
-		commandCompatibility: 'unknown', missingFlags: [], reason: version ? 'cli-found' : 'version-command-failed'
+		commandCompatibility: command.compatibility, missingFlags: command.missingFlags,
+		reason: version ? 'cli-found' : 'version-command-failed'
 	};
 }
