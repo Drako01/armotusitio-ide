@@ -28,7 +28,7 @@ const ALL: Capability[] = [
 ];
 const VERIFIED_NATIVE: Capability[] = [
   'verification-gates', 'durable-tasks', 'durable-workflows', 'provider-execution',
-  'agent-handoffs', 'reconciliation', 'bounded-processes', 'parallel-gates'
+  'agent-handoffs', 'reconciliation', 'bounded-processes', 'parallel-gates', 'worktree-isolation'
 ];
 
 export async function describeEngine(root: string): Promise<EngineCapabilities> {
