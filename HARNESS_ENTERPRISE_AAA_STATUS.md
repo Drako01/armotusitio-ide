@@ -336,6 +336,16 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 - [ ] **Retest del cambio:** el último commit del fixture todavía debe validarse localmente y en CI; no interpretar el PASS previo como evidencia de la barrera nueva.
 - [ ] **Certificación CI multiplataforma:** la consulta de ejecuciones de la rama no mostró runs; la ausencia de runs requiere investigar registro/activación del workflow, no implica éxito.
 
+### Validación DAG estable en Windows; endurecimiento de CI sin proveedores (2026-10-30, 18:01 ART)
+
+**Evidencia recibida:** `Texto pegado(20261030-210153).txt` sobre commit `45a599c0a7a`. Test DAG aislado **5 PASS / 0 FAIL**; verificador enfocado todos los gates PASS; suite completa **189 PASS / 0 FAIL / 1 SKIP** de 190; `npm run check` PASS, sin modificaciones rastreadas (solo `script_test.log` untracked).
+
+- [x] **Regresión de concurrencia con barrera:** validada localmente en Windows.
+- [x] **Workflow CI actualizado:** verifica que el sparse checkout contiene fuente, fixture fake, test DAG y smoke offline, y repite el test DAG tres veces por sistema operativo para detectar intermitencia. No llama modelos ni requiere cuota.
+- [ ] **Confirmar ejecución efectiva del workflow en GitHub Actions** sobre el SHA actual y los tres runners `ubuntu-latest`, `windows-latest`, `macos-latest`. No atribuir PASS de CI a los tests locales.
+- [ ] **CI como gate de PR**: futura integración según política de ramas, tras demostrar runs reales.
+- [ ] **Sandbox OS y recuperación transaccional de archivos**: pendientes; ninguna prueba de barrera o CI sustituye aislamiento efectivo.
+
 ## Validación local obligatoria
 
 Desde la raíz del repositorio, con las dependencias instaladas:
