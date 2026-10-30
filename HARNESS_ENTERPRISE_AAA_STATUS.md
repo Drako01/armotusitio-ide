@@ -648,7 +648,7 @@ Los 2 SKIP son explícitos por plataforma: symlink sensible (Windows) y enforcem
 
 ### Pendientes inevitables (no ejecutables en este entorno)
 
-- [ ] **E2E Claude autenticado:** requiere cuota; no se consumió por instrucción expresa.
+- [x] **E2E Claude autenticado: PASS** (2026-10-30, autorizado por el operador). `ats-harness-real-provider-smoke.mts --provider claude`, sin modificar el runner, ejecutado en una pseudo-terminal real (ConPTY vía `node-pty`) con la confirmación literal `RUN`: `passed=true`, `status=passed`, `exitCode=0`, `durationMs=18640`, `scopeVerified=true`, `scopeViolation=false`, `responseTruncated=false`, `tokenUsageReported=true`. Claude Code 2.1.224, Windows x64, Node v24.22.1. Junto con el PASS previo de Codex, ambos proveedores quedan validados en modo revisor de solo lectura; **no certifica** un workflow completo con escritura, cancelación ni recuperación con proveedores reales.
 - [ ] **Ejecución en Linux/macOS:** prueba de enforcement del sandbox (bubblewrap/Seatbelt), symlink sensible y suite completa. El perfil Seatbelt se generó y probó como texto, pero **no se ejecutó en macOS**.
 - [ ] **Sandbox Windows:** no hay primitiva CLI sin privilegios equivalente; requiere AppContainer/Job Objects vía código nativo o Windows Sandbox. Hoy falla cerrado.
 - [ ] **Adopción del protocolo v2 por el motor Python/RedEvent** (`ide-gate`, eco del epoch y verificación del fence antes de escribir): cambio en otro repositorio.
