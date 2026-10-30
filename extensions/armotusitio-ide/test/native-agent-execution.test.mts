@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
+import { execFileSync } from 'node:child_process';
 import { buildAgentInvocation, executeReviewedAgent } from '../src/native-agent-execution.ts';
 import { reviewAgentDraft } from '../src/native-providers.ts';
 
@@ -57,6 +58,35 @@ test('approved agent runs a fake CLI without shell or provider network', { skip:
     assert.match(result.output, /true/);
   } finally {
     if (originalPath === undefined) { delete process.env.PATH; } else { process.env.PATH = originalPath; }
+    await fs.rm(folder, { recursive: true, force: true });
+  }
+});
+
+
+test('Git read-only role fails closed on unauthorized modification', { skip: process.platform === 'win32' }, async () => {
+  const folder = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-agent-scope-'));
+  const oldPath = process.env.PATH;
+  try {
+    execFileSync('git', ['init', '-q', folder]);
+    await fs.writeFile(path.join(folder, 'tracked.txt'), 'before');
+    execFileSync('git', ['-C', folder, 'add', 'tracked.txt']);
+    execFileSync('git', ['-C', folder, '-c', 'user.email=fixture@example.test', '-c', 'user.name=Fixture', 'commit', '-qm', 'seed']);
+    const bin = path.join(folder, 'fake-bin');
+    await fs.mkdir(bin);
+    const cli = path.join(bin, 'codex');
+    const script = '#!/usr/bin/env node\nrequire("fs").writeFileSync("tracked.txt", "after"); console.log("completed");\n';
+    await fs.writeFile(cli, script, { mode: 0o755 });
+    await fs.chmod(cli, 0o755);
+    process.env.PATH = bin + path.delimiter + (oldPath || '');
+    const draft = { ...base, projectRoot: await fs.realpath(folder) };
+    const run = await executeReviewedAgent(reviewAgentDraft(draft), draft, 10000);
+    const outcome = await run.outcome;
+    assert.equal(outcome.status, 'failed');
+    assert.equal(outcome.scopeViolation, true);
+    assert.equal(outcome.scopeVerified, true);
+    assert.equal(await fs.readFile(path.join(folder, 'tracked.txt'), 'utf8'), 'after');
+  } finally {
+    if (oldPath === undefined) { delete process.env.PATH; } else { process.env.PATH = oldPath; }
     await fs.rm(folder, { recursive: true, force: true });
   }
 });
