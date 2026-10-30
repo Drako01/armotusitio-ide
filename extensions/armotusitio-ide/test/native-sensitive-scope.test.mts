@@ -33,3 +33,21 @@ test('ignores dependency directories but fails closed on oversized secrets', asy
     await assert.rejects(sensitiveScopeDigest(canonical), /HARNESS_SENSITIVE_FILE_TOO_LARGE/);
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 });
+
+
+test('does not follow secret symlinks into unrelated directories', { skip: process.platform === 'win32' }, async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-sensitive-links-'));
+  const external = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-sensitive-external-'));
+  try {
+    await fs.writeFile(path.join(external, 'secret'), 'a');
+    await fs.symlink(path.join(external, 'secret'), path.join(root, '.env'));
+    const before = await sensitiveScopeDigest(await fs.realpath(root));
+    await fs.writeFile(path.join(external, 'secret'), 'b');
+    const after = await sensitiveScopeDigest(await fs.realpath(root));
+    assert.equal(before.digest, after.digest);
+    assert.equal(before.entries, 1);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+    await fs.rm(external, { recursive: true, force: true });
+  }
+});
