@@ -82,6 +82,7 @@ export async function executeReviewedAgent(review: AgentReview, current: AgentDr
   const env: NodeJS.ProcessEnv = {};
   for (const key of AUTH_ENV) { if (process.env[key]) { env[key] = process.env[key]; } }
   if (command.embeddedNode) { env.ELECTRON_RUN_AS_NODE = '1'; }
+  if (current.provider === 'claude') { env.CLAUDE_CODE_SKIP_PROMPT_HISTORY = '1'; }
   const started = Date.now();
   let cancelled = false, timedOut = false, truncated = false;
   let stdout = '', stderr = '', size = 0;
