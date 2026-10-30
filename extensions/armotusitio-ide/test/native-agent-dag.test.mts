@@ -8,7 +8,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { NativeAgentWorkflow, workflowDigest } from '../src/native-agent-workflow.ts';
 import assert from 'node:assert/strict';
-import { planAgentWaves, executeAgentDAG } from '../src/native-agent-dag.ts';
+import { planAgentWaves, executeAgentDAG, validateDAGReviewCoverage } from '../src/native-agent-dag.ts';
 import type { HandoffPlan } from '../src/native-providers.ts';
 
 const plan: HandoffPlan = {
@@ -101,4 +101,14 @@ test('workflow launches two independent read-only providers before exclusive imp
 		if (oldPath === undefined) { delete process.env.PATH; } else { process.env.PATH = oldPath; }
 		await fs.rm(root, { recursive: true, force: true });
 	}
+});
+
+test('DAG blocks unreviewed writes before launching agents', () => {
+	validateDAGReviewCoverage(plan);
+	const unsafe: HandoffPlan = { schemaVersion: 1, handoffs: [
+		{ id: 'read_a', role: 'planner', provider: 'codex', dependsOn: [], instruction: 'Read A' },
+		{ id: 'read_b', role: 'planner', provider: 'claude', dependsOn: [], instruction: 'Read B' },
+		{ id: 'unreviewed_writer', role: 'implementer', provider: 'codex', dependsOn: ['read_a', 'read_b'], instruction: 'Write' }
+	] };
+	assert.throws(() => validateDAGReviewCoverage(unsafe), /HARNESS_DAG_REVIEW_REQUIRED/);
 });
