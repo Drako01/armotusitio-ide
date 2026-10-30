@@ -1,6 +1,6 @@
 # Harness Enterprise AAA — estado de implementación y checklist
 
-> **Proyecto:** `Drako01/armotusitio-ide`  
+> **Proyecto:** `Drako01/armotusitio-ide`
 > **Rama de trabajo:** `feat/native-harness-enterprise-upgrade` (creada desde `main`)
 > **Fecha de corte:** 2026-10-30
 > **Estado:** desarrollo experimental; **NO certificado para merge ni producción**.
@@ -9,7 +9,7 @@
 
 Esta guía documenta el alcance acordado y diferencia **código agregado a la rama** de funcionalidad realmente certificada. Una casilla marcada no significa que el comportamiento haya pasado pruebas reales de extremo a extremo.
 
-**Inventario funcional histórico (línea base anterior a los lotes incrementales):** 34 ítems implementados en código, 5 parciales y 15 pendientes. Este inventario es histórico y no representa el conteo vigente. **Última validación automatizada local Windows aportada:** suite completa de extensión **252 PASS, 0 FAIL, 1 SKIP** (253 total), sobre `44a684c23f0`, 2026-10-30; el verificador focalizado completó sus siete gates en PASS con **155 PASS, 0 FAIL, 1 SKIP** en el subconjunto. El test de concurrencia corregido también pasó **5 de 5 repeticiones**. El benchmark offline histórico sobre Windows x64, Node v24.22.1 midió 3 ejecuciones exitosas del verificador, con mediana de **9923 ms** (en `fd6f1d98dec`). **Los desarrollos posteriores a `44a684c23f0` todavía no están validados por esos logs. No certifica AAA, E2E con ambos proveedores reales, aislamiento del sistema operativo, compilación completa del IDE ni portabilidad Windows/Linux/macOS.** Los lotes se detallan cronológicamente abajo.
+**Inventario funcional histórico (línea base anterior a los lotes incrementales):** 34 ítems implementados en código, 5 parciales y 15 pendientes. Este inventario es histórico y no representa el conteo vigente. **Última validación automatizada local Windows:** suite completa de extensión **292 PASS, 0 FAIL, 2 SKIP** (294 total) y verificador 7/7 PASS sobre el lote P0/P1/P2 detallado más abajo (2026-10-30). Antecedente: **252 PASS, 0 FAIL, 1 SKIP** (253 total), sobre `44a684c23f0`, 2026-10-30; el verificador focalizado completó sus siete gates en PASS con **155 PASS, 0 FAIL, 1 SKIP** en el subconjunto. El test de concurrencia corregido también pasó **5 de 5 repeticiones**. El benchmark offline histórico sobre Windows x64, Node v24.22.1 midió 3 ejecuciones exitosas del verificador, con mediana de **9923 ms** (en `fd6f1d98dec`). **Los desarrollos posteriores a `44a684c23f0` todavía no están validados por esos logs. No certifica AAA, E2E con ambos proveedores reales, aislamiento del sistema operativo, compilación completa del IDE ni portabilidad Windows/Linux/macOS.** Los lotes se detallan cronológicamente abajo.
 
 **Calificación:** no asignar una nueva nota 1–10 ni declarar nivel AAA hasta disponer de pruebas reproducibles y resultados E2E. El 70% mencionado en el seguimiento conversacional fue una apreciación de cobertura, **no** una medición auditada.
 
@@ -27,8 +27,8 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 - [x] Detección de proyectos y prioridad del Harness propio frente al motor nativo.
 - [x] Contrato declarativo de capacidades versionado (v2).
 - [~] Capacidades externas: lectura de manifiesto v2 y handshake **ejecutable, explícito y con nonce** agregado. Sigue faltando demostrar los comportamientos auto-reportados contra motores externos reales; no se conceden permisos por el handshake.
-- [ ] Unificar el motor Python y el motor nativo detrás de un protocolo ejecutable estable.
-- [ ] Eliminar dependencias y convenciones heredadas de RedEvent para portabilidad plena.
+- [~] Unificar el motor Python y el motor nativo detrás de un protocolo ejecutable estable: **lado IDE implementado** (protocolo v2 `ide-status` + `ide-gate` con nonce, epoch del fence, cancelación, timeout y evidencia; validado con un motor de proyecto real en tests). Falta que el motor Python/RedEvent adopte `ide-gate` (repositorio externo).
+- [~] Eliminar dependencias y convenciones heredadas de RedEvent para portabilidad plena: el motor nativo (`src/native-*.ts`) no contiene referencias a RedEvent (test automatizado) y ejecuta proyectos Node, Go y PHP reales. La capa heredada (chat `/check redevent`, descripción del paquete) conserva menciones por compatibilidad.
 
 ### Agentes y autonomía
 
@@ -39,7 +39,7 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 - [x] Recepción de veredicto explícito del reviewer, con fallo cerrado ante respuestas ambiguas.
 - [x] Un ciclo correctivo acotado y re-revisión independiente, autorizado previamente.
 - [x] DAG acotado de agentes: lectores independientes en olas concurrentes (hasta dos), escritores exclusivos y cobertura de revisión de implementers; el camino plan → implement → review conserva su ciclo correctivo.
-- [ ] Planificación adaptativa y coordinación de agentes ejecutados simultáneamente.
+- [~] Planificación adaptativa y coordinación de agentes ejecutados simultáneamente: scheduler de olas de gates adaptado a CPU libre y presión de memoria; la planificación adaptativa de **agentes** sigue pendiente.
 - [ ] Generación dinámica de agentes y distribución de tareas según capacidades, costo y carga.
 
 ### Seguridad y aislamiento
@@ -52,8 +52,8 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 - [x] Límites temporales, de captura de salida y concurrencia.
 - [x] Validación de veredictos de revisión e identificación de handoffs como datos no confiables.
 - [~] Defensas ante prompt injection: encapsulado de handoffs, revisión explícita, límites de permisos y nueva batería adversarial automatizada; aún falta red-team integral contra proveedores reales y aislamiento OS.
-- [ ] Sandbox OS con políticas efectivas de filesystem, proceso y red: un worktree NO es un límite de seguridad.
-- [ ] Pruebas adversariales de exfiltración, symlinks, TOCTOU y escalada de permisos.
+- [~] Sandbox OS con políticas efectivas de filesystem, proceso y red: un worktree NO es un límite de seguridad. Gates offline: Linux (bubblewrap) y macOS (Seatbelt `sandbox-exec`, política portable `offline-readonly`); Windows falla cerrado. La prueba de enforcement real queda omitida en Windows y **no se ejecutó en Linux/macOS**. Agentes con red: sin sandbox OS.
+- [~] Pruebas adversariales de exfiltración, symlinks, TOCTOU y escalada de permisos: nuevas regresiones de inyección en perfiles Seatbelt, parches de integración alterados, respuestas de gate falsificadas, motor que ignora el fence o modifica su entrypoint, y ledgers de presupuesto adulterados. Sin red-team integral ni pruebas TOCTOU a nivel OS.
 
 ### Persistencia y recuperación
 
@@ -63,8 +63,8 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 - [x] Reconciliación explícita de ejecuciones interrumpidas, sin reejecución automática.
 - [x] Administración y retiro de worktrees limpios, conservando los modificados.
 - [~] Recuperación: reconciliación más reinicio explícito con aprobación renovada, nuevo ID y rechazo si comenzó un writer. La reanudación granular desde checkpoints con escrituras previas permanece pendiente.
-- [ ] Integración transaccional de cambios, gestión automática de conflictos y rollback validado.
-- [ ] Reanudación granular de tareas desde checkpoints seguros.
+- [x] Integración transaccional de cambios, protección contra conflictos y rollback validado: `native-worktree-integration.ts` aplica todo-o-nada (`git apply`), rechaza conflictos y ediciones locales sin escribir, journal write-ahead, rollback exacto y recuperación clasificada por estado real de archivos. Los conflictos se **rechazan**, no se resuelven automáticamente (decisión de seguridad).
+- [~] Reanudación granular de tareas desde checkpoints seguros: **tareas/gates implementado** (reutiliza gates aprobados solo con mismo plan, configuración y evidencia vigente de inputs declarados). Workflows con escritores interrumpidos siguen sin reanudación granular.
 
 ### Performance, recursos y costos
 
@@ -76,9 +76,9 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 - [x] Lectura estructurada de tokens reportados por Codex/Claude.
 - [x] Costo estimado reportado por proveedor cuando existe; no equipararlo a facturación.
 - [~] Compatibilidad CLI: ahora inspección acotada de versión, flags declarados por `--help` y sesión local de login; falta certificar compatibilidad del protocolo real y autenticación efectiva con ejecución E2E.
-- [ ] Topes monetarios rígidos por proveedor/proyecto y tratamiento de cuotas/rate limiting.
-- [ ] Benchmarks cold/warm reales: CPU, RAM, latencia, éxito, tokens, costos y comparación secuencial/paralela.
-- [ ] Scheduler adaptativo basado en telemetría de carga y capacidad.
+- [x] Topes rígidos por proveedor/proyecto de tokens y costo **reportados**, con bloqueo ante uso no reportado y espera de 15 min tras rate limiting detectado (`atsHarness.providerTokensPer24h`, `atsHarness.providerCostUsdPer24h`). Límite: se verifica antes de cada invocación; no corta una invocación en curso.
+- [~] Benchmarks cold/warm reales: primera ejecución vs. siguientes, CPU y memoria del host, latencia y éxito. Sin tokens/costos de proveedores reales ni comparación secuencial/paralela dedicada (el factor paralelo observado está en las métricas de gates).
+- [x] Scheduler adaptativo basado en telemetría de carga y capacidad (gates `parallelSafe`: CPU libre por load average y presión de memoria; Windows solo memoria, porque no reporta load).
 
 ### IDE, observabilidad y calidad
 
@@ -88,7 +88,7 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 - [x] Pruebas unitarias y de integración con proveedores simulados incorporadas.
 - [x] Suite local offline para el motor nativo en Windows; el workflow experimental de GitHub Actions se retiró por decisión del responsable, sin cambiar los otros workflows.
 - [~] Observabilidad: eventos de ciclo de vida y avance de bytes sin contenido, emitidos y persistidos de forma acotada; faltan trazas distribuidas completas y validación E2E de streaming.
-- [ ] Streaming estructurado del ciclo de vida completo y trazas accionables en el IDE.
+- [~] Streaming estructurado del ciclo de vida completo y trazas accionables en el IDE: comando `atsHarness.nativeTrace` con spans compatibles OTLP/W3C por workflow, agente, verificación, tarea y gate. Falta exportador a un colector externo y streaming en vivo de spans.
 - [ ] E2E con Codex y Claude autenticados, cubriendo permisos, cancelación y recuperación.
 - [ ] Compilación, tests e instaladores validados en los tres sistemas operativos.
 - [ ] Validación local trazable sobre el SHA exacto a integrar; Linux/macOS quedan pendientes en ambientes locales/VM, sin GitHub Actions.
@@ -498,7 +498,6 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 - [x] Causa del único gate fallido: caracteres acentuados literales en dos mensajes de `native-integration.ts` (regla `no-unexpected-multiline`/Unicode del verificador). Se sustituyeron por escapes `\\u` manteniendo el texto de la interfaz.
 - [ ] Retest de `node scripts/ats-harness-check.mts` sobre `7c2f44881140`; todavía no afirmar higiene PASS sobre ese SHA.
 
-
 ### Lote de endurecimiento del protocolo híbrido (2026-10-30; pendiente de retest)
 
 - [x] **Handshake estricto:** la respuesta JSON del motor externo se rechaza si contiene campos distintos de `schemaVersion`, `nonce` y `capabilities`. Un proyecto no puede introducir `executionGranted` u otro campo de autorización en la respuesta sin disparar `HARNESS_HANDSHAKE_INVALID`.
@@ -541,7 +540,6 @@ Ejemplo local voluntario: `node scripts/ats-harness-benchmark.mts --command chec
 - [ ] **Sin attestation de sandbox ni protección OS ante TOCTOU:** un digest anterior/posterior no impide mutaciones entre ambas comprobaciones o escrituras fuera del proyecto. Los ejecutores externos siguen sin autorización de escritura del IDE.
 - [ ] Validación local completa de estos cambios sobre el SHA publicado y pruebas E2E posteriores.
 
-
 ### Cierre de validación Windows del benchmark e integridad (2026-10-30, 19:20 ART)
 
 - [x] **Evidencia del operador sobre `fd6f1d98dec`:** `npm test --prefix extensions/armotusitio-ide` ejecutó **242 pruebas: 241 PASS, 0 FAIL, 1 SKIP**. Incluye las pruebas de integridad del entrypoint y benchmark offline.
@@ -549,7 +547,6 @@ Ejemplo local voluntario: `node scripts/ats-harness-benchmark.mts --command chec
 - [x] **Check adicional:** `npm run check --prefix extensions/armotusitio-ide` pasó y `git diff --check` no reportó diferencias.
 - [x] **Baseline local offline**, Windows x64, Node v24.22.1, `--command check --runs 3`: 3 PASS, 0 FAIL; tiempos reales wall de 10035 ms, 9749 ms y 9923 ms. Mínimo **9749 ms**, mediana **9923 ms**, p95 observado **10035 ms**. No son métricas del IDE completo ni de proveedores IA.
 - [ ] **Certificación AAA:** siguen pendientes sandbox OS efectivo, protocolo común con escritura y fencing interproceso, rollback y reanudación segura, cuotas monetarias rígidas, E2E real de ambos proveedores, build completo del IDE en Windows/Linux/macOS y auditoría de seguridad.
-
 
 ### Lote coordinado P0/P1: interop, fencing, aislamiento y rollback (2026-10-30; retest obligatorio)
 
@@ -616,6 +613,47 @@ Ver runbook: [`docs/native-harness-recovery-quota.md`](docs/native-harness-recov
 - [x] **Causa común de los dos FAIL:** la validación de nombres de archivos de tareas en `native-shared-fence.ts` usaba una barra invertida duplicada en el literal regex: rechazaba `<uuid>.json` como `HARNESS_FENCE_RECOVERY_UNSAFE_STATE` antes de analizar el estado de los intentos.
 - [x] **Corrección puntual:** commit `4e594154f68f9f60f22a101280f1fa378f59c43c`, expresión regular corregida sin modificar el comportamiento de exclusión de writers ni el MCP.
 - [ ] **Retest del fix:** `node --test extensions/armotusitio-ide/test/native-shared-fence.test.mts`, suite focalizada, suite completa y typecheck/whitespace sobre el nuevo HEAD. No declarar PASS del nuevo commit sin la evidencia correspondiente.
+
+## Lote P0/P1/P2: integración transaccional, presupuestos, sandbox multiplataforma, protocolo v2, trazas y portabilidad (2026-10-30; validado Windows)
+
+**Línea base antes del lote:** `21894263ab7` (incluye el fix de regex `4e594154f68`): `node scripts/ats-harness-check.mts` 7/7 PASS y suite completa **263 PASS / 0 FAIL / 1 SKIP**. Cierra el retest pendiente de la sección anterior.
+
+| Prioridad | Trabajo | Implementado en este lote | Estado |
+| --- | --- | --- | --- |
+| P0 | Sandbox fuerte | Política portable `offline-readonly`: Linux bubblewrap, macOS Seatbelt (deny default, sin red, workspace solo lectura, escritura solo en scratch privado, exec solo desde binarios del sistema, entorno reemplazado). Windows falla cerrado. | Parcial: enforcement real sin ejecutar en Linux/macOS; sin backend Windows ni sandbox de agentes con red |
+| P0 | CI reproducible y E2E | Batería local completa verde sobre el árbol final | Parcial: sin E2E de Claude (cuota), sin Linux/macOS, sin build completo del IDE |
+| P1 | Contrato ejecutable común | `delegateProjectGate`: protocolo v2 `ide-gate` con consentimiento, catálogo declarado, `verification-gates` + `bounded-processes` declaradas y reportadas, nonce, eco obligatorio del epoch del fence, cancelación y timeout que **esperan la salida real del proceso**, y verificación de entrypoint, manifiesto y catálogo sin cambios. Comando `atsHarness.nativeProjectGateDelegate`. Se unificó el lanzador de entrypoints (handshake, status y gate). | Lado IDE completo; falta adopción por el motor Python/RedEvent |
+| P1 | Integración transaccional | `integrateWorktreeChanges` / `rollbackWorktreeIntegration` / `reconcileWorktreeIntegration`: índice privado (incluye nuevos, borrados y binarios), todo-o-nada, rechazo de conflictos y ediciones locales, sin staging ni commit, journal write-ahead y recuperación por estado real. Comandos `atsHarness.nativeWorktreeIntegrate` y `atsHarness.nativeWorktreeIntegrationRollback`. | Completo (validado con repos Git reales, `autocrlf` true/false) |
+| P1 | DAG y orquestación adaptativa | Scheduler adaptativo; reanudación de tareas desde checkpoint seguro (`resumableGates`, opción "Reanudar" en el IDE); compensación vía rollback de integración. | Parcial: planificación adaptativa de agentes y reanudación de workflows con escritores pendientes |
+| P2 | Presupuestos IA | Topes rígidos de tokens/costo reportados, bloqueo ante uso no reportado, cooldown por rate limit detectado en eventos de error estructurados, vista en `nativeProviderQuotaStatus`. | Completo con el límite indicado (pre-invocación) |
+| P2 | Tracing/UX | `native-trace.ts` + `atsHarness.nativeTrace`: spans deterministas compatibles OTLP/W3C (`traceparent`), resumen legible, sin prompts, salidas ni rutas. | Parcial: sin exportador ni streaming de spans en vivo |
+| P2 | Benchmarks | CPU y memoria del host, primera ejecución vs. siguientes. | Parcial (ver medición abajo) |
+| P2 | Portabilidad | E2E reales: proyectos Node (`npm run test`), Go (`go test ./...`, aprobado y fallido) y PHP (`php -v`) por el motor nativo; test de independencia de RedEvent. **Defecto real encontrado y corregido:** `go test` fallaba en Windows porque el entorno acotado de gates no incluía `LOCALAPPDATA`; se agregaron `LOCALAPPDATA`, `APPDATA` y `XDG_CACHE_HOME` (rutas, no secretos). | Completo en Windows; Linux/macOS sin ejecutar |
+
+**Otras correcciones:** `release.sh --plan --dry-run` ahora sale con mensaje limpio y exit 1 (antes stack trace), con test de regresión (14/14 PASS en `ats-release-script.test.mts`). Rate limiting se detecta solo en eventos de error estructurados, nunca en respuestas exitosas.
+
+**Evidencia (Windows 11 x64, Node v24.22.1, árbol final del lote antes del commit):**
+
+| Control | Resultado |
+| --- | --- |
+| `node scripts/ats-harness-check.mts --fix` y sin `--fix` | **7/7 PASS** (TypeScript, webview, UI/renderer, bundle, recursos nativos, higiene, diff); subconjunto **195 PASS / 0 FAIL / 2 SKIP** |
+| `npm test --prefix extensions/armotusitio-ide` | **292 PASS / 0 FAIL / 2 SKIP** (294 tests) |
+| `npm run check --prefix extensions/armotusitio-ide` | **PASS** |
+| `git diff --check` | Sin errores |
+| MCP ArmoTuSitio | `src/mcp.ts` y `extension.ts` con blobs idénticos a `main`; suites MCP en PASS |
+
+Los 2 SKIP son explícitos por plataforma: symlink sensible (Windows) y enforcement del sandbox de kernel (requiere Linux con bubblewrap o macOS).
+
+**Benchmark offline** (`node scripts/ats-harness-benchmark.mts --command test --runs 3`, 16 CPUs lógicas, 32 GiB): 3 PASS / 0 FAIL; wall 27866, 25274 y 23048 ms (mediana 25274, p95 27866); primera ejecución 27866 ms frente a 23048 ms en las siguientes (el resumen toma la mediana inferior); CPU del host en mediana 152690 ms; pico de memoria del host +611 MiB. CPU y memoria son del **host completo** durante la corrida (incluyen otros procesos); no son métricas de proveedores IA ni del IDE completo.
+
+### Pendientes inevitables (no ejecutables en este entorno)
+
+- [ ] **E2E Claude autenticado:** requiere cuota; no se consumió por instrucción expresa.
+- [ ] **Ejecución en Linux/macOS:** prueba de enforcement del sandbox (bubblewrap/Seatbelt), symlink sensible y suite completa. El perfil Seatbelt se generó y probó como texto, pero **no se ejecutó en macOS**.
+- [ ] **Sandbox Windows:** no hay primitiva CLI sin privilegios equivalente; requiere AppContainer/Job Objects vía código nativo o Windows Sandbox. Hoy falla cerrado.
+- [ ] **Adopción del protocolo v2 por el motor Python/RedEvent** (`ide-gate`, eco del epoch y verificación del fence antes de escribir): cambio en otro repositorio.
+- [ ] **Build completo del IDE e instaladores** en Windows/Linux/macOS: no se ejecutó (fuera del alcance y sin publicar release).
+- [ ] **Planificación adaptativa de agentes, reanudación de workflows con escritores y exportador de trazas** a un colector externo.
 
 ## Validación local obligatoria
 
