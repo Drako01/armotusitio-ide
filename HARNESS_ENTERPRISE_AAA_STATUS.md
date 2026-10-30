@@ -9,7 +9,7 @@
 
 Esta guía documenta el alcance acordado y diferencia **código agregado a la rama** de funcionalidad realmente certificada. Una casilla marcada no significa que el comportamiento haya pasado pruebas reales de extremo a extremo.
 
-**Inventario funcional:** 34 ítems implementados en código, 5 parciales y 15 pendientes (54 ítems de distinto tamaño y riesgo; no representan un porcentaje técnico de certificación). **Última validación automatizada local Windows aportada:** 190 tests aprobados, 0 fallidos, 1 omitido (191 total), con TypeScript, bundle, recursos e higiene en PASS, sobre el commit previo a la mejora de recuperación de historial completo. Esto no equivale a CI multiplataforma ni a E2E completo.
+**Inventario funcional:** 34 ítems implementados en código, 5 parciales y 15 pendientes (54 ítems de distinto tamaño y riesgo; no representan un porcentaje técnico de certificación). **Última validación automatizada local Windows aportada:** 191 tests aprobados, 0 fallidos, 1 omitido (192 total), con TypeScript, bundle, recursos e higiene en PASS, sobre el commit previo al refuerzo de liberación de locks. Esto no equivale a CI multiplataforma ni a E2E completo.
 
 **Calificación:** no asignar una nueva nota 1–10 ni declarar nivel AAA hasta disponer de pruebas reproducibles y resultados E2E. El 70% mencionado en el seguimiento conversacional fue una apreciación de cobertura, **no** una medición auditada.
 
@@ -86,12 +86,12 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 - [x] Panel con resumen de estado, métricas de agentes y gates.
 - [x] Diagnóstico local de instalaciones Codex/Claude sin invocar modelos.
 - [x] Pruebas unitarias y de integración con proveedores simulados incorporadas.
-- [x] Definición de workflow CI para Windows, Linux y macOS.
+- [x] Suite local offline para el motor nativo en Windows; el workflow experimental de GitHub Actions se retiró por decisión del responsable, sin cambiar los otros workflows.
 - [~] Observabilidad: eventos de ciclo de vida y avance de bytes sin contenido, emitidos y persistidos de forma acotada; faltan trazas distribuidas completas y validación E2E de streaming.
 - [ ] Streaming estructurado del ciclo de vida completo y trazas accionables en el IDE.
 - [ ] E2E con Codex y Claude autenticados, cubriendo permisos, cancelación y recuperación.
 - [ ] Compilación, tests e instaladores validados en los tres sistemas operativos.
-- [ ] CI exitoso sobre el SHA exacto a integrar.
+- [ ] Validación local trazable sobre el SHA exacto a integrar; Linux/macOS quedan pendientes en ambientes locales/VM, sin GitHub Actions.
 
 ## Pendientes críticos priorizados
 
@@ -361,6 +361,13 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 - [x] Nueva prueba offline con 41 registros: el workflow más antiguo está oculto para la UI y debe reconciliarse igualmente.
 - [ ] Repetir tests locales y verificar el commit `6f5040690035`. Los 190 PASS reportados son anteriores a esta modificación.
 
+### Recuperación segura: liberar lock después de persistir estados (pendiente de retest)
+
+- [x] **Orden de reconciliación reforzado:** `reconcile()` mantiene el lock obsoleto hasta finalizar todos los `atomicWrite` de los workflows interrumpidos. Ante errores de persistencia, conserva el lock en lugar de permitir nuevas escrituras.
+- [x] **Regresión offline añadida:** comprobar que, tras una recuperación satisfactoria, el lock se elimina y los estados pasan a `interrupted`.
+- [ ] **Validación local posterior:** correr el verificador, suite completa y check TypeScript; el último log del operador (**191 PASS / 0 FAIL / 1 SKIP**) es anterior a estos dos commits.
+- [ ] **Sigue pendiente:** journal transaccional real, recuperación ante fallas de disco a mitad de una serie de registros, y sandbox OS. No confundir esta protección de lock con rollback transaccional completo.
+
 ## Validación local obligatoria
 
 Desde la raíz del repositorio, con las dependencias instaladas:
@@ -382,7 +389,7 @@ Después, validar manualmente en el IDE: arranque y apertura de proyectos con/si
 ### Criterios de salida para la rama
 
 - [x] Los tres comandos locales finalizaron satisfactoriamente en el árbol de trabajo final de Windows; confirmar por separado el SHA exacto mediante CI o checkout limpio.
-- [ ] El workflow CI aparece como **successful** para el último commit de la rama (actualmente `18f35f8d374`; sin evidencia verificada).
+- [ ] Reproducir los checks en un checkout limpio del SHA final; no se exige GitHub Actions.
 - [ ] Build **completo del IDE** y empaquetado de distribución validados; el bundle y chequeo de recursos de la extensión **sí** pasaron localmente.
 - [ ] Pruebas de permiso de lectura/escritura, aislamiento y secretos aprobadas.
 - [ ] E2E real plan → implement → review → gate funciona con Codex y Claude.
@@ -406,7 +413,7 @@ Después, validar manualmente en el IDE: arranque y apertura de proyectos con/si
 - [`extensions/armotusitio-ide/src/native-agent-execution.ts`](extensions/armotusitio-ide/src/native-agent-execution.ts): ejecución de proveedores.
 - [`extensions/armotusitio-ide/src/native-agent-worktree.ts`](extensions/armotusitio-ide/src/native-agent-worktree.ts): aislamiento Git.
 - [`extensions/armotusitio-ide/src/native-engine-contract.ts`](extensions/armotusitio-ide/src/native-engine-contract.ts): contrato declarativo.
-- [`.github/workflows/ats-harness-enterprise-validation.yml`](.github/workflows/ats-harness-enterprise-validation.yml): definición de CI multiplataforma.
+- El workflow experimental de GitHub Actions del Harness se eliminó de esta rama; la política vigente es validación local sin Actions.
 
 ## Política de integración
 
