@@ -7,13 +7,14 @@ import * as path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { resolveNativeCommand } from './native-runtime.ts';
 import { captureAgentScope, scopeChanged } from './native-agent-scope.ts';
+import { parseProviderOutput, type ProviderUsage } from './native-provider-output.ts';
 import { reviewAgentDraft, validateReviewedAgent, type AgentDraft, type AgentReview } from './native-providers.ts';
 
 const MAX_OUTPUT_BYTES = 256 * 1024;
 const MAX_DURATION_MS = 30 * 60 * 1000;
 const AUTH_ENV = ['PATH', 'Path', 'PATHEXT', 'SystemRoot', 'WINDIR', 'HOME', 'USERPROFILE', 'TEMP', 'TMP', 'TMPDIR', 'LANG', 'LC_ALL', 'CODEX_HOME', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY'];
 export interface AgentInvocation { executable: 'codex' | 'claude'; args: string[]; stdin: string; }
-export interface AgentOutcome { status: 'passed' | 'failed' | 'cancelled' | 'timeout'; exitCode: number | null; durationMs: number; output: string; truncated: boolean; scopeViolation?: boolean; scopeVerified?: boolean; }
+export interface AgentOutcome { status: 'passed' | 'failed' | 'cancelled' | 'timeout'; exitCode: number | null; durationMs: number; output: string; truncated: boolean; scopeViolation?: boolean; scopeVerified?: boolean; usage?: ProviderUsage; structuredOutput?: boolean; }
 export interface AgentExecution { outcome: Promise<AgentOutcome>; cancel(): void; }
 
 export function buildAgentInvocation(draft: AgentDraft): AgentInvocation {
@@ -31,7 +32,7 @@ export function buildAgentInvocation(draft: AgentDraft): AgentInvocation {
   if (draft.provider === 'codex') {
     return {
       executable: 'codex',
-      args: ['exec', '--sandbox', draft.readOnly ? 'read-only' : 'workspace-write', '--skip-git-repo-check', '--ask-for-approval', 'never', '--ephemeral', '-'],
+      args: ['exec', '--sandbox', draft.readOnly ? 'read-only' : 'workspace-write', '--skip-git-repo-check', '--ask-for-approval', 'never', '--ephemeral', '--json', '-'],
       stdin: instruction
     };
   }
@@ -39,7 +40,7 @@ export function buildAgentInvocation(draft: AgentDraft): AgentInvocation {
   // plan mode is strictly read-only; don'tAsk is fail-closed if required tools lack an allow rule.
   return {
     executable: 'claude',
-    args: ['--print', '--permission-mode', draft.readOnly ? 'plan' : 'dontAsk', '--allowedTools', draft.readOnly ? 'Read,Glob,Grep' : 'Read,Glob,Grep,Edit,Write', '--disallowedTools', 'Bash,WebFetch,WebSearch', '--max-turns', '12', '--output-format', 'text'],
+    args: ['--print', '--permission-mode', draft.readOnly ? 'plan' : 'dontAsk', '--allowedTools', draft.readOnly ? 'Read,Glob,Grep' : 'Read,Glob,Grep,Edit,Write', '--disallowedTools', 'Bash,WebFetch,WebSearch', '--max-turns', '12', '--output-format', 'json'],
     stdin: instruction
   };
 }
@@ -80,19 +81,20 @@ export async function executeReviewedAgent(review: AgentReview, current: AgentDr
   if (command.embeddedNode) { env.ELECTRON_RUN_AS_NODE = '1'; }
   const started = Date.now();
   let cancelled = false, timedOut = false, truncated = false;
-  let output = '', size = 0;
+  let stdout = '', stderr = '', size = 0;
   const child = spawn(command.executable, command.args, {
     cwd: canonical, env, shell: false, windowsHide: true, detached: process.platform !== 'win32',
     stdio: ['pipe', 'pipe', 'pipe']
   });
   const cancel = (): void => { cancelled = true; stopProcess(child); };
-  const collect = (chunk: Buffer): void => {
+  const collect = (chunk: Buffer, channel: 'stdout' | 'stderr'): void => {
     size += chunk.length;
     if (size > MAX_OUTPUT_BYTES) { truncated = true; cancel(); return; }
-    output += chunk.toString('utf8');
+    if (channel === 'stdout') { stdout += chunk.toString('utf8'); }
+    else { stderr += chunk.toString('utf8'); }
   };
-  child.stdout?.on('data', collect);
-  child.stderr?.on('data', collect);
+  child.stdout?.on('data', chunk => collect(chunk, 'stdout'));
+  child.stderr?.on('data', chunk => collect(chunk, 'stderr'));
   const outcome = new Promise<AgentOutcome>(resolve => {
     const timer = setTimeout(() => { timedOut = true; cancel(); }, durationMs);
     timer.unref();
@@ -101,7 +103,8 @@ export async function executeReviewedAgent(review: AgentReview, current: AgentDr
       if (ended) { return; }
       ended = true; clearTimeout(timer);
       void (async () => {
-        let status: AgentOutcome['status'] = timedOut ? 'timeout' : cancelled ? 'cancelled' : exitCode === 0 ? 'passed' : 'failed';
+        const parsed = parseProviderOutput(current.provider, stdout);
+        let status: AgentOutcome['status'] = timedOut ? 'timeout' : cancelled ? 'cancelled' : exitCode === 0 && !parsed.providerError ? 'passed' : 'failed';
         let scopeViolation = false;
         let scopeVerified = false;
         if (initialScope) {
@@ -116,7 +119,8 @@ export async function executeReviewedAgent(review: AgentReview, current: AgentDr
           }
         }
         resolve({ status, exitCode, durationMs: Date.now() - started, truncated,
-          output: redactOutput(output), scopeViolation, scopeVerified });
+          output: redactOutput(parsed.structured ? parsed.message : stdout + (stderr ? '\n' + stderr : '')),
+          scopeViolation, scopeVerified, structuredOutput: parsed.structured, usage: parsed.usage });
       })();
     };
     child.once('error', () => finish(null));
