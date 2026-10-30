@@ -159,7 +159,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			const verificationSnapshot = JSON.stringify(verification || null);
 			await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({ language: 'json',
 				content: JSON.stringify({ project: root, executionRoot, isolationMode: mode.value, handoffs: plan.handoffs, verification: verification || 'NOT_CONFIGURED', digest,
-					notice: 'Ejecución secuencial en el workspace actual. No se crean worktrees ni commits. Se consumen tokens en cada etapa.' }, null, 2)
+					notice: mode.value === 'worktree' ? 'La IA operará únicamente en este checkout Git separado; se conservará después para revisar los cambios. No se hace commit ni merge.' : 'La IA operará sobre el workspace actual sin aislamiento de archivos. No se hace commit ni merge.' }, null, 2)
 			}), { preview: true });
 			const approved = await vscode.window.showWarningMessage('Autorizar los tres agentes y la escritura local del implementador? Revisá el plan antes de continuar.', { modal: true }, 'Autorizar workflow');
 			if (approved !== 'Autorizar workflow' || !authorized(chosen.folder) || await fs.realpath(chosen.folder.uri.fsPath) !== root) { return; }
