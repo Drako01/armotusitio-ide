@@ -163,7 +163,11 @@ test('persisted workflow rejects undeclared top-level and step content without r
 		const workflow = new NativeAgentWorkflow(canonical, state);
 		for (const corrupted of [
 			{ ...baseline, providerOutput: 'UNTRUSTED_RAW_MODEL_OUTPUT' },
-			{ ...baseline, steps: [{ ...baseline.steps[0], prompt: 'UNTRUSTED_PRIVATE_PROMPT' }] }
+			{ ...baseline, steps: [{ ...baseline.steps[0], prompt: 'UNTRUSTED_PRIVATE_PROMPT' }] },
+			{ ...baseline, verification: 'succeeded-without-checks' },
+			{ ...baseline, endedAt: 'not-a-date' },
+			{ ...baseline, steps: [{ ...baseline.steps[0], durationMs: -100 }] },
+			{ ...baseline, steps: [{ ...baseline.steps[0], exitCode: 'SUCCESS' }] }
 		]) {
 			const raw = JSON.stringify(corrupted);
 			await fs.writeFile(file, raw);
