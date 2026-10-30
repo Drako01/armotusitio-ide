@@ -55,3 +55,27 @@ test('oversized project skills fail closed without exposing content', async () =
 		await assert.rejects(listProjectSkills(await fs.realpath(root)), /HARNESS_PROJECT_SKILL_UNSAFE/);
 	} finally { await fs.rm(root, { recursive: true, force: true }); }
 });
+
+test('symlinked top-level skill parent is rejected instead of following outside workspace', async (t) => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-skills-parent-'));
+	const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-skills-outside-'));
+	try {
+		const canonical = await fs.realpath(root);
+		const dir = path.join(outside, 'skills', 'security');
+		await fs.mkdir(dir, { recursive: true });
+		await fs.writeFile(path.join(dir, 'SKILL.md'), '# Outside root');
+		try {
+			await fs.symlink(outside, path.join(root, '.agents'), process.platform === 'win32' ? 'junction' : 'dir');
+		} catch (error) {
+			if (['EPERM', 'EACCES', 'ENOTSUP'].includes((error as NodeJS.ErrnoException).code || '')) {
+				t.skip('Directory links unavailable on this machine');
+				return;
+			}
+			throw error;
+		}
+		await assert.rejects(listProjectSkills(canonical), /HARNESS_PROJECT_SKILL_UNSAFE/);
+	} finally {
+		await fs.rm(root, { recursive: true, force: true });
+		await fs.rm(outside, { recursive: true, force: true });
+	}
+});
