@@ -287,3 +287,21 @@ test('explicit handshake displays project DAG gate metadata without granting exe
 		assert.ok(/^[a-f0-9]{64}$/.test(preview.gateCatalog.digest));
 	} finally { await f.cleanup(); }
 });
+
+test('workflow history reports unresolved journal IDs without exposing uncertain record content', async () => {
+	const f = await fixture();
+	try {
+		const root = f.roots[0];
+		const digest = (await import('node:crypto')).createHash('sha256').update(root).digest('hex');
+		const store = path.join(path.dirname(root), 'private', 'native-harness', digest, 'workflows');
+		await fs.mkdir(store, { recursive: true });
+		const id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab';
+		await fs.writeFile(path.join(store, id + '.json.intent'), 'UNCERTAIN_PRIVATE_CONTENT');
+		await f.invoke('nativeWorkflowHistory', root);
+		const preview = JSON.parse(f.documents.at(-1)!.content);
+		assert.equal(preview.status, 'recovery-required');
+		assert.equal(preview.executionEnabled, false);
+		assert.deepEqual(preview.pendingJournalIds, [id]);
+		assert.equal(f.documents.at(-1)!.content.includes('UNCERTAIN_PRIVATE_CONTENT'), false);
+	} finally { await f.cleanup(); }
+});
