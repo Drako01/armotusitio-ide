@@ -275,6 +275,37 @@ export class NativeAgentWorkflow {
 		}
 	}
 
+	/**
+	 * Explicit safe restart of an interrupted workflow from the beginning.
+	 * No stored provider output is reused; any previously started writer forbids replay.
+	 * This is intentionally NOT a partial checkpoint resume.
+	 */
+	async restartInterrupted(
+		previousId: string, plan: HandoffPlan, approvedDigest: string,
+		trusted: () => boolean, verify?: (signal: AbortSignal) => Promise<boolean>,
+		onOutcome?: (provider: NativeProvider, role: AgentRole, outcome: AgentOutcome) => Promise<void>
+	): Promise<WorkflowRun> {
+		if (!IDENTIFIER.test(previousId)) { throw Error('HARNESS_RESUME_ID_INVALID'); }
+		if (this.running) { throw Error('HARNESS_WORKFLOW_ALREADY_RUNNING'); }
+		if (!trusted()) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
+		const canonical = await fs.realpath(this.root);
+		if (canonical !== this.root) { throw Error('HARNESS_WORKFLOW_ROOT_CHANGED'); }
+		const digest = workflowDigest(canonical, plan);
+		if (approvedDigest !== digest) { throw Error('HARNESS_WORKFLOW_APPROVAL_CHANGED'); }
+		const previous = (await this.history()).find(record => record.id === previousId);
+		if (!previous || previous.status !== 'interrupted' ||
+			previous.projectKey !== createHash('sha256').update(canonical).digest('hex') ||
+			previous.planDigest !== digest) {
+			throw Error('HARNESS_RESUME_STATE_INVALID');
+		}
+		if (previous.steps.some(step => step.role === 'implementer' && step.status !== 'pending') ||
+			previous.steps.some(step => !plan.handoffs.some(h => h.id === step.id && h.role === step.role && h.provider === step.provider))) {
+			throw Error('HARNESS_RESUME_WRITE_UNCERTAIN');
+		}
+		// A separate, freshly approved run owns a new ID and lock. Never relabel old evidence.
+		return this.start(plan, approvedDigest, trusted, verify, onOutcome);
+	}
+
 	async start(plan: HandoffPlan, approvedDigest: string, trusted: () => boolean, verify?: (signal: AbortSignal) => Promise<boolean>, onOutcome?: (provider: NativeProvider, role: AgentRole, outcome: AgentOutcome) => Promise<void>): Promise<WorkflowRun> {
 		if (this.running) { throw Error('HARNESS_WORKFLOW_ALREADY_RUNNING'); }
 		if (!trusted()) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
