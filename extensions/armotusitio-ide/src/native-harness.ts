@@ -12,8 +12,9 @@ import { fingerprintEvidence, evidenceKey, saveEvidenceMetadata, readEvidenceMet
 import { inspectHarnessAuthority } from './native-authority.ts';
 import { resolveNativeCommand } from './native-runtime.ts';
 import { acquireSharedExecutionFence, type SharedExecutionFence } from './native-shared-fence.ts';
+import { offlineSandboxInvocation } from './native-os-sandbox.ts';
 
-export type Gate = { id: string; executable: string; args: string[]; cwd?: string; timeoutMs?: number; dependsOn?: string[]; parallelSafe?: boolean; resources?: string[] };
+export type Gate = { id: string; executable: string; args: string[]; cwd?: string; timeoutMs?: number; dependsOn?: string[]; parallelSafe?: boolean; resources?: string[]; sandbox?: 'linux-offline-readonly' };
 export type Plan = { schemaVersion: 1; gates: Gate[]; inputs?: string[] };
 export type GateResult = { id: string; exitCode: number | null; status: 'passed' | 'failed' | 'cancelled'; output: string; startedAt: string; endedAt: string };
 export type Attempt = { id: string; startedAt: string; endedAt?: string; status: 'running' | 'passed' | 'failed' | 'interrupted' | 'cancelled'; results: GateResult[]; revision: string; approval: string; evidence?: { fingerprint?: EvidenceFingerprint; key?: string; state: 'recorded' | 'changed' | 'unavailable'; error?: string } };
@@ -39,6 +40,7 @@ export function validateNativePlan(plan: Plan): void {
 		if (gate.cwd !== undefined && (typeof gate.cwd !== 'string' || gate.cwd.length > 4096 || gate.cwd.includes('\0'))) { throw Error('HARNESS_INVALID_CWD'); }
 		if (gate.dependsOn !== undefined && (!Array.isArray(gate.dependsOn) || !gate.dependsOn.every(x => typeof x === 'string'))) { throw Error('HARNESS_INVALID_DEPENDENCY'); }
 		if (gate.parallelSafe !== undefined && typeof gate.parallelSafe !== 'boolean') { throw Error('HARNESS_INVALID_PARALLEL_POLICY'); }
+		if (gate.sandbox !== undefined && gate.sandbox !== 'linux-offline-readonly') { throw Error('HARNESS_INVALID_SANDBOX_POLICY'); }
 		if (gate.resources !== undefined && (!Array.isArray(gate.resources) || gate.resources.length > 16 || new Set(gate.resources).size !== gate.resources.length || !gate.resources.every(x => typeof x === 'string' && /^[a-z0-9][a-z0-9_.:-]{0,99}$/i.test(x)))) { throw Error('HARNESS_INVALID_RESOURCES'); }
 	}
 	const done = new Set<string>(), active = new Set<string>();
@@ -307,8 +309,17 @@ export class NativeHarness {
 		const startedAt = new Date().toISOString(); const env: NodeJS.ProcessEnv = {};
 		for (const k of ENV_KEYS) { if (process.env[k]) { env[k] = process.env[k]; } }
 		let command;
-		try { command = await resolveNativeCommand(gate.executable, gate.args); }
-		catch { return { id: gate.id, startedAt, endedAt: new Date().toISOString(), status: 'failed', exitCode: null, output: 'HARNESS_EXECUTABLE_UNAVAILABLE' }; }
+		try {
+			command = await resolveNativeCommand(gate.executable, gate.args);
+			if (gate.sandbox === 'linux-offline-readonly') {
+				const sandbox = await offlineSandboxInvocation(cwd, command.executable, command.args);
+				command = { executable: sandbox.executable, args: sandbox.args, embeddedNode: false };
+			}
+		} catch {
+			return { id: gate.id, startedAt, endedAt: new Date().toISOString(),
+				status: 'failed', exitCode: null,
+				output: gate.sandbox ? 'HARNESS_OS_SANDBOX_UNAVAILABLE' : 'HARNESS_EXECUTABLE_UNAVAILABLE' };
+		}
 		if (signal.aborted) { return { id: gate.id, startedAt, endedAt: new Date().toISOString(), status: 'cancelled', exitCode: null, output: '' }; }
 		if (command.embeddedNode) { env.ELECTRON_RUN_AS_NODE = '1'; }
 		return new Promise(resolve => {
