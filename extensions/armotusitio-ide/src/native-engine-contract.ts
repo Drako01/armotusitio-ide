@@ -84,6 +84,31 @@ export async function describeEngine(root: string): Promise<EngineCapabilities> 
 	};
 }
 
+export interface HybridCapabilityComparison {
+	nativeVerified: Capability[];
+	projectReported: Capability[];
+	overlap: Capability[];
+	projectOnly: Capability[];
+	nativeOnly: Capability[];
+	executionGranted: false;
+}
+
+/** Handshake output is advisory: never convert self-reported features into execution rights. */
+export function compareHybridCapabilities(native: readonly Capability[], reported: readonly Capability[]): HybridCapabilityComparison {
+	const known = new Set<Capability>(ALL);
+	if (new Set(native).size !== native.length || new Set(reported).size !== reported.length ||
+		![...native, ...reported].every(capability => known.has(capability))) {
+		throw Error('HARNESS_HYBRID_CAPABILITY_INVALID');
+	}
+	return {
+		nativeVerified: [...native], projectReported: [...reported],
+		overlap: native.filter(capability => reported.includes(capability)),
+		projectOnly: reported.filter(capability => !native.includes(capability)),
+		nativeOnly: native.filter(capability => !reported.includes(capability)),
+		executionGranted: false
+	};
+}
+
 /**
  * Explicit opt-in project handshake. A self-reported response is NOT an OS
  * attestation and does not grant authority to execute project operations.
