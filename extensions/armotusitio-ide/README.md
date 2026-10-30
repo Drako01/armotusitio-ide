@@ -15,6 +15,8 @@ No modifica ninguna configuración de proveedor, no crea PRs, no hace push ni de
 3. Revisá el JSON que muestra el ejecutable, argumentos, permisos e instrucción.
 4. Confirmá **Ejecutar agente**. La ejecución tiene límite de 30 minutos, salida acotada,
    cancelación manual desde **Cancelar tarea nativa** y resultado visible en un documento JSON.
+Las últimas 100 ejecuciones se resumen localmente en **ArmoTuSitio: Métricas locales de agentes IA**:
+porcentaje de éxito, duración promedio y p95, sin prompts, rutas de proyecto ni salidas.
 5. Revisá los cambios con `git diff` y corré las verificaciones del proyecto antes de incorporarlos.
    El sistema no comitea ni integra cambios automáticamente.
 
