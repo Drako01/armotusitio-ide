@@ -632,6 +632,8 @@ Ver runbook: [`docs/native-harness-recovery-quota.md`](docs/native-harness-recov
 
 **Otras correcciones:** `release.sh --plan --dry-run` ahora sale con mensaje limpio y exit 1 (antes stack trace), con test de regresión (14/14 PASS en `ats-release-script.test.mts`). Rate limiting se detecta solo en eventos de error estructurados, nunca en respuestas exitosas.
 
+**Preparación de `release.sh` (revisión previa al release):** la etapa `validate` corre la higiene completa del repo, y esta escaneaba el `test.log` (ignorado) que dejaba `ats-harness-check.mts` en la raíz: 11 errores (Unicode y copyright) que habrían detenido el release. El log ahora se escribe en `.build/ats-harness-check.log`. Resultados sobre la rama: `npm run hygiene` PASS (14 163 archivos), `npm run typecheck-client` PASS, suites de scripts de release **42/42 PASS**. Preflight local verificado sin efectos: Node 24.22.1 win32/x64, `pwsh` 7.6.9, Docker con contenedores Linux y buildx `linux/amd64` + `linux/arm64`, gulp instalado y clave de firma coincidente con la metadata. Ruleset de `main`: PR obligatorio, solo squash y 0 aprobaciones; Actions deshabilitado. Próximo tag calculado: `ats-v1.144.0-r2`.
+
 **Evidencia (Windows 11 x64, Node v24.22.1, árbol final del lote antes del commit):**
 
 | Control | Resultado |
