@@ -110,6 +110,7 @@ window.addEventListener('message', event => {
 		tools.append(action('Ejecutar agente IA', project.root, 'native', 'nativeAgentExecute'));
 		tools.append(action('Workflow multiagente', project.root, 'native', 'nativeAgentWorkflow'));
 		tools.append(action('Métricas IA', project.root, 'native', 'nativeAgentMetrics'));
+		tools.append(action('Diagnóstico IA', project.root, 'native', 'nativeProviderDiagnostics'));
 		tools.append(action('Historial multiagente', project.root, 'native', 'nativeWorkflowHistory'));
 		tools.append(action('Reconciliar workflows', project.root, 'native', 'nativeWorkflowReconcile'));
 		tools.append(action('Limpiar worktree inactivo', project.root, 'native', 'nativeWorktreeCleanup'));
