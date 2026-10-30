@@ -44,7 +44,8 @@ export function verifiedNativeCapabilities(): Capability[] { return [...VERIFIED
 export async function readProjectCapabilities(root: string): Promise<Capability[]> {
 	const canonical = await fs.realpath(root);
 	if (canonical !== root) { throw Error('HARNESS_CAPABILITIES_ROOT_CHANGED'); }
-	const directory = path.join(canonical, '.harness', 'manifests');
+	const projectDir = path.join(canonical, '.harness');
+	const directory = path.join(projectDir, 'manifests');
 	const target = path.join(directory, 'ide-capabilities.json');
 	let info;
 	try { info = await fs.lstat(target); }
@@ -52,14 +53,24 @@ export async function readProjectCapabilities(root: string): Promise<Capability[
 		if ((error as NodeJS.ErrnoException).code === 'ENOENT') { return []; }
 		throw error;
 	}
-	if (!info.isFile() || info.isSymbolicLink() || info.size > 16 * 1024 ||
-		(await fs.realpath(directory)) !== directory || (await fs.realpath(target)) !== target) {
+	const projectStat = await fs.lstat(projectDir);
+	const directoryStat = await fs.lstat(directory);
+	if (!projectStat.isDirectory() || projectStat.isSymbolicLink() ||
+		!directoryStat.isDirectory() || directoryStat.isSymbolicLink() ||
+		!info.isFile() || info.isSymbolicLink() || info.size > 16 * 1024 ||
+		await fs.realpath(projectDir) !== projectDir ||
+		await fs.realpath(directory) !== directory || await fs.realpath(target) !== target) {
 		throw Error('HARNESS_CAPABILITIES_UNSAFE');
 	}
-	const value: unknown = JSON.parse(await fs.readFile(target, 'utf8'));
+	const bytes = await fs.readFile(target);
+	if (bytes.length > 16 * 1024) { throw Error('HARNESS_CAPABILITIES_UNSAFE'); }
+	let value: unknown;
+	try { value = JSON.parse(bytes.toString('utf8')); }
+	catch { throw Error('HARNESS_CAPABILITIES_INVALID'); }
 	if (!value || typeof value !== 'object' || Array.isArray(value)) { throw Error('HARNESS_CAPABILITIES_INVALID'); }
 	const manifest = value as { schemaVersion?: number; engine?: string; capabilities?: unknown };
-	if (manifest.schemaVersion !== ENGINE_CONTRACT_VERSION || manifest.engine !== 'project' ||
+	if (Object.keys(value).sort().join(',') !== 'capabilities,engine,schemaVersion' ||
+		manifest.schemaVersion !== ENGINE_CONTRACT_VERSION || manifest.engine !== 'project' ||
 		!Array.isArray(manifest.capabilities) || manifest.capabilities.length > ALL.length ||
 		!manifest.capabilities.every(c => typeof c === 'string' && ALL.includes(c as Capability)) ||
 		new Set(manifest.capabilities).size !== manifest.capabilities.length) {
