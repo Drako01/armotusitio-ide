@@ -164,6 +164,14 @@
         "title": "ArmoTuSitio: Ejecutar agente IA con autorización"
       },
       {
+        "command": "atsHarness.nativeAgentWorkflow",
+        "title": "ArmoTuSitio: Ejecutar workflow multiagente nativo"
+      },
+      {
+        "command": "atsHarness.nativeWorkflowHistory",
+        "title": "ArmoTuSitio: Historial de workflows multiagente"
+      },
+      {
         "command": "atsHarness.nativeAgentMetrics",
         "title": "ArmoTuSitio: Métricas locales de agentes IA"
       },
