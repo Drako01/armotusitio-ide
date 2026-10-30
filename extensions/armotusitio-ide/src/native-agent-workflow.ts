@@ -410,6 +410,7 @@ export class NativeAgentWorkflow {
 		};
 		const file = path.join(this.storage, record.id + '.json');
 		const result = (async (): Promise<WorkflowRecord> => {
+			let lockReleaseError: Error | undefined;
 			try {
 				await lock.writeFile(JSON.stringify({ id: record.id, startedAt: record.createdAt, pid: process.pid }));
 				await atomicWrite(file, record);
@@ -522,7 +523,6 @@ export class NativeAgentWorkflow {
 			} finally {
 				record.endedAt = new Date().toISOString();
 				let terminalStatePersisted = false;
-				let lockReleaseError: Error | undefined;
 				try {
 					this.emit(record, 'workflow-finished');
 					await atomicWrite(file, record);
@@ -546,8 +546,8 @@ export class NativeAgentWorkflow {
 						else { lockReleaseError = Error('HARNESS_WORKFLOW_LOCK_CHANGED'); }
 					}
 				}
-				if (lockReleaseError) { throw lockReleaseError; }
 			}
+			if (lockReleaseError) { throw lockReleaseError; }
 			return record;
 		})();
 		return { id: record.id, result, cancel: () => this.cancel() };
