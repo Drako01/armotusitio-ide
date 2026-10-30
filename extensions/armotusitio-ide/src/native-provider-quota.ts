@@ -133,7 +133,7 @@ export async function readProviderInvocationQuota(
 		await fs.realpath(directory) !== path.resolve(directory))) {
 		throw Error('HARNESS_PROVIDER_QUOTA_STORAGE_UNSAFE');
 	}
-	const ledger = info ? await readLedger(path.join(directory, FILE)) : { schemaVersion: 1 as const, entries: [] as Entry[] };
+	const ledger: Ledger = info ? await readLedger(path.join(directory, FILE)) : { schemaVersion: 1, entries: [] };
 	if (ledger.entries.some(entry => entry.at > now)) { throw Error('HARNESS_PROVIDER_QUOTA_CLOCK_ROLLBACK'); }
 	const active = ledger.entries.filter(entry => now - entry.at < WINDOW_MS);
 	const count = (provider: NativeProvider): { used: number; remaining: number | null } => {
