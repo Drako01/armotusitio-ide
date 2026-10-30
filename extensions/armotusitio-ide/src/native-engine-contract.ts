@@ -179,5 +179,10 @@ export async function probeProjectHandshake(root: string, trusted: () => boolean
 		new Set(result.capabilities).size !== result.capabilities.length) {
 		throw Error('HARNESS_HANDSHAKE_INVALID');
 	}
+	const currentDeclaration = await readProjectCapabilities(canonical);
+	if (JSON.stringify(currentDeclaration) !== JSON.stringify(declared)) {
+		throw Error('HARNESS_HANDSHAKE_CAPABILITIES_CHANGED');
+	}
+	if (!trusted()) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
 	return { protocol: 2, reported: result.capabilities as Capability[] };
 }
