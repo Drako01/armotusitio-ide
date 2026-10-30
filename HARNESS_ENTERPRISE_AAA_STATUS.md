@@ -601,6 +601,15 @@ Ejemplo local voluntario: `node scripts/ats-harness-benchmark.mts --command chec
 
 Ver runbook: [`docs/native-harness-recovery-quota.md`](docs/native-harness-recovery-quota.md). El MCP original queda intacto.
 
+### Evidencia Windows y hardening de recuperacion aislada (2026-10-30; retest del fix pendiente)
+
+- [x] **Validacion en `9c1577918b7`**: log de Windows UCRT64 del operador, 7/7 gates PASS en `node scripts/ats-harness-check.mts`; **165 PASS, 0 FAIL, 1 SKIP** en pruebas focalizadas (166 total); suite completa **262 PASS, 0 FAIL, 1 SKIP** (263 total); `npm run check` PASS y `git diff --check` sin incidencias.
+- [x] **MCP ArmoTuSitio**: las pruebas completas de handshake, identidad, transporte, cancelacion y seguridad MCP continuan en PASS; no se modifica el proveedor.
+- [x] **Defecto detectado en auditoria posterior**: `reconcileSharedExecutionFence` inspeccionaba locks y estados de `tasks/` y `workflows/`, pero no validaba los `isolated-verification/<worktree-id>/execution.lock` ni sus `tasks/`. Era posible intentar liberar el fence de un workflow interrumpido mientras una verificacion de worktree conservaba un lock o intento `running` incierto.
+- [x] **Correccion incremental**: la reconciliacion inspecciona y valida directorios de verificacion aislada, rechaza locks activos, archivos inesperados y tareas no reconciliadas, y conserva el fence sin reintentos automaticos. Nueva regresion para `execution.lock`, `running` e `interrupted` sobre un worktree simulado.
+- [ ] **Retest en Windows del nuevo fix**: ejecutar las siete verificaciones focalizadas, suite completa, check y `git diff --check` sobre el ultimo SHA. La evidencia de 262 PASS corresponde al commit anterior y **no certifica los cambios posteriores**.
+- [ ] **No resuelve las demas dependencias P0**: motor de proyecto externo sin adopcion del protocolo de escritores; aislamiento OS real de agentes Windows/macOS; rollback transaccional de cambios integrados; E2E de Claude pendiente de cuota.
+
 ## Validación local obligatoria
 
 Desde la raíz del repositorio, con las dependencias instaladas:
