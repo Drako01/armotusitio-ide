@@ -134,6 +134,17 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 - **Formateo restante:** para garantizar el formato exacto exigido por `build/lib/formatter.ts` sin desactivar reglas de higiene, el verificador ofrece ahora `--fix` como modo **explícitamente modificador del árbol de trabajo**. No se ejecuta automáticamente y el cambio local debe inspeccionarse antes de confirmarlo.
 - [ ] **Pendiente:** ejecutar localmente `node scripts/ats-harness-check.mts --fix` una vez, revisar `git diff`, ejecutar los tres comandos originales sin `--fix` y subir nuevo log. No se declara el check verde hasta disponer de evidencia.
 
+### Tercera validación Windows (2026-10-30, 15:59)
+
+- **Commit validado:** `472b9afed30`.
+- **Suite principal:** 160 PASS, 0 FAIL, 7 SKIP, exit 0.
+- **TypeScript y recursos:** PASS, exit 0.
+- **Chequeo focalizado:** FAIL exclusivamente en `Focused hygiene`: 19 advertencias por falta de `;` en los miembros de tres interfaces (`native-agent-execution.ts`, `native-agent-worktree.ts`, `native-agent-scope.ts`).
+- [x] **Corrección publicada tras el log:** los 19 miembros de interfaces multilinea vuelven a terminar en punto y coma conforme a `@stylistic/member-delimiter-style`. No se modificó lógica de agentes.
+- [ ] **Pendiente de verificación:** repetir los tres comandos para observar si `Focused hygiene` queda verde. Los warnings `MODULE_TYPELESS_PACKAGE_JSON`, Node experimental y configuraciones npm no son el motivo de fallo actual.
+
+**Atención al actualizar el checkout:** `node scripts/ats-harness-check.mts --fix` pudo dejar cambios locales en siete archivos. Antes de `git pull --ff-only`, inspeccionar `git status --short`; no descartar modificaciones ajenas ni forzar la rama. Si solo existen diferencias de formato conocidas, guardarlas con `git stash push -m "formatter-local-20261030" -- <rutas>` antes de actualizar, o copiarlas para revisión.
+
 ## Validación local obligatoria
 
 Desde la raíz del repositorio, con las dependencias instaladas:
