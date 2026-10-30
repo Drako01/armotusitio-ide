@@ -6,34 +6,52 @@ on:
     paths:
       - 'extensions/armotusitio-ide/src/native-*.ts'
       - 'extensions/armotusitio-ide/test/native-*.test.mts'
+      - 'extensions/armotusitio-ide/package.json'
+      - 'scripts/ats-harness-check.mts'
+      - 'HARNESS_ENTERPRISE_AAA_STATUS.md'
       - '.github/workflows/ats-harness-enterprise-validation.yml'
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: native-harness-enterprise-${{ github.ref }}-${{ github.workflow }}
+  cancel-in-progress: true
+
 jobs:
   native-contracts:
-    name: Native agent runtime contracts
+    name: Native agent contracts / ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 12
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
         with:
+          persist-credentials: false
           sparse-checkout: |
             extensions/armotusitio-ide
           sparse-checkout-cone-mode: true
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-      - name: Native provider and workflow contracts
-        shell: bash
+      - name: Verify runtime and SHA
         run: |
-          node --test extensions/armotusitio-ide/test/native-agent-execution.test.mts \
+          node --version
+          echo "Testing SHA: ${GITHUB_SHA}"
+          git rev-parse HEAD
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+      - name: Native provider and workflow contracts
+        run: |
+          set -o pipefail
+          node --test \
+            extensions/armotusitio-ide/test/native-agent-execution.test.mts \
             extensions/armotusitio-ide/test/native-agent-metrics.test.mts \
             extensions/armotusitio-ide/test/native-agent-workflow.test.mts \
             extensions/armotusitio-ide/test/native-agent-dag.test.mts \
@@ -49,4 +67,24 @@ jobs:
             extensions/armotusitio-ide/test/native-provider-diagnostics.test.mts \
             extensions/armotusitio-ide/test/native-provider-output.test.mts \
             extensions/armotusitio-ide/test/native-harness.test.mts \
-            extensions/armotusitio-ide/test/native-integration.test.mts
+            extensions/armotusitio-ide/test/native-integration.test.mts \
+            2>&1 | tee native-contracts.log
+      - name: Record validation evidence
+        if: always()
+        run: |
+          {
+            echo "### Native agent contracts: ${{ matrix.os }}"
+            echo ""
+            echo "- Commit: \`${GITHUB_SHA}\`"
+            echo "- Runner: \`${RUNNER_OS}\`"
+            echo "- Result: \`${{ job.status }}\`"
+            echo "- Scope: native CLI fixtures and contracts (no real-provider login or IDE installer)"
+          } >> "${GITHUB_STEP_SUMMARY}"
+      - name: Upload test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-contracts-${{ matrix.os }}
+          path: native-contracts.log
+          if-no-files-found: warn
+          retention-days: 7
