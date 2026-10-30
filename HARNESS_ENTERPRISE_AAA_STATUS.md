@@ -213,6 +213,26 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 - [ ] **Validación CI sobre SHA final:** confirmar tres jobs y revisar artifacts, incluidos tests que ya no se omiten en Windows.
 - [ ] **Conservar sin reclasificar:** sandbox OS, recuperación transaccional, protocolo común Python/Node, presupuestos monetarios, benchmark e instaladores siguen pendientes.
 
+### Verificación local de fixtures multiplataforma (2026-10-30, 17:34 ART)
+
+**Evidencia aportada por el operador:** log `Texto pegado(20261030-203500).txt` en Windows `win32/x64`, Node `v24.22.1`; rama `feat/native-harness-enterprise-upgrade` actualizada antes de ejecutar.
+
+| Gate | Resultado |
+|---|---|
+| `node scripts/ats-harness-check.mts --fix` | **PASS** en todos los gates, incluidos formato e higiene |
+| `node scripts/ats-harness-check.mts` | **PASS**: TypeScript, recursos, UI/renderer, bundle, paquete nativo, higiene y diff |
+| `npm test --prefix extensions/armotusitio-ide` | **182 PASS, 0 FAIL, 1 SKIP** (183 tests) |
+| `npm run check --prefix extensions/armotusitio-ide` | **PASS** |
+| `git diff --check` | Sin observaciones |
+| `git status --short` | Sin archivos rastreados modificados; `script_test.log` permanece sin seguimiento |
+
+- [x] **Validación local Windows de esta iteración:** cerrada. Las ocho pruebas adicionales antes omitidas fueron ejecutadas y aprobaron, incluidas concurrencia DAG, ejecución simulada, ciclo correctivo, detección de escrituras de solo lectura, progreso y diagnóstico CLI.
+- [ ] **Prueba de symlink sensible en Windows:** sigue omitida mediante condición de plataforma; corresponde verificarla en Linux/macOS y evaluar permisos para Windows.
+- [ ] **GitHub Actions multiplataforma del último SHA:** sin evidencia de jobs verdes en la fuente consultada. No equiparar YAML definido con ejecución CI exitosa.
+- [ ] **E2E de modelos reales y sandbox OS:** no ejecutados por esta batería; siguen siendo bloqueantes para certificación enterprise AAA.
+
+**Nota:** la evidencia demuestra funcionamiento de proveedores *simulados*, no autenticación, permisos de proveedor ni contención efectiva del sistema operativo.
+
 ## Validación local obligatoria
 
 Desde la raíz del repositorio, con las dependencias instaladas:
