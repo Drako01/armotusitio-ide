@@ -507,6 +507,8 @@ export class NativeAgentWorkflow {
 					if (this.cancelled || !trusted()) { step.status = 'cancelled'; return output; }
 					await this.sharedFence?.assertCurrent();
 					await beforeProvider?.(handoff.provider);
+					if (this.cancelled || !trusted()) { step.status = 'cancelled'; return output; }
+					await this.sharedFence?.assertCurrent();
 					const draft = {
 						schemaVersion: 1 as const, provider: handoff.provider, role: handoff.role,
 						projectRoot: canonical, readOnly: handoff.role !== 'implementer',
@@ -531,7 +533,7 @@ export class NativeAgentWorkflow {
 					try { await onOutcome?.(handoff.provider, handoff.role, outcome); } catch { /* Metrics are non-authoritative. */ }
 					if (step.status === 'passed' && !outcome.truncated) { output = boundedHandoff(step.id, outcome.output); }
 				} catch {
-					step.status = this.cancelled ? 'cancelled' : 'failed';
+					step.status = this.cancelled || !trusted() ? 'cancelled' : 'failed';
 				} finally {
 					step.endedAt = new Date().toISOString();
 				}
@@ -666,6 +668,7 @@ export class NativeAgentWorkflow {
 							};
 							// Readonly and write grants are carried in the individually reviewed provider command.
 							await beforeProvider?.(handoff.provider);
+							if (this.cancelled || !trusted()) { throw Error('HARNESS_WORKFLOW_AUTH_REVOKED'); }
 							await fence.assertCurrent();
 							this.active = await executeReviewedAgent(reviewAgentDraft(draft), draft,
 								Math.min(MAX_AGENT_DURATION_MS, Math.max(1000, deadline - Date.now())),
@@ -687,7 +690,7 @@ export class NativeAgentWorkflow {
 							}
 						} catch {
 							// Never persist exception details: provider messages may contain credentials.
-							step.status = 'failed';
+							step.status = this.cancelled || !trusted() ? 'cancelled' : 'failed';
 						} finally {
 							this.active = undefined;
 							step.endedAt = new Date().toISOString();
