@@ -610,6 +610,13 @@ Ver runbook: [`docs/native-harness-recovery-quota.md`](docs/native-harness-recov
 - [ ] **Retest en Windows del nuevo fix**: ejecutar las siete verificaciones focalizadas, suite completa, check y `git diff --check` sobre el ultimo SHA. La evidencia de 262 PASS corresponde al commit anterior y **no certifica los cambios posteriores**.
 - [ ] **No resuelve las demas dependencias P0**: motor de proyecto externo sin adopcion del protocolo de escritores; aislamiento OS real de agentes Windows/macOS; rollback transaccional de cambios integrados; E2E de Claude pendiente de cuota.
 
+### Corrección de regresión de validación de archivos (2026-10-30; retest pendiente)
+
+- [x] **Log Windows en `c4a55697174`:** el verificador focalizado obtuvo 164 PASS, 2 FAIL, 1 SKIP; la suite completa obtuvo 261 PASS, 2 FAIL, 1 SKIP; TypeScript, bundle, recursos, higiene y whitespace continuaron en PASS.
+- [x] **Causa común de los dos FAIL:** la validación de nombres de archivos de tareas en `native-shared-fence.ts` usaba una barra invertida duplicada en el literal regex: rechazaba `<uuid>.json` como `HARNESS_FENCE_RECOVERY_UNSAFE_STATE` antes de analizar el estado de los intentos.
+- [x] **Corrección puntual:** commit `4e594154f68f9f60f22a101280f1fa378f59c43c`, expresión regular corregida sin modificar el comportamiento de exclusión de writers ni el MCP.
+- [ ] **Retest del fix:** `node --test extensions/armotusitio-ide/test/native-shared-fence.test.mts`, suite focalizada, suite completa y typecheck/whitespace sobre el nuevo HEAD. No declarar PASS del nuevo commit sin la evidencia correspondiente.
+
 ## Validación local obligatoria
 
 Desde la raíz del repositorio, con las dependencias instaladas:
