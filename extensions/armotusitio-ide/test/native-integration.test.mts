@@ -106,3 +106,15 @@ test('hybrid project keeps its task engine but exposes native read-only agent re
 		assert.deepEqual(rows.map(row => row.root), [f.roots[1]]);
 	} finally { await f.cleanup(); }
 });
+
+test('hybrid projects block native writers before any provider invocation', async () => {
+	const f = await fixture();
+	try {
+		await fs.mkdir(path.join(f.roots[0], '.harness'));
+		f.vscode.window.showQuickPick = async (items, options) =>
+			options?.title === 'Rol del agente' ? 'implementer' : items[0];
+		await f.invoke('nativeAgentExecute', f.roots[0]);
+		assert.ok(f.notices.some(notice => notice.includes('HARNESS_HYBRID_WRITER_UNAVAILABLE')));
+		assert.equal(f.documents.length, 0);
+	} finally { await f.cleanup(); }
+});
