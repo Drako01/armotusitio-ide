@@ -180,6 +180,10 @@
         "title": "ArmoTuSitio: Retirar Git worktree limpio del Harness"
       },
       {
+        "command": "atsHarness.nativeWorktreeRollback",
+        "title": "ArmoTuSitio: Revertir worktree a checkpoint (confirmación requerida)"
+      },
+      {
         "command": "atsHarness.nativeAgentMetrics",
         "title": "ArmoTuSitio: Métricas locales de agentes IA"
       },
