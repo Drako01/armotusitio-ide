@@ -1,0 +1,103 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+/** Read-only metadata for external verification gates. No commands or executable paths accepted. */
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
+import { createHash } from 'node:crypto';
+
+export interface ProjectGate {
+	id: string;
+	dependsOn: string[];
+	resources: string[];
+}
+export interface ProjectGateCatalog {
+	schemaVersion: 1;
+	gates: ProjectGate[];
+	digest: string;
+	executionEnabled: false;
+}
+const IDENTIFIER = /^[a-z][a-z0-9_-]{0,63}$/;
+const MAX_BYTES = 16 * 1024;
+
+export async function readProjectGateCatalog(root: string): Promise<ProjectGateCatalog | undefined> {
+	const canonical = await fs.realpath(root);
+	if (canonical !== root) { throw Error('HARNESS_GATE_CATALOG_ROOT_CHANGED'); }
+	const projectDir = path.join(canonical, '.harness');
+	const manifestDir = path.join(projectDir, 'manifests');
+	const target = path.join(manifestDir, 'ide-gates.json');
+	let fileInfo;
+	try { fileInfo = await fs.lstat(target); }
+	catch (error) {
+		if ((error as NodeJS.ErrnoException).code === 'ENOENT') { return undefined; }
+		throw error;
+	}
+	for (const directory of [projectDir, manifestDir]) {
+		const info = await fs.lstat(directory);
+		if (!info.isDirectory() || info.isSymbolicLink() || await fs.realpath(directory) !== directory) {
+			throw Error('HARNESS_GATE_CATALOG_UNSAFE');
+		}
+	}
+	if (!fileInfo.isFile() || fileInfo.isSymbolicLink() || fileInfo.size > MAX_BYTES ||
+		await fs.realpath(target) !== target) { throw Error('HARNESS_GATE_CATALOG_UNSAFE'); }
+	const bytes = await fs.readFile(target);
+	if (bytes.length > MAX_BYTES) { throw Error('HARNESS_GATE_CATALOG_UNSAFE'); }
+	let parsed: unknown;
+	try { parsed = JSON.parse(bytes.toString('utf8')); }
+	catch { throw Error('HARNESS_GATE_CATALOG_INVALID'); }
+	if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) ||
+		Object.keys(parsed).sort().join(',') !== 'gates,schemaVersion') {
+		throw Error('HARNESS_GATE_CATALOG_INVALID');
+	}
+	const value = parsed as { schemaVersion?: unknown; gates?: unknown };
+	if (value.schemaVersion !== 1 || !Array.isArray(value.gates) || value.gates.length > 32) {
+		throw Error('HARNESS_GATE_CATALOG_INVALID');
+	}
+	const gates: ProjectGate[] = [];
+	const seen = new Set<string>();
+	for (const gate of value.gates) {
+		if (!gate || typeof gate !== 'object' || Array.isArray(gate) ||
+			Object.keys(gate).sort().join(',') !== 'dependsOn,id,resources') {
+			throw Error('HARNESS_GATE_CATALOG_INVALID');
+		}
+		const item = gate as Partial<ProjectGate>;
+		if (typeof item.id !== 'string' || !IDENTIFIER.test(item.id) || seen.has(item.id) ||
+			!Array.isArray(item.dependsOn) || item.dependsOn.length > 32 ||
+			!item.dependsOn.every(dep => typeof dep === 'string' && IDENTIFIER.test(dep)) ||
+			new Set(item.dependsOn).size !== item.dependsOn.length ||
+			!Array.isArray(item.resources) || item.resources.length > 8 ||
+			!item.resources.every(resource => typeof resource === 'string' && IDENTIFIER.test(resource)) ||
+			new Set(item.resources).size !== item.resources.length) {
+			throw Error('HARNESS_GATE_CATALOG_INVALID');
+		}
+		seen.add(item.id);
+		gates.push({ id: item.id, dependsOn: [...item.dependsOn], resources: [...item.resources] });
+	}
+	const index = new Map(gates.map(gate => [gate.id, gate]));
+	const visiting = new Set<string>();
+	const visited = new Set<string>();
+	const visit = (id: string): void => {
+		if (visiting.has(id)) { throw Error('HARNESS_GATE_CATALOG_CYCLE'); }
+		if (visited.has(id)) { return; }
+		const gate = index.get(id);
+		if (!gate) { throw Error('HARNESS_GATE_CATALOG_DEPENDENCY'); }
+		visiting.add(id);
+		for (const dependency of gate.dependsOn) { visit(dependency); }
+		visiting.delete(id);
+		visited.add(id);
+	};
+	for (const gate of gates) { visit(gate.id); }
+	return {
+		schemaVersion: 1, gates,
+		digest: createHash('sha256').update(bytes).digest('hex'),
+		executionEnabled: false
+	};
+}
+
+/** For an eventual explicit delegation, require fresh approval of the exact manifest. */
+export async function validateProjectGateCatalog(root: string, expectedDigest: string): Promise<void> {
+	if (!/^[a-f0-9]{64}$/.test(expectedDigest)) { throw Error('HARNESS_GATE_CATALOG_INVALID'); }
+	const current = await readProjectGateCatalog(root);
+	if (!current || current.digest !== expectedDigest) { throw Error('HARNESS_GATE_CATALOG_CHANGED'); }
+}
