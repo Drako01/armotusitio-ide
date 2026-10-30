@@ -8,6 +8,14 @@ import { spawn } from 'node:child_process';
 
 const root = path.resolve(import.meta.dirname, '..');
 const extension = 'extensions/armotusitio-ide';
+const formatTargets = [
+	'src/native-integration.ts',
+	'src/native-agent-execution.ts',
+	'src/native-agent-metrics.ts',
+	'src/native-agent-workflow.ts',
+	'src/native-provider-output.ts'
+].map(file => `${extension}/${file}`);
+const fixRequested = process.argv.includes('--fix');
 const logPath = path.join(root, 'test.log');
 const log = fs.createWriteStream(logPath, { flags: 'w' });
 const results: Array<{ name: string; result: string }> = [];
@@ -29,8 +37,9 @@ async function run(name: string, args: string[], executable = process.execPath):
 }
 
 write(`Harness checks | ${new Date().toISOString()} | ${process.platform}/${process.arch} | ${process.version}\n`);
-write('Focused checks only. No release, Git mutation, remote CI or AI provider is invoked.\n');
+write(fixRequested ? 'Explicit --fix: format selected Harness sources locally before validation. No commits, remote CI or providers.\n' : 'Focused checks only. No release, Git mutation, remote CI or AI provider is invoked.\n');
 try {
+	if (fixRequested) { await run('Format Harness sources', ['build/lib/formatter.ts', '--replace', ...formatTargets]); }
 	await run('TypeScript', ['node_modules/@typescript/native/bin/tsc', '--project', `${extension}/tsconfig.json`]);
 	await run('Webview resources', [`${extension}/check-resources.mts`]);
 	await run('UI bridge and renderer', ['--test', `${extension}/test/home.test.cts`, `${extension}/test/renderer.test.cts`, `${extension}/test/native-integration.test.mts`, `${extension}/test/native-harness.test.mts`, `${extension}/test/native-providers.test.mts`, `${extension}/test/native-agent-execution.test.mts`, `${extension}/test/native-agent-metrics.test.mts`, `${extension}/test/native-agent-workflow.test.mts`, `${extension}/test/native-agent-scope.test.mts`, `${extension}/test/native-agent-worktree.test.mts`, `${extension}/test/native-engine-contract.test.mts`, `${extension}/test/native-performance.test.mts`, `${extension}/test/native-review.test.mts`, `${extension}/test/native-agent-corrective.test.mts`, `${extension}/test/native-sensitive-scope.test.mts`, `${extension}/test/native-provider-diagnostics.test.mts`, `${extension}/test/native-provider-output.test.mts`]);
