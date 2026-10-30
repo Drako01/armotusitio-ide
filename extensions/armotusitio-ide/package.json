@@ -200,6 +200,10 @@
         "title": "ArmoTuSitio: Métricas locales de agentes IA"
       },
       {
+        "command": "atsHarness.nativeProviderQuotaStatus",
+        "title": "ArmoTuSitio: Consultar cupo local de llamadas de IA"
+      },
+      {
         "command": "atsHarness.nativeProjectHandshake",
         "title": "ArmoTuSitio: Negociar capacidades del Harness externo (autorización explícita)"
       },
