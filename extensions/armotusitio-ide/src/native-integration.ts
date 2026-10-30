@@ -13,6 +13,7 @@ import { buildSupportReport, exportSupportReport } from './native-support.ts';
 import { inspectHarnessAuthority } from './native-authority.ts';
 import { buildAgentInvocation, executeReviewedAgent, type AgentExecution } from './native-agent-execution.ts';
 import { readAgentStatistics, recordAgentMetric } from './native-agent-metrics.ts';
+import { NativeAgentWorkflow, proposedWorkflow, workflowDigest, type WorkflowRun } from './native-agent-workflow.ts';
 
 type Host = any; // vscode host is injected by the existing extension (avoid duplicating the UI layer).
 const sessions = new Map<string, NativeHarness>();
@@ -35,8 +36,10 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 	const running = new Map<string, { engine: NativeHarness; taskId: string }>();
 	const runningAgents = new Map<string, AgentExecution>();
 	const pendingAgents = new Set<string>();
+	const runningWorkflows = new Map<string, WorkflowRun>();
+	const pendingWorkflows = new Set<string>();
 	const metricsDirectory = (root: string): string => path.join(context.globalStorageUri.fsPath, 'native-harness', createHash('sha256').update(root).digest('hex'));
-	controller.nativeRunning = () => running.size + runningAgents.size + pendingAgents.size;
+	controller.nativeRunning = () => running.size + runningAgents.size + pendingAgents.size + runningWorkflows.size + pendingWorkflows.size;
 	controller.nativeProjects = async () => {
 		const rows = [];
 		if (!vscode.workspace.getConfiguration('atsHarness').get('enabled', true)) { return rows; }
@@ -48,7 +51,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 				const tasks = ensureTrust() ? await selected.engine.list() : [];
 				const diagnostic = ensureTrust() ? await selected.engine.diagnose() : undefined;
 				const configured = ensureTrust() ? !!await loadProjectConfig(folder.uri.fsPath) : false;
-				rows.push({ root: folder.uri.fsPath, name: folder.name, engine: 'ide-native', configured, lock: diagnostic?.lock, agentActive: runningAgents.has(folder.uri.fsPath), tasks: tasks.sort((a, b) => Number(b.attempts.at(-1)?.status === 'running') - Number(a.attempts.at(-1)?.status === 'running')).slice(0, 100).map(task => ({ id: task.id, title: task.title, status: task.attempts.at(-1)?.status || 'pending', attempts: task.attempts.length, gates: task.plan.gates.map(gate => ({ id: gate.id, dependsOn: gate.dependsOn || [], status: task.attempts.at(-1)?.results.find(result => result.id === gate.id)?.status || 'pending' })), reconciliationRequired: task.attempts.at(-1)?.status === 'running' && (diagnostic?.lock !== 'active' || diagnostic?.lockTask !== task.id || diagnostic?.lockAttempt !== task.attempts.at(-1)?.id) })) });
+				rows.push({ root: folder.uri.fsPath, name: folder.name, engine: 'ide-native', configured, lock: diagnostic?.lock, agentActive: runningAgents.has(folder.uri.fsPath) || runningWorkflows.has(folder.uri.fsPath), tasks: tasks.sort((a, b) => Number(b.attempts.at(-1)?.status === 'running') - Number(a.attempts.at(-1)?.status === 'running')).slice(0, 100).map(task => ({ id: task.id, title: task.title, status: task.attempts.at(-1)?.status || 'pending', attempts: task.attempts.length, gates: task.plan.gates.map(gate => ({ id: gate.id, dependsOn: gate.dependsOn || [], status: task.attempts.at(-1)?.results.find(result => result.id === gate.id)?.status || 'pending' })), reconciliationRequired: task.attempts.at(-1)?.status === 'running' && (diagnostic?.lock !== 'active' || diagnostic?.lockTask !== task.id || diagnostic?.lockAttempt !== task.attempts.at(-1)?.id) })) });
 			} catch { rows.push({ root: folder.uri.fsPath, name: folder.name, engine: 'ide-native', error: true, tasks: [] }); }
 		}
 		return rows;
@@ -85,7 +88,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			if (!ensureTrust()) { vscode.window.showWarningMessage('Se requiere un workspace confiable.'); return; }
 			const chosen = await choose(requested); if (!chosen) { return; }
 			const root = await fs.realpath(chosen.folder.uri.fsPath);
-			if (runningAgents.has(root) || pendingAgents.has(root) || running.has(chosen.folder.uri.toString())) { throw Error('HARNESS_ALREADY_RUNNING'); }
+			if (runningAgents.has(root) || pendingAgents.has(root) || runningWorkflows.has(root) || pendingWorkflows.has(root) || running.has(chosen.folder.uri.toString())) { throw Error('HARNESS_ALREADY_RUNNING'); }
 			const provider = await vscode.window.showQuickPick(['codex', 'claude'], { title: 'Proveedor de IA local' }) as NativeProvider | undefined;
 			if (!provider) { return; }
 			const role = await vscode.window.showQuickPick(['planner', 'implementer', 'reviewer'], { title: 'Rol del agente' }) as AgentRole | undefined;
@@ -119,6 +122,57 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 		} catch (error) { showError(error); } finally { controller.refresh(); }
 	}));
 
+
+	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.nativeAgentWorkflow', async (requested?: string) => {
+		let root: string | undefined;
+		try {
+			if (!ensureTrust()) { vscode.window.showWarningMessage('Se requiere un workspace confiable.'); return; }
+			const chosen = await choose(requested); if (!chosen) { return; }
+			root = await fs.realpath(chosen.folder.uri.fsPath);
+			if (runningAgents.has(root) || pendingAgents.has(root) || runningWorkflows.has(root) || pendingWorkflows.has(root) || running.has(chosen.folder.uri.toString())) {
+				throw Error('HARNESS_ALREADY_RUNNING');
+			}
+			const provider = await vscode.window.showQuickPick(['codex', 'claude'], { title: 'Proveedor para el workflow multiagente' }) as NativeProvider | undefined;
+			if (!provider) { return; }
+			const instruction = await vscode.window.showInputBox({ title: 'Objetivo del workflow (plan → implementación → revisión)', prompt: 'Describí el alcance específico; no ingreses secretos.' });
+			if (!instruction) { return; }
+			const plan = proposedWorkflow(provider, instruction);
+			const digest = workflowDigest(root, plan);
+			await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({ language: 'json',
+				content: JSON.stringify({ project: root, handoffs: plan.handoffs, digest,
+					notice: 'Ejecución secuencial en el workspace actual. No se crean worktrees ni commits. Se consumen tokens en cada etapa.' }, null, 2)
+			}), { preview: true });
+			const approved = await vscode.window.showWarningMessage('Autorizar los tres agentes y la escritura local del implementador? Revisá el plan antes de continuar.', { modal: true }, 'Autorizar workflow');
+			if (approved !== 'Autorizar workflow' || !authorized(chosen.folder) || await fs.realpath(chosen.folder.uri.fsPath) !== root) { return; }
+			if (runningAgents.has(root) || pendingAgents.has(root) || runningWorkflows.has(root) || pendingWorkflows.has(root) || running.has(chosen.folder.uri.toString())) {
+				throw Error('HARNESS_ALREADY_RUNNING');
+			}
+			pendingWorkflows.add(root); controller.refresh();
+			const engine = new NativeAgentWorkflow(root, path.join(metricsDirectory(root), 'workflows'));
+			let run: WorkflowRun;
+			try { run = await engine.start(plan, digest, () => authorized(chosen.folder)); }
+			finally { pendingWorkflows.delete(root); }
+			runningWorkflows.set(root, run); controller.refresh();
+			try {
+				const outcome = await run.result;
+				if (authorized(chosen.folder)) {
+					await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({ language: 'json', content: JSON.stringify(outcome, null, 2) }), { preview: true });
+					vscode.window.showInformationMessage('Workflow multiagente finalizado: ' + outcome.status);
+				}
+			} finally { runningWorkflows.delete(root); controller.refresh(); }
+		} catch (error) { showError(error); }
+		finally { if (root) { pendingWorkflows.delete(root); } controller.refresh(); }
+	}));
+	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.nativeWorkflowHistory', async (requested?: string) => {
+		try {
+			if (!ensureTrust()) { return; }
+			const chosen = await choose(requested); if (!chosen) { return; }
+			const root = await fs.realpath(chosen.folder.uri.fsPath);
+			const history = await new NativeAgentWorkflow(root, path.join(metricsDirectory(root), 'workflows')).history();
+			if (!authorized(chosen.folder)) { return; }
+			await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({ language: 'json', content: JSON.stringify(history, null, 2) }), { preview: true });
+		} catch (error) { showError(error); }
+	}));
 	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.nativeAgentMetrics', async (requested?: string) => {
 		try {
 			if (!ensureTrust()) { return; }
@@ -239,10 +293,11 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			const p = await choose(requested); if (!p) { return; }
 			const current = running.get(p.folder.uri.toString());
 			const agent = runningAgents.get(p.folder.uri.fsPath);
-			if (!current && !agent) { vscode.window.showInformationMessage(vscode.l10n.t('No hay una tarea nativa activa en este proyecto.')); return; }
-			const answer = await vscode.window.showWarningMessage(`Cancelar la tarea activa ${current?.taskId || 'agente IA'}?`, { modal: true }, 'Cancelar tarea');
+			const workflow = runningWorkflows.get(p.folder.uri.fsPath);
+			if (!current && !agent && !workflow) { vscode.window.showInformationMessage(vscode.l10n.t('No hay una tarea nativa activa en este proyecto.')); return; }
+			const answer = await vscode.window.showWarningMessage(`Cancelar la tarea activa ${current?.taskId || (workflow ? 'workflow multiagente' : 'agente IA')}?`, { modal: true }, 'Cancelar tarea');
 			if (answer !== 'Cancelar tarea' || !ensureTrust()) { return; }
-			if (current) { current.engine.cancel(); } else { agent?.cancel(); }
+			if (current) { current.engine.cancel(); } else if (agent) { agent.cancel(); } else { workflow?.cancel(); }
 		} catch (e) { showError(e); } finally { controller.refresh(); }
 	}));
 	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.nativeStatus', async (requested?: string, taskId?: string) => {
@@ -265,5 +320,5 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			await p.engine.reconcile(); vscode.window.showInformationMessage(vscode.l10n.t('Estado reconciliado sin reintentar tareas.'));
 		} catch (e) { showError(e); } finally { controller.refresh(); }
 	}));
-	context.subscriptions.push({ dispose() { for (const engine of sessions.values()) { engine.cancel(); } for (const agent of runningAgents.values()) { agent.cancel(); } runningAgents.clear(); sessions.clear(); } });
+	context.subscriptions.push({ dispose() { for (const engine of sessions.values()) { engine.cancel(); } for (const agent of runningAgents.values()) { agent.cancel(); } runningAgents.clear(); for (const workflow of runningWorkflows.values()) { workflow.cancel(); } runningWorkflows.clear(); sessions.clear(); } });
 }
