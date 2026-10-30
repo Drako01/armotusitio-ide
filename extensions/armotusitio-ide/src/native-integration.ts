@@ -287,8 +287,11 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			const workflow = new NativeAgentWorkflow(root, path.join(metricsDirectory(root), 'workflows'));
 			const pendingJournalIds = await workflow.pendingJournalIds();
 			const history = pendingJournalIds.length ? {
-				status: 'recovery-required', executionEnabled: false, pendingJournalIds,
-				note: 'Hay escrituras inciertas. Reconciliar explícitamente; nunca repetir agentes ni eliminar evidencia automáticamente.'
+				status: runningWorkflows.has(root) ? 'write-in-progress' : 'recovery-required',
+				executionEnabled: false, pendingJournalIds,
+				note: runningWorkflows.has(root)
+					? 'Se está persistiendo una transición del workflow. No implica recuperación mientras siga activo.'
+					: 'Hay escrituras inciertas. Reconciliar explícitamente; nunca repetir agentes ni eliminar evidencia automáticamente.'
 			} : await workflow.history();
 			if (!authorized(chosen.folder)) { return; }
 			await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({ language: 'json', content: JSON.stringify(history, null, 2) }), { preview: true });
