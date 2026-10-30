@@ -18,6 +18,9 @@ test('isolated worktree preserves the primary checkout and refuses dirty disposa
     await fs.writeFile(path.join(root, 'file.txt'), 'original');
     execFileSync('git', ['-C', root, 'add', 'file.txt']);
     execFileSync('git', ['-C', root, '-c', 'user.email=fixture@example.test', '-c', 'user.name=Fixture', 'commit', '-qm', 'initial']);
+    await fs.writeFile(path.join(root, 'file.txt'), 'dirty local work');
+    await assert.rejects(createAgentWorktree(await fs.realpath(root), path.join(directory, 'isolated')), /HARNESS_WORKTREE_SOURCE_DIRTY/);
+    await fs.writeFile(path.join(root, 'file.txt'), 'original');
     const worktree = await createAgentWorktree(await fs.realpath(root), path.join(directory, 'isolated'));
     assert.equal(await fs.readFile(path.join(worktree.root, 'file.txt'), 'utf8'), 'original');
     assert.equal((await listAgentWorktrees(await fs.realpath(root), path.join(directory, 'isolated'))).length, 1);
