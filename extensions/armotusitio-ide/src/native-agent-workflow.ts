@@ -103,7 +103,13 @@ async function atomicWrite(file: string, record: WorkflowRecord): Promise<void> 
 	if (Buffer.byteLength(payload) > MAX_STATE_BYTES) { throw Error('HARNESS_WORKFLOW_STATE_TOO_LARGE'); }
 	const temp = file + '.' + randomUUID() + '.tmp';
 	try {
-		await fs.writeFile(temp, payload, { flag: 'wx', mode: 0o600 });
+		const handle = await fs.open(temp, 'wx', 0o600);
+		try {
+			await handle.writeFile(payload);
+			// Flush the completed temporary record before replacing durable state.
+			// Directory metadata durability and multi-record journaling remain future work.
+			await handle.sync();
+		} finally { await handle.close(); }
 		await fs.rename(temp, file);
 	} finally { await fs.rm(temp, { force: true }); }
 }
