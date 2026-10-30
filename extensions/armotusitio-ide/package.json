@@ -164,6 +164,10 @@
         "title": "ArmoTuSitio: Ejecutar agente IA con autorización"
       },
       {
+        "command": "atsHarness.nativeAgentMetrics",
+        "title": "ArmoTuSitio: Métricas locales de agentes IA"
+      },
+      {
         "command": "atsHarness.nativeConfigure",
         "title": "ArmoTuSitio: Configurar Harness nativo del proyecto"
       },
