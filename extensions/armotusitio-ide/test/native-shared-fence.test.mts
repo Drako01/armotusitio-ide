@@ -8,7 +8,15 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import { acquireSharedExecutionFence, inspectSharedExecutionFence, reconcileSharedExecutionFence } from '../src/native-shared-fence.ts';
+
+function exitedOwnerPid(): number {
+	const child = spawnSync(process.execPath, ['-e', 'process.exit(0)'], { windowsHide: true, timeout: 5000 });
+	assert.equal(child.status, 0);
+	assert.ok(child.pid && child.pid > 0);
+	return child.pid!;
+}
 
 test('shared fence grants one owner, is monotonic and fails closed on contention', async () => {
 	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-fence-'));
@@ -81,7 +89,7 @@ test('crashed local fence can be released only after explicit approval and safe-
 		// but replace its PID with one which cannot be alive on the test host.
 		const lock = path.join(storage, 'shared-execution.lock');
 		const record = JSON.parse(await fs.readFile(lock, 'utf8'));
-		record.pid = 2147483647;
+		record.pid = exitedOwnerPid();
 		await fs.writeFile(lock, JSON.stringify(record));
 		await fs.mkdir(path.join(storage, 'workflows'));
 		await fs.writeFile(path.join(storage, 'workflows', 'execution.lock'), '{}');
@@ -120,7 +128,7 @@ test('shared recovery never clears pending rollback, unknown project owners or f
 		await acquireSharedExecutionFence(canonical, storage, 'native-agent');
 		const lock = path.join(storage, 'shared-execution.lock');
 		const record = JSON.parse(await fs.readFile(lock, 'utf8'));
-		record.pid = 2147483647;
+		record.pid = exitedOwnerPid();
 		await fs.writeFile(lock, JSON.stringify(record));
 		await fs.mkdir(path.join(storage, 'checkpoints'));
 		await fs.writeFile(path.join(storage, 'checkpoints', 'abc.rollback.intent'), '{}');
