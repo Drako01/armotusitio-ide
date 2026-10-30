@@ -284,7 +284,12 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			if (!ensureTrust()) { return; }
 			const chosen = await choose(requested); if (!chosen) { return; }
 			const root = await fs.realpath(chosen.folder.uri.fsPath);
-			const history = await new NativeAgentWorkflow(root, path.join(metricsDirectory(root), 'workflows')).history();
+			const workflow = new NativeAgentWorkflow(root, path.join(metricsDirectory(root), 'workflows'));
+			const pendingJournalIds = await workflow.pendingJournalIds();
+			const history = pendingJournalIds.length ? {
+				status: 'recovery-required', executionEnabled: false, pendingJournalIds,
+				note: 'Hay escrituras inciertas. Reconciliar explícitamente; nunca repetir agentes ni eliminar evidencia automáticamente.'
+			} : await workflow.history();
 			if (!authorized(chosen.folder)) { return; }
 			await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({ language: 'json', content: JSON.stringify(history, null, 2) }), { preview: true });
 		} catch (error) { showError(error); }
