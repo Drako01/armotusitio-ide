@@ -272,9 +272,16 @@ export class NativeAgentWorkflow {
           else {
             try {
               this.verificationController = new AbortController();
-              record.verification = await verify(this.verificationController.signal) ? 'passed' : 'failed';
-              if (this.cancelled) { record.status = 'cancelled'; }
-              else if (record.verification === 'failed') { record.status = 'failed'; }
+              const remainingMs = Math.max(1, deadline - Date.now());
+              const gateDeadline = setTimeout(() => this.verificationController?.abort(), remainingMs);
+              try {
+                record.verification = await verify(this.verificationController.signal) ? 'passed' : 'failed';
+                if (this.cancelled) { record.status = 'cancelled'; }
+                else if (this.verificationController.signal.aborted || record.verification === 'failed') {
+                  record.status = 'failed';
+                  record.verification = 'failed';
+                }
+              } finally { clearTimeout(gateDeadline); }
             } catch { record.verification = 'failed'; record.status = this.cancelled ? 'cancelled' : 'failed'; }
             finally { this.verificationController = undefined; }
           }
