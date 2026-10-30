@@ -275,13 +275,13 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			const folders = vscode.workspace.workspaceFolders || [];
 			const selected = requested ? folders.find((folder: Host) => folder.uri.fsPath === requested) :
 				folders.length === 1 ? folders[0] :
-				(await vscode.window.showQuickPick(folders.map((folder: Host) => ({ label: folder.name, description: folder.uri.fsPath, folder })), { placeHolder: 'Elegí el Harness externo a verificar' }))?.folder;
+				(await vscode.window.showQuickPick(folders.map((folder: Host) => ({ label: folder.name, description: folder.uri.fsPath, folder })), { placeHolder: 'Eleg\u00ed el Harness externo a verificar' }))?.folder;
 			if (!selected || !authorized(selected)) { return; }
 			const root = await fs.realpath(selected.uri.fsPath);
 			const descriptor = await describeEngine(root);
 			if (descriptor.engine !== 'project') { throw Error('HARNESS_HANDSHAKE_NOT_PROJECT'); }
 			const confirmed = await vscode.window.showWarningMessage(
-				'Esta prueba ejecutará explícitamente la entrada Node del Harness del proyecto para negociar capacidades. No concede permisos de escritura ni valida el sandbox. ¿Continuar?',
+				'Esta prueba ejecutar\u00e1 expl\u00edcitamente la entrada Node del Harness del proyecto para negociar capacidades. No concede permisos de escritura ni valida el sandbox. \u00bfContinuar?',
 				{ modal: true }, 'Ejecutar handshake');
 			if (confirmed !== 'Ejecutar handshake' || !authorized(selected)) { return; }
 			const handshake = await probeProjectHandshake(root, () => authorized(selected));
