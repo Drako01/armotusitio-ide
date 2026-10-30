@@ -116,6 +116,12 @@ test('gate planner refuses forged in-memory resources and undeclared dependencie
 			...valid, gates: [{ id: 'lint', dependsOn: [], resources: ['cpu; rm -rf'] }]
 		}), /HARNESS_GATE_CATALOG_INVALID/);
 		assert.throws(() => planProjectGateWaves({
+			...valid, digest: 'not-a-digest'
+		}), /HARNESS_GATE_CATALOG_INVALID/);
+		assert.throws(() => planProjectGateWaves({
+			...valid, executionGranted: true
+		} as never), /HARNESS_GATE_CATALOG_INVALID/);
+		assert.throws(() => planProjectGateWaves({
 			...valid, gates: [{ id: 'lint', dependsOn: [], resources: [], command: 'node evil.js' }] as never
 		}), /HARNESS_GATE_CATALOG_INVALID/);
 	} finally { await fs.rm(root, { recursive: true, force: true }); }
