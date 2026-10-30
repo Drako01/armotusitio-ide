@@ -57,6 +57,8 @@ const MAX_STORED = 500;
 const MAX_STATE_BYTES = 128 * 1024;
 export const MAX_WORKFLOW_DURATION_MS = 60 * 60 * 1000;
 const MAX_AGENT_DURATION_MS = 30 * 60 * 1000;
+/** The IDE authorization dialog currently grants at most five provider invocations. */
+export const MAX_WORKFLOW_PROVIDER_CALLS = 5;
 const IDENTIFIER = /^[a-z0-9][a-z0-9_-]{0,63}$/i;
 
 export function workflowDigest(root: string, plan: HandoffPlan): string {
@@ -324,6 +326,7 @@ export class NativeAgentWorkflow {
 		const digest = workflowDigest(canonical, plan);
 		if (approvedDigest !== digest) { throw Error('HARNESS_WORKFLOW_APPROVAL_CHANGED'); }
 		const ordered = executionOrder(plan);
+		if (ordered.length > MAX_WORKFLOW_PROVIDER_CALLS) { throw Error('HARNESS_WORKFLOW_CALL_BUDGET_EXCEEDED'); }
 		if (planAgentWaves(plan).some(wave => wave.ids.length > 1)) { validateDAGReviewCoverage(plan); }
 		await fs.mkdir(this.storage, { recursive: true, mode: 0o700 });
 		const lockFile = path.join(this.storage, 'execution.lock');
@@ -400,7 +403,8 @@ export class NativeAgentWorkflow {
 						// One authorized corrective cycle: reimplement the bounded reviewer feedback,
 						// then require a fresh independent read-only approval. No unbounded retries.
 						if (step.id === 'review' && step.status === 'failed' && correctiveCycles === 0 &&
-							!this.cancelled && trusted() && plan.handoffs.some(h => h.id === 'implement')) {
+							!this.cancelled && trusted() && plan.handoffs.some(h => h.id === 'implement') &&
+							record.steps.length + 2 <= MAX_WORKFLOW_PROVIDER_CALLS) {
 							correctiveCycles++;
 							const implement = plan.handoffs.find(h => h.id === 'implement')!;
 							const reviewer = plan.handoffs.find(h => h.id === 'review')!;
