@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { describeEngine, probeProjectHandshake } from '../src/native-engine-contract.ts';
+import { describeEngine, probeProjectHandshake, compareHybridCapabilities, verifiedNativeCapabilities } from '../src/native-engine-contract.ts';
 
 test('native engine declares implemented features only', async () => {
 	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-engine-contract-'));
@@ -57,4 +57,15 @@ test('project capability handshake is explicit, nonce-bound and never grants exe
 		await fs.writeFile(path.join(root, '.harness', 'core.mjs'), 'console.log(JSON.stringify({schemaVersion:2,nonce:"forged",capabilities:["parallel-gates"]}));');
 		await assert.rejects(probeProjectHandshake(canonical, () => true), /HARNESS_HANDSHAKE_INVALID/);
 	} finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
+test('hybrid capability comparison is read-only and cannot grant execution authority', () => {
+	const native = verifiedNativeCapabilities();
+	const result = compareHybridCapabilities(native, ['parallel-gates', 'os-sandbox']);
+	assert.ok(result.overlap.includes('parallel-gates'));
+	assert.deepEqual(result.projectOnly, ['os-sandbox']);
+	assert.equal(result.executionGranted, false);
+	assert.ok(result.nativeOnly.includes('agent-handoffs'));
+	assert.throws(() => compareHybridCapabilities(native, ['unsupported'] as never), /HARNESS_HYBRID_CAPABILITY_INVALID/);
+	assert.throws(() => compareHybridCapabilities(native, ['parallel-gates', 'parallel-gates']), /HARNESS_HYBRID_CAPABILITY_INVALID/);
 });
