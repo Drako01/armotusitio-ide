@@ -5,11 +5,29 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 import * as path from 'node:path';
-import { readFile } from 'node:fs/promises';
+import { readFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { linuxRunArgs } from './ats-build-linux.mts';
-import { createNodeCompileCacheGenerationEnvironment } from '../build/lib/nodeCompileCache.ts';
+import { createNodeCompileCacheGenerationEnvironment, validateNodeCompileCache } from '../build/lib/nodeCompileCache.ts';
 
 const root = path.resolve(import.meta.dirname, '..');
+
+test('cache validation accepts both version tags and retains architecture and readiness checks', async t => {
+	const directory = await mkdtemp(path.join(tmpdir(), 'ats-cache-tag-'));
+	t.after(() => rm(directory, { recursive: true, force: true }));
+	for (const suffix of ['', '-1000']) {
+		const cache = path.join(directory, suffix || 'legacy');
+		for (const kind of ['main', 'extension-host', 'shared-process', 'pty-host', 'agent-host']) {
+			const location = path.join(cache, kind, `v24.22.0-x64-60e4fe36${suffix}`);
+			await mkdir(location, { recursive: true });
+			await writeFile(path.join(location, 'deadbeef'), 'fixture');
+			await writeFile(path.join(cache, kind, '.ready'), '');
+		}
+		await assert.rejects(validateNodeCompileCache(cache, 'arm64'), /0 arm64 version-tag/);
+		assert.equal(await validateNodeCompileCache(cache, 'x64'), 5);
+		await assert.rejects(validateNodeCompileCache(cache, 'x64'), /readiness marker/);
+	}
+});
 
 test('packaged Electron cache retains DISPLAY without inheriting Node-only options', () => {
 	const parent = { DISPLAY: ':99', NODE_OPTIONS: '--max-old-space-size=8192', ELECTRON_RUN_AS_NODE: '1' };
