@@ -218,7 +218,7 @@ export class NativeAgentWorkflow {
 			} catch (error) {
 				if ((error as NodeJS.ErrnoException).code !== 'ESRCH') { throw error; }
 			}
-			await fs.rm(lockFile);
+			// Retain the stale lock until every interrupted record is durably reconciled.
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code !== 'ENOENT') { throw error; }
 		}
@@ -233,6 +233,9 @@ export class NativeAgentWorkflow {
 			await atomicWrite(path.join(this.storage, record.id + '.json'), record);
 			recovered++;
 		}
+		// If any state write fails, the lock stays in place and no new writer can start.
+		// A missing lock is harmless here: reconciliation remains explicit and fail-closed.
+		await fs.rm(lockFile, { force: true });
 		return recovered;
 	}
 
