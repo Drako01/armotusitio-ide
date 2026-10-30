@@ -1,5 +1,6 @@
 /*---------------------------------------------------------------------------------------------
- *  Copyright (c) ArmoTuSitio contributors. Licensed under the MIT License.
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -9,66 +10,66 @@ import * as path from 'node:path';
 import { NativeAgentWorkflow, executionOrder, proposedWorkflow, workflowDigest } from '../src/native-agent-workflow.ts';
 
 test('proposed workflow is a fixed auditable plan-implement-review chain', () => {
-  const p = proposedWorkflow('codex', 'Add a safe API endpoint');
-  assert.deepEqual(executionOrder(p), ['plan', 'implement', 'review']);
-  assert.equal(p.handoffs[0].role, 'planner');
-  assert.equal(p.handoffs[1].role, 'implementer');
-  assert.equal(p.handoffs[2].role, 'reviewer');
-  assert.notEqual(workflowDigest('/repo', p), workflowDigest('/repo2', p));
-  assert.throws(() => proposedWorkflow('codex', ''), /HARNESS_AGENT_INSTRUCTION_INVALID/);
+	const p = proposedWorkflow('codex', 'Add a safe API endpoint');
+	assert.deepEqual(executionOrder(p), ['plan', 'implement', 'review']);
+	assert.equal(p.handoffs[0].role, 'planner');
+	assert.equal(p.handoffs[1].role, 'implementer');
+	assert.equal(p.handoffs[2].role, 'reviewer');
+	assert.notEqual(workflowDigest('/repo', p), workflowDigest('/repo2', p));
+	assert.throws(() => proposedWorkflow('codex', ''), /HARNESS_AGENT_INSTRUCTION_INVALID/);
 });
 
 test('rejects forged approval before running anything', async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-workflow-approval-'));
-  try {
-    const flow = new NativeAgentWorkflow(await fs.realpath(root), path.join(root, 'private'));
-    const plan = proposedWorkflow('codex', 'Analyze modules');
-    await assert.rejects(flow.start(plan, 'wrong', () => true), /HARNESS_WORKFLOW_APPROVAL_CHANGED/);
-    assert.deepEqual(await flow.history(), []);
-    await assert.rejects(flow.start(plan, workflowDigest(await fs.realpath(root), plan), () => false), /HARNESS_UNTRUSTED_WORKSPACE/);
-  } finally { await fs.rm(root, { recursive: true, force: true }); }
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-workflow-approval-'));
+	try {
+		const flow = new NativeAgentWorkflow(await fs.realpath(root), path.join(root, 'private'));
+		const plan = proposedWorkflow('codex', 'Analyze modules');
+		await assert.rejects(flow.start(plan, 'wrong', () => true), /HARNESS_WORKFLOW_APPROVAL_CHANGED/);
+		assert.deepEqual(await flow.history(), []);
+		await assert.rejects(flow.start(plan, workflowDigest(await fs.realpath(root), plan), () => false), /HARNESS_UNTRUSTED_WORKSPACE/);
+	} finally { await fs.rm(root, { recursive: true, force: true }); }
 });
 
 test('executes three stages in order with fake provider; persists only metadata', { skip: process.platform === 'win32' }, async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-workflow-e2e-'));
-  const oldPath = process.env.PATH;
-  try {
-    const canonical = await fs.realpath(root);
-    const bin = path.join(root, 'bin');
-    await fs.mkdir(bin);
-    const cli = path.join(bin, 'codex');
-    const script = [
-      '#!/usr/bin/env node',
-      'let input = "";',
-      'process.stdin.on("data", b => { input += b; });',
-      'process.stdin.on("end", () => {',
-      ' const role = input.includes("Read-only assessment") ? "plan" : input.includes("Implement only") ? "implement" : "review";',
-      ' require("fs").appendFileSync("trace.txt", role + "\\n");',
-      ' console.log(role === "review" ? "HARNESS_REVIEW: PASS" : "fake provider passed");',
-      '});'
-    ].join('\n');
-    await fs.writeFile(cli, script, { mode: 0o755 });
-    await fs.chmod(cli, 0o755);
-    process.env.PATH = bin + path.delimiter + (oldPath || '');
-    const plan = proposedWorkflow('codex', 'PRIVATETASK-DO-NOT-PERSIST');
-    const flow = new NativeAgentWorkflow(canonical, path.join(root, 'private'));
-    let verified = 0;
-    let metrics = 0;
-    const run = await flow.start(plan, workflowDigest(canonical, plan), () => true, async () => { verified++; return true; }, async () => { metrics++; });
-    const outcome = await run.result;
-    assert.equal(outcome.status, 'passed');
-    assert.equal(outcome.verification, 'passed');
-    assert.equal(verified, 1);
-    assert.equal(metrics, 3);
-    assert.deepEqual(outcome.steps.map(s => s.status), ['passed', 'passed', 'passed']);
-    assert.equal(await fs.readFile(path.join(root, 'trace.txt'), 'utf8'), 'plan\nimplement\nreview\n');
-    const history = await flow.history();
-    assert.equal(history.length, 1);
-    assert.equal(history[0].status, 'passed');
-    const raw = await fs.readFile(path.join(root, 'private', outcome.id + '.json'), 'utf8');
-    assert.ok(!raw.includes('PRIVATETASK-DO-NOT-PERSIST'));
-  } finally {
-    if (oldPath === undefined) { delete process.env.PATH; } else { process.env.PATH = oldPath; }
-    await fs.rm(root, { recursive: true, force: true });
-  }
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-workflow-e2e-'));
+	const oldPath = process.env.PATH;
+	try {
+		const canonical = await fs.realpath(root);
+		const bin = path.join(root, 'bin');
+		await fs.mkdir(bin);
+		const cli = path.join(bin, 'codex');
+		const script = [
+			'#!/usr/bin/env node',
+			'let input = "";',
+			'process.stdin.on("data", b => { input += b; });',
+			'process.stdin.on("end", () => {',
+			' const role = input.includes("Read-only assessment") ? "plan" : input.includes("Implement only") ? "implement" : "review";',
+			' require("fs").appendFileSync("trace.txt", role + "\\n");',
+			' console.log(role === "review" ? "HARNESS_REVIEW: PASS" : "fake provider passed");',
+			'});'
+		].join('\n');
+		await fs.writeFile(cli, script, { mode: 0o755 });
+		await fs.chmod(cli, 0o755);
+		process.env.PATH = bin + path.delimiter + (oldPath || '');
+		const plan = proposedWorkflow('codex', 'PRIVATETASK-DO-NOT-PERSIST');
+		const flow = new NativeAgentWorkflow(canonical, path.join(root, 'private'));
+		let verified = 0;
+		let metrics = 0;
+		const run = await flow.start(plan, workflowDigest(canonical, plan), () => true, async () => { verified++; return true; }, async () => { metrics++; });
+		const outcome = await run.result;
+		assert.equal(outcome.status, 'passed');
+		assert.equal(outcome.verification, 'passed');
+		assert.equal(verified, 1);
+		assert.equal(metrics, 3);
+		assert.deepEqual(outcome.steps.map(s => s.status), ['passed', 'passed', 'passed']);
+		assert.equal(await fs.readFile(path.join(root, 'trace.txt'), 'utf8'), 'plan\nimplement\nreview\n');
+		const history = await flow.history();
+		assert.equal(history.length, 1);
+		assert.equal(history[0].status, 'passed');
+		const raw = await fs.readFile(path.join(root, 'private', outcome.id + '.json'), 'utf8');
+		assert.ok(!raw.includes('PRIVATETASK-DO-NOT-PERSIST'));
+	} finally {
+		if (oldPath === undefined) { delete process.env.PATH; } else { process.env.PATH = oldPath; }
+		await fs.rm(root, { recursive: true, force: true });
+	}
 });
