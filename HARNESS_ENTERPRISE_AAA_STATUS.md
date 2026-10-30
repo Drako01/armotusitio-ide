@@ -534,6 +534,13 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 
 Ejemplo local voluntario: `node scripts/ats-harness-benchmark.mts --command check --runs 3`. El resultado JSON se imprime en terminal; no se guarda información del proyecto ni se ejecutan CLIs de IA.
 
+### Lote P0: integridad del entrypoint en handshake externo (2026-10-30; retest pendiente)
+
+- [x] `probeProjectHandshake()` fija un digest SHA-256 del entrypoint real `.harness/core.mjs` antes de invocarlo y vuelve a comprobarlo al finalizar, antes de aceptar capacidades. Se limita el tamaño leído a 16 MiB y se exige archivo regular, canónico y no enlazado.
+- [x] La modificación del entrypoint durante el handshake genera `HARNESS_HANDSHAKE_ENTRY_CHANGED` y no concede permisos. Se agregó un caso offline donde el propio proceso altera su script tras iniciarse.
+- [ ] **Sin attestation de sandbox ni protección OS ante TOCTOU:** un digest anterior/posterior no impide mutaciones entre ambas comprobaciones o escrituras fuera del proyecto. Los ejecutores externos siguen sin autorización de escritura del IDE.
+- [ ] Validación local completa de estos cambios sobre el SHA publicado y pruebas E2E posteriores.
+
 ## Validación local obligatoria
 
 Desde la raíz del repositorio, con las dependencias instaladas:
