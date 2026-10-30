@@ -23,8 +23,11 @@ test('durable provider quota rejects over-budget concurrent readers before CLI l
 			]);
 			assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
 			assert.equal(results.filter(result => result.status === 'rejected').length, 1);
-			assert.match(String((results.find(result => result.status === 'rejected') as PromiseRejectedResult).reason),
-				/HARNESS_PROVIDER_QUOTA_EXCEEDED/);
+			const rejected = results.find(result => result.status === 'rejected');
+			assert.equal(rejected?.status, 'rejected');
+			if (rejected?.status === 'rejected') {
+				assert.match(String(rejected.reason), /HARNESS_PROVIDER_QUOTA_EXCEEDED/);
+			}
 			const other = await reserveProviderInvocation(storage, 'claude', fence, 1, now);
 			assert.deepEqual(other, { used: 1, remaining: 0 });
 			const stored = JSON.parse(await fs.readFile(path.join(storage, 'provider-invocations.json'), 'utf8'));
