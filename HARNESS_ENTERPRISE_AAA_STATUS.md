@@ -107,6 +107,24 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 | **P2** | Benchmarks | Baseline con experimentos repetibles e indicadores observados de rendimiento y éxito. |
 | **P2** | Portabilidad | Políticas y documentación independientes de RedEvent; pruebas en proyectos Node, Go y PHP. |
 
+## Incidente de validación local (2026-10-30)
+
+**Evidencia aportada:** `harness-validation-20261030-154253.log`, ejecutado en Windows `win32/x64`, Node `v24.22.1`, npm `11.6.2`, commit base `49a17187bf2`.
+
+| Comando | Resultado observado en ese log | Diagnóstico |
+|---|---|---|
+| `node scripts/ats-harness-check.mts` | **FAIL** | Tres archivos de test bloqueados por el parser TypeScript; higiene de estilo con 1332 errores. TypeScript, recursos y bundle informaron PASS. |
+| `npm test --prefix extensions/armotusitio-ide` | **FAIL**: 155/163 passed, 3 failed, 5 skipped | Las fallas de `native-agent-corrective`, `native-agent-workflow` y `native-integration` comparten la misma causa de importación de `native-agent-workflow.ts`. |
+| `npm run check --prefix extensions/armotusitio-ide` | **PASS** | Typecheck y validación de recursos completados; no implica que higiene y tests estén aprobados. |
+
+### Correcciones publicadas en esta rama después de ese log
+
+- [x] **Compatibilidad Node strip-only:** sustituida la parameter property `constructor(private readonly root: string, private readonly storage: string)` por campos declarados e inicialización explícita. El cambio busca eliminar `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX` de las tres suites afectadas.
+- [x] **Higiene de código:** normalizados encabezados de copyright e indentación por tabulaciones en los archivos nativos y tests afectados; escapados caracteres Unicode que reportaba el chequeo de recursos; retirados los dos casts `as any` reportados.
+- [ ] **Validación posterior a las correcciones:** **PENDIENTE**. No se han ejecutado de nuevo en el equipo Windows del operador los tres comandos, ni existe evidencia de CI verde sobre los commits de corrección. Es posible que aparezcan errores adicionales al desbloquear los imports.
+
+**Criterio:** nunca cambiar las casillas pendientes a completadas solo porque la corrección fue commiteada. Repetir el script y adjuntar el nuevo `.log`, incluyendo todos los exit codes.
+
 ## Validación local obligatoria
 
 Desde la raíz del repositorio, con las dependencias instaladas:
