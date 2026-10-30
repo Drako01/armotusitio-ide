@@ -9,7 +9,7 @@
 
 Esta guía documenta el alcance acordado y diferencia **código agregado a la rama** de funcionalidad realmente certificada. Una casilla marcada no significa que el comportamiento haya pasado pruebas reales de extremo a extremo.
 
-**Inventario funcional histórico (línea base anterior a los lotes incrementales):** 34 ítems implementados en código, 5 parciales y 15 pendientes. El listado es orientativo y no constituye un conteo actualizado ni un porcentaje técnico de certificación; los nuevos lotes se registran individualmente debajo. **Última validación automatizada local Windows aportada:** 227 tests aprobados, 0 fallidos, 1 omitido (228 total), con TypeScript, bundle, recursos, higiene y diff en PASS según el log Windows del 2026-10-30 21:56, sobre el commit `5799f281773`. Las implementaciones posteriores deben probarse nuevamente. Esto no equivale a CI multiplataforma ni a E2E completo.
+**Inventario funcional histórico (línea base anterior a los lotes incrementales):** 34 ítems implementados en código, 5 parciales y 15 pendientes. El listado es orientativo y no constituye un conteo actualizado ni un porcentaje técnico de certificación; los nuevos lotes se registran individualmente debajo. **Última validación automatizada local Windows aportada:** 237 tests aprobados, 0 fallidos, 1 omitido (238 total), TypeScript, bundle, recursos y diff en PASS, pero higiene en FAIL por dos caracteres Unicode en `native-integration.ts` (líneas 293–294), sobre `a35c656f523` el 2026-10-30 22:08. Corregido en commit `7c2f44881140` mediante escapes Unicode; repetir el verificador para confirmar higiene. Los tests funcionales de este lote pasaron, pero el gate de calidad global todavía no está validado. Esto no equivale a CI multiplataforma ni a E2E completo.
 
 **Calificación:** no asignar una nueva nota 1–10 ni declarar nivel AAA hasta disponer de pruebas reproducibles y resultados E2E. El 70% mencionado en el seguimiento conversacional fue una apreciación de cobertura, **no** una medición auditada.
 
@@ -491,6 +491,12 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 - [x] `planProjectGateWaves()` revalida íntegramente también los catálogos suministrados desde memoria: nombres, recursos, duplicados, campos extra y dependencias, sin asumir que pasaron por el lector seguro de JSON.
 - [x] Nuevas pruebas offline e integración de diagnóstico y rechazo de catálogo adulterado; los módulos nuevos se añadieron al verificador local.
 - [ ] Queda pendiente un protocolo de delegación *real* que coopere con los locks y permisos del proyecto, además de E2E mixto validado con RedEvent. La simulación de waves no significa ejecución automática.
+
+### Corrección de higiene tras retest Windows (2026-10-30)
+
+- [x] Log local sobre `a35c656f523`: **237 PASS, 0 FAIL, 1 SKIP**, TypeScript, UI, bundle, recursos y diff en PASS.
+- [x] Causa del único gate fallido: caracteres acentuados literales en dos mensajes de `native-integration.ts` (regla `no-unexpected-multiline`/Unicode del verificador). Se sustituyeron por escapes `\\u` manteniendo el texto de la interfaz.
+- [ ] Retest de `node scripts/ats-harness-check.mts` sobre `7c2f44881140`; todavía no afirmar higiene PASS sobre ese SHA.
 
 ## Validación local obligatoria
 
