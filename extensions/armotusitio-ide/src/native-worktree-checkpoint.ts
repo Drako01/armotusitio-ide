@@ -33,21 +33,34 @@ export interface WorktreeCheckpoint {
 	status: 'prepared' | 'rolled-back';
 }
 
-async function git(root: string, args: string[]): Promise<string> {
+/** Options for Git operations on managed checkouts; output is trimmed unless `raw` is set. */
+export interface ManagedGitOptions {
+	env?: Record<string, string>;
+	maxBuffer?: number;
+	raw?: boolean;
+	failure?: string;
+}
+
+/** Run Git without a shell and with a minimal environment. */
+export async function managedGit(root: string, args: string[], options: ManagedGitOptions = {}): Promise<string> {
 	const command = await resolveNativeCommand('git', args);
 	return await new Promise((resolve, reject) => {
 		execFile(command.executable, command.args, {
-			cwd: root, timeout: 60_000, windowsHide: true, maxBuffer: 64 * 1024,
+			cwd: root, timeout: 60_000, windowsHide: true, maxBuffer: options.maxBuffer ?? 64 * 1024,
 			env: {
 				PATH: process.env.PATH, Path: process.env.Path, SystemRoot: process.env.SystemRoot,
 				HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE,
-				GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0'
+				GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0', ...options.env
 			}
-		}, (error, stdout) => error ? reject(Error('HARNESS_CHECKPOINT_GIT_FAILED')) : resolve(stdout.trim()));
+		}, (error, stdout) => error
+			? reject(Error(options.failure ?? 'HARNESS_CHECKPOINT_GIT_FAILED'))
+			: resolve(options.raw ? stdout : stdout.trim()));
 	});
 }
-const digest = (value: string): string => createHash('sha256').update(value).digest('hex');
-async function validateManagedWorktree(worktree: ManagedWorktree): Promise<void> {
+const git = (root: string, args: string[]): Promise<string> => managedGit(root, args);
+export const digest = (value: string | Buffer): string => createHash('sha256').update(value).digest('hex');
+/** Prove the descriptor is a registered managed worktree of its parent repository. */
+export async function validateManagedWorktree(worktree: ManagedWorktree): Promise<void> {
 	if (!UUID.test(worktree.id) || path.basename(worktree.root) !== 'wt-' + worktree.id) {
 		throw Error('HARNESS_CHECKPOINT_WORKTREE_INVALID');
 	}
@@ -64,7 +77,8 @@ async function validateManagedWorktree(worktree: ManagedWorktree): Promise<void>
 	const currentCommon = await fs.realpath(path.resolve(root, await git(root, ['rev-parse', '--git-common-dir'])));
 	if (expectedCommon !== currentCommon) { throw Error('HARNESS_CHECKPOINT_REPOSITORY_MISMATCH'); }
 }
-async function safeStorage(storage: string): Promise<void> {
+/** Create a private, canonical, non-linked state directory. */
+export async function safeStorage(storage: string): Promise<void> {
 	await fs.mkdir(storage, { recursive: true, mode: 0o700 });
 	const stat = await fs.lstat(storage);
 	if (!stat.isDirectory() || stat.isSymbolicLink() || await fs.realpath(storage) !== path.resolve(storage)) {
@@ -90,9 +104,10 @@ async function readRecord(file: string): Promise<CheckpointRecord> {
 	}
 	return item;
 }
-async function writeDurable(file: string, value: unknown, exclusive: boolean): Promise<void> {
+/** fsync a bounded JSON record; non-exclusive writes replace atomically by rename. */
+export async function writeDurable(file: string, value: unknown, exclusive: boolean, maxBytes = MAX_BYTES): Promise<void> {
 	const bytes = JSON.stringify(value);
-	if (Buffer.byteLength(bytes) > MAX_BYTES) { throw Error('HARNESS_CHECKPOINT_UNSAFE_RECORD'); }
+	if (Buffer.byteLength(bytes) > maxBytes) { throw Error('HARNESS_CHECKPOINT_UNSAFE_RECORD'); }
 	const target = exclusive ? file : file + '.' + randomUUID() + '.tmp';
 	const handle = await fs.open(target, 'wx', 0o600);
 	try { await handle.writeFile(bytes); await handle.sync(); }
@@ -123,6 +138,26 @@ export async function createWorktreeCheckpoint(worktree: ManagedWorktree, storag
 	return { id: record.id, head: record.head, status: record.status };
 }
 
+async function preparedRecord(worktree: ManagedWorktree, storage: string, id: string): Promise<{ record: CheckpointRecord; file: string }> {
+	if (!UUID.test(id)) { throw Error('HARNESS_CHECKPOINT_ID_INVALID'); }
+	await validateManagedWorktree(worktree);
+	await safeStorage(storage);
+	const file = path.join(storage, id + '.json');
+	const record = await readRecord(file);
+	if (record.id !== id || record.worktreeId !== worktree.id ||
+		record.rootKey !== digest(worktree.root) || record.parentKey !== digest(worktree.parent) ||
+		record.status !== 'prepared') {
+		throw Error('HARNESS_CHECKPOINT_IDENTITY_MISMATCH');
+	}
+	return { record, file };
+}
+
+/** Read a still-prepared checkpoint that belongs to this exact managed worktree. */
+export async function readWorktreeCheckpoint(worktree: ManagedWorktree, storage: string, id: string): Promise<WorktreeCheckpoint> {
+	const { record } = await preparedRecord(worktree, storage, id);
+	return { id: record.id, head: record.head, status: record.status };
+}
+
 /**
  * Destructive only inside an owned detached worktree, with explicit confirmation.
  * Refuses changed HEAD, foreign descriptors, unknown records and pending journals.
@@ -133,17 +168,8 @@ export async function rollbackWorktreeCheckpoint(
 	fence: SharedExecutionFence, explicitlyApproved: boolean
 ): Promise<WorktreeCheckpoint> {
 	if (!explicitlyApproved) { throw Error('HARNESS_CHECKPOINT_APPROVAL_REQUIRED'); }
-	if (!UUID.test(id)) { throw Error('HARNESS_CHECKPOINT_ID_INVALID'); }
 	await fence.assertCurrent();
-	await validateManagedWorktree(worktree);
-	await safeStorage(storage);
-	const file = path.join(storage, id + '.json');
-	const record = await readRecord(file);
-	if (record.id !== id || record.worktreeId !== worktree.id ||
-		record.rootKey !== digest(worktree.root) || record.parentKey !== digest(worktree.parent) ||
-		record.status !== 'prepared') {
-		throw Error('HARNESS_CHECKPOINT_IDENTITY_MISMATCH');
-	}
+	const { record, file } = await preparedRecord(worktree, storage, id);
 	if (await git(worktree.root, ['rev-parse', '--verify', 'HEAD']) !== record.head) {
 		throw Error('HARNESS_CHECKPOINT_HEAD_CHANGED');
 	}
