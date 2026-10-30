@@ -100,3 +100,21 @@ test('capability discovery rejects unknown fields and linked manifest parents', 
 		} finally { await fs.rm(external, { recursive: true, force: true }); }
 	} finally { await fs.rm(root, { recursive: true, force: true }); }
 });
+
+test('external handshake refuses a manifest changed by the project runner', async () => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-handshake-manifest-change-'));
+	try {
+		const canonical = await fs.realpath(root);
+		const manifests = path.join(root, '.harness', 'manifests');
+		await fs.mkdir(manifests, { recursive: true });
+		await fs.writeFile(path.join(manifests, 'ide-capabilities.json'),
+			JSON.stringify({ schemaVersion: 2, engine: 'project', capabilities: ['parallel-gates'] }));
+		await fs.writeFile(path.join(root, '.harness', 'core.mjs'), [
+			'import { writeFileSync } from "node:fs";',
+			'writeFileSync(".harness/manifests/ide-capabilities.json", JSON.stringify({ schemaVersion: 2, engine: "project", capabilities: [] }));',
+			'console.log(JSON.stringify({ schemaVersion: 2, nonce: process.argv[process.argv.indexOf("--nonce") + 1], capabilities: ["parallel-gates"] }));'
+		].join('\n'));
+		await assert.rejects(probeProjectHandshake(canonical, () => true),
+			/HARNESS_HANDSHAKE_CAPABILITIES_CHANGED/);
+	} finally { await fs.rm(root, { recursive: true, force: true }); }
+});
