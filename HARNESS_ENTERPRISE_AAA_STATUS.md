@@ -9,7 +9,7 @@
 
 Esta guía documenta el alcance acordado y diferencia **código agregado a la rama** de funcionalidad realmente certificada. Una casilla marcada no significa que el comportamiento haya pasado pruebas reales de extremo a extremo.
 
-**Inventario funcional:** 34 ítems implementados en código, 5 parciales y 15 pendientes (54 ítems de distinto tamaño y riesgo; no representan un porcentaje técnico de certificación). **Última validación automatizada local Windows aportada:** 192 tests aprobados, 0 fallidos, 1 omitido (193 total), con TypeScript, bundle, recursos e higiene en PASS, sobre el commit `a5ec430ef523` anterior a la actual ronda de endurecimiento. Esto no equivale a CI multiplataforma ni a E2E completo.
+**Inventario funcional:** 34 ítems implementados en código, 5 parciales y 15 pendientes (54 ítems de distinto tamaño y riesgo; no representan un porcentaje técnico de certificación). **Última validación automatizada local Windows aportada:** 194 tests aprobados, 0 fallidos, 1 omitido (195 total), con TypeScript, bundle, recursos e higiene en PASS, sobre el commit `2c942d1f829` anterior al lote actual. Esto no equivale a CI multiplataforma ni a E2E completo.
 
 **Calificación:** no asignar una nueva nota 1–10 ni declarar nivel AAA hasta disponer de pruebas reproducibles y resultados E2E. El 70% mencionado en el seguimiento conversacional fue una apreciación de cobertura, **no** una medición auditada.
 
@@ -368,13 +368,22 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 - [ ] **Validación local posterior:** correr el verificador, suite completa y check TypeScript; el último log del operador (**191 PASS / 0 FAIL / 1 SKIP**) es anterior a estos dos commits.
 - [ ] **Sigue pendiente:** journal transaccional real, recuperación ante fallas de disco a mitad de una serie de registros, y sandbox OS. No confundir esta protección de lock con rollback transaccional completo.
 
-### Lote P0: integridad de locks, estado y worktrees (2026-10-30; pendiente de retest)
+### Lote P0: integridad de locks, estado y worktrees (2026-10-30; validado Windows)
 
 - [x] **Estado terminal durable antes de desbloquear:** `NativeAgentWorkflow.start()` solo retira `execution.lock` cuando se confirmó la persistencia del registro final. Ante un fallo de escritura, retiene el lock para reconciliación explícita. Nueva prueba simula que el archivo de estado deja de ser escribible y verifica que un segundo writer queda bloqueado.
 - [x] **Vinculación archivo–workflow:** `readHistory()` rechaza cualquier registro cuyo `id` no coincida exactamente con el nombre de archivo. `reconcile()` no podrá escribir sobre un registro distinto al inspeccionado. Nueva prueba de identidad alterada y conservación de evidencia.
 - [x] **Limpieza de worktrees:** `removeCleanAgentWorktree()` valida formato del ID, nombre de directorio esperado y `git-common-dir` compartido con el repositorio raíz antes de ejecutar `git worktree remove`. Nueva prueba de descriptor falsificado.
-- [ ] **Retest obligatorio:** prueba focalizada de workflow y worktree, `ats-harness-check.mts`, suite completa, TypeScript, recursos y `git diff --check`. Los 192 PASS provienen del log *anterior* a este lote.
+- [x] **Retest Windows:** workflow 12/12, worktree 1/1, suite 194 PASS / 0 FAIL / 1 SKIP, TypeScript, recursos, bundle, higiene y diff PASS (log 2026-10-30 21:23 ART).
 - [ ] **Aún no implementado:** journal transaccional, merge/rollback reversible, aislamiento filesystem/proceso/red a nivel OS, pruebas adversariales E2E; los controles aquí agregados no justifican declararlos completos.
+
+### Lote P0 siguiente: estados de proyectos y persistencia reforzada (2026-10-30; retest pendiente)
+
+- [x] `restartInterrupted()` busca en los hasta 500 registros válidos almacenados, no solo en los 40 visibles en la UI; conserva aprobación renovada y prohibición de repetir escritores inciertos.
+- [x] `reconcile()` rechaza registros cuyo `projectKey` no coincide con el proyecto local antes de alterar locks o estados.
+- [x] `atomicWrite()` ejecuta `FileHandle.sync()` sobre el estado temporal antes del rename atómico; reduce pérdidas por buffer pendiente pero no garantiza atomicidad entre varios registros ni durabilidad del directorio en todos los sistemas operativos.
+- [x] Dos nuevas pruebas offline verifican rechazo de registros ajenos y búsqueda de ejecuciones antiguas.
+- [ ] **Ronda de pruebas actual:** ejecutar tests focalizados, check local, suite completa, typecheck e higiene; los **194 PASS** corresponden al commit anterior a este lote.
+- [ ] **P0 pendiente:** journal multioperación, fencing efectivo de locks ante concurrencia entre procesos, sandbox OS, integración/reversión de cambios y pruebas adversariales.
 
 ## Validación local obligatoria
 
