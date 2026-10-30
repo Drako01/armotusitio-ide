@@ -51,8 +51,8 @@ async function gitHash(root: string, args: string[]): Promise<string> {
 	});
 }
 export interface ScopeSnapshot {
-	source: 'git' | 'none'
-	digest: string
+	source: 'git' | 'none';
+	digest: string;
 }
 
 export async function captureAgentScope(root: string): Promise<ScopeSnapshot> {
