@@ -9,7 +9,7 @@
 
 Esta guía documenta el alcance acordado y diferencia **código agregado a la rama** de funcionalidad realmente certificada. Una casilla marcada no significa que el comportamiento haya pasado pruebas reales de extremo a extremo.
 
-**Inventario funcional:** 34 ítems implementados en código, 5 parciales y 15 pendientes (54 ítems de distinto tamaño y riesgo; no representan un porcentaje técnico de certificación). **Última validación automatizada local Windows aportada:** 213 tests aprobados, 0 fallidos, 1 omitido (214 total), con TypeScript, bundle, recursos, higiene y diff en PASS según el último log Windows del 2026-10-30 21:45, sobre el commit `b50999ec592`. Las mejoras posteriores aún requieren retest. Esto no equivale a CI multiplataforma ni a E2E completo.
+**Inventario funcional:** 34 ítems implementados en código, 5 parciales y 15 pendientes (54 ítems de distinto tamaño y riesgo; no representan un porcentaje técnico de certificación). **Última validación automatizada local Windows aportada:** 220 tests aprobados, 0 fallidos, 1 omitido (221 total), con TypeScript, bundle, recursos, higiene y diff en PASS según el último log Windows del 2026-10-30 21:50, sobre el commit `66d57bea921`. Las mejoras posteriores aún requieren retest. Esto no equivale a CI multiplataforma ni a E2E completo.
 
 **Calificación:** no asignar una nueva nota 1–10 ni declarar nivel AAA hasta disponer de pruebas reproducibles y resultados E2E. El 70% mencionado en el seguimiento conversacional fue una apreciación de cobertura, **no** una medición auditada.
 
@@ -428,7 +428,7 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 - [x] **Validación local completada:** **213 PASS / 0 FAIL / 1 SKIP** sobre `b50999ec592`, con todos los gates locales en PASS.
 - [ ] **Interoperabilidad completa:** pendiente protocolo de control compartido, fencing de escrituras, delegación de gates y pruebas reales multi-Harness. Las skills se consumen como convenciones, nunca como permiso para ejecutar arbitrariamente.
 
-### Lote P1: inventario de convenciones de proyecto (2026-10-30; pendiente de retest)
+### Lote P1: inventario de convenciones de proyecto (2026-10-30; validado Windows)
 
 - [x] Descubrimiento **read-only** de `AGENTS.md`, `CLAUDE.md`, `.codex/AGENTS.md` y `.github/copilot-instructions.md`, con límites por archivo de 64 KiB, hashes SHA-256 y rutas relativas canónicas.
 - [x] El catálogo no expone contenido de instrucciones en la revisión visual: únicamente rutas, tamaño y digest. No interpreta archivos de proyecto como autorizaciones de ejecución ni ejecuta sus comandos.
@@ -436,17 +436,41 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 - [x] Rechazo de documentos y directorios padres enlazados mediante symlinks/junctions, archivos no regulares y archivos superiores al límite. No se siguen rutas externas.
 - [x] Pruebas offline nuevas de inventario, mutación de contenido, tamaños máximos, symlinks, preview de metadatos y cancelación de lanzamiento ante cambios.
 - [x] Registro de `native-project-guidance.ts` y su suite en formato, higiene, tests focalizados y verificación local.
-- [ ] **Retest consolidado:** los últimos 213 PASS son anteriores a este bloque. Ejecutar localmente la suite nueva y los gates completos una sola vez tras el lote.
+- [x] **Retest Windows:** incluidos en la suite 220 PASS / 0 FAIL / 1 SKIP, TypeScript, bundle, higiene y diff PASS, sobre `66d57bea921`.
 - [ ] **No implementado:** interoperabilidad ejecutable plena entre motores, exclusión distribuida de escritores, journal multioperación, sandbox OS y ejecución autónoma de gates externos. Ningún metadato de convenciones puede habilitar estas capacidades.
 
-### Lote P1: comparación de capacidades sin elevación de permisos (2026-10-30; retest pendiente)
+### Lote P1: comparación de capacidades sin elevación de permisos (2026-10-30; validado Windows)
 
 - [x] `verifiedNativeCapabilities()` expone la lista real declarada por el motor IDE, independiente de que el proyecto abierto disponga de Harness propio.
 - [x] `compareHybridCapabilities()` devuelve intersección, capacidades exclusivas del IDE y capacidades reportadas solo por el proyecto; rechaza nombres desconocidos y duplicados.
 - [x] El handshake explícito muestra esta comparación para preparar el futuro routing de gates. **El resultado nunca activa ejecución externa**: `executionGranted: false`.
 - [x] Pruebas offline de solapamiento, funcionalidad externa sin attestation, rechazo de manifiestos inválidos y renderizado del handshake real sin autorización de ejecución.
 - [ ] **Pendiente:** protocolo de ejecución de gates con contratos firmes, locks compartidos/fencing y tests E2E reales. No usar los reportes de capacidades como sustituto de implementación validada.
-- [ ] **Retest local consolidado** tras los cambios de este lote, sobre el SHA definitivo.
+- [x] **Retest Windows:** comparación de capacidades y UI de handshake validadas dentro de los 220 PASS sobre `66d57bea921`.
+
+### Lote P0/P1: catálogo seguro de gates externos y handshake estable (2026-10-30; retest pendiente)
+
+- [x] **Capacidades endurecidas:** `.harness/manifests/ide-capabilities.json` exige rutas padre canónicas sin symlinks, lectura real acotada a 16 KiB y campos exactos de schema v2. Los campos desconocidos no amplían autoridad.
+- [x] **Descubrimiento declarativo de gates:** `.harness/manifests/ide-gates.json` admite únicamente `schemaVersion: 1` y `gates` con `id`, `dependsOn` y `resources`; hasta 32 gates, identificadores limitados, máximo 8 recursos por gate y 16 KiB totales. Rechaza comandos, rutas ejecutables, dependencias ausentes y ciclos.
+- [x] **Sin ejecución implícita:** `readProjectGateCatalog()` solo lee metadatos y SHA-256, devuelve `executionEnabled: false`. El catálogo aparece en el handshake voluntario del proyecto; nunca se interpretan capacidades o DAG como autorización.
+- [x] **Snapshot para integración futura:** `validateProjectGateCatalog()` comprueba que el digest aprobado todavía coincide. El handshake también vuelve a validar la declaración de capacidades después de ejecutar el probe, rechazando cambios de manifiesto.
+- [x] **Regresiones offline:** validación estricta de manifest de capacidades y directorios enlazados, catálogo DAG, ciclos, comandos inyectados, dependencias ausentes, alteración de digest, UI read-only y mutación durante handshake.
+- [x] **Gates de calidad:** módulo y pruebas del catálogo añadidos al verificador `ats-harness-check.mts`, incluyendo formato, TypeScript, suite enfocada e higiene.
+- [ ] **Retest obligatorio del lote:** los 220 PASS son anteriores a los cambios indicados en este bloque; no declarar PASS sin ejecutar la suite del SHA publicado.
+- [ ] **Delegación de gates de proyecto:** requiere negociar un contrato ejecutable y explícito, permisos, límites de procesos y locks compartidos. Este catálogo no ejecuta un solo gate y no certifica coexistencia de escritores.
+- [ ] **P0 restantes:** journal transaccional entre registros, fencing de locks interproceso, sandbox OS, control de red y rollback sin pérdida de datos.
+
+**Formato del catálogo opcional (no crea ni habilita gates):**
+
+```json
+{
+  "schemaVersion": 1,
+  "gates": [
+    { "id": "lint", "dependsOn": [], "resources": ["cpu"] },
+    { "id": "tests", "dependsOn": ["lint"], "resources": ["db"] }
+  ]
+}
+```
 
 ## Validación local obligatoria
 
