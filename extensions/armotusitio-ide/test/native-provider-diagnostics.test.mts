@@ -1,0 +1,32 @@
+/*---------------------------------------------------------------------------------------------
+ * Copyright (c) ArmoTuSitio contributors. Licensed under the MIT License.
+ *--------------------------------------------------------------------------------------------*/
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { diagnoseProvider } from '../src/native-provider-diagnostics.ts';
+
+test('provider diagnostics reject unknown hosts without invoking any model', async () => {
+  await assert.rejects(diagnoseProvider('unknown' as any), /HARNESS_PROVIDER_UNSUPPORTED/);
+});
+
+test('diagnostics report availability but never imply authentication', { skip: process.platform === 'win32' }, async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-provider-diagnostic-'));
+  const oldPath = process.env.PATH;
+  try {
+    const cli = path.join(root, 'codex');
+    await fs.writeFile(cli, '#!/bin/sh\necho "codex-cli 1.2.3"\n', { mode: 0o755 });
+    await fs.chmod(cli, 0o755);
+    process.env.PATH = root + path.delimiter + (oldPath || '');
+    const result = await diagnoseProvider('codex');
+    assert.equal(result.installed, true);
+    assert.equal(result.version, '1.2.3');
+    assert.equal(result.protocolVerified, false);
+    assert.equal(result.modelAuthenticated, false);
+  } finally {
+    if (oldPath === undefined) { delete process.env.PATH; } else { process.env.PATH = oldPath; }
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
