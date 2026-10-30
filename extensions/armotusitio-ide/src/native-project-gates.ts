@@ -100,7 +100,10 @@ export function planProjectGateWaves(catalog: ProjectGateCatalog, maxConcurrent 
 	if (!Number.isSafeInteger(maxConcurrent) || maxConcurrent < 1 || maxConcurrent > 8) {
 		throw Error('HARNESS_GATE_CAPACITY_INVALID');
 	}
-	if (catalog.executionEnabled !== false || catalog.schemaVersion !== 1 ||
+	if (!catalog || typeof catalog !== 'object' ||
+		Object.keys(catalog).sort().join(',') !== 'digest,executionEnabled,gates,schemaVersion' ||
+		typeof catalog.digest !== 'string' || !/^[a-f0-9]{64}$/.test(catalog.digest) ||
+		catalog.executionEnabled !== false || catalog.schemaVersion !== 1 ||
 		!Array.isArray(catalog.gates) || catalog.gates.length > 32) {
 		throw Error('HARNESS_GATE_CATALOG_INVALID');
 	}
