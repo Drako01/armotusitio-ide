@@ -98,6 +98,7 @@ export class NativeAgentWorkflow {
   private active: AgentExecution | undefined;
   private cancelled = false;
   private running = false;
+  private verificationController: AbortController | undefined;
 
   constructor(private readonly root: string, private readonly storage: string) {}
 
@@ -125,6 +126,7 @@ export class NativeAgentWorkflow {
   cancel(): void {
     this.cancelled = true;
     this.active?.cancel();
+    this.verificationController?.abort();
   }
 
   /** Explicit stale-state reconciliation. Never kills an agent or silently retries an interrupted step. */
@@ -160,7 +162,7 @@ export class NativeAgentWorkflow {
     return recovered;
   }
 
-  async start(plan: HandoffPlan, approvedDigest: string, trusted: () => boolean, verify?: () => Promise<boolean>): Promise<WorkflowRun> {
+  async start(plan: HandoffPlan, approvedDigest: string, trusted: () => boolean, verify?: (signal: AbortSignal) => Promise<boolean>): Promise<WorkflowRun> {
     if (this.running) { throw Error('HARNESS_WORKFLOW_ALREADY_RUNNING'); }
     if (!trusted()) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
     const canonical = await fs.realpath(this.root);
@@ -229,9 +231,12 @@ export class NativeAgentWorkflow {
           if (!trusted() || this.cancelled) { record.status = 'cancelled'; }
           else {
             try {
-              record.verification = await verify() ? 'passed' : 'failed';
-              if (record.verification === 'failed') { record.status = 'failed'; }
-            } catch { record.verification = 'failed'; record.status = 'failed'; }
+              this.verificationController = new AbortController();
+              record.verification = await verify(this.verificationController.signal) ? 'passed' : 'failed';
+              if (this.cancelled) { record.status = 'cancelled'; }
+              else if (record.verification === 'failed') { record.status = 'failed'; }
+            } catch { record.verification = 'failed'; record.status = this.cancelled ? 'cancelled' : 'failed'; }
+            finally { this.verificationController = undefined; }
           }
         } else if (!verify) { record.verification = 'not-configured'; }
         if (record.status === 'running') { record.status = 'passed'; }
@@ -242,6 +247,7 @@ export class NativeAgentWorkflow {
         try { await atomicWrite(file, record); }
         finally {
           this.active = undefined;
+          this.verificationController = undefined;
           this.running = false;
           await lock.close();
           await fs.rm(lockFile, { force: true });
