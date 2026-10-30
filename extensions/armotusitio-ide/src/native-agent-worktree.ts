@@ -48,6 +48,9 @@ export async function createAgentWorktree(root: string, storage: string): Promis
   const topLevel = await git(canonical, ['rev-parse', '--show-toplevel']);
   const topCanonical = await fs.realpath(topLevel);
   if ((process.platform === 'win32' ? topCanonical.toLowerCase() : topCanonical) !== (process.platform === 'win32' ? canonical.toLowerCase() : canonical)) { throw Error('HARNESS_WORKTREE_NOT_REPOSITORY_ROOT'); }
+  // A detached worktree contains HEAD, not dirty local changes. Refuse a misleading clone.
+  const dirty = await git(canonical, ['status', '--porcelain=v1', '--untracked-files=all']);
+  if (dirty) { throw Error('HARNESS_WORKTREE_SOURCE_DIRTY'); }
   const commit = await git(canonical, ['rev-parse', '--verify', 'HEAD']);
   if (!/^[a-f0-9]{40,64}$/i.test(commit)) { throw Error('HARNESS_WORKTREE_HEAD_UNAVAILABLE'); }
   await fs.mkdir(storage, { recursive: true, mode: 0o700 });
