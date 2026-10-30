@@ -9,7 +9,7 @@
 
 Esta guía documenta el alcance acordado y diferencia **código agregado a la rama** de funcionalidad realmente certificada. Una casilla marcada no significa que el comportamiento haya pasado pruebas reales de extremo a extremo.
 
-**Inventario:** 34 ítems con implementación en código, 5 parciales y 15 pendientes. Son ítems de diferente tamaño y riesgo; no equivalen a un porcentaje técnico de avance.
+**Inventario funcional:** 34 ítems implementados en código, 5 parciales y 15 pendientes (54 ítems de distinto tamaño y riesgo; no representan un porcentaje técnico de certificación). **Validación automatizada local Windows:** PASS en el árbol de trabajo que se consolidó con el commit de formato `18f35f8d374`; 173 tests aprobados, 0 fallidos, 9 omitidos. No equivale a CI ni E2E real.
 
 **Calificación:** no asignar una nueva nota 1–10 ni declarar nivel AAA hasta disponer de pruebas reproducibles y resultados E2E. El 70% mencionado en el seguimiento conversacional fue una apreciación de cobertura, **no** una medición auditada.
 
@@ -153,9 +153,9 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 - [ ] **Pendiente para certificación enterprise:** confirmar CI Linux/macOS/Windows, los 7 casos omitidos (según su compatibilidad de plataforma) y pruebas E2E con proveedores reales, incluida autorización, cancelación, límites, recuperación y aislamiento.
 - **Notas no bloqueantes:** warnings de `MODULE_TYPELESS_PACKAGE_JSON`, `stripTypeScriptTypes` experimental y configuración npm antigua; no se consideran fallas de las pruebas realizadas.
 
-## Ampliación de las seis áreas previamente parciales (pendiente de validación)
+## Ampliación de las seis áreas previamente parciales (validación automatizada local completada)
 
-**Rama:** `feat/native-harness-enterprise-upgrade`. Esta entrega agrega código para **las seis áreas** y una suite de regresiones. El último resultado de 160 PASS corresponde al código **anterior** a esta ampliación; no debe utilizarse como evidencia de los cambios nuevos.
+**Rama:** `feat/native-harness-enterprise-upgrade`. Esta entrega agrega código para **las seis áreas** y suites de regresión. El resultado actualizado es **173 PASS / 0 FAIL / 9 SKIP** en Windows, sobre el árbol local con formato oficial que se confirmó como `18f35f8d374`. La validación anterior de 160 PASS queda como antecedente histórico, no como evidencia vigente.
 
 - **Contrato externo:** `probeProjectHandshake` ejecuta la entrada reconocida del Harness del proyecto solo tras autorización explícita, con nonce, timeout, límites de respuesta y comprobación contra capacidades declaradas. El contrato continúa *fail closed*: los datos auto-reportados no habilitan ejecución automática.
 - **DAG real:** nueva ejecución en olas para agentes independientes de solo lectura, con escritores exclusivos, dependencias topológicas y validación de reviewer posterior a cada escritor. Ruta secuencial conservada para workflows tradicionales.
@@ -166,7 +166,7 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 
 **Matriz de pruebas y limitaciones:** [`docs/native-harness-six-partial-validation.md`](docs/native-harness-six-partial-validation.md).
 
-- [ ] Ejecutar los tres comandos de validación **sobre el nuevo SHA** y corregir errores reales detectados; verificar el hook de higiene.
+- [x] Ejecutados los tres comandos sobre el árbol de trabajo final antes de confirmar el commit `18f35f8d374`; verificador completo PASS, pruebas 173/0/9 y typecheck/recursos PASS. Precommit Husky confirmó higiene de los cuatro archivos stageados. Para atribuir evidencia al SHA final inmutable todavía corresponde repetir en checkout limpio o verificar CI.
 - [ ] CI Windows/Linux/macOS y pruebas E2E de CLI reales.
 - [ ] Evidencia adicional para cerrar las cinco áreas que siguen siendo parciales, sin reducir el nivel de seguridad ni relajar checks.
 
@@ -175,8 +175,29 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 - **Suite de extensión:** 173 PASS, 0 FAIL, 9 SKIP; `npm run check`: PASS.
 - **Verificador focalizado:** TypeScript, recursos, renderer, bundle y diff whitespace: PASS. `Focused hygiene`: un único error ESLint `curly` por `else for` en `native-agent-workflow.ts`, línea 357.
 - [x] **Corrección publicada:** el fallback secuencial ahora utiliza un bloque `else { ... }`; sin modificaciones del flujo de decisiones. **Pendiente de nueva prueba**.
-- **Formato local no incorporado aún:** `--fix` modificó `native-integration.ts`, `native-agent-dag.test.mts` y `native-agent-execution.test.mts` en el checkout del operador. Preservar esos archivos y registrarlos con un commit después de validar; no descartarlos.
-- [ ] Volver a ejecutar el verificador y la batería en el SHA corregido; constatar la higiene verde antes de cerrar los gates.
+- **Formato incorporado posteriormente:** los tres archivos y `native-agent-workflow.ts` se formatearon y publicaron en `18f35f8d374`; la nota anterior documenta el incidente previo, no un trabajo actualmente pendiente.
+- [x] Reejecución local realizada con el árbol actualizado: higiene verde, typecheck y pruebas en verde. Evidencia y commit de formato detallados en el cierre siguiente.
+
+### Cierre de la ampliación: validación Windows y publicación (2026-10-30, 17:23 ART)
+
+**Evidencia del operador:** log `Texto pegado(20261030-202342).txt`, Windows `win32/x64`, Node `v24.22.1`.
+
+| Control | Resultado observado |
+|---|---|
+| `node scripts/ats-harness-check.mts --fix` | PASS; el formateador ajustó `native-agent-workflow.ts` |
+| `node scripts/ats-harness-check.mts` (sin `--fix`) | **PASS**: TypeScript, webview, UI/renderer, bundle, recursos nativos, `Focused hygiene` y `Diff whitespace` |
+| `npm test --prefix extensions/armotusitio-ide` | **173 PASS, 0 FAIL, 9 SKIP** (182 tests en total) |
+| `npm run check --prefix extensions/armotusitio-ide` | **PASS**: TypeScript y recursos |
+| `git diff --check` y `git diff --cached --check` | **PASS**: sin errores informados |
+| Husky precommit | **PASS**: cuatro archivos analizados por higiene |
+| Commit y push | **PASS**: `18f35f8d374`, `style(harness): finalize six-area enterprise formatting`, publicado en `feat/native-harness-enterprise-upgrade` |
+
+- [x] **Bloqueo local de formato/higiene: cerrado.** No quedan fallas en la batería local ejecutada sobre el árbol que se publicó.
+- [x] **Commit de formato publicado.** Cuatro archivos, 89 inserciones y 81 eliminaciones declaradas por Git; no se incluyó `script_test.log`.
+- [ ] **CI sobre el SHA `18f35f8d374`**: no confirmado en esta evidencia. Hay que verificar los jobs de Windows, Linux y macOS y sus tests E2E simulados que Windows omite.
+- [ ] **E2E con Codex/Claude autenticados**, permisos y aislamiento OS, recuperación con escrituras, portabilidad, benchmarks y empaquetado completo del IDE: aún sin certificación.
+
+**Interpretación:** los 9 SKIP son omisiones explícitas de tests según plataforma, no 9 fallos; sí constituyen cobertura pendiente en Windows. Los warnings de Node sobre TypeScript experimental y `MODULE_TYPELESS_PACKAGE_JSON` no bloquearon este cierre. La ejecución se hizo **antes** del commit final de formato: la prueba no demuestra por sí sola que GitHub CI pasó en ese SHA exacto.
 
 ## Validación local obligatoria
 
@@ -198,9 +219,9 @@ Después, validar manualmente en el IDE: arranque y apertura de proyectos con/si
 
 ### Criterios de salida para la rama
 
-- [ ] Todos los comandos anteriores finalizan con código de salida cero.
-- [ ] El workflow CI aparece como **successful** para el último commit de la rama.
-- [ ] Build del IDE y empaquetado de extensión completados sin regresiones.
+- [x] Los tres comandos locales finalizaron satisfactoriamente en el árbol de trabajo final de Windows; confirmar por separado el SHA exacto mediante CI o checkout limpio.
+- [ ] El workflow CI aparece como **successful** para el último commit de la rama (actualmente `18f35f8d374`; sin evidencia verificada).
+- [ ] Build **completo del IDE** y empaquetado de distribución validados; el bundle y chequeo de recursos de la extensión **sí** pasaron localmente.
 - [ ] Pruebas de permiso de lectura/escritura, aislamiento y secretos aprobadas.
 - [ ] E2E real plan → implement → review → gate funciona con Codex y Claude.
 - [ ] Cancelación, bloqueo, recuperación, y conservación de modificaciones comprobados.
