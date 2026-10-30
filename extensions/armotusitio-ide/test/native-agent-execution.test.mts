@@ -33,6 +33,9 @@ test('Claude uses plan for readers and fail-closed dontAsk for writers', () => {
   const writer = buildAgentInvocation({ ...base, provider: 'claude', role: 'implementer', readOnly: false });
   assert.equal(reader.args[2], 'plan');
   assert.equal(writer.args[2], 'dontAsk');
+  assert.ok(writer.args.includes('Read,Glob,Grep,Edit,Write'));
+  assert.ok(writer.args.includes('Bash,WebFetch,WebSearch'));
+  assert.ok(!reader.args.includes('Read,Glob,Grep,Edit,Write'));
   assert.ok(!writer.args.includes('--dangerously-skip-permissions'));
 });
 
