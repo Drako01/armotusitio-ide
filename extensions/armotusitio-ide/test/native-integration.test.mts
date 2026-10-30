@@ -87,3 +87,22 @@ test('project Harness symlink is blocked without reading or replacing its state'
 		await assert.rejects(fs.stat(path.join(f.roots[0], '.ats-harness.json')), { code: 'ENOENT' });
 	} finally { await f.cleanup(); }
 });
+
+test('hybrid project keeps its task engine but exposes native read-only agent review and skill catalog', async () => {
+	const f = await fixture();
+	try {
+		const project = f.roots[0];
+		await fs.mkdir(path.join(project, '.harness'));
+		const skillDir = path.join(project, '.agents', 'skills', 'security');
+		await fs.mkdir(skillDir, { recursive: true });
+		await fs.writeFile(path.join(skillDir, 'SKILL.md'), '# Review security boundaries');
+		await f.invoke('nativeAgentReview', project);
+		const preview = JSON.parse(f.documents.at(-1)!.content);
+		assert.equal(preview.hybrid, true);
+		assert.equal(preview.executionEnabled, false);
+		assert.deepEqual(preview.skills.map(skill => skill.name), ['security']);
+		await f.invoke('nativeNewTask', project);
+		const rows = await f.controller.nativeProjects();
+		assert.deepEqual(rows.map(row => row.root), [f.roots[1]]);
+	} finally { await f.cleanup(); }
+});
