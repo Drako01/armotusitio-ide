@@ -28,6 +28,8 @@ This ledger separates code shipped on the branch from work that has **not** been
 - [x] Conservative project capability declarations read from `.harness/manifests/ide-capabilities.json`, never trusted as verified runtime support.
 - [x] Provider CLI version diagnostics via bounded `--version` calls without invoking a model or claiming authentication.
 - [x] Structured Codex JSONL and Claude JSON output parsing; only actual provider-reported input/output tokens and optional estimated USD cost are recorded. Unknown usage remains unavailable.
+- [x] Incremental bounded Codex JSONL reduction that discards command logs and retains only final model output and usage; tests include large simulated tool output.
+- [x] Privacy-controlled provider launches: Codex ephemeral sessions and a Claude prompt-history opt-out hint (subject to installed CLI support).
 - [x] Codex ephemeral session policy and noninteractive approval denial, with read-only/workspace-write sandbox boundaries.
 
 
@@ -44,6 +46,10 @@ This ledger separates code shipped on the branch from work that has **not** been
 - [ ] Validate Windows, Linux and macOS behavior under CI with actual installer builds and E2E smoke tests.
 - [ ] Complete the project-independent migration of legacy RedEvent policies/docs and expand semantic contract tests.
 - [ ] Verify CI is green on this exact branch SHA before review/merge.
+
+## Local verification status
+
+The branch has **not** passed an observed CI run. Its new cross-platform workflow is defined on the feature branch, but GitHub Actions has not reported any run for that branch. The Windows installer and real authenticated provider calls remain untested. Do not merge or deploy based solely on source inspection.
 
 ## Local checks
 
