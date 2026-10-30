@@ -125,6 +125,15 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 
 **Criterio:** nunca cambiar las casillas pendientes a completadas solo porque la corrección fue commiteada. Repetir el script y adjuntar el nuevo `.log`, incluyendo todos los exit codes.
 
+### Segunda validación Windows (2026-10-30, 15:51)
+
+- **Commit probado:** `fab25dcb9dc`.
+- **Tests de extensión:** **160 PASS / 0 FAIL / 7 SKIP**; TypeScript y recursos: PASS.
+- **Validación focalizada:** falla únicamente `Focused hygiene`, con **10 incidencias**: cinco archivos pendientes del formateador oficial y cinco advertencias de `@stylistic/member-delimiter-style` en tres archivos.
+- **Remediación posterior:** se sustituyeron los miembros de interfaces con separadores no admitidos, en `native-agent-execution.ts`, `native-agent-worktree.ts` y `native-agent-scope.ts`. Estas correcciones **no están incluidas en el log original**.
+- **Formateo restante:** para garantizar el formato exacto exigido por `build/lib/formatter.ts` sin desactivar reglas de higiene, el verificador ofrece ahora `--fix` como modo **explícitamente modificador del árbol de trabajo**. No se ejecuta automáticamente y el cambio local debe inspeccionarse antes de confirmarlo.
+- [ ] **Pendiente:** ejecutar localmente `node scripts/ats-harness-check.mts --fix` una vez, revisar `git diff`, ejecutar los tres comandos originales sin `--fix` y subir nuevo log. No se declara el check verde hasta disponer de evidencia.
+
 ## Validación local obligatoria
 
 Desde la raíz del repositorio, con las dependencias instaladas:
