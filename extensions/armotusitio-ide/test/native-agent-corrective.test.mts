@@ -6,17 +6,17 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import { installFakeCodex } from './native-fake-provider.mts';
 import * as os from 'node:os';
 import { NativeAgentWorkflow, proposedWorkflow, workflowDigest } from '../src/native-agent-workflow.ts';
 
-test('one corrective cycle is bounded and requires independent reviewer reapproval', { skip: process.platform === 'win32' }, async () => {
+test('one corrective cycle is bounded and requires independent reviewer reapproval', async () => {
 	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-corrective-'));
 	const originalPath = process.env.PATH;
 	const traceFile = path.join(os.tmpdir(), 'ats-corrective-trace-' + path.basename(root) + '.txt');
 	try {
 		const bin = path.join(root, 'bin');
 		await fs.mkdir(bin);
-		const cli = path.join(bin, 'codex');
 		const script = [
 			'#!/usr/bin/env node',
 			'let input = "";',
@@ -28,8 +28,7 @@ test('one corrective cycle is bounded and requires independent reviewer reapprov
 			' console.log(phase === "review-first" ? "HARNESS_REVIEW: FAIL" : phase === "review-again" ? "HARNESS_REVIEW: PASS" : "stage passed");',
 			'});'
 		].join('\n');
-		await fs.writeFile(cli, script, { mode: 0o755 });
-		await fs.chmod(cli, 0o755);
+		await installFakeCodex(bin, script);
 		process.env.PATH = bin + path.delimiter + (originalPath || '');
 		const canonical = await fs.realpath(root);
 		const plan = proposedWorkflow('codex', 'Fix a safe local fixture');
