@@ -41,5 +41,6 @@ jobs:
             extensions/armotusitio-ide/test/native-agent-worktree.test.mts \
             extensions/armotusitio-ide/test/native-performance.test.mts \
             extensions/armotusitio-ide/test/native-engine-contract.test.mts \
+            extensions/armotusitio-ide/test/native-review.test.mts \
             extensions/armotusitio-ide/test/native-harness.test.mts \
             extensions/armotusitio-ide/test/native-integration.test.mts
