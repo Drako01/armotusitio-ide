@@ -28,7 +28,6 @@ test('unsupported OS and executable paths fail closed before running a gate', as
 		await assert.rejects(offlineSandboxInvocation(path.resolve('.'), '/usr/bin/git', []),
 			/HARNESS_OS_SANDBOX_UNAVAILABLE/);
 	}
-	assert.throws(() => validateNativePlan({
-		schemaVersion: 1, gates: [{ id: 'unsafe', executable: 'node', args: [], sandbox: 'unknown' }]
-	} as never), /HARNESS_INVALID_SANDBOX_POLICY/);
+	const malformed = JSON.parse('{"schemaVersion":1,"gates":[{"id":"unsafe","executable":"node","args":[],"sandbox":"unknown"}]}');
+	assert.throws(() => validateNativePlan(malformed), /HARNESS_INVALID_SANDBOX_POLICY/);
 });
