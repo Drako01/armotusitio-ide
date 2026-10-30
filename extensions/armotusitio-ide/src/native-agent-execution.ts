@@ -58,7 +58,8 @@ export function buildAgentInvocation(draft: AgentDraft): AgentInvocation {
 	if (draft.provider === 'codex') {
 		return {
 			executable: 'codex',
-			args: ['exec', '--sandbox', draft.readOnly ? 'read-only' : 'workspace-write', '--skip-git-repo-check', '--ask-for-approval', 'never', '--ephemeral', '--json', '-'],
+			// The approval flag is global and must precede the exec subcommand on current Codex CLIs.
+			args: ['--ask-for-approval', 'never', 'exec', '--sandbox', draft.readOnly ? 'read-only' : 'workspace-write', '--skip-git-repo-check', '--ephemeral', '--json', '-'],
 			stdin: instruction
 		};
 	}
