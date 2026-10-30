@@ -534,7 +534,19 @@ export class NativeAgentWorkflow {
 					await lock.close();
 					// Never unlock after a failed state write: a new writer must not
 					// mistake an uncertain workflow for a successfully finished one.
-					if (terminalStatePersisted) { await fs.rm(lockFile, { force: true }); }
+					if (terminalStatePersisted) {
+						const lockStat = await fs.lstat(lockFile);
+						if (!lockStat.isFile() || lockStat.isSymbolicLink() || lockStat.size > 4096) {
+							throw Error('HARNESS_WORKFLOW_LOCK_CHANGED');
+						}
+						const current: unknown = JSON.parse(await fs.readFile(lockFile, 'utf8'));
+						if (!current || typeof current !== 'object' ||
+							(current as { id?: unknown }).id !== record.id ||
+							(current as { pid?: unknown }).pid !== process.pid) {
+							throw Error('HARNESS_WORKFLOW_LOCK_CHANGED');
+						}
+						await fs.rm(lockFile);
+					}
 				}
 			}
 			return record;
