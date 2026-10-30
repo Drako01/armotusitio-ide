@@ -97,6 +97,10 @@ window.addEventListener('message', event => {
 		if (project.agentMetrics?.count) {
 			article.append(element('p', 'Agentes IA: ' + project.agentMetrics.count + ' ejecuciones · éxito: ' + project.agentMetrics.successRate + '% · p95: ' + project.agentMetrics.p95DurationMs + ' ms', 'muted'));
 		}
+		if (project.gatePerformance?.attempts) {
+			const perf = project.gatePerformance;
+			article.append(element('p', 'Gates locales: ' + perf.attempts + ' intentos · éxito: ' + perf.completionRate + '% · p95: ' + perf.p95WallMs + ' ms · paralelismo observado: ' + (perf.averageParallelFactor ?? 'sin datos') + '×', 'muted'));
+		}
 		const details = options(project.root);
 		for (const task of project.tasks.slice(1)) { details.append(taskRow(task)); }
 		details.append(element('p', project.root, 'muted path'));
