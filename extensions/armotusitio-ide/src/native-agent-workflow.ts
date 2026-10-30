@@ -32,6 +32,18 @@ export interface WorkflowRecord {
 	steps: WorkflowStep[];
 	verification?: 'passed' | 'failed' | 'not-configured';
 }
+export type WorkflowEventKind = 'workflow-started' | 'step-started' | 'step-finished' | 'verification-finished' | 'workflow-finished';
+/** Minimal trust-safe event record: never contains prompts, provider output, paths or credentials. */
+export interface WorkflowEvent {
+	workflowId: string;
+	kind: WorkflowEventKind;
+	at: string;
+	stepId?: string;
+	status?: WorkflowStatus | 'pending';
+	durationMs?: number;
+}
+export type WorkflowEventListener = (event: Readonly<WorkflowEvent>) => void;
+
 export interface WorkflowRun {
 	id: string;
 	result: Promise<WorkflowRecord>;
@@ -105,6 +117,20 @@ export class NativeAgentWorkflow {
 	private cancelled = false;
 	private running = false;
 	private verificationController: AbortController | undefined;
+	private readonly listeners = new Set<WorkflowEventListener>();
+
+	onEvent(listener: WorkflowEventListener): () => void {
+		this.listeners.add(listener);
+		return () => this.listeners.delete(listener);
+	}
+
+	private emit(record: WorkflowRecord, kind: WorkflowEventKind, step?: WorkflowStep): void {
+		const event: WorkflowEvent = Object.freeze({
+			workflowId: record.id, kind, at: new Date().toISOString(),
+			...(step ? { stepId: step.id, status: step.status, ...(step.durationMs === undefined ? {} : { durationMs: step.durationMs }) } : { status: record.status })
+		});
+		for (const listener of this.listeners) { try { listener(event); } catch { /* UI observers cannot change workflow results. */ } }
+	}
 
 	private readonly root: string;
 	private readonly storage: string;
@@ -199,6 +225,7 @@ export class NativeAgentWorkflow {
 			try {
 				await lock.writeFile(JSON.stringify({ id: record.id, startedAt: record.createdAt, pid: process.pid }));
 				await atomicWrite(file, record);
+				this.emit(record, 'workflow-started');
 				const deadline = Date.now() + MAX_WORKFLOW_DURATION_MS;
 				const previousHandoffs: string[] = [];
 				const corrective = new Map<string, Handoff>();
@@ -211,6 +238,7 @@ export class NativeAgentWorkflow {
 					step.status = 'running';
 					step.startedAt = new Date().toISOString();
 					await atomicWrite(file, record);
+					this.emit(record, 'step-started', step);
 					try {
 						const draft = {
 							schemaVersion: 1 as const, provider: handoff.provider, role: handoff.role,
@@ -242,6 +270,7 @@ export class NativeAgentWorkflow {
 						this.active = undefined;
 						step.endedAt = new Date().toISOString();
 						await atomicWrite(file, record);
+						this.emit(record, 'step-finished', step);
 					}
 					// One authorized corrective cycle: reimplement the bounded reviewer feedback,
 					// then require a fresh independent read-only approval. No unbounded retries.
@@ -291,12 +320,13 @@ export class NativeAgentWorkflow {
 						finally { this.verificationController = undefined; }
 					}
 				} else if (!verify) { record.verification = 'not-configured'; }
+				if (record.verification) { this.emit(record, 'verification-finished'); }
 				if (record.status === 'running') { record.status = 'passed'; }
 			} catch {
 				record.status = 'failed';
 			} finally {
 				record.endedAt = new Date().toISOString();
-				try { await atomicWrite(file, record); }
+				try { await atomicWrite(file, record); this.emit(record, 'workflow-finished'); }
 				finally {
 					this.active = undefined;
 					this.verificationController = undefined;
