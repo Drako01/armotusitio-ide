@@ -36,6 +36,8 @@ jobs:
           node --test extensions/armotusitio-ide/test/native-agent-execution.test.mts \
             extensions/armotusitio-ide/test/native-agent-metrics.test.mts \
             extensions/armotusitio-ide/test/native-agent-workflow.test.mts \
+            extensions/armotusitio-ide/test/native-agent-dag.test.mts \
+            extensions/armotusitio-ide/test/native-agent-adversarial.test.mts \
             extensions/armotusitio-ide/test/native-providers.test.mts \
             extensions/armotusitio-ide/test/native-agent-scope.test.mts \
             extensions/armotusitio-ide/test/native-agent-worktree.test.mts \
