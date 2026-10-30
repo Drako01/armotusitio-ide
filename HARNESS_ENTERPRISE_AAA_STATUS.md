@@ -289,6 +289,18 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 - [ ] **Smoke real Claude y CI Windows/Linux/macOS:** pendientes. El test de enlaces simbólicos sensibles permanece omitido en Windows.
 - [ ] **Seguridad OS, recuperación transaccional y protocolo común de motores:** aún no certificados.
 
+### CI local limpio; smoke Claude bloqueado por descubrimiento de CLI (2026-10-30, 17:47 ART)
+
+**Evidencia del operador:** `Texto pegado(20261030-204745).txt` y transcripción de una ejecución manual de Claude autorizada con `RUN`.
+
+- [x] **Validación automatizada local Windows:** verificador sin `--fix` con todos los gates en PASS (TypeScript, recursos, UI/renderer, bundle, empaquetado, higiene, diff). Suite completa: **185 PASS / 0 FAIL / 1 SKIP** de 186 tests; `npm run check` PASS.
+- [x] **Codex real, modo read-only:** PASS con evidencia registrada en la iteración precedente.
+- [ ] **Claude E2E real:** la resolución de ejecutable devolvió `HARNESS_EXECUTABLE_UNAVAILABLE`; no llegó a invocar Claude, no demuestra fallo de autenticación ni de modelo.
+- [ ] **Determinar si Claude Code está instalado y accesible:** comprobar `command -v claude`, `where.exe claude`, `claude --version`, y, en caso de instalación npm, el directorio del paquete `@anthropic-ai/claude-code/cli.js` en PATH. El resolver Windows soporta `claude.exe` y el entry point JavaScript de npm; no ejecuta shims `.cmd` ni comandos arbitrarios.
+- [ ] **CI Linux/macOS/Windows del SHA actual, aislamiento OS, recuperación transaccional y protocolo común de motores:** siguen sin certificación.
+
+**Decisión:** no instalar Claude ni modificar PATH automáticamente sin evidencia del entorno; no relajar el `shell:false` ni las restricciones del ejecutor para ocultar un fallo de descubrimiento.
+
 ## Validación local obligatoria
 
 Desde la raíz del repositorio, con las dependencias instaladas:
