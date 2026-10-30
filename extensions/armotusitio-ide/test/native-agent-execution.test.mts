@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
+import { installFakeCodex } from './native-fake-provider.mts';
 import { execFileSync } from 'node:child_process';
 import { buildAgentInvocation, executeReviewedAgent } from '../src/native-agent-execution.ts';
 import { reviewAgentDraft } from '../src/native-providers.ts';
@@ -51,13 +52,11 @@ test('a changed review or invalid duration never starts an agent', async () => {
 	await assert.rejects(executeReviewedAgent(review, base, -5), /HARNESS_AGENT_TIMEOUT_INVALID/);
 });
 
-test('approved agent runs a fake CLI without shell or provider network', { skip: process.platform === 'win32' }, async () => {
+test('approved agent runs a fake CLI without shell or provider network', async () => {
 	const folder = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-agent-e2e-'));
 	const originalPath = process.env.PATH;
 	try {
-		const cli = path.join(folder, 'codex');
-		await fs.writeFile(cli, '#!/usr/bin/env node\nlet input = ""; process.stdin.on("data", c => input += c); process.stdin.on("end", () => { console.log("SAFE_AGENT", process.argv.slice(2).join(" "), input.includes("Review API changes")); });\n', { mode: 0o755 });
-		await fs.chmod(cli, 0o755);
+		await installFakeCodex(folder, '#!/usr/bin/env node\nlet input = ""; process.stdin.on("data", c => input += c); process.stdin.on("end", () => { console.log("SAFE_AGENT", process.argv.slice(2).join(" "), input.includes("Review API changes")); });\n');
 		process.env.PATH = folder + path.delimiter + (originalPath || '');
 		const current = { ...base, projectRoot: await fs.realpath(folder) };
 		const execution = await executeReviewedAgent(reviewAgentDraft(current), current, 10000);
@@ -72,7 +71,7 @@ test('approved agent runs a fake CLI without shell or provider network', { skip:
 });
 
 
-test('Git read-only role fails closed on unauthorized modification', { skip: process.platform === 'win32' }, async () => {
+test('Git read-only role fails closed on unauthorized modification', async () => {
 	const folder = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-agent-scope-'));
 	const oldPath = process.env.PATH;
 	try {
@@ -82,10 +81,8 @@ test('Git read-only role fails closed on unauthorized modification', { skip: pro
 		execFileSync('git', ['-C', folder, '-c', 'user.email=fixture@example.test', '-c', 'user.name=Fixture', 'commit', '-qm', 'seed']);
 		const bin = path.join(folder, 'fake-bin');
 		await fs.mkdir(bin);
-		const cli = path.join(bin, 'codex');
 		const script = '#!/usr/bin/env node\nrequire("fs").writeFileSync("tracked.txt", "after"); console.log("completed");\n';
-		await fs.writeFile(cli, script, { mode: 0o755 });
-		await fs.chmod(cli, 0o755);
+		await installFakeCodex(bin, script);
 		process.env.PATH = bin + path.delimiter + (oldPath || '');
 		const draft = { ...base, projectRoot: await fs.realpath(folder) };
 		const run = await executeReviewedAgent(reviewAgentDraft(draft), draft, 10000);
@@ -101,11 +98,10 @@ test('Git read-only role fails closed on unauthorized modification', { skip: pro
 });
 
 
-test('structured Codex provider usage flows through real local subprocess transport', { skip: process.platform === 'win32' }, async () => {
+test('structured Codex provider usage flows through real local subprocess transport', async () => {
 	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-agent-usage-'));
 	const oldPath = process.env.PATH;
 	try {
-		const cli = path.join(root, 'codex');
 		const script = [
 			'#!/usr/bin/env node',
 			'const events = [',
@@ -114,8 +110,7 @@ test('structured Codex provider usage flows through real local subprocess transp
 			'];',
 			'process.stdin.resume(); process.stdin.on("end", () => { for (const e of events) console.log(JSON.stringify(e)); });'
 		].join('\n');
-		await fs.writeFile(cli, script, { mode: 0o755 });
-		await fs.chmod(cli, 0o755);
+		await installFakeCodex(root, script);
 		process.env.PATH = root + path.delimiter + (oldPath || '');
 		const current = { ...base, projectRoot: await fs.realpath(root) };
 		const run = await executeReviewedAgent(reviewAgentDraft(current), current, 10000);
@@ -130,15 +125,13 @@ test('structured Codex provider usage flows through real local subprocess transp
 	}
 });
 
-test('provider progress exposes only bounded byte counts, never secrets or prompts', { skip: process.platform === 'win32' }, async () => {
+test('provider progress exposes only bounded byte counts, never secrets or prompts', async () => {
 	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-progress-'));
 	const previousPath = process.env.PATH;
 	try {
 		const bin = path.join(root, 'bin');
 		await fs.mkdir(bin);
-		const cli = path.join(bin, 'codex');
-		await fs.writeFile(cli, '#!/usr/bin/env node\nprocess.stdout.write("a".repeat(18000));\n', { mode: 0o755 });
-		await fs.chmod(cli, 0o755);
+		await installFakeCodex(bin, '#!/usr/bin/env node\nprocess.stdout.write("a".repeat(18000));\n');
 		process.env.PATH = bin + path.delimiter + (previousPath || '');
 		const draft = { ...base, projectRoot: await fs.realpath(root), instruction: 'SECRET-DO-NOT-EMIT' };
 		const observed: Array<{ observedBytes: number; at: string }> = [];
