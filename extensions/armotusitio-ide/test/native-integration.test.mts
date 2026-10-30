@@ -280,6 +280,7 @@ test('explicit handshake displays project DAG gate metadata without granting exe
 		assert.equal(preview.executionEnabled, false);
 		assert.equal(preview.gateCatalog.executionEnabled, false);
 		assert.deepEqual(preview.gateCatalog.gates[1].dependsOn, ['lint']);
+		assert.deepEqual(preview.simulatedGateWaves, [['lint'], ['tests']]);
 		assert.ok(/^[a-f0-9]{64}$/.test(preview.gateCatalog.digest));
 	} finally { await f.cleanup(); }
 });
