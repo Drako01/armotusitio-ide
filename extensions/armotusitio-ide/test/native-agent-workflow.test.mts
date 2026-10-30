@@ -10,6 +10,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { installFakeCodex } from './native-fake-provider.mts';
 import { NativeAgentWorkflow, executionOrder, proposedWorkflow, workflowDigest } from '../src/native-agent-workflow.ts';
+import { reserveProviderInvocation } from '../src/native-provider-quota.ts';
 
 test('proposed workflow is a fixed auditable plan-implement-review chain', () => {
 	const p = proposedWorkflow('codex', 'Add a safe API endpoint');
@@ -585,6 +586,42 @@ test('workflow does not record passed after workspace trust is revoked inside ve
 		assert.equal((await flow.history())[0].status, 'cancelled');
 	} finally {
 		if (oldPath === undefined) { delete process.env.PATH; } else { process.env.PATH = oldPath; }
+		await fs.rm(root, { recursive: true, force: true });
+	}
+});
+
+test('workflow quota blocks the next provider before invoking its CLI', async () => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-workflow-quota-'));
+	const oldPath = process.env.PATH;
+	const trace = path.join(os.tmpdir(), 'ats-quota-trace-' + path.basename(root) + '.txt');
+	try {
+		const canonical = await fs.realpath(root);
+		const bin = path.join(root, 'bin');
+		await fs.mkdir(bin);
+		await installFakeCodex(bin, [
+			'#!/usr/bin/env node',
+			'process.stdin.resume();',
+			'process.stdin.on("end", () => {',
+			' require("node:fs").appendFileSync(' + JSON.stringify(trace) + ', "call\\n");',
+			' console.log("HARNESS_REVIEW: PASS");',
+			'});'
+		].join('\n'));
+		process.env.PATH = bin + path.delimiter + (oldPath || '');
+		const plan = proposedWorkflow('codex', 'Limit provider invocations offline');
+		const flow = new NativeAgentWorkflow(canonical, path.join(root, 'workflows'));
+		const run = await flow.start(plan, workflowDigest(canonical, plan), () => true,
+			undefined, undefined, undefined, async provider => {
+				const fence = flow.activeFence();
+				assert.ok(fence);
+				await reserveProviderInvocation(canonical, provider, fence, 1);
+			});
+		const result = await run.result;
+		assert.equal(result.status, 'failed');
+		assert.deepEqual(result.steps.map(step => step.status), ['passed', 'failed', 'pending']);
+		assert.equal(await fs.readFile(trace, 'utf8'), 'call\n');
+	} finally {
+		if (oldPath === undefined) { delete process.env.PATH; } else { process.env.PATH = oldPath; }
+		await fs.rm(trace, { force: true });
 		await fs.rm(root, { recursive: true, force: true });
 	}
 });
