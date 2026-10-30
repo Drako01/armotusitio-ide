@@ -92,19 +92,19 @@ window.addEventListener('message', event => {
 		if (current) { article.append(taskRow(current)); } else { article.append(element('p', nativeLabels.empty, 'muted')); }
 		if (project.workflows?.length) {
 			const workflow = project.workflows[0];
-			article.append(element('p', 'Último workflow multiagente: ' + workflow.status + (workflow.verification ? ' · verificación: ' + workflow.verification : ''), 'muted'));
+			article.append(element('p', '\u00daltimo workflow multiagente: ' + workflow.status + (workflow.verification ? ' \u00b7 verificaci\u00f3n: ' + workflow.verification : ''), 'muted'));
 		}
 		if (project.agentMetrics?.count) {
-			article.append(element('p', 'Agentes IA: ' + project.agentMetrics.count + ' ejecuciones · éxito: ' + project.agentMetrics.successRate + '% · p95: ' + project.agentMetrics.p95DurationMs + ' ms', 'muted'));
+			article.append(element('p', 'Agentes IA: ' + project.agentMetrics.count + ' ejecuciones \u00b7 \u00e9xito: ' + project.agentMetrics.successRate + '% \u00b7 p95: ' + project.agentMetrics.p95DurationMs + ' ms', 'muted'));
 			if (project.agentMetrics.usageSamples) {
 				const metric = project.agentMetrics;
 				article.append(element('p', 'Tokens medidos (' + metric.usageSamples + ' ejecuciones): ' + metric.measuredInputTokens + ' entrada / ' + metric.measuredOutputTokens + ' salida' +
-					(metric.estimatedCostUsd === null ? '' : ' · costo estimado parcial: USD ' + metric.estimatedCostUsd.toFixed(4)), 'muted'));
+					(metric.estimatedCostUsd === null ? '' : ' \u00b7 costo estimado parcial: USD ' + metric.estimatedCostUsd.toFixed(4)), 'muted'));
 			}
 		}
 		if (project.gatePerformance?.attempts) {
 			const perf = project.gatePerformance;
-			article.append(element('p', 'Gates locales: ' + perf.attempts + ' intentos · éxito: ' + perf.completionRate + '% · p95: ' + perf.p95WallMs + ' ms · paralelismo observado: ' + (perf.averageParallelFactor ?? 'sin datos') + '×', 'muted'));
+			article.append(element('p', 'Gates locales: ' + perf.attempts + ' intentos \u00b7 \u00e9xito: ' + perf.completionRate + '% \u00b7 p95: ' + perf.p95WallMs + ' ms \u00b7 paralelismo observado: ' + (perf.averageParallelFactor ?? 'sin datos') + '\u00d7', 'muted'));
 		}
 		const details = options(project.root);
 		for (const task of project.tasks.slice(1)) { details.append(taskRow(task)); }
@@ -114,8 +114,8 @@ window.addEventListener('message', event => {
 		for (const [tool, key] of Object.entries(commands)) { if (tool !== command) { tools.append(action(nativeLabels[key], project.root, 'native', tool)); } }
 		tools.append(action('Ejecutar agente IA', project.root, 'native', 'nativeAgentExecute'));
 		tools.append(action('Workflow multiagente', project.root, 'native', 'nativeAgentWorkflow'));
-		tools.append(action('Métricas IA', project.root, 'native', 'nativeAgentMetrics'));
-		tools.append(action('Diagnóstico IA', project.root, 'native', 'nativeProviderDiagnostics'));
+		tools.append(action('M\u00e9tricas IA', project.root, 'native', 'nativeAgentMetrics'));
+		tools.append(action('Diagn\u00f3stico IA', project.root, 'native', 'nativeProviderDiagnostics'));
 		tools.append(action('Historial multiagente', project.root, 'native', 'nativeWorkflowHistory'));
 		tools.append(action('Reconciliar workflows', project.root, 'native', 'nativeWorkflowReconcile'));
 		tools.append(action('Limpiar worktree inactivo', project.root, 'native', 'nativeWorktreeCleanup'));

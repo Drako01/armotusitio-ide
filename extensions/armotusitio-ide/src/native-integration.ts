@@ -104,15 +104,15 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			if (!provider) { return; }
 			const role = await vscode.window.showQuickPick(['planner', 'implementer', 'reviewer'], { title: 'Rol del agente' }) as AgentRole | undefined;
 			if (!role) { return; }
-			const instruction = await vscode.window.showInputBox({ title: 'Instrucción del agente', prompt: 'Describí una tarea acotada. No incluyas credenciales.' });
+			const instruction = await vscode.window.showInputBox({ title: 'Instrucci\u00f3n del agente', prompt: 'Describ\u00ed una tarea acotada. No incluyas credenciales.' });
 			if (!instruction) { return; }
 			const draft = { schemaVersion: 1 as const, provider, role, projectRoot: root, instruction, readOnly: role !== 'implementer' };
 			const review = reviewAgentDraft(draft);
 			const invocation = buildAgentInvocation(draft);
 			const preview = JSON.stringify({ project: root, role, provider, permissionMode: draft.readOnly ? 'read-only' : 'workspace-write (Codex) / dontAsk (Claude)',
-				command: invocation.executable, args: invocation.args, instruction, warning: 'Este proceso puede consumir tokens e interactuar con el workspace. Los límites de aislamiento dependen del proveedor.' }, null, 2);
+				command: invocation.executable, args: invocation.args, instruction, warning: 'Este proceso puede consumir tokens e interactuar con el workspace. Los l\u00edmites de aislamiento dependen del proveedor.' }, null, 2);
 			await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({ language: 'json', content: preview }), { preview: true });
-			const approved = await vscode.window.showWarningMessage('¿Ejecutar este agente local con los permisos indicados? Sin autorización no se inicia ningún proveedor.', { modal: true }, 'Ejecutar agente');
+			const approved = await vscode.window.showWarningMessage('\u00bfEjecutar este agente local con los permisos indicados? Sin autorizaci\u00f3n no se inicia ning\u00fan proveedor.', { modal: true }, 'Ejecutar agente');
 			if (approved !== 'Ejecutar agente' || !authorized(chosen.folder) || await fs.realpath(root) !== root) { return; }
 			if (runningAgents.has(root) || pendingAgents.has(root) || runningWorkflows.has(root) || pendingWorkflows.has(root) || running.has(chosen.folder.uri.toString())) { throw Error('HARNESS_ALREADY_RUNNING'); }
 			assertProviderCapacity();
@@ -125,7 +125,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			try {
 				const result = await execution.outcome;
 				try { await recordAgentMetric(metricsDirectory(root), provider, role, result); }
-				catch { void vscode.window.showWarningMessage('No se pudo registrar la métrica local del agente.'); }
+				catch { void vscode.window.showWarningMessage('No se pudo registrar la m\u00e9trica local del agente.'); }
 				if (!authorized(chosen.folder)) { return; }
 				await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({ language: 'json',
 					content: JSON.stringify({ role, provider, ...result }, null, 2) }), { preview: true });
@@ -150,16 +150,16 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			if (!provider) { return; }
 			const reviewerMode = await vscode.window.showQuickPick([
 				{ label: 'Mismo proveedor en todas las fases', value: 'same' },
-				{ label: 'Revisión cruzada con el otro proveedor', value: 'cross' }
+				{ label: 'Revisi\u00f3n cruzada con el otro proveedor', value: 'cross' }
 			], { title: 'Independencia del agente revisor' });
 			if (!reviewerMode) { return; }
 			const reviewerProvider: NativeProvider = reviewerMode.value === 'cross' ? (provider === 'codex' ? 'claude' : 'codex') : provider;
-			const instruction = await vscode.window.showInputBox({ title: 'Objetivo del workflow (plan → implementación → revisión)', prompt: 'Describí el alcance específico; no ingreses secretos.' });
+			const instruction = await vscode.window.showInputBox({ title: 'Objetivo del workflow (plan \u2192 implementaci\u00f3n \u2192 revisi\u00f3n)', prompt: 'Describ\u00ed el alcance espec\u00edfico; no ingreses secretos.' });
 			if (!instruction) { return; }
 			const mode = await vscode.window.showQuickPick([
 				{ label: 'Git worktree aislado (recomendado)', value: 'worktree' },
 				{ label: 'Workspace actual (sin aislamiento)', value: 'direct' }
-			], { title: 'Dónde permitir modificaciones del implementador' });
+			], { title: 'D\u00f3nde permitir modificaciones del implementador' });
 			if (!mode) { return; }
 			let executionRoot = root;
 			if (mode.value === 'worktree') {
@@ -175,9 +175,9 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			const verificationSnapshot = JSON.stringify(verification || null);
 			await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({ language: 'json',
 				content: JSON.stringify({ project: root, executionRoot, isolationMode: mode.value, handoffs: plan.handoffs, maxCorrectiveCycles: 1, maxProviderCalls: 5, verification: verification || 'NOT_CONFIGURED', digest,
-					notice: mode.value === 'worktree' ? 'La IA operará únicamente en este checkout Git separado; se conservará después para revisar los cambios. No se hace commit ni merge.' : 'La IA operará sobre el workspace actual sin aislamiento de archivos. No se hace commit ni merge.' }, null, 2)
+					notice: mode.value === 'worktree' ? 'La IA operar\u00e1 \u00fanicamente en este checkout Git separado; se conservar\u00e1 despu\u00e9s para revisar los cambios. No se hace commit ni merge.' : 'La IA operar\u00e1 sobre el workspace actual sin aislamiento de archivos. No se hace commit ni merge.' }, null, 2)
 			}), { preview: true });
-			const approved = await vscode.window.showWarningMessage('Autorizar plan, implementación, revisión y hasta un ciclo correctivo adicional (máximo 5 invocaciones de IA)? Revisá el plan antes de continuar.', { modal: true }, 'Autorizar workflow');
+			const approved = await vscode.window.showWarningMessage('Autorizar plan, implementaci\u00f3n, revisi\u00f3n y hasta un ciclo correctivo adicional (m\u00e1ximo 5 invocaciones de IA)? Revis\u00e1 el plan antes de continuar.', { modal: true }, 'Autorizar workflow');
 			if (approved !== 'Autorizar workflow' || !authorized(chosen.folder) || await fs.realpath(chosen.folder.uri.fsPath) !== root) { return; }
 			if (runningAgents.has(root) || pendingAgents.has(root) || runningWorkflows.has(root) || pendingWorkflows.has(root) || running.has(chosen.folder.uri.toString())) {
 				throw Error('HARNESS_ALREADY_RUNNING');
@@ -210,7 +210,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 		finally { if (root) { pendingWorkflows.delete(root); }
 			if (isolation && !launched) {
 				try { await removeCleanAgentWorktree(isolation); }
-				catch { void vscode.window.showWarningMessage('El worktree no se pudo retirar automáticamente. Revisá git worktree list.'); }
+				catch { void vscode.window.showWarningMessage('El worktree no se pudo retirar autom\u00e1ticamente. Revis\u00e1 git worktree list.'); }
 			}
 			controller.refresh(); }
 	}));
@@ -235,9 +235,9 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			const storage = path.join(metricsDirectory(root), 'isolated-worktrees');
 			const list = await listAgentWorktrees(root, storage);
 			if (!list.length) { vscode.window.showInformationMessage('No hay Git worktrees administrados por el Harness.'); return; }
-			const selected = await vscode.window.showQuickPick(list.map(worktree => ({ label: worktree.id, description: worktree.root, worktree })), { title: 'Retirar únicamente un worktree limpio' });
+			const selected = await vscode.window.showQuickPick(list.map(worktree => ({ label: worktree.id, description: worktree.root, worktree })), { title: 'Retirar \u00fanicamente un worktree limpio' });
 			if (!selected) { return; }
-			if (await vscode.window.showWarningMessage('Eliminar el worktree ' + selected.worktree.root + '? Se rechazará si contiene cambios.', { modal: true }, 'Retirar worktree limpio') !== 'Retirar worktree limpio') { return; }
+			if (await vscode.window.showWarningMessage('Eliminar el worktree ' + selected.worktree.root + '? Se rechazar\u00e1 si contiene cambios.', { modal: true }, 'Retirar worktree limpio') !== 'Retirar worktree limpio') { return; }
 			if (!authorized(chosen.folder)) { return; }
 			await removeCleanAgentWorktree(selected.worktree);
 			vscode.window.showInformationMessage('Worktree limpio retirado.');
