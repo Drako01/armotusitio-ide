@@ -12,6 +12,7 @@ import { reviewAgentDraft, inspectAgentWorkspace, type NativeProvider, type Agen
 import { buildSupportReport, exportSupportReport } from './native-support.ts';
 import { inspectHarnessAuthority } from './native-authority.ts';
 import { buildAgentInvocation, executeReviewedAgent, type AgentExecution } from './native-agent-execution.ts';
+import { readAgentStatistics, recordAgentMetric } from './native-agent-metrics.ts';
 
 type Host = any; // vscode host is injected by the existing extension (avoid duplicating the UI layer).
 const sessions = new Map<string, NativeHarness>();
@@ -34,6 +35,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 	const running = new Map<string, { engine: NativeHarness; taskId: string }>();
 	const runningAgents = new Map<string, AgentExecution>();
 	const pendingAgents = new Set<string>();
+	const metricsDirectory = (root: string): string => path.join(context.globalStorageUri.fsPath, 'native-harness', createHash('sha256').update(root).digest('hex'));
 	controller.nativeRunning = () => running.size + runningAgents.size + pendingAgents.size;
 	controller.nativeProjects = async () => {
 		const rows = [];
@@ -107,12 +109,24 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			runningAgents.set(root, execution); controller.refresh();
 			try {
 				const result = await execution.outcome;
+				try { await recordAgentMetric(metricsDirectory(root), provider, role, result); }
+				catch { void vscode.window.showWarningMessage('No se pudo registrar la métrica local del agente.'); }
 				if (!authorized(chosen.folder)) { return; }
 				await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({ language: 'json',
 					content: JSON.stringify({ role, provider, ...result }, null, 2) }), { preview: true });
 				vscode.window.showInformationMessage('Agente finalizado: ' + result.status);
 			} finally { runningAgents.delete(root); controller.refresh(); }
 		} catch (error) { showError(error); } finally { controller.refresh(); }
+	}));
+
+	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.nativeAgentMetrics', async (requested?: string) => {
+		try {
+			if (!ensureTrust()) { return; }
+			const selected = await choose(requested); if (!selected) { return; }
+			const report = await readAgentStatistics(metricsDirectory(await fs.realpath(selected.folder.uri.fsPath)));
+			if (!authorized(selected.folder)) { return; }
+			await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({ language: 'json', content: JSON.stringify(report, null, 2) }), { preview: true });
+		} catch (error) { showError(error); }
 	}));
 	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.nativeSupport', async (requested?: string) => {
 		try {
