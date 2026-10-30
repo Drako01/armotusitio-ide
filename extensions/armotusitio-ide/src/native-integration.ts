@@ -179,7 +179,9 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 				const approval = await validationEngine.reviewDigest(task.plan);
 				const result = await validationEngine.execute(task.id, approval, () => authorized(chosen.folder), signal);
 				return result.attempts.at(-1)?.status === 'passed';
-			} : undefined); }
+			} : undefined, async (stageProvider, stageRole, stageOutcome) => {
+				await recordAgentMetric(metricsDirectory(root!), stageProvider, stageRole, stageOutcome);
+			}); }
 			finally { pendingWorkflows.delete(root); }
 			launched = true;
 			runningWorkflows.set(root, run); controller.refresh();
