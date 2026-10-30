@@ -15,9 +15,9 @@ test('records bounded metrics without prompts, paths, outputs or credentials', a
     assert.equal(before.count, 0);
     assert.equal(before.successRate, null);
     await recordAgentMetric(directory, 'codex', 'implementer', { status: 'passed', exitCode: 0,
-      durationMs: 100, truncated: false, output: 'SECRET_PROMPT_VALUE' });
+      durationMs: 100, truncated: false, output: 'SECRET_PROMPT_VALUE', usage: { inputTokens: 1000, outputTokens: 200, cachedInputTokens: 500 } });
     await recordAgentMetric(directory, 'claude', 'reviewer', { status: 'failed', exitCode: 1,
-      durationMs: 300, truncated: false, output: 'SECRET_OUTPUT_VALUE' });
+      durationMs: 300, truncated: false, output: 'SECRET_OUTPUT_VALUE', usage: { inputTokens: 500, outputTokens: 50, estimatedCostUsd: 0.023 } });
     const result = await readAgentStatistics(directory);
     assert.deepEqual({ count: result.count, successes: result.successes, failures: result.failures,
       successRate: result.successRate, average: result.averageDurationMs, p95: result.p95DurationMs },
@@ -25,6 +25,10 @@ test('records bounded metrics without prompts, paths, outputs or credentials', a
     const raw = await fs.readFile(path.join(directory, 'agent-metrics.json'), 'utf8');
     assert.ok(!raw.includes('SECRET_'));
     assert.equal(result.entries[0].provider, 'codex');
+    assert.equal(result.usageSamples, 2);
+    assert.equal(result.measuredInputTokens, 1500);
+    assert.equal(result.measuredOutputTokens, 250);
+    assert.equal(result.estimatedCostUsd, 0.023);
   } finally { await fs.rm(directory, { recursive: true, force: true }); }
 });
 
