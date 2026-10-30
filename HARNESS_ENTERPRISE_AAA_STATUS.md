@@ -9,7 +9,7 @@
 
 Esta guía documenta el alcance acordado y diferencia **código agregado a la rama** de funcionalidad realmente certificada. Una casilla marcada no significa que el comportamiento haya pasado pruebas reales de extremo a extremo.
 
-**Inventario funcional:** 34 ítems implementados en código, 5 parciales y 15 pendientes (54 ítems de distinto tamaño y riesgo; no representan un porcentaje técnico de certificación). **Última validación automatizada local Windows aportada:** 199 tests aprobados, 0 fallidos, 1 omitido (200 total), con TypeScript, bundle y recursos en PASS, pero **Focused hygiene falló por dos `no-unsafe-finally`** sobre el commit `364bf661179`. El lote actual corrige el código; todavía falta repetir higiene. Esto no equivale a CI multiplataforma ni a E2E completo.
+**Inventario funcional:** 34 ítems implementados en código, 5 parciales y 15 pendientes (54 ítems de distinto tamaño y riesgo; no representan un porcentaje técnico de certificación). **Última validación automatizada local Windows aportada:** 204 tests aprobados, 0 fallidos, 1 omitido (205 total), con TypeScript, bundle, recursos, higiene y diff en PASS según el log Windows del 2026-10-30 21:38, sobre el commit `80d7a7bb867`. Los cambios posteriores requieren nuevo retest. Esto no equivale a CI multiplataforma ni a E2E completo.
 
 **Calificación:** no asignar una nueva nota 1–10 ni declarar nivel AAA hasta disponer de pruebas reproducibles y resultados E2E. El 70% mencionado en el seguimiento conversacional fue una apreciación de cobertura, **no** una medición auditada.
 
@@ -393,7 +393,7 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 - [ ] **Retest de esta iteración:** ejecutar pruebas locales enfocadas, suite completa, TypeScript, recursos, higiene y revisar `git diff --check`. El último **196 PASS / 0 FAIL / 1 SKIP** es anterior a estas modificaciones.
 - [ ] **P0 pendiente:** fencing OS/IPC con exclusión efectiva durante toda la reconciliación, journal transaccional multioperación, sandbox OS y rollback seguro. No declarar AAA antes de cubrirlos.
 
-### Interoperabilidad híbrida con Harness de proyecto y skills (2026-10-30; pendiente de validación local)
+### Interoperabilidad híbrida con Harness de proyecto y skills (2026-10-30; primer lote validado Windows)
 
 **Política deseada:** el IDE actúa como orquestador preferente de agentes y ofrece controles de seguridad, mientras que el proyecto conserva sus skills, reglas, contratos, gates y herramientas. No deben ejecutarse dos escritores concurrentes ni reemplazarse el Harness del proyecto sin un protocolo de coordinación verificable.
 
@@ -403,7 +403,7 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 - [x] **Seguridad de autoridad:** paths de Harness inseguros mantienen bloqueo, incluso al intentar operación híbrida. No se ejecuta un motor externo durante el descubrimiento.
 - [x] **Regresión de higiene:** retirados los dos `throw` de liberación de locks; la propagación de `HARNESS_WORKFLOW_LOCK_CHANGED` se realiza después del `finally` externo. Pendiente de comprobación local del gate `no-unsafe-finally`.
 - [x] **Pruebas incorporadas:** descubrimiento de skills, cambio de digest, alias Claude, límite de tamaño, revisión híbrida sin creación de tareas nativas y rechazo de implementadores híbridos antes de invocar proveedores.
-- [ ] **Retest:** correr la suite focal, verificador completo, `npm test`, `npm run check` y `git diff --check`; el último log tiene 199 PASS/0 FAIL/1 SKIP, pero higiene FAIL anterior a estos cambios.
+- [x] **Retest Windows primer lote:** 204 PASS/0 FAIL/1 SKIP; TypeScript, webview, bundle, recursos, higiene y diff PASS. El registro corresponde al SHA `80d7a7bb867`.
 - [ ] **Fase híbrida de escritura:** protocolo ejecutable bidireccional con gates delegados, locks compartidos, control de concurrencia y E2E sobre RedEvent. El soporte actual **no certifica** prioridad completa del IDE ni integración de ejecutores de proyectos.
 - [~] **Skills más extensas:** catálogo admite hasta 64 KiB por skill y evita truncar el prompt; queda pendiente la carga supervisada/selección de instrucciones muy extensas, incluyendo más de una skill por tarea.
 
