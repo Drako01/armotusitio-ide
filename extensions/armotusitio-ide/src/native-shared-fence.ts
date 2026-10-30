@@ -193,20 +193,25 @@ async function assertNoUncertainArtifacts(storage: string): Promise<void> {
 	}
 	await checkDir('workflows', async name => {
 		if (name === 'execution.lock' || name === 'reconcile.guard' ||
-			name.endsWith('.intent')) { throw Error('HARNESS_FENCE_RECOVERY_PENDING_WORKFLOW'); }
+			name.endsWith('.intent') || name.endsWith('.tmp')) { throw Error('HARNESS_FENCE_RECOVERY_PENDING_WORKFLOW'); }
 		if (!/^[a-f0-9-]{36}\.json$/i.test(name)) { return; }
 		const file = path.join(storage, 'workflows', name);
 		const record = await readJsonRecovery(file, 128 * 1024);
 		if (!record || typeof record !== 'object' || Array.isArray(record) ||
+			(record as { schemaVersion?: unknown }).schemaVersion !== 1 ||
+			(record as { id?: unknown }).id !== name.slice(0, -5) ||
 			!['passed', 'failed', 'cancelled', 'interrupted'].includes((record as { status?: string }).status ?? '')) {
 			throw Error('HARNESS_FENCE_RECOVERY_PENDING_WORKFLOW');
 		}
 	});
 	await checkDir('tasks', async name => {
+		if (name.endsWith('.tmp') || name.endsWith('.intent')) { throw Error('HARNESS_FENCE_RECOVERY_PENDING_TASK'); }
 		if (!/^[a-f0-9-]{36}\.json$/i.test(name)) { return; }
 		const file = path.join(storage, 'tasks', name);
 		const task = await readJsonRecovery(file, 2 * 1024 * 1024);
 		if (!task || typeof task !== 'object' || Array.isArray(task) ||
+			(task as { schemaVersion?: unknown }).schemaVersion !== 1 ||
+			(task as { id?: unknown }).id !== name.slice(0, -5) ||
 			!Array.isArray((task as { attempts?: unknown }).attempts) ||
 			(task as { attempts: Array<{ status?: string }> }).attempts.some(attempt =>
 				!attempt || !['passed', 'failed', 'cancelled', 'interrupted'].includes(attempt.status ?? ''))) {
