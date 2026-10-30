@@ -45,5 +45,6 @@ jobs:
             extensions/armotusitio-ide/test/native-agent-corrective.test.mts \
             extensions/armotusitio-ide/test/native-sensitive-scope.test.mts \
             extensions/armotusitio-ide/test/native-provider-diagnostics.test.mts \
+            extensions/armotusitio-ide/test/native-provider-output.test.mts \
             extensions/armotusitio-ide/test/native-harness.test.mts \
             extensions/armotusitio-ide/test/native-integration.test.mts
