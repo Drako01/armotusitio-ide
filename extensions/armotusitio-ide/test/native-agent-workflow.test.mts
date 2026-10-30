@@ -127,3 +127,21 @@ test('workflow history refuses injected fields inside persisted lifecycle events
 		await assert.rejects(workflow.history(), /HARNESS_WORKFLOW_INVALID_STATE/);
 	} finally { await fs.rm(root, { recursive: true, force: true }); }
 });
+
+test('workflow rejects calls beyond the five invocations explicitly approved in the IDE', async () => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-call-budget-'));
+	try {
+		const canonical = await fs.realpath(root);
+		const plan = {
+			schemaVersion: 1 as const,
+			handoffs: Array.from({ length: 6 }, (_, index) => ({
+				id: 'read_' + index, role: 'planner' as const, provider: 'codex' as const,
+				dependsOn: index === 0 ? [] : ['read_' + (index - 1)],
+				instruction: 'Audit section ' + index
+			}))
+		};
+		const flow = new NativeAgentWorkflow(canonical, path.join(root, 'private'));
+		await assert.rejects(flow.start(plan, workflowDigest(canonical, plan), () => true), /HARNESS_WORKFLOW_CALL_BUDGET_EXCEEDED/);
+		assert.deepEqual(await flow.history(), []);
+	} finally { await fs.rm(root, { recursive: true, force: true }); }
+});
