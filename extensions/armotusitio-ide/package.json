@@ -101,6 +101,14 @@
           "default": true,
           "description": "Enable workspace-local harness detection."
         },
+        "atsHarness.providerCallsPer24h": {
+          "type": "integer",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 1000,
+          "scope": "resource",
+          "description": "Limite opcional de invocaciones por proveedor y proyecto en una ventana movil de 24 horas. 0 deshabilita el limite. Se reserva antes de llamar al CLI y no equivale a presupuesto en USD."
+        },
         "atsHarness.notifications": {
           "type": "string",
           "enum": [
