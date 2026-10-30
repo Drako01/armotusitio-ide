@@ -9,10 +9,11 @@ import { createHash } from 'node:crypto';
 
 export interface ProjectSkill {
 	name: string;
-	source: '.agents/skills' | '.claude/skills';
+	source: '.agents/skills' | '.codex/skills' | '.claude/skills';
 	digest: string;
 }
-const SOURCES = ['.agents/skills', '.claude/skills'] as const;
+// Shared skills take precedence; provider-specific directories are fallback sources.
+const SOURCES = ['.agents/skills', '.codex/skills', '.claude/skills'] as const;
 const SAFE_NAME = /^[a-z0-9][a-z0-9_-]{0,63}$/i;
 const MAX_SKILLS = 64;
 const MAX_SKILL_BYTES = 64 * 1024;
@@ -46,9 +47,8 @@ export async function listProjectSkills(root: string): Promise<ProjectSkill[]> {
 	const seen = new Set<string>();
 	for (const source of SOURCES) {
 		const directory = path.join(canonical, source);
-		// Legacy project setups may link .claude/skills to .agents/skills.
-		// Never traverse that link; the canonical .agents source was already read.
-		if (source === '.claude/skills') {
+		// Provider directories may alias the shared skills folder. Never follow links.
+		if (source !== '.agents/skills') {
 			try {
 				if ((await fs.lstat(directory)).isSymbolicLink()) { continue; }
 			} catch (error) {
