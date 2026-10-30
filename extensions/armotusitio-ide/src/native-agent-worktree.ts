@@ -12,9 +12,9 @@ import { resolveNativeCommand } from './native-runtime.ts';
 const MAX_MESSAGE = 2048;
 const GIT_TIMEOUT = 180_000;
 export interface ManagedWorktree {
-	root: string
-	parent: string
-	id: string
+	root: string;
+	parent: string;
+	id: string;
 }
 
 async function git(root: string, args: string[]): Promise<string> {
