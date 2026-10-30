@@ -29,10 +29,12 @@ const formatTargets = [
 	'src/native-agent-workflow.ts',
 	'src/native-agent-dag.ts',
 	'src/native-agent-worktree.ts',
-	'src/native-shared-fence.ts',
+	'src/native-shared-fence.ts', 'src/native-provider-quota.ts',
+	'src/native-provider-quota.ts',
 	'src/native-os-sandbox.ts',
 	'src/native-worktree-checkpoint.ts',
-	'test/native-shared-fence.test.mts',
+	'test/native-shared-fence.test.mts', 'test/native-provider-quota.test.mts',
+	'test/native-provider-quota.test.mts',
 	'test/native-os-sandbox.test.mts',
 	'test/native-worktree-checkpoint.test.mts',
 	'test/native-cross-engine-fence.test.mts',
@@ -76,7 +78,7 @@ try {
 	if (fixRequested) { await run('Format Harness sources', ['build/lib/formatter.ts', '--replace', ...formatTargets]); }
 	await run('TypeScript', ['node_modules/@typescript/native/bin/tsc', '--project', `${extension}/tsconfig.json`]);
 	await run('Webview resources', [`${extension}/check-resources.mts`]);
-	await run('UI bridge and renderer', ['--test', `${extension}/test/home.test.cts`, `${extension}/test/renderer.test.cts`, `${extension}/test/native-integration.test.mts`, `${extension}/test/native-project-skills.test.mts`, `${extension}/test/native-project-guidance.test.mts`, `${extension}/test/native-project-gates.test.mts`, `${extension}/test/native-hybrid-readiness.test.mts`, `${extension}/test/native-benchmark.test.mts`, `${extension}/test/native-shared-fence.test.mts`, `${extension}/test/native-os-sandbox.test.mts`, `${extension}/test/native-worktree-checkpoint.test.mts`, `${extension}/test/native-cross-engine-fence.test.mts`, `${extension}/test/native-harness.test.mts`, `${extension}/test/native-providers.test.mts`, `${extension}/test/native-agent-execution.test.mts`, `${extension}/test/native-agent-metrics.test.mts`, `${extension}/test/native-agent-workflow.test.mts`, `${extension}/test/native-agent-dag.test.mts`, `${extension}/test/native-agent-adversarial.test.mts`, `${extension}/test/native-agent-scope.test.mts`, `${extension}/test/native-agent-worktree.test.mts`, `${extension}/test/native-engine-contract.test.mts`, `${extension}/test/native-engine-interop.test.mts`, `${extension}/test/native-performance.test.mts`, `${extension}/test/native-review.test.mts`, `${extension}/test/native-agent-corrective.test.mts`, `${extension}/test/native-sensitive-scope.test.mts`, `${extension}/test/native-provider-diagnostics.test.mts`, `${extension}/test/native-provider-output.test.mts`, `${extension}/test/native-real-smoke.test.mts`, `${extension}/test/native-runtime.test.mts`]);
+	await run('UI bridge and renderer', ['--test', `${extension}/test/home.test.cts`, `${extension}/test/renderer.test.cts`, `${extension}/test/native-integration.test.mts`, `${extension}/test/native-project-skills.test.mts`, `${extension}/test/native-project-guidance.test.mts`, `${extension}/test/native-project-gates.test.mts`, `${extension}/test/native-hybrid-readiness.test.mts`, `${extension}/test/native-benchmark.test.mts`, `${extension}/test/native-shared-fence.test.mts`, `${extension}/test/native-provider-quota.test.mts`, `${extension}/test/native-os-sandbox.test.mts`, `${extension}/test/native-worktree-checkpoint.test.mts`, `${extension}/test/native-cross-engine-fence.test.mts`, `${extension}/test/native-harness.test.mts`, `${extension}/test/native-providers.test.mts`, `${extension}/test/native-agent-execution.test.mts`, `${extension}/test/native-agent-metrics.test.mts`, `${extension}/test/native-agent-workflow.test.mts`, `${extension}/test/native-agent-dag.test.mts`, `${extension}/test/native-agent-adversarial.test.mts`, `${extension}/test/native-agent-scope.test.mts`, `${extension}/test/native-agent-worktree.test.mts`, `${extension}/test/native-engine-contract.test.mts`, `${extension}/test/native-engine-interop.test.mts`, `${extension}/test/native-performance.test.mts`, `${extension}/test/native-review.test.mts`, `${extension}/test/native-agent-corrective.test.mts`, `${extension}/test/native-sensitive-scope.test.mts`, `${extension}/test/native-provider-diagnostics.test.mts`, `${extension}/test/native-provider-output.test.mts`, `${extension}/test/native-real-smoke.test.mts`, `${extension}/test/native-runtime.test.mts`]);
 	const compiled = await run('Extension bundle', [`${extension}/esbuild.mts`]);
 	if (compiled) { await run('Native package resources', [`${extension}/check-native-package.mts`]); }
 	else { results.push({ name: 'Native package resources', result: 'SKIP (bundle failed)' }); }
