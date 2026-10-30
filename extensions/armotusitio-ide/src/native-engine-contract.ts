@@ -173,7 +173,8 @@ export async function probeProjectHandshake(root: string, trusted: () => boolean
 	try { parsed = JSON.parse(output); } catch { throw Error('HARNESS_HANDSHAKE_INVALID'); }
 	if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) { throw Error('HARNESS_HANDSHAKE_INVALID'); }
 	const result = parsed as { schemaVersion?: unknown; nonce?: unknown; capabilities?: unknown };
-	if (result.schemaVersion !== ENGINE_CONTRACT_VERSION || result.nonce !== nonce ||
+	if (Object.keys(parsed).sort().join(',') !== 'capabilities,nonce,schemaVersion' ||
+		result.schemaVersion !== ENGINE_CONTRACT_VERSION || result.nonce !== nonce ||
 		!Array.isArray(result.capabilities) || result.capabilities.length > declared.length ||
 		!result.capabilities.every(cap => typeof cap === 'string' && declared.includes(cap as Capability)) ||
 		new Set(result.capabilities).size !== result.capabilities.length) {
