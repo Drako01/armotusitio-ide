@@ -522,6 +522,7 @@ export class NativeAgentWorkflow {
 			} finally {
 				record.endedAt = new Date().toISOString();
 				let terminalStatePersisted = false;
+				let lockReleaseError: Error | undefined;
 				try {
 					this.emit(record, 'workflow-finished');
 					await atomicWrite(file, record);
@@ -536,18 +537,16 @@ export class NativeAgentWorkflow {
 					// mistake an uncertain workflow for a successfully finished one.
 					if (terminalStatePersisted) {
 						const lockStat = await fs.lstat(lockFile);
-						if (!lockStat.isFile() || lockStat.isSymbolicLink() || lockStat.size > 4096) {
-							throw Error('HARNESS_WORKFLOW_LOCK_CHANGED');
-						}
-						const current: unknown = JSON.parse(await fs.readFile(lockFile, 'utf8'));
-						if (!current || typeof current !== 'object' ||
-							(current as { id?: unknown }).id !== record.id ||
-							(current as { pid?: unknown }).pid !== process.pid) {
-							throw Error('HARNESS_WORKFLOW_LOCK_CHANGED');
-						}
-						await fs.rm(lockFile);
+						const safeLock = lockStat.isFile() && !lockStat.isSymbolicLink() && lockStat.size <= 4096;
+						const current: unknown = safeLock ? JSON.parse(await fs.readFile(lockFile, 'utf8')) : undefined;
+						const sameOwner = !!current && typeof current === 'object' &&
+							(current as { id?: unknown }).id === record.id &&
+							(current as { pid?: unknown }).pid === process.pid;
+						if (safeLock && sameOwner) { await fs.rm(lockFile); }
+						else { lockReleaseError = Error('HARNESS_WORKFLOW_LOCK_CHANGED'); }
 					}
 				}
+				if (lockReleaseError) { throw lockReleaseError; }
 			}
 			return record;
 		})();
