@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { installFakeCodex } from './native-fake-provider.mts';
 import { NativeAgentWorkflow, executionOrder, proposedWorkflow, workflowDigest } from '../src/native-agent-workflow.ts';
 
 test('proposed workflow is a fixed auditable plan-implement-review chain', () => {
@@ -30,7 +31,7 @@ test('rejects forged approval before running anything', async () => {
 	} finally { await fs.rm(root, { recursive: true, force: true }); }
 });
 
-test('executes three stages in order with fake provider; persists only metadata', { skip: process.platform === 'win32' }, async () => {
+test('executes three stages in order with fake provider; persists only metadata', async () => {
 	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-workflow-e2e-'));
 	const oldPath = process.env.PATH;
 	const traceFile = path.join(os.tmpdir(), 'ats-workflow-trace-' + path.basename(root) + '.txt');
@@ -38,7 +39,6 @@ test('executes three stages in order with fake provider; persists only metadata'
 		const canonical = await fs.realpath(root);
 		const bin = path.join(root, 'bin');
 		await fs.mkdir(bin);
-		const cli = path.join(bin, 'codex');
 		const script = [
 			'#!/usr/bin/env node',
 			'let input = "";',
@@ -49,8 +49,7 @@ test('executes three stages in order with fake provider; persists only metadata'
 			' console.log(role === "review" ? "HARNESS_REVIEW: PASS" : "fake provider passed");',
 			'});'
 		].join('\n');
-		await fs.writeFile(cli, script, { mode: 0o755 });
-		await fs.chmod(cli, 0o755);
+		await installFakeCodex(bin, script);
 		process.env.PATH = bin + path.delimiter + (oldPath || '');
 		const plan = proposedWorkflow('codex', 'PRIVATETASK-DO-NOT-PERSIST');
 		const flow = new NativeAgentWorkflow(canonical, path.join(root, 'private'));
