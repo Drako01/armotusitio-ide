@@ -13,6 +13,8 @@ const formatTargets = [
 	'src/native-agent-execution.ts',
 	'src/native-agent-metrics.ts',
 	'src/native-agent-workflow.ts',
+	'src/native-agent-worktree.ts',
+	'src/native-agent-scope.ts',
 	'src/native-provider-output.ts'
 ].map(file => `${extension}/${file}`);
 const fixRequested = process.argv.includes('--fix');
