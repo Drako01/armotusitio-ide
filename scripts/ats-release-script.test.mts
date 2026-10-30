@@ -11,7 +11,7 @@ import { generateKeyPairSync } from 'node:crypto';
 import { spawn } from 'node:child_process';
 
 const root = path.resolve(import.meta.dirname, '..');
-const shell = await readFile(path.join(root, 'release.sh'), 'utf8');
+const shell = (await readFile(path.join(root, 'release.sh'), 'utf8')).replaceAll('\r\n', '\n');
 const embedded = shell.split('<<\'NODE\'\n')[1]?.replace(/\nNODE\n?$/, '');
 assert.ok(embedded, 'The shell launcher must contain the tested Node recipe.');
 
@@ -42,7 +42,7 @@ export async function run(file, args) {
 		if (args[0] === 'pr' && args[1] === 'view') return JSON.stringify({ state: settings.blockMerge ? 'OPEN' : 'MERGED' });
 		return '';
 	}
-	if (file === 'docker') return 'linux';
+	if (file === 'docker') return args[0] === 'buildx' ? settings.noArm ? 'Platforms: linux/amd64' : 'Platforms: linux/amd64, linux/arm64' : 'linux';
 	return 'ready';
 }
 export async function withLock(directory, work) {
@@ -57,7 +57,8 @@ export async function main(args) {
 	await record(['update', ...args]);
 	if (settings.failStage === args[0]) throw new Error('fixture stage failed');
 	if (settings.changeAfterValidate && args[0] === 'validate') sourceChanged = true;
-	if (args[0] === 'validate') validated = true;
+	if (args[0] === 'artifacts') { const { mkdir, writeFile } = await import('node:fs/promises'); await mkdir('.build/releases', {recursive:true}); await writeFile('.build/releases/artifact', 'signed fixture'); }
+	if (args[0] === 'validate') { validated = true; const { mkdir, writeFile } = await import('node:fs/promises'); await mkdir('.build/ats-autoupdate', {recursive:true}); await writeFile('.build/ats-autoupdate/validation.json', JSON.stringify({commit: merged ? updated : original})); }
 }
 `;
 
@@ -70,7 +71,9 @@ async function fixture(settings: object, revision = 4, version = '1.143.1') {
 		'fixture.json': JSON.stringify(settings),
 		'build/armotusitio/product-overrides.json': JSON.stringify({ quality: 'stable', armotusitioUpdate: { repository: 'example/ide', revision, publicKey: keys.publicKey }, armotusitioUpstream: { ref: version } }),
 		'scripts/ats-autoupdate.mts': runner,
-		'scripts/ats-build-all.mts': `import { main } from './ats-autoupdate.mts'; export const assertPackagedClosed = async () => {}; export const buildAll = async () => main(['build-all']);`,
+		'scripts/ats-release-state.mts': await readFile(path.join(root, 'scripts/ats-release-state.mts'), 'utf8'),
+		'scripts/ats-release-check.mts': `import { run } from './ats-autoupdate.mts'; export const dryRun = async () => { await run('fixture-dry-run', []); };`,
+		'scripts/ats-build-all.mts': `import { main } from './ats-autoupdate.mts'; export const assertPackagedClosed = async () => {}; export const buildAll = async () => { await main(['build-all']); const { writeFile } = await import('node:fs/promises'); await writeFile('.build/ats-autoupdate/build-receipt.json', 'fixture receipt'); };`,
 		'src/vs/platform/update/common/armotusitioUpdate.ts': `export const armotusitioRepository = 'example/ide';`,
 		'.build/ats-autoupdate/signing/private.pem': keys.privateKey,
 		'node_modules/gulp/bin/gulp.js': '',
@@ -119,7 +122,7 @@ test('plan paginates all releases, selects the current version numerically, igno
 
 test('new version starts at r1 even when metadata has a higher old revision', async () => {
 	const f = await fixture({ pages: [[published('ats-v1.143.1-r40')]] }, 4, '1.144.0');
-	try { const result = await f.invoke(['--dry-run']); assert.equal(result.code, 0, result.output); assert.match(result.output, /Metadata revision: 4 -> 1/); }
+	try { const result = await f.invoke(['--plan']); assert.equal(result.code, 0, result.output); assert.match(result.output, /Metadata revision: 4 -> 1/); }
 	finally { await f.close(); }
 });
 
@@ -198,4 +201,40 @@ test('protected PR that remains open prevents all build/publication stages', { s
 	const f = await fixture({ pages: [[]], blockMerge: true });
 	try { const result = await f.invoke([]); assert.equal(result.code, 1, result.output); assert.ok((await f.calls()).every(call => call[0] !== 'update')); }
 	finally { await f.close(); }
+});
+
+
+test('dry-run performs preflight and isolated checks without locks, metadata updates, builds or publication', { skip: process.platform !== 'win32' }, async () => {
+	const f = await fixture({ pages: [[]] });
+	try {
+		const before = await readFile(path.join(f.directory, 'build/armotusitio/product-overrides.json'), 'utf8');
+		const result = await f.invoke(['--dry-run']); assert.equal(result.code, 0, result.output);
+		const calls = await f.calls();
+		assert.ok(calls.some(call => call[0] === 'docker'));
+		assert.ok(calls.some(call => call[0] === 'fixture-dry-run'));
+		assert.ok(calls.every(call => !['lock', 'update'].includes(call[0]) && !(call[0] === 'git' && ['switch', 'commit', 'add', 'push', 'pull'].includes(call[1])) && !(call[0] === 'gh' && ['pr', 'release'].includes(call[1]))));
+		assert.equal(await readFile(path.join(f.directory, 'build/armotusitio/product-overrides.json'), 'utf8'), before);
+	} finally { await f.close(); }
+});
+
+
+test('missing ARM64 support fails in preflight before any metadata or build write', { skip: process.platform !== 'win32' }, async () => {
+	const f = await fixture({ pages: [[]], noArm: true });
+	try {
+		const result = await f.invoke([]); assert.equal(result.code, 1, result.output); assert.match(result.output, /Restore ARM64/);
+		assert.ok((await f.calls()).every(call => call[0] !== 'update' && !(call[0] === 'git' && ['switch', 'commit', 'add', 'push', 'pull'].includes(call[1]))));
+	} finally { await f.close(); }
+});
+
+test('retry reuses validated source and signed outputs; rebuild forces both gates again', { skip: process.platform !== 'win32' }, async () => {
+	const f = await fixture({ pages: [[]] }, 1);
+	try {
+		assert.equal((await f.invoke(['--no-publish'])).code, 0);
+		let count = (await f.calls()).length;
+		const retry = await f.invoke(['--no-publish']); assert.equal(retry.code, 0, retry.output);
+		assert.deepEqual((await f.calls()).slice(count).filter(call => call[0] === 'update'), [['update', 'build-all']]);
+		count = (await f.calls()).length;
+		const rebuild = await f.invoke(['--rebuild', '--no-publish']); assert.equal(rebuild.code, 0, rebuild.output);
+		assert.deepEqual((await f.calls()).slice(count).filter(call => call[0] === 'update'), [['update', 'validate'], ['update', 'build-all'], ['update', 'artifacts']]);
+	} finally { await f.close(); }
 });

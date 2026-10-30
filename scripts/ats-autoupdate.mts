@@ -366,7 +366,7 @@ async function validate(): Promise<unknown> {
 		await run(process.execPath, [npmCLI, ...args], repositoryRoot, 1800000);
 	}
 	await run(process.execPath, [path.join(repositoryRoot, 'node_modules', '@typescript', 'native', 'bin', 'tsc'), '--project', 'extensions/armotusitio-ide/tsconfig.json', '--noEmit', '--pretty', 'false']);
-	await run(process.execPath, ['--test', 'scripts/ats-autoupdate.test.mts'], repositoryRoot, 120000);
+	await run(process.execPath, ['--test', 'scripts/ats-autoupdate.test.mts', 'scripts/ats-release-script.test.mts', 'scripts/ats-release-state.test.mts', 'scripts/ats-build-all.test.mts', 'scripts/ats-release-retry.test.mts', 'scripts/ats-release-check.test.mts'], repositoryRoot, 120000);
 	const result = { status: 'validated', commit: await run('git', ['rev-parse', 'HEAD']), checkedAt: new Date().toISOString(), buildExecuted: false };
 	await saveJSON(path.join(stateRoot, 'validation.json'), result);
 	return result;
@@ -383,6 +383,16 @@ export async function findReleaseByTag(tag: string, execute: typeof run = run): 
 	if (!isUpdateRecord(release) || typeof release.id !== 'number' || !Number.isSafeInteger(release.id) || release.id < 1
 		|| typeof release.draft !== 'boolean' || typeof release.target_commitish !== 'string') { throw new Error('Invalid GitHub release metadata.'); }
 	return { id: release.id, draft: release.draft, target_commitish: release.target_commitish };
+}
+
+/** GitHub can take several seconds to list a draft that was just created. */
+export async function waitForReleaseByTag(tag: string, execute: typeof run = run, pause: (ms: number) => Promise<void> = ms => new Promise(resolve => setTimeout(resolve, ms))) {
+	for (let attempt = 0; attempt < 6; attempt++) {
+		const release = await findReleaseByTag(tag, execute);
+		if (release) { return release; }
+		if (attempt < 5) { await pause(Math.min(1000 * 2 ** attempt, 8000)); }
+	}
+	throw new Error('Created draft is not visible yet. Retry the recipe to resume it; no published release was replaced.');
 }
 
 /** Recheck the immutable publication target before uploading and before making the draft public. */
@@ -435,7 +445,7 @@ async function publish(approved: boolean): Promise<unknown> {
 	if (!existing) {
 		await requireActionsDisabled();
 		await run('gh', ['release', 'create', tag, '--repo', armotusitioRepository, '--target', manifest.commit, '--draft', '--title', `ArmotuSitio IDE ${manifest.baseVersion} r${manifest.revision}`, '--notes', `Windows x64, Linux x64 (.deb/.rpm/archive), Linux x64/arm64 remote servers. Source: ${manifest.commit}. Signed update manifest; Windows executables may be unsigned.`]);
-		existing = await findReleaseByTag(tag);
+		existing = await waitForReleaseByTag(tag);
 	}
 	if (!existing) { throw new Error('Created draft release could not be found.'); }
 	const releasePath = `repos/${armotusitioRepository}/releases/${existing.id}`;
