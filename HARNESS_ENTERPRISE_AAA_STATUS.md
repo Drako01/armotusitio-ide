@@ -439,6 +439,15 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 - [ ] **Retest consolidado:** los últimos 213 PASS son anteriores a este bloque. Ejecutar localmente la suite nueva y los gates completos una sola vez tras el lote.
 - [ ] **No implementado:** interoperabilidad ejecutable plena entre motores, exclusión distribuida de escritores, journal multioperación, sandbox OS y ejecución autónoma de gates externos. Ningún metadato de convenciones puede habilitar estas capacidades.
 
+### Lote P1: comparación de capacidades sin elevación de permisos (2026-10-30; retest pendiente)
+
+- [x] `verifiedNativeCapabilities()` expone la lista real declarada por el motor IDE, independiente de que el proyecto abierto disponga de Harness propio.
+- [x] `compareHybridCapabilities()` devuelve intersección, capacidades exclusivas del IDE y capacidades reportadas solo por el proyecto; rechaza nombres desconocidos y duplicados.
+- [x] El handshake explícito muestra esta comparación para preparar el futuro routing de gates. **El resultado nunca activa ejecución externa**: `executionGranted: false`.
+- [x] Prueba offline de solapamiento, funcionalidad externa sin attestation y rechazo de manifiestos inválidos.
+- [ ] **Pendiente:** protocolo de ejecución de gates con contratos firmes, locks compartidos/fencing y tests E2E reales. No usar los reportes de capacidades como sustituto de implementación validada.
+- [ ] **Retest local consolidado** tras los cambios de este lote, sobre el SHA definitivo.
+
 ## Validación local obligatoria
 
 Desde la raíz del repositorio, con las dependencias instaladas:
