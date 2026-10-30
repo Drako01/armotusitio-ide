@@ -356,3 +356,42 @@ test('restart locates old interrupted records outside 40 most recent UI entries'
 			/HARNESS_RESUME_WRITE_UNCERTAIN/);
 	} finally { await fs.rm(root, { recursive: true, force: true }); }
 });
+
+test('workflow storage refuses a symlink to an unrelated directory', async (t) => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-workflow-storage-link-'));
+	try {
+		const canonical = await fs.realpath(root);
+		const target = path.join(root, 'other-state');
+		const linked = path.join(root, 'private');
+		await fs.mkdir(target);
+		try { await fs.symlink(target, linked, process.platform === 'win32' ? 'junction' : 'dir'); }
+		catch (error) {
+			if (['EPERM', 'EACCES', 'ENOTSUP'].includes((error as NodeJS.ErrnoException).code || '')) {
+				t.skip('Creating directory links requires OS privileges');
+				return;
+			}
+			throw error;
+		}
+		const flow = new NativeAgentWorkflow(canonical, linked);
+		await assert.rejects(flow.history(), /HARNESS_WORKFLOW_UNSAFE_STORAGE/);
+		await assert.rejects(flow.reconcile(), /HARNESS_WORKFLOW_UNSAFE_STORAGE/);
+		const plan = proposedWorkflow('codex', 'Inspect linked state');
+		await assert.rejects(flow.start(plan, workflowDigest(canonical, plan), () => true),
+			/HARNESS_WORKFLOW_UNSAFE_STORAGE/);
+		assert.deepEqual(await fs.readdir(target), []);
+	} finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
+test('workflow state path refuses an ordinary file before writing a lock', async () => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-workflow-storage-file-'));
+	try {
+		const canonical = await fs.realpath(root);
+		const storage = path.join(root, 'private');
+		await fs.writeFile(storage, 'USER_EVIDENCE');
+		const plan = proposedWorkflow('codex', 'Inspect protected file');
+		const flow = new NativeAgentWorkflow(canonical, storage);
+		await assert.rejects(flow.history(), /HARNESS_WORKFLOW_UNSAFE_STORAGE/);
+		await assert.rejects(flow.start(plan, workflowDigest(canonical, plan), () => true));
+		assert.equal(await fs.readFile(storage, 'utf8'), 'USER_EVIDENCE');
+	} finally { await fs.rm(root, { recursive: true, force: true }); }
+});
