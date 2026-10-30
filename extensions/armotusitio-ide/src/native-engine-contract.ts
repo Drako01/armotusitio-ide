@@ -6,6 +6,8 @@
 import { inspectHarnessAuthority } from './native-authority.ts';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import { spawn } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 
 export const ENGINE_CONTRACT_VERSION = 2 as const;
 export type Capability =
@@ -80,4 +82,63 @@ export async function describeEngine(root: string): Promise<EngineCapabilities> 
 		requiresExternalHandshake: isProject,
 		executionEnabled: !isProject
 	};
+}
+
+/**
+ * Explicit opt-in project handshake. A self-reported response is NOT an OS
+ * attestation and does not grant authority to execute project operations.
+ * Never call from discovery, workspace opening or untrusted workspaces.
+ */
+export async function probeProjectHandshake(root: string, trusted: () => boolean): Promise<{ protocol: 2; reported: Capability[] }> {
+	if (!trusted()) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
+	const canonical = await fs.realpath(root);
+	if (canonical !== root) { throw Error('HARNESS_HANDSHAKE_ROOT_CHANGED'); }
+	const authority = await inspectHarnessAuthority(canonical);
+	if (authority.engine !== 'project' || !authority.entry || authority.reason !== 'project-entry') { throw Error('HARNESS_HANDSHAKE_ENTRY_UNAVAILABLE'); }
+	const target = path.join(canonical, authority.entry);
+	const entry = await fs.lstat(target);
+	if (!entry.isFile() || entry.isSymbolicLink() || await fs.realpath(target) !== target) { throw Error('HARNESS_HANDSHAKE_ENTRY_UNSAFE'); }
+	const declared = await readProjectCapabilities(canonical);
+	const nonce = randomBytes(16).toString('hex');
+	const environment: NodeJS.ProcessEnv = {};
+	for (const key of ['PATH', 'Path', 'SystemRoot', 'WINDIR', 'HOME', 'USERPROFILE', 'TEMP', 'TMP']) {
+		if (process.env[key]) { environment[key] = process.env[key]; }
+	}
+	environment.ELECTRON_RUN_AS_NODE = '1';
+	const output = await new Promise<string>((resolve, reject) => {
+		const child = spawn(process.execPath, [target, 'capabilities', '--ide-protocol', '2', '--nonce', nonce], {
+			cwd: canonical, shell: false, windowsHide: true, env: environment, stdio: ['ignore', 'pipe', 'pipe']
+		});
+		let stdout = '';
+		let bytes = 0;
+		let finished = false;
+		const finish = (error?: Error): void => {
+			if (finished) { return; }
+			finished = true;
+			clearTimeout(timer);
+			if (error) { child.kill(); reject(error); } else { resolve(stdout); }
+		};
+		const timer = setTimeout(() => finish(Error('HARNESS_HANDSHAKE_TIMEOUT')), 5000);
+		timer.unref();
+		child.stdout?.on('data', (data: Buffer) => {
+			bytes += data.length;
+			if (bytes > 16 * 1024) { finish(Error('HARNESS_HANDSHAKE_OVERSIZED')); return; }
+			stdout += data.toString('utf8');
+		});
+		child.stderr?.on('data', (data: Buffer) => { bytes += data.length; if (bytes > 16 * 1024) { finish(Error('HARNESS_HANDSHAKE_OVERSIZED')); } });
+		child.once('error', () => finish(Error('HARNESS_HANDSHAKE_PROCESS')));
+		child.once('close', code => finish(code === 0 ? undefined : Error('HARNESS_HANDSHAKE_FAILED')));
+	});
+	if (!trusted()) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
+	let parsed: unknown;
+	try { parsed = JSON.parse(output); } catch { throw Error('HARNESS_HANDSHAKE_INVALID'); }
+	if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) { throw Error('HARNESS_HANDSHAKE_INVALID'); }
+	const result = parsed as { schemaVersion?: unknown; nonce?: unknown; capabilities?: unknown };
+	if (result.schemaVersion !== ENGINE_CONTRACT_VERSION || result.nonce !== nonce ||
+		!Array.isArray(result.capabilities) || result.capabilities.length > declared.length ||
+		!result.capabilities.every(cap => typeof cap === 'string' && declared.includes(cap as Capability)) ||
+		new Set(result.capabilities).size !== result.capabilities.length) {
+		throw Error('HARNESS_HANDSHAKE_INVALID');
+	}
+	return { protocol: 2, reported: result.capabilities as Capability[] };
 }
