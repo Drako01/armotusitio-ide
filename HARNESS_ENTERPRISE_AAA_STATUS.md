@@ -322,8 +322,8 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 
 ### Estado durable estrictamente tipado y rechazo de datos no autorizados (iteración pendiente de retest)
 
-- [x] **Control de seguridad incorporado:** el lector del historial de workflows ahora valida una allowlist de campos tanto en el registro raíz como en cada paso, además de la allowlist ya existente para eventos. Se rechazan metadatos desconocidos, incluidos posibles prompts, respuestas del proveedor o credenciales inyectados en JSON de estado.
-- [x] **Regresión sin modelos:** test que escribe estados contaminados al archivo privado, comprueba fallo cerrado y ausencia de reescritura, y verifica que el estado legítimo continúa siendo legible.
+- [x] **Control de seguridad incorporado:** el lector del historial de workflows ahora valida una allowlist de campos tanto en el registro raíz como en cada paso, además de la allowlist ya existente para eventos. Verifica fechas, códigos de salida, duraciones y resultado final de verificación. Se rechazan metadatos desconocidos, incluidos posibles prompts, respuestas del proveedor o credenciales inyectados en JSON de estado.
+- [x] **Regresión sin modelos:** test que escribe estados contaminados al archivo privado, comprueba fallo cerrado y ausencia de reescritura, y verifica que el estado legítimo continúa siendo legible. Incluye rechazos de campos desconocidos, fechas inválidas, duración negativa, códigos de salida no numéricos y estado de verificación desconocido.
 - [ ] **Nueva ejecución de tests:** la batería previa de 188 PASS no contiene esta nueva prueba. Repetir `ats-harness-check.mts --fix` / sin `--fix`, suite npm, `npm run check` y `git diff --check`.
 - [ ] **No certificado aún:** CI Windows/Linux/macOS y protección transaccional del filesystem; la allowlist endurece la persistencia, **no constituye rollback ni sandbox OS**.
 
