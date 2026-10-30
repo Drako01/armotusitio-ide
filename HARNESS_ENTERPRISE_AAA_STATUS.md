@@ -574,6 +574,14 @@ Ejemplo local voluntario: `node scripts/ats-harness-benchmark.mts --command chec
 - [ ] **Retest del commit corregido y este documento:** repetir `node scripts/ats-harness-check.mts`, `npm test --prefix extensions/armotusitio-ide`, `npm run check --prefix extensions/armotusitio-ide` y `git diff --check` en Windows. No atribuir resultados verdes a commits posteriores a `f369b0f384f` hasta contar con un nuevo log.
 - [ ] **Warnings informativos del runtime:** los avisos `MODULE_TYPELESS_PACKAGE_JSON` y `ExperimentalWarning: stripTypeScriptTypes` no constituyeron fallos. No se cambió `package.json` a ESM porque el entrypoint de la extensión utiliza CommonJS y una migración aislada podría romper la activación y el MCP.
 
+### Corrección de carrera de cancelación en Windows (2026-10-30; nuevo retest pendiente)
+
+- [x] **Evidencia en `213e21246bf`:** `node scripts/ats-harness-check.mts` obtuvo los **7/7 gates en PASS** (156 tests focalizados: 155 PASS, 0 FAIL, 1 SKIP). `npm run check --prefix extensions/armotusitio-ide` y `git diff --check` finalizaron correctamente.
+- [x] **Suite completa en el mismo SHA:** 253 tests; **251 PASS, 1 FAIL, 1 SKIP**. El único fallo fue `native-harness.test.mts`: `concurrent attempts cannot both obtain execution lock`, en la aserción final `assert.notEqual(status, 'passed')`. El subproceso de 2 segundos podía terminar mientras se esperaba el rechazo del segundo intento, antes de que `cancel()` se ejecutara; es una condición de carrera de la prueba bajo carga.
+- [x] **Corrección en la rama:** el fixture de contención mantiene un gate activo hasta su cancelación; espera la señal real de inicio antes del segundo intento, garantiza `cancel()` y drena el subproceso también cuando una aserción falla. El motor `NativeHarness` revisa el aborto y Workspace Trust antes de persistir un `passed` terminal.
+- [x] **MCP intacto:** no se modifica `mcp.ts`, `extension.ts` ni la configuración del proveedor `atsIde.armotusitioMcp`; las pruebas MCP están en PASS.
+- [ ] **Pendiente:** reejecutar los controles focalizados y los 253 tests completos sobre el nuevo HEAD. No se considera verde el nuevo SHA hasta disponer de ese resultado. Los warnings de detección ESM y Node TS experimental no son fallos ni justifican cambiar la extensión CommonJS.
+
 ## Validación local obligatoria
 
 Desde la raíz del repositorio, con las dependencias instaladas:
@@ -594,7 +602,7 @@ Después, validar manualmente en el IDE: arranque y apertura de proyectos con/si
 
 ### Criterios de salida para la rama
 
-- [x] Los tres comandos locales finalizaron satisfactoriamente en el árbol de trabajo final de Windows; confirmar por separado el SHA exacto mediante CI o checkout limpio.
+- [ ] Los tres comandos locales finalizan satisfactoriamente sobre el HEAD de trabajo final en Windows. En `213e21246bf` el focalizado y el check pasaron, pero la suite completa tuvo 1 fallo de concurrencia; corrección posterior pendiente de retest.
 - [ ] Reproducir los checks en un checkout limpio del SHA final; no se exige GitHub Actions.
 - [ ] Build **completo del IDE** y empaquetado de distribución validados; el bundle y chequeo de recursos de la extensión **sí** pasaron localmente.
 - [ ] Pruebas de permiso de lectura/escritura, aislamiento y secretos aprobadas.
