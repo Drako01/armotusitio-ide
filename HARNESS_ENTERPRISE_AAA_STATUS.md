@@ -518,6 +518,16 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 - [ ] **Retest obligatorio del SHA corregido:** verificar `node scripts/ats-harness-check.mts`, `npm test --prefix extensions/armotusitio-ide`, `npm run check --prefix extensions/armotusitio-ide` y `git diff --check`; aún no existe log para ese commit.
 - [ ] **Cierre enterprise AAA pendiente:** protocolo de ejecución externa coordinado y interoperable, sandbox OS probado, fences compartidos, rollback y checkpoints transaccionales, E2E con ambos proveedores autenticados, builds reales Windows/Linux/macOS y benchmarks reproducibles. Ninguna suite offline sustituye estos criterios de aceptación.
 
+### Lote P2: benchmark reproducible offline (2026-10-30; validación pendiente)
+
+- [x] Nuevo `scripts/ats-harness-benchmark.mts` ejecuta localmente únicamente `check` o `test`, entre 1 y 10 repeticiones explícitas; sin agente, despliegue, publicación ni red de proveedor. Registra tiempos reales wall-clock y tasas observadas de éxito/fallo sin inventar CPU, RAM, precios ni mejora porcentual.
+- [x] Resumen con mínimo, mediana, p95 y máximo por ejecución; todas las mediciones fallidas aparecen como muestras y generan exit code de fallo.
+- [x] Nueva suite `native-benchmark.test.mts` cubre muestras válidas/invalidas, rechazo de comandos arbitrarios y `--help` sin ejecución. Integrada en tests focalizados, formateo e higiene de `ats-harness-check.mts`.
+- [ ] El benchmark **no** equivale a comparación cold/warm de motores ni cuantifica consumo CPU/RAM/tokens, costos o throughput de proveedores reales. Requiere baseline fija, hardware controlado y repetición en sistemas operativos elegidos.
+- [ ] Retest de la rama tras este lote y revisión del formato oficial. Ejecutar `node scripts/ats-harness-check.mts`, `npm test --prefix extensions/armotusitio-ide` y `npm run check --prefix extensions/armotusitio-ide`. No cambiar casillas globales de certificación hasta contar con evidencia.
+
+Ejemplo local voluntario: `node scripts/ats-harness-benchmark.mts --command check --runs 3`. El resultado JSON se imprime en terminal; no se guarda información del proyecto ni se ejecutan CLIs de IA.
+
 ## Validación local obligatoria
 
 Desde la raíz del repositorio, con las dependencias instaladas:
