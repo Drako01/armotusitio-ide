@@ -193,6 +193,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			assertProviderCapacity();
 			pendingWorkflows.add(root); controller.refresh();
 			const engine = new NativeAgentWorkflow(executionRoot, path.join(metricsDirectory(root), 'workflows'));
+			const unsubscribeEvents = engine.onEvent(() => { controller.refresh(); });
 			const validationEngine = isolation ? new NativeHarness(executionRoot, path.join(metricsDirectory(root), 'isolated-verification', isolation.id)) : chosen.engine;
 			let run: WorkflowRun;
 			try {
@@ -214,7 +215,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 					await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({ language: 'json', content: JSON.stringify(outcome, null, 2) }), { preview: true });
 					vscode.window.showInformationMessage('Workflow multiagente finalizado: ' + outcome.status + (isolation ? '. Worktree conservado: ' + isolation.root : ''));
 				}
-			} finally { runningWorkflows.delete(root); controller.refresh(); }
+			} finally { unsubscribeEvents(); runningWorkflows.delete(root); controller.refresh(); }
 		} catch (error) { showError(error); }
 		finally {
 			if (root) { pendingWorkflows.delete(root); }
@@ -276,7 +277,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			if (!authorized(chosen.folder)) { return; }
 			await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({
 				language: 'json',
-				content: JSON.stringify({ providers: diagnostics, note: 'CLI --version only. Authentication and supported flags require an explicit provider smoke test.' }, null, 2)
+				content: JSON.stringify({ providers: diagnostics, note: 'Local --version and --help flag diagnostics only. Authentication, effective permissions and provider protocol still require a real opt-in smoke test.' }, null, 2)
 			}), { preview: true });
 		} catch (error) { showError(error); }
 	}));
