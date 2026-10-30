@@ -32,6 +32,7 @@ export interface AgentOutcome {
 	scopeVerified?: boolean;
 	usage?: ProviderUsage;
 	structuredOutput?: boolean;
+	rateLimited?: true;
 }
 export interface AgentExecution {
 	outcome: Promise<AgentOutcome>;
@@ -167,7 +168,8 @@ export async function executeReviewedAgent(review: AgentReview, current: AgentDr
 				resolve({
 					status, exitCode, durationMs: Date.now() - started, truncated,
 					output: redactOutput(parsed.structured ? parsed.message : stdout + (stderr ? '\n' + stderr : '')),
-					scopeViolation, scopeVerified, structuredOutput: parsed.structured, usage: parsed.usage
+					scopeViolation, scopeVerified, structuredOutput: parsed.structured, usage: parsed.usage,
+					...(parsed.rateLimited ? { rateLimited: true as const } : {})
 				});
 			})();
 		};

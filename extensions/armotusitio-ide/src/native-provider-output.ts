@@ -16,6 +16,17 @@ export interface ParsedProviderOutput {
 	structured: boolean;
 	providerError: boolean;
 	usage?: ProviderUsage;
+	/** Present only when a provider error reports throttling or an exhausted usage quota. */
+	rateLimited?: true;
+}
+const THROTTLED = /rate[ _-]?limit|too many requests|usage limit|quota exceeded|\b429\b/i;
+/** Recognize throttling from structured error fields only, never from successful answers. */
+function throttled(event: Record<string, unknown> | undefined): boolean {
+	if (!event) { return false; }
+	const nested = object(event.error);
+	return [event.api_error_status, event.status, event.status_code, nested?.status, nested?.code].includes(429) ||
+		[event.message, event.result, event.subtype, nested?.message, nested?.type, nested?.code]
+			.some(text => typeof text === 'string' && THROTTLED.test(text.slice(0, 4096)));
 }
 function amount(value: unknown): number | undefined {
 	return Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : undefined;
@@ -40,6 +51,7 @@ export function parseProviderOutput(provider: NativeProvider, raw: string): Pars
 				const estimatedCostUsd = cost(data.total_cost_usd);
 				return {
 					message: data.result, structured: true, providerError: data.is_error === true,
+					...(data.is_error === true && throttled(data) ? { rateLimited: true as const } : {}),
 					usage: input !== undefined && output !== undefined
 						? {
 							inputTokens: input, outputTokens: output, ...(cached === undefined ? {} : { cachedInputTokens: cached }),
@@ -59,10 +71,11 @@ export function parseProviderOutput(provider: NativeProvider, raw: string): Pars
 			if (events.some(x => !x || typeof x.type !== 'string')) { throw Error('BAD_EVENTS'); }
 			let message = '';
 			let providerError = false;
+			let rateLimited = false;
 			let latestUsage: ProviderUsage | undefined;
 			for (const event of events) {
 				if (!event) { continue; }
-				if (event.type === 'error' || event.type === 'turn.failed') { providerError = true; }
+				if (event.type === 'error' || event.type === 'turn.failed') { providerError = true; rateLimited ||= throttled(event); }
 				if (event.type === 'item.completed') {
 					const item = object(event.item);
 					if ((item?.type === 'agent_message' || item?.type === 'assistant_message') && typeof item.text === 'string') {
@@ -78,7 +91,7 @@ export function parseProviderOutput(provider: NativeProvider, raw: string): Pars
 				}
 			}
 			if (message || providerError) {
-				return { message, structured: true, providerError, usage: latestUsage };
+				return { message, structured: true, providerError, usage: latestUsage, ...(rateLimited ? { rateLimited: true as const } : {}) };
 			}
 		} catch { /* Fallback supports older CLIs and mock providers. */ }
 	}
@@ -93,6 +106,7 @@ export class CodexEventAccumulator {
 	private invalid = false;
 	private message = '';
 	private providerError = false;
+	private rateLimited = false;
 	private usage: ProviderUsage | undefined;
 
 	push(text: string): void {
@@ -114,7 +128,7 @@ export class CodexEventAccumulator {
 			const event = object(JSON.parse(line));
 			if (!event || typeof event.type !== 'string') { this.invalid = true; return; }
 			this.seen++;
-			if (event.type === 'error' || event.type === 'turn.failed') { this.providerError = true; }
+			if (event.type === 'error' || event.type === 'turn.failed') { this.providerError = true; this.rateLimited ||= throttled(event); }
 			if (event.type === 'item.completed') {
 				const item = object(event.item);
 				if ((item?.type === 'agent_message' || item?.type === 'assistant_message') && typeof item.text === 'string') {
@@ -134,6 +148,9 @@ export class CodexEventAccumulator {
 	finish(): ParsedProviderOutput | null {
 		if (this.pending.trim()) { this.accept(this.pending.trim()); }
 		if (this.invalid || !this.seen || (!this.message && !this.providerError)) { return null; }
-		return { message: this.message, structured: true, providerError: this.providerError, usage: this.usage };
+		return {
+			message: this.message, structured: true, providerError: this.providerError, usage: this.usage,
+			...(this.rateLimited ? { rateLimited: true as const } : {})
+		};
 	}
 }
