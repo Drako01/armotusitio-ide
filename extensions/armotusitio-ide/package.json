@@ -172,6 +172,10 @@
         "title": "ArmoTuSitio: Historial de workflows multiagente"
       },
       {
+        "command": "atsHarness.nativeWorkflowReconcile",
+        "title": "ArmoTuSitio: Reconciliar workflows interrumpidos"
+      },
+      {
         "command": "atsHarness.nativeAgentMetrics",
         "title": "ArmoTuSitio: Métricas locales de agentes IA"
       },
