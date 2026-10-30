@@ -96,6 +96,11 @@ window.addEventListener('message', event => {
 		}
 		if (project.agentMetrics?.count) {
 			article.append(element('p', 'Agentes IA: ' + project.agentMetrics.count + ' ejecuciones · éxito: ' + project.agentMetrics.successRate + '% · p95: ' + project.agentMetrics.p95DurationMs + ' ms', 'muted'));
+			if (project.agentMetrics.usageSamples) {
+				const metric = project.agentMetrics;
+				article.append(element('p', 'Tokens medidos (' + metric.usageSamples + ' ejecuciones): ' + metric.measuredInputTokens + ' entrada / ' + metric.measuredOutputTokens + ' salida' +
+					(metric.estimatedCostUsd === null ? '' : ' · costo estimado parcial: USD ' + metric.estimatedCostUsd.toFixed(4)), 'muted'));
+			}
 		}
 		if (project.gatePerformance?.attempts) {
 			const perf = project.gatePerformance;
