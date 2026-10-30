@@ -8,7 +8,7 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { acquireSharedExecutionFence } from '../src/native-shared-fence.ts';
-import { reserveProviderInvocation } from '../src/native-provider-quota.ts';
+import { reserveProviderInvocation, readProviderInvocationQuota } from '../src/native-provider-quota.ts';
 
 test('durable provider quota rejects over-budget concurrent readers before CLI launch', async () => {
 	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-quota-root-'));
@@ -32,6 +32,11 @@ test('durable provider quota rejects over-budget concurrent readers before CLI l
 			assert.deepEqual(other, { used: 1, remaining: 0 });
 			const stored = JSON.parse(await fs.readFile(path.join(storage, 'provider-invocations.json'), 'utf8'));
 			assert.deepEqual(stored.entries.map(entry => entry.provider), ['codex', 'claude']);
+			const status = await readProviderInvocationQuota(storage, 1, now);
+			assert.deepEqual(status.providers, {
+				codex: { used: 1, remaining: 0 }, claude: { used: 1, remaining: 0 }
+			});
+			assert.equal(status.enabled, true);
 			// Credits expire only after the entire rolling window.
 			assert.deepEqual(await reserveProviderInvocation(storage, 'codex', fence, 1, now + 86400001),
 				{ used: 1, remaining: 0 });
