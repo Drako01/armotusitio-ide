@@ -33,6 +33,7 @@ test('rejects forged approval before running anything', async () => {
 test('executes three stages in order with fake provider; persists only metadata', { skip: process.platform === 'win32' }, async () => {
 	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-workflow-e2e-'));
 	const oldPath = process.env.PATH;
+	const traceFile = path.join(os.tmpdir(), 'ats-workflow-trace-' + path.basename(root) + '.txt');
 	try {
 		const canonical = await fs.realpath(root);
 		const bin = path.join(root, 'bin');
@@ -44,7 +45,7 @@ test('executes three stages in order with fake provider; persists only metadata'
 			'process.stdin.on("data", b => { input += b; });',
 			'process.stdin.on("end", () => {',
 			' const role = input.includes("Read-only assessment") ? "plan" : input.includes("Implement only") ? "implement" : "review";',
-			' require("fs").appendFileSync("trace.txt", role + "\\n");',
+			' require("fs").appendFileSync(' + JSON.stringify(traceFile) + ', role + "\\n");',
 			' console.log(role === "review" ? "HARNESS_REVIEW: PASS" : "fake provider passed");',
 			'});'
 		].join('\n');
@@ -66,7 +67,7 @@ test('executes three stages in order with fake provider; persists only metadata'
 		assert.equal(verified, 1);
 		assert.equal(metrics, 3);
 		assert.deepEqual(outcome.steps.map(s => s.status), ['passed', 'passed', 'passed']);
-		assert.equal(await fs.readFile(path.join(root, 'trace.txt'), 'utf8'), 'plan\nimplement\nreview\n');
+		assert.equal(await fs.readFile(traceFile, 'utf8'), 'plan\nimplement\nreview\n');
 		const history = await flow.history();
 		assert.equal(history.length, 1);
 		assert.equal(history[0].status, 'passed');
@@ -74,6 +75,7 @@ test('executes three stages in order with fake provider; persists only metadata'
 		assert.ok(!raw.includes('PRIVATETASK-DO-NOT-PERSIST'));
 	} finally {
 		if (oldPath === undefined) { delete process.env.PATH; } else { process.env.PATH = oldPath; }
+		await fs.rm(traceFile, { force: true });
 		await fs.rm(root, { recursive: true, force: true });
 	}
 });
