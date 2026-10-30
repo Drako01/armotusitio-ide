@@ -33,7 +33,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 	const authorized = (folder: Host): boolean => ensureTrust() && (vscode.workspace.workspaceFolders || []).some((current: Host) => current.uri.toString() === folder.uri.toString());
 	const running = new Map<string, { engine: NativeHarness; taskId: string }>();
 	const runningAgents = new Map<string, AgentExecution>();
-	controller.nativeRunning = () => running.size;
+	controller.nativeRunning = () => running.size + runningAgents.size;
 	controller.nativeProjects = async () => {
 		const rows = [];
 		if (!vscode.workspace.getConfiguration('atsHarness').get('enabled', true)) { return rows; }
@@ -45,7 +45,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 				const tasks = ensureTrust() ? await selected.engine.list() : [];
 				const diagnostic = ensureTrust() ? await selected.engine.diagnose() : undefined;
 				const configured = ensureTrust() ? !!await loadProjectConfig(folder.uri.fsPath) : false;
-				rows.push({ root: folder.uri.fsPath, name: folder.name, engine: 'ide-native', configured, lock: diagnostic?.lock, tasks: tasks.sort((a, b) => Number(b.attempts.at(-1)?.status === 'running') - Number(a.attempts.at(-1)?.status === 'running')).slice(0, 100).map(task => ({ id: task.id, title: task.title, status: task.attempts.at(-1)?.status || 'pending', attempts: task.attempts.length, gates: task.plan.gates.map(gate => ({ id: gate.id, dependsOn: gate.dependsOn || [], status: task.attempts.at(-1)?.results.find(result => result.id === gate.id)?.status || 'pending' })), reconciliationRequired: task.attempts.at(-1)?.status === 'running' && (diagnostic?.lock !== 'active' || diagnostic?.lockTask !== task.id || diagnostic?.lockAttempt !== task.attempts.at(-1)?.id) })) });
+				rows.push({ root: folder.uri.fsPath, name: folder.name, engine: 'ide-native', configured, lock: diagnostic?.lock, agentActive: runningAgents.has(folder.uri.fsPath), tasks: tasks.sort((a, b) => Number(b.attempts.at(-1)?.status === 'running') - Number(a.attempts.at(-1)?.status === 'running')).slice(0, 100).map(task => ({ id: task.id, title: task.title, status: task.attempts.at(-1)?.status || 'pending', attempts: task.attempts.length, gates: task.plan.gates.map(gate => ({ id: gate.id, dependsOn: gate.dependsOn || [], status: task.attempts.at(-1)?.results.find(result => result.id === gate.id)?.status || 'pending' })), reconciliationRequired: task.attempts.at(-1)?.status === 'running' && (diagnostic?.lock !== 'active' || diagnostic?.lockTask !== task.id || diagnostic?.lockAttempt !== task.attempts.at(-1)?.id) })) });
 			} catch { rows.push({ root: folder.uri.fsPath, name: folder.name, engine: 'ide-native', error: true, tasks: [] }); }
 		}
 		return rows;
