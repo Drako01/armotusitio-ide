@@ -444,7 +444,7 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 - [x] `verifiedNativeCapabilities()` expone la lista real declarada por el motor IDE, independiente de que el proyecto abierto disponga de Harness propio.
 - [x] `compareHybridCapabilities()` devuelve intersección, capacidades exclusivas del IDE y capacidades reportadas solo por el proyecto; rechaza nombres desconocidos y duplicados.
 - [x] El handshake explícito muestra esta comparación para preparar el futuro routing de gates. **El resultado nunca activa ejecución externa**: `executionGranted: false`.
-- [x] Prueba offline de solapamiento, funcionalidad externa sin attestation y rechazo de manifiestos inválidos.
+- [x] Pruebas offline de solapamiento, funcionalidad externa sin attestation, rechazo de manifiestos inválidos y renderizado del handshake real sin autorización de ejecución.
 - [ ] **Pendiente:** protocolo de ejecución de gates con contratos firmes, locks compartidos/fencing y tests E2E reales. No usar los reportes de capacidades como sustituto de implementación validada.
 - [ ] **Retest local consolidado** tras los cambios de este lote, sobre el SHA definitivo.
 
