@@ -12,11 +12,12 @@ import { fingerprintEvidence, evidenceKey, saveEvidenceMetadata, readEvidenceMet
 import { inspectHarnessAuthority } from './native-authority.ts';
 import { resolveNativeCommand } from './native-runtime.ts';
 import { acquireSharedExecutionFence, type SharedExecutionFence } from './native-shared-fence.ts';
-import { offlineSandboxInvocation } from './native-os-sandbox.ts';
+import { offlineSandboxInvocation, OFFLINE_SANDBOX_POLICIES, type OfflineSandboxPolicy } from './native-os-sandbox.ts';
+import { adaptiveWorkerBudget, sampleHostLoad } from './native-performance.ts';
 
-export type Gate = { id: string; executable: string; args: string[]; cwd?: string; timeoutMs?: number; dependsOn?: string[]; parallelSafe?: boolean; resources?: string[]; sandbox?: 'linux-offline-readonly' };
+export type Gate = { id: string; executable: string; args: string[]; cwd?: string; timeoutMs?: number; dependsOn?: string[]; parallelSafe?: boolean; resources?: string[]; sandbox?: OfflineSandboxPolicy };
 export type Plan = { schemaVersion: 1; gates: Gate[]; inputs?: string[] };
-export type GateResult = { id: string; exitCode: number | null; status: 'passed' | 'failed' | 'cancelled'; output: string; startedAt: string; endedAt: string };
+export type GateResult = { id: string; exitCode: number | null; status: 'passed' | 'failed' | 'cancelled'; output: string; startedAt: string; endedAt: string; reusedFrom?: string };
 export type Attempt = { id: string; startedAt: string; endedAt?: string; status: 'running' | 'passed' | 'failed' | 'interrupted' | 'cancelled'; results: GateResult[]; revision: string; approval: string; evidence?: { fingerprint?: EvidenceFingerprint; key?: string; state: 'recorded' | 'changed' | 'unavailable'; error?: string } };
 export type Task = { schemaVersion: 1; id: string; title: string; createdAt: string; plan: Plan; revision: string; attempts: Attempt[] };
 export type Progress = { task: Task; active: boolean; reconciliationRequired: boolean };
@@ -25,7 +26,8 @@ const EXEC = /^[a-zA-Z0-9][a-zA-Z0-9_.+-]{0,99}$/;
 const MAX_OUTPUT = 64 * 1024;
 const MAX_STATE_BYTES = 2 * 1024 * 1024;
 const MAX_MS = 10 * 60 * 1000;
-const ENV_KEYS = ['PATH', 'Path', 'PATHEXT', 'SystemRoot', 'WINDIR', 'HOME', 'USERPROFILE', 'TEMP', 'TMP', 'TMPDIR', 'LANG', 'LC_ALL'];
+// Per-user cache directories (paths, never secrets) let Go, npm and Composer toolchains run on every OS.
+const ENV_KEYS = ['PATH', 'Path', 'PATHEXT', 'SystemRoot', 'WINDIR', 'HOME', 'USERPROFILE', 'TEMP', 'TMP', 'TMPDIR', 'LANG', 'LC_ALL', 'LOCALAPPDATA', 'APPDATA', 'XDG_CACHE_HOME'];
 function assertId(id: string): void { if (typeof id !== 'string' || !ID.test(id)) { throw Error('HARNESS_INVALID_ID'); } }
 export function nativePlanRevision(plan: Plan): string { return createHash('sha256').update(JSON.stringify(plan)).digest('hex'); }
 export function approvalDigest(plan: Plan, project: string, configuration?: string): string { return createHash('sha256').update(JSON.stringify(configuration === undefined ? [nativePlanRevision(plan), project] : [nativePlanRevision(plan), project, configuration])).digest('hex'); }
@@ -40,7 +42,7 @@ export function validateNativePlan(plan: Plan): void {
 		if (gate.cwd !== undefined && (typeof gate.cwd !== 'string' || gate.cwd.length > 4096 || gate.cwd.includes('\0'))) { throw Error('HARNESS_INVALID_CWD'); }
 		if (gate.dependsOn !== undefined && (!Array.isArray(gate.dependsOn) || !gate.dependsOn.every(x => typeof x === 'string'))) { throw Error('HARNESS_INVALID_DEPENDENCY'); }
 		if (gate.parallelSafe !== undefined && typeof gate.parallelSafe !== 'boolean') { throw Error('HARNESS_INVALID_PARALLEL_POLICY'); }
-		if (gate.sandbox !== undefined && gate.sandbox !== 'linux-offline-readonly') { throw Error('HARNESS_INVALID_SANDBOX_POLICY'); }
+		if (gate.sandbox !== undefined && !OFFLINE_SANDBOX_POLICIES.includes(gate.sandbox)) { throw Error('HARNESS_INVALID_SANDBOX_POLICY'); }
 		if (gate.resources !== undefined && (!Array.isArray(gate.resources) || gate.resources.length > 16 || new Set(gate.resources).size !== gate.resources.length || !gate.resources.every(x => typeof x === 'string' && /^[a-z0-9][a-z0-9_.:-]{0,99}$/i.test(x)))) { throw Error('HARNESS_INVALID_RESOURCES'); }
 	}
 	const done = new Set<string>(), active = new Set<string>();
@@ -48,8 +50,11 @@ export function validateNativePlan(plan: Plan): void {
 	for (const id of seen.keys()) { visit(id); }
 }
 
-/** Preserve legacy two-gate execution; allow up to four only when all candidates explicitly declare safe parallelism. */
-export function selectNativeWave(ready: Gate[], availableCpus = os.availableParallelism()): Gate[] {
+/**
+ * Preserve legacy two-gate execution; allow up to four only when all candidates explicitly
+ * declare safe parallelism, scaled down by observed CPU load and memory pressure.
+ */
+export function selectNativeWave(ready: Gate[], availableCpus = adaptiveWorkerBudget(sampleHostLoad())): Gate[] {
 	if (!ready.length) { return []; }
 	if (!ready.every(g => g.parallelSafe === true)) { return ready.slice(0, 2); }
 	const maxWorkers = Math.max(1, Math.min(4, availableCpus));
@@ -148,7 +153,7 @@ export class NativeHarness {
 		const data = JSON.parse(await fs.readFile(this.file(id), 'utf8')) as Task;
 		if (data.schemaVersion !== 1) { throw Error('HARNESS_INCOMPATIBLE_SCHEMA'); }
 		if (data.id !== id || !Array.isArray(data.attempts) || data.attempts.length > 2048 || !data.attempts.every(a => a && typeof a.id === 'string' && ['running', 'passed', 'failed', 'interrupted', 'cancelled'].includes(a.status) && Array.isArray(a.results))) { throw Error('HARNESS_INVALID_TASK_STATE'); }
-		if (typeof data.title !== 'string' || data.title.length > 300 || typeof data.createdAt !== 'string' || !Number.isFinite(Date.parse(data.createdAt)) || !data.attempts.every(a => ID.test(a.id) && typeof a.startedAt === 'string' && Number.isFinite(Date.parse(a.startedAt)) && /^[a-f0-9]{64}$/.test(a.revision) && /^[a-f0-9]{64}$/.test(a.approval) && a.results.length <= 64 && a.results.every(r => r && ID.test(r.id) && ['passed', 'failed', 'cancelled'].includes(r.status) && (r.exitCode === null || Number.isSafeInteger(r.exitCode)) && typeof r.output === 'string' && Buffer.byteLength(r.output) <= MAX_OUTPUT && typeof r.startedAt === 'string' && typeof r.endedAt === 'string'))) { throw Error('HARNESS_INVALID_TASK_STATE'); }
+		if (typeof data.title !== 'string' || data.title.length > 300 || typeof data.createdAt !== 'string' || !Number.isFinite(Date.parse(data.createdAt)) || !data.attempts.every(a => ID.test(a.id) && typeof a.startedAt === 'string' && Number.isFinite(Date.parse(a.startedAt)) && /^[a-f0-9]{64}$/.test(a.revision) && /^[a-f0-9]{64}$/.test(a.approval) && a.results.length <= 64 && a.results.every(r => r && ID.test(r.id) && ['passed', 'failed', 'cancelled'].includes(r.status) && (r.exitCode === null || Number.isSafeInteger(r.exitCode)) && typeof r.output === 'string' && Buffer.byteLength(r.output) <= MAX_OUTPUT && typeof r.startedAt === 'string' && typeof r.endedAt === 'string' && (r.reusedFrom === undefined || ID.test(r.reusedFrom))))) { throw Error('HARNESS_INVALID_TASK_STATE'); }
 		validateNativePlan(data.plan); if (data.revision !== nativePlanRevision(data.plan)) { throw Error('HARNESS_PLAN_CHANGED'); }
 		for (const attempt of data.attempts) { for (const result of attempt.results) { result.output = redact(result.output); } }
 		return data;
@@ -213,7 +218,23 @@ export class NativeHarness {
 		if (current.pid !== info.pid || current.hostname !== info.hostname || current.attempt !== info.attempt || current.task !== info.task || current.startedAt !== info.startedAt || processAlive(info.pid!)) { throw Error('HARNESS_LOCK_CHANGED'); }
 		await fs.rm(this.lockFile()); return true;
 	}
-	async execute(id: string, approved: string, trust: () => boolean, signal?: AbortSignal, borrowedFence?: SharedExecutionFence): Promise<Task> {
+	/**
+	 * Safe checkpoint of the latest unsuccessful attempt: its passed gates are reusable
+	 * only for the same reviewed plan and configuration, with recorded evidence whose
+	 * declared inputs are unchanged now. Interrupted attempts never qualify.
+	 */
+	async resumableGates(id: string): Promise<{ attemptId: string; gates: string[] } | null> {
+		const task = await this.get(id);
+		const last = task.attempts.at(-1);
+		if (!last || (last.status !== 'failed' && last.status !== 'cancelled') || !task.plan.inputs?.length ||
+			last.revision !== task.revision || last.approval !== await this.reviewDigest(task.plan)) {
+			return null;
+		}
+		if ((await this.evidenceStatus(id)).find(entry => entry.attemptId === last.id)?.state !== 'current-declared-inputs') { return null; }
+		const gates = last.results.filter(result => result.status === 'passed').map(result => result.id);
+		return gates.length ? { attemptId: last.id, gates } : null;
+	}
+	async execute(id: string, approved: string, trust: () => boolean, signal?: AbortSignal, borrowedFence?: SharedExecutionFence, options: { resume?: boolean } = {}): Promise<Task> {
 		if (!trust()) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
 		if ((await inspectHarnessAuthority(this.project)).engine === 'project') { throw Error('HARNESS_PROJECT_AUTHORITY'); }
 		const task = await this.get(id); const root = await this.root();
@@ -247,12 +268,18 @@ export class NativeHarness {
 			try {
 				if (task.plan.inputs?.length) { fingerprint = await fingerprintEvidence(root, approved, task.plan.inputs); }
 			} catch { /* Missing or unsafe inputs disable evidence reuse, never execution checks. */ }
+			const checkpoint = options.resume ? await this.resumableGates(id) : null;
+			if (options.resume && !checkpoint) { throw Error('HARNESS_RESUME_UNAVAILABLE'); }
+			const previous = checkpoint ? task.attempts.find(item => item.id === checkpoint.attemptId) : undefined;
 			await handle.writeFile(JSON.stringify({ pid: process.pid, hostname: os.hostname(), task: id, attempt: attempt.id, startedAt: attempt.startedAt }));
 			task.attempts.push(attempt); attemptStarted = true;
 			await shared.assertCurrent();
 			await writeAtomic(this.file(id), task);
 			try {
 				const completed = new Set<string>();
+				for (const result of previous?.results.filter(item => checkpoint?.gates.includes(item.id)) || []) {
+					attempt.results.push({ ...result, reusedFrom: previous!.id }); completed.add(result.id);
+				}
 				// A bounded wave runs only independent gates. Preserve the plan order in persisted evidence.
 				// The first failed/cancelled wave stops the DAG; no dependent gate is started.
 				while (completed.size < task.plan.gates.length) {
@@ -309,14 +336,17 @@ export class NativeHarness {
 		}
 	}
 	private async runGate(gate: Gate, cwd: string, signal: AbortSignal): Promise<GateResult> {
-		const startedAt = new Date().toISOString(); const env: NodeJS.ProcessEnv = {};
+		const startedAt = new Date().toISOString(); let env: NodeJS.ProcessEnv = {};
 		for (const k of ENV_KEYS) { if (process.env[k]) { env[k] = process.env[k]; } }
 		let command;
+		let scratch: string | undefined;
 		try {
 			command = await resolveNativeCommand(gate.executable, gate.args);
-			if (gate.sandbox === 'linux-offline-readonly') {
-				const sandbox = await offlineSandboxInvocation(cwd, command.executable, command.args);
+			if (gate.sandbox) {
+				const sandbox = await offlineSandboxInvocation(cwd, command.executable, command.args, gate.sandbox);
 				command = { executable: sandbox.executable, args: sandbox.args, embeddedNode: false };
+				if (sandbox.env) { env = { ...sandbox.env }; }
+				scratch = sandbox.scratch;
 			}
 		} catch {
 			return {
@@ -325,7 +355,11 @@ export class NativeHarness {
 				output: gate.sandbox ? 'HARNESS_OS_SANDBOX_UNAVAILABLE' : 'HARNESS_EXECUTABLE_UNAVAILABLE'
 			};
 		}
-		if (signal.aborted) { return { id: gate.id, startedAt, endedAt: new Date().toISOString(), status: 'cancelled', exitCode: null, output: '' }; }
+		try { return await this.spawnGate(gate, cwd, signal, command, env, startedAt); }
+		finally { if (scratch) { await fs.rm(scratch, { recursive: true, force: true }); } }
+	}
+	private spawnGate(gate: Gate, cwd: string, signal: AbortSignal, command: { executable: string; args: string[]; embeddedNode: boolean }, env: NodeJS.ProcessEnv, startedAt: string): Promise<GateResult> {
+		if (signal.aborted) { return Promise.resolve({ id: gate.id, startedAt, endedAt: new Date().toISOString(), status: 'cancelled', exitCode: null, output: '' }); }
 		if (command.embeddedNode) { env.ELECTRON_RUN_AS_NODE = '1'; }
 		return new Promise(resolve => {
 			let output = '', finished = false, wasCancelled = false;

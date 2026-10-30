@@ -4,10 +4,18 @@
  *--------------------------------------------------------------------------------------------*/
 /** Repeatable local benchmark: observed timings only, no provider, network or release. */
 import { spawn } from 'node:child_process';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export interface BenchmarkSample { wallMs: number; passed: boolean }
+export interface BenchmarkSample {
+	wallMs: number;
+	passed: boolean;
+	/** Host-wide busy CPU time across all cores during the run (includes descendants and other processes). */
+	hostCpuMs?: number;
+	/** Peak increase of host memory in use over the value at start, sampled every 100 ms. */
+	peakHostMemoryDeltaBytes?: number;
+}
 export interface BenchmarkSummary {
 	runs: number;
 	passed: number;
@@ -31,6 +39,35 @@ export function summarizeBenchmark(samples: readonly BenchmarkSample[]): Benchma
 		maxWallMs: wall.at(-1) ?? null
 	};
 }
+export interface BenchmarkResources {
+	firstRunWallMs: number | null;
+	subsequentMedianWallMs: number | null;
+	medianHostCpuMs: number | null;
+	maxPeakHostMemoryDeltaBytes: number | null;
+}
+const median = (values: number[]): number | null => {
+	const sorted = [...values].sort((a, b) => a - b);
+	return sorted.length ? sorted[Math.ceil(sorted.length * .5) - 1] : null;
+};
+/** First (cold-cache) run versus later (warm) runs plus host resource observations. */
+export function summarizeResources(samples: readonly BenchmarkSample[]): BenchmarkResources {
+	const measured = (value: number | undefined): value is number => value !== undefined && Number.isFinite(value) && value >= 0;
+	if (samples.length > 10 || !samples.every(s => Number.isFinite(s.wallMs) && s.wallMs >= 0 &&
+		(s.hostCpuMs === undefined || measured(s.hostCpuMs)) &&
+		(s.peakHostMemoryDeltaBytes === undefined || measured(s.peakHostMemoryDeltaBytes)))) {
+		throw Error('HARNESS_BENCHMARK_SAMPLE_INVALID');
+	}
+	const cpu = samples.map(s => s.hostCpuMs).filter(measured);
+	const memory = samples.map(s => s.peakHostMemoryDeltaBytes).filter(measured);
+	return {
+		firstRunWallMs: samples[0]?.wallMs ?? null,
+		subsequentMedianWallMs: median(samples.slice(1).map(s => s.wallMs)),
+		medianHostCpuMs: median(cpu),
+		maxPeakHostMemoryDeltaBytes: memory.length ? Math.max(...memory) : null
+	};
+}
+const busyCpuMs = (): number => os.cpus().reduce((sum, cpu) => sum + cpu.times.user + cpu.times.sys + cpu.times.nice + cpu.times.irq, 0);
+const memoryInUse = (): number => os.totalmem() - os.freemem();
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const commands: Record<string, string[]> = {
 	check: ['scripts/ats-harness-check.mts'],
@@ -40,6 +77,10 @@ const commands: Record<string, string[]> = {
 function run(args: string[]): Promise<BenchmarkSample> {
 	return new Promise(resolve => {
 		const started = process.hrtime.bigint();
+		const cpuStart = busyCpuMs();
+		const memoryStart = memoryInUse();
+		let peak = 0;
+		const sampler = setInterval(() => { peak = Math.max(peak, memoryInUse() - memoryStart); }, 100);
 		const child = spawn(process.execPath, args, {
 			cwd: root, shell: false, windowsHide: true, stdio: 'ignore'
 		});
@@ -47,7 +88,11 @@ function run(args: string[]): Promise<BenchmarkSample> {
 		const finish = (passed: boolean): void => {
 			if (done) { return; }
 			done = true;
-			resolve({ passed, wallMs: Math.round(Number(process.hrtime.bigint() - started) / 1e6) });
+			clearInterval(sampler);
+			resolve({
+				passed, wallMs: Math.round(Number(process.hrtime.bigint() - started) / 1e6),
+				hostCpuMs: Math.max(0, Math.round(busyCpuMs() - cpuStart)), peakHostMemoryDeltaBytes: Math.max(0, peak)
+			});
 		};
 		child.once('error', () => finish(false));
 		child.once('close', code => finish(code === 0));
@@ -68,7 +113,8 @@ async function main(args: string[]): Promise<void> {
 	const summary = summarizeBenchmark(samples);
 	process.stdout.write(JSON.stringify({
 		schemaVersion: 1, command: args[1], platform: process.platform, arch: process.arch,
-		node: process.version, mode: 'observed-local', samples, summary
+		node: process.version, cpus: os.availableParallelism(), totalMemoryBytes: os.totalmem(),
+		mode: 'observed-local', samples, summary, resources: summarizeResources(samples)
 	}, null, 2) + '\n');
 	if (summary.failed) { process.exitCode = 1; }
 }

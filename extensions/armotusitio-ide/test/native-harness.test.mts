@@ -297,3 +297,33 @@ test('resource-aware gate scheduler caps concurrency and avoids shared resources
 	assert.deepEqual(selectNativeWave(ready.map(x => ({ ...x, parallelSafe: false })), 8).map(x => x.id), ['a', 'b']);
 	assert.throws(() => validateNativePlan({ schemaVersion: 1, gates: [{ id: 'bad', executable: 'node', args: [], resources: ['../secret'] }] }), /HARNESS_INVALID_RESOURCES/);
 });
+
+test('resume reuses passed gates from a safe checkpoint and re-runs only the failed remainder', async () => {
+	const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'ats-resume-')));
+	try {
+		await fs.writeFile(path.join(root, 'input.txt'), 'v1');
+		const engine = new NativeHarness(root, path.join(root, '.state'));
+		const task = await engine.create('Resumable', { schemaVersion: 1, inputs: ['input.txt'], gates: [
+			{ id: 'build', executable: 'node', args: ['-e', 'require("fs").appendFileSync("runs.txt", "b")'] },
+			{ id: 'verify', executable: 'node', args: ['-e', 'process.exit(require("fs").existsSync("ready") ? 0 : 1)'], dependsOn: ['build'] }
+		] });
+		const approval = await engine.reviewDigest(task.plan);
+		await assert.rejects(engine.execute(task.id, approval, () => true, undefined, undefined, { resume: true }), /HARNESS_RESUME_UNAVAILABLE/);
+		const first = await engine.execute(task.id, approval, () => true);
+		assert.equal(first.attempts.at(-1)?.status, 'failed');
+		assert.deepEqual(await engine.resumableGates(task.id), { attemptId: first.attempts.at(-1)!.id, gates: ['build'] });
+		await fs.writeFile(path.join(root, 'ready'), '');
+		const resumed = await engine.execute(task.id, approval, () => true, undefined, undefined, { resume: true });
+		const attempt = resumed.attempts.at(-1)!;
+		assert.deepEqual({
+			status: attempt.status, gates: attempt.results.map(result => [result.id, result.status, result.reusedFrom ?? null]),
+			buildRuns: await fs.readFile(path.join(root, 'runs.txt'), 'utf8')
+		}, { status: 'passed', gates: [['build', 'passed', first.attempts.at(-1)!.id], ['verify', 'passed', null]], buildRuns: 'b' });
+		// A passed attempt or changed declared inputs never offer a checkpoint.
+		assert.equal(await engine.resumableGates(task.id), null);
+		await fs.rm(path.join(root, 'ready'));
+		await engine.execute(task.id, approval, () => true);
+		await fs.writeFile(path.join(root, 'input.txt'), 'v2');
+		assert.equal(await engine.resumableGates(task.id), null);
+	} finally { await fs.rm(root, { recursive: true, force: true }); }
+});

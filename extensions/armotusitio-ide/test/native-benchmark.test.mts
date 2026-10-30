@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import * as path from 'node:path';
-import { summarizeBenchmark } from '../../../scripts/ats-harness-benchmark.mts';
+import { summarizeBenchmark, summarizeResources } from '../../../scripts/ats-harness-benchmark.mts';
 
 test('benchmark reports only measured durations, including failed samples', () => {
 	assert.deepEqual(summarizeBenchmark([]), {
@@ -34,4 +34,15 @@ test('benchmark CLI is opt-in and rejects arbitrary commands without execution',
 	});
 	assert.equal(unsafe.status, 1);
 	assert.match(unsafe.stderr, /HARNESS_BENCHMARK_ARGUMENTS_INVALID/);
+});
+
+test('benchmark separates the first run from warm runs and reports host resources only when measured', () => {
+	assert.deepEqual(summarizeResources([
+		{ wallMs: 900, passed: true, hostCpuMs: 4000, peakHostMemoryDeltaBytes: 300 },
+		{ wallMs: 500, passed: true, hostCpuMs: 2000, peakHostMemoryDeltaBytes: 100 },
+		{ wallMs: 400, passed: true, hostCpuMs: 2500, peakHostMemoryDeltaBytes: 200 }
+	]), { firstRunWallMs: 900, subsequentMedianWallMs: 400, medianHostCpuMs: 2500, maxPeakHostMemoryDeltaBytes: 300 });
+	assert.deepEqual(summarizeResources([{ wallMs: 1, passed: true }]),
+		{ firstRunWallMs: 1, subsequentMedianWallMs: null, medianHostCpuMs: null, maxPeakHostMemoryDeltaBytes: null });
+	assert.throws(() => summarizeResources([{ wallMs: 1, passed: true, hostCpuMs: -1 }]), /HARNESS_BENCHMARK_SAMPLE_INVALID/);
 });
