@@ -39,6 +39,16 @@ export async function listProjectSkills(root: string): Promise<ProjectSkill[]> {
 	const seen = new Set<string>();
 	for (const source of SOURCES) {
 		const directory = path.join(canonical, source);
+		// Legacy project setups may link .claude/skills to .agents/skills.
+		// Never traverse that link; the canonical .agents source was already read.
+		if (source === '.claude/skills') {
+			try {
+				if ((await fs.lstat(directory)).isSymbolicLink()) { continue; }
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code === 'ENOENT') { continue; }
+				throw error;
+			}
+		}
 		if (!await canonicalDirectory(canonical, directory)) { continue; }
 		const entries = await fs.readdir(directory, { withFileTypes: true });
 		if (entries.length > MAX_SKILLS) { throw Error('HARNESS_PROJECT_SKILLS_TOO_MANY'); }
