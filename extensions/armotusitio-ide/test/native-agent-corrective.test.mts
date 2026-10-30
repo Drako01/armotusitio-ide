@@ -12,6 +12,7 @@ import { NativeAgentWorkflow, proposedWorkflow, workflowDigest } from '../src/na
 test('one corrective cycle is bounded and requires independent reviewer reapproval', { skip: process.platform === 'win32' }, async () => {
 	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-corrective-'));
 	const originalPath = process.env.PATH;
+	const traceFile = path.join(os.tmpdir(), 'ats-corrective-trace-' + path.basename(root) + '.txt');
 	try {
 		const bin = path.join(root, 'bin');
 		await fs.mkdir(bin);
@@ -23,7 +24,7 @@ test('one corrective cycle is bounded and requires independent reviewer reapprov
 			'process.stdin.on("end", () => {',
 			' const fs = require("node:fs");',
 			' const phase = input.includes("Re-evaluate all changes") ? "review-again" : input.includes("One authorized corrective attempt") ? "repair" : input.includes("Read-only audit") ? "review-first" : input.includes("Implement only") ? "implement" : "plan";',
-			' fs.appendFileSync("phases.txt", phase + "\\n");',
+			' fs.appendFileSync(' + JSON.stringify(traceFile) + ', phase + "\\n");',
 			' console.log(phase === "review-first" ? "HARNESS_REVIEW: FAIL" : phase === "review-again" ? "HARNESS_REVIEW: PASS" : "stage passed");',
 			'});'
 		].join('\n');
@@ -37,10 +38,11 @@ test('one corrective cycle is bounded and requires independent reviewer reapprov
 		const result = await run.result;
 		assert.equal(result.status, 'passed');
 		assert.deepEqual(result.steps.map(step => step.status), ['passed', 'passed', 'failed', 'passed', 'passed']);
-		assert.equal(await fs.readFile(path.join(root, 'phases.txt'), 'utf8'), 'plan\nimplement\nreview-first\nrepair\nreview-again\n');
+		assert.equal(await fs.readFile(traceFile, 'utf8'), 'plan\nimplement\nreview-first\nrepair\nreview-again\n');
 		assert.equal((await workflow.history())[0].steps.length, 5);
 	} finally {
 		if (originalPath === undefined) { delete process.env.PATH; } else { process.env.PATH = originalPath; }
+		await fs.rm(traceFile, { force: true });
 		await fs.rm(root, { recursive: true, force: true });
 	}
 });
