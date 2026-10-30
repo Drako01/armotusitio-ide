@@ -13,16 +13,31 @@ export interface ProviderDiagnostic {
 	version: string | null;
 	protocolVerified: false;
 	modelAuthenticated: false;
+	commandCompatibility: 'verified' | 'unsupported' | 'unknown';
+	missingFlags: string[];
 	reason: 'cli-found' | 'cli-unavailable' | 'version-command-failed';
 }
 const VERSION_TIMEOUT = 5000;
 const MAX_CAPTURE = 4096;
+const REQUIRED_FLAGS: Record<NativeProvider, readonly string[]> = {
+	codex: ['--sandbox', '--skip-git-repo-check', '--ask-for-approval', '--ephemeral', '--json'],
+	claude: ['--permission-mode', '--allowedTools', '--disallowedTools', '--max-turns', '--output-format']
+};
+
+/** A CLI's help text is evidence of supported flags, never proof of authentication or sandbox enforcement. */
+export function inspectProviderHelp(provider: NativeProvider, help: string): { compatibility: 'verified' | 'unsupported' | 'unknown'; missingFlags: string[] } {
+	if (provider !== 'codex' && provider !== 'claude') { throw Error('HARNESS_PROVIDER_UNSUPPORTED'); }
+	if (typeof help !== 'string' || help.length > 32 * 1024 || help.trim().length < 20) { return { compatibility: 'unknown', missingFlags: [] }; }
+	const missingFlags = REQUIRED_FLAGS[provider].filter(flag => !new RegExp('(?:^|\\\\s)' + flag.replace(/[-/\\\\^$*+?.()|[\\\\]{}]/g, '\\\\const MAX_CAPTURE = 4096;') + '(?=\\\\s|[=,\\\\[<]|$)', 'm').test(help));
+	return { compatibility: missingFlags.length ? 'unsupported' : 'verified', missingFlags };
+}
+
 
 export async function diagnoseProvider(provider: NativeProvider): Promise<ProviderDiagnostic> {
 	if (provider !== 'codex' && provider !== 'claude') { throw Error('HARNESS_PROVIDER_UNSUPPORTED'); }
 	let resolved;
 	try { resolved = await resolveNativeCommand(provider, ['--version']); }
-	catch { return { provider, installed: false, version: null, protocolVerified: false, modelAuthenticated: false, reason: 'cli-unavailable' }; }
+	catch { return { provider, installed: false, version: null, protocolVerified: false, modelAuthenticated: false, commandCompatibility: 'unknown', missingFlags: [], reason: 'cli-unavailable' }; }
 	const env: NodeJS.ProcessEnv = {};
 	for (const key of ['PATH', 'Path', 'PATHEXT', 'SystemRoot', 'WINDIR', 'HOME', 'USERPROFILE', 'TEMP', 'TMP']) {
 		if (process.env[key]) { env[key] = process.env[key]; }
@@ -60,6 +75,6 @@ export async function diagnoseProvider(provider: NativeProvider): Promise<Provid
 	return {
 		provider, installed: true, version,
 		protocolVerified: false, modelAuthenticated: false,
-		reason: version ? 'cli-found' : 'version-command-failed'
+		commandCompatibility: 'unknown', missingFlags: [], reason: version ? 'cli-found' : 'version-command-failed'
 	};
 }
