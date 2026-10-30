@@ -208,10 +208,13 @@ export class NativeAgentWorkflow {
             this.active = await executeReviewedAgent(reviewAgentDraft(draft), draft);
             if (this.cancelled || !trusted()) { this.active.cancel(); }
             const outcome: AgentOutcome = await this.active.outcome;
-            try { await onOutcome?.(handoff.provider, handoff.role, outcome); } catch { /* Metrics never change execution outcomes. */ }
             step.status = outcome.status === 'timeout' ? 'failed' : outcome.status;
             // A review must explicitly approve the changes. Exit code 0 alone is not a quality signal.
-            if (step.role === 'reviewer' && step.status === 'passed' && !/^HARNESS_REVIEW:\s*PASS\s*$/m.test(outcome.output)) { step.status = 'failed'; }
+            if (step.role === 'reviewer' && step.status === 'passed' && !/^HARNESS_REVIEW:\s*PASS\s*$/m.test(outcome.output)) {
+              step.status = 'failed';
+              outcome.status = 'failed';
+            }
+            try { await onOutcome?.(handoff.provider, handoff.role, outcome); } catch { /* Metrics never change execution outcomes. */ }
             step.durationMs = outcome.durationMs;
             step.exitCode = outcome.exitCode;
             if (step.status === 'passed' && !outcome.truncated) {
