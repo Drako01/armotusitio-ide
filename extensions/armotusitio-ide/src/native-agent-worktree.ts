@@ -9,7 +9,7 @@ import { spawn } from 'node:child_process';
 import { resolveNativeCommand } from './native-runtime.ts';
 
 const MAX_MESSAGE = 2048;
-const GIT_TIMEOUT = 60_000;
+const GIT_TIMEOUT = 180_000;
 export interface ManagedWorktree { root: string; parent: string; id: string; }
 
 async function git(root: string, args: string[]): Promise<string> {
@@ -46,7 +46,8 @@ export async function createAgentWorktree(root: string, storage: string): Promis
   const canonical = await fs.realpath(root);
   if (canonical !== root) { throw Error('HARNESS_WORKTREE_ROOT_CHANGED'); }
   const topLevel = await git(canonical, ['rev-parse', '--show-toplevel']);
-  if (path.resolve(topLevel) !== canonical) { throw Error('HARNESS_WORKTREE_NOT_REPOSITORY_ROOT'); }
+  const topCanonical = await fs.realpath(topLevel);
+  if ((process.platform === 'win32' ? topCanonical.toLowerCase() : topCanonical) !== (process.platform === 'win32' ? canonical.toLowerCase() : canonical)) { throw Error('HARNESS_WORKTREE_NOT_REPOSITORY_ROOT'); }
   const commit = await git(canonical, ['rev-parse', '--verify', 'HEAD']);
   if (!/^[a-f0-9]{40,64}$/i.test(commit)) { throw Error('HARNESS_WORKTREE_HEAD_UNAVAILABLE'); }
   await fs.mkdir(storage, { recursive: true, mode: 0o700 });
