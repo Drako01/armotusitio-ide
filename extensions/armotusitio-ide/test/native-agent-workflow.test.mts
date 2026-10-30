@@ -625,3 +625,36 @@ test('workflow quota blocks the next provider before invoking its CLI', async ()
 		await fs.rm(root, { recursive: true, force: true });
 	}
 });
+
+test('revoked trust during provider preflight never starts a provider CLI', async () => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-workflow-quota-revoke-'));
+	const oldPath = process.env.PATH;
+	const trace = path.join(os.tmpdir(), 'ats-quota-revoke-trace-' + path.basename(root) + '.txt');
+	try {
+		const canonical = await fs.realpath(root);
+		const bin = path.join(root, 'bin');
+		await fs.mkdir(bin);
+		await installFakeCodex(bin, [
+			'#!/usr/bin/env node',
+			'process.stdin.resume();',
+			'process.stdin.on("end", () => {',
+			' require("node:fs").writeFileSync(' + JSON.stringify(trace) + ', "called");',
+			' console.log("HARNESS_REVIEW: PASS");',
+			'});'
+		].join('\n'));
+		process.env.PATH = bin + path.delimiter + (oldPath || '');
+		const flow = new NativeAgentWorkflow(canonical, path.join(root, 'workflows'));
+		const plan = proposedWorkflow('codex', 'Do not launch after trust revocation');
+		let trusted = true;
+		const run = await flow.start(plan, workflowDigest(canonical, plan), () => trusted,
+			undefined, undefined, undefined, async () => { trusted = false; });
+		const result = await run.result;
+		assert.equal(result.status, 'cancelled');
+		assert.equal(result.steps[0].status, 'cancelled');
+		await assert.rejects(fs.stat(trace), { code: 'ENOENT' });
+	} finally {
+		if (oldPath === undefined) { delete process.env.PATH; } else { process.env.PATH = oldPath; }
+		await fs.rm(trace, { force: true });
+		await fs.rm(root, { recursive: true, force: true });
+	}
+});
