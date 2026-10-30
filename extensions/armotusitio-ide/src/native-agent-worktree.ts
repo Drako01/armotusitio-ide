@@ -78,6 +78,20 @@ export async function removeCleanAgentWorktree(worktree: ManagedWorktree): Promi
 	if (root !== worktree.root) { throw Error('HARNESS_WORKTREE_PATH_CHANGED'); }
 	const parent = await fs.realpath(worktree.parent);
 	if (parent !== worktree.parent) { throw Error('HARNESS_WORKTREE_ROOT_CHANGED'); }
+	// A caller-supplied descriptor is not proof of ownership. Require the
+	// generated name and the same underlying Git repository before cleanup.
+	if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(worktree.id) ||
+		path.basename(root) !== 'wt-' + worktree.id || root === parent) {
+		throw Error('HARNESS_WORKTREE_IDENTITY_INVALID');
+	}
+	const parentCommonDir = await git(parent, ['rev-parse', '--git-common-dir']);
+	const worktreeCommonDir = await git(root, ['rev-parse', '--git-common-dir']);
+	const expectedGitDir = await fs.realpath(path.resolve(parent, parentCommonDir));
+	const actualGitDir = await fs.realpath(path.resolve(root, worktreeCommonDir));
+	if ((process.platform === 'win32' ? expectedGitDir.toLowerCase() : expectedGitDir) !==
+		(process.platform === 'win32' ? actualGitDir.toLowerCase() : actualGitDir)) {
+		throw Error('HARNESS_WORKTREE_REPOSITORY_MISMATCH');
+	}
 	const status = await git(root, ['status', '--porcelain=v1', '--ignored', '--untracked-files=all']);
 	if (status.length) { throw Error('HARNESS_WORKTREE_DIRTY'); }
 	await git(parent, ['worktree', 'remove', root]);
