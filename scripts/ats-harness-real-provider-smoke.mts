@@ -32,6 +32,14 @@ export function parseSmokeArgs(args: readonly string[]): { provider: NativeProvi
 	return { provider: args[1] as NativeProvider, approved: true };
 }
 
+/** Diagnostic buckets only; raw CLI text is never logged by the smoke runner. */
+export function classifySmokeFailure(message: string, exitCode: number | null): 'cli-arguments' | 'authentication' | 'quota' | 'provider-failed' | 'review-not-approved' {
+	if (/unexpected argument|unrecognized option|unknown option|invalid value for|found argument .*wasn't expected/i.test(message)) { return 'cli-arguments'; }
+	if (/not logged in|authentication required|unauthorized|please log in|please sign in|invalid api key/i.test(message)) { return 'authentication'; }
+	if (/rate.limit|quota exceeded|insufficient.quota|too many requests/i.test(message)) { return 'quota'; }
+	return exitCode === 0 ? 'review-not-approved' : 'provider-failed';
+}
+
 function git(folder: string, args: string[]): void {
 	execFileSync('git', ['-C', folder, ...args], { stdio: 'ignore', timeout: 10000, windowsHide: true });
 }
@@ -86,6 +94,8 @@ async function main(): Promise<void> {
 			parseReviewerVerdict(outcome.output, outcome.truncated) === 'approved';
 		process.stdout.write(JSON.stringify({
 			provider: config.provider, passed: approved, status: outcome.status,
+			exitCode: outcome.exitCode,
+			...(approved ? {} : { failureCategory: outcome.scopeViolation ? 'scope-violation' : classifySmokeFailure(outcome.output, outcome.exitCode) }),
 			scopeVerified: outcome.scopeVerified === true,
 			scopeViolation: modified, responseTruncated: outcome.truncated,
 			durationMs: outcome.durationMs,
