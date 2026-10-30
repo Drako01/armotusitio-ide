@@ -71,7 +71,7 @@ export async function removeCleanAgentWorktree(worktree: ManagedWorktree): Promi
   if (root !== worktree.root) { throw Error('HARNESS_WORKTREE_PATH_CHANGED'); }
   const parent = await fs.realpath(worktree.parent);
   if (parent !== worktree.parent) { throw Error('HARNESS_WORKTREE_ROOT_CHANGED'); }
-  const status = await git(root, ['status', '--porcelain=v1', '--untracked-files=all']);
+  const status = await git(root, ['status', '--porcelain=v1', '--ignored', '--untracked-files=all']);
   if (status.length) { throw Error('HARNESS_WORKTREE_DIRTY'); }
   await git(parent, ['worktree', 'remove', root]);
 }
