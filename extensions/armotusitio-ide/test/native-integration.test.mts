@@ -239,3 +239,21 @@ test('project guidance metadata is available for review without invoking a provi
 		assert.equal(f.documents.at(-1)!.content.includes('Team conventions'), false);
 	} finally { await f.cleanup(); }
 });
+
+test('explicit project handshake displays advisory capability routing without enabling external execution', async () => {
+	const f = await fixture();
+	try {
+		const root = f.roots[0];
+		await fs.mkdir(path.join(root, '.harness', 'manifests'), { recursive: true });
+		await fs.writeFile(path.join(root, '.harness', 'manifests', 'ide-capabilities.json'),
+			JSON.stringify({ schemaVersion: 2, engine: 'project', capabilities: ['parallel-gates', 'os-sandbox'] }));
+		await fs.writeFile(path.join(root, '.harness', 'core.mjs'),
+			'console.log(JSON.stringify({ schemaVersion: 2, nonce: process.argv[process.argv.indexOf("--nonce") + 1], capabilities: ["parallel-gates", "os-sandbox"] }));');
+		await f.invoke('nativeProjectHandshake', root);
+		const displayed = JSON.parse(f.documents.at(-1)!.content);
+		assert.equal(displayed.executionEnabled, false);
+		assert.equal(displayed.comparison.executionGranted, false);
+		assert.ok(displayed.comparison.overlap.includes('parallel-gates'));
+		assert.deepEqual(displayed.comparison.projectOnly, ['os-sandbox']);
+	} finally { await f.cleanup(); }
+});
