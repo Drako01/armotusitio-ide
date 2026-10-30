@@ -126,6 +126,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 						{ title: 'Skills del proyecto (hasta 8, opcional)', canPickMany: true });
 					if (!selected) { return; }
 					if (!Array.isArray(selected) || selected.length > 8 ||
+						new Set(selected.map(item => item.skill?.source + '/' + item.skill?.name)).size !== selected.length ||
 						selected.some(item => !skills.some(skill => skill.name === item.skill?.name &&
 							skill.source === item.skill.source && skill.digest === item.skill.digest))) {
 						throw Error('HARNESS_PROJECT_SKILL_SELECTION_INVALID');
