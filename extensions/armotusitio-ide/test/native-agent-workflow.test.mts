@@ -144,3 +144,35 @@ test('workflow rejects calls beyond the five invocations explicitly approved in 
 		assert.deepEqual(await flow.history(), []);
 	} finally { await fs.rm(root, { recursive: true, force: true }); }
 });
+
+test('persisted workflow rejects undeclared top-level and step content without rewriting evidence', async () => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-workflow-record-schema-'));
+	try {
+		const canonical = await fs.realpath(root);
+		const state = path.join(root, 'private');
+		await fs.mkdir(state);
+		const id = 'cccccccc-cccc-4ccc-cccc-cccccccccccc';
+		const digest = workflowDigest(canonical, proposedWorkflow('codex', 'Inspect fixture'));
+		const key = (await import('node:crypto')).createHash('sha256').update(canonical).digest('hex');
+		const file = path.join(state, id + '.json');
+		const baseline = {
+			schemaVersion: 1, id, createdAt: new Date().toISOString(),
+			projectKey: key, planDigest: digest, status: 'interrupted',
+			steps: [{ id: 'plan', role: 'planner', provider: 'codex', status: 'passed' }]
+		};
+		const workflow = new NativeAgentWorkflow(canonical, state);
+		for (const corrupted of [
+			{ ...baseline, providerOutput: 'UNTRUSTED_RAW_MODEL_OUTPUT' },
+			{ ...baseline, steps: [{ ...baseline.steps[0], prompt: 'UNTRUSTED_PRIVATE_PROMPT' }] }
+		]) {
+			const raw = JSON.stringify(corrupted);
+			await fs.writeFile(file, raw);
+			await assert.rejects(workflow.history(), /HARNESS_WORKFLOW_INVALID_STATE/);
+			assert.equal(await fs.readFile(file, 'utf8'), raw);
+		}
+		await fs.writeFile(file, JSON.stringify(baseline));
+		const history = await workflow.history();
+		assert.equal(history.length, 1);
+		assert.equal(history[0].status, 'interrupted');
+	} finally { await fs.rm(root, { recursive: true, force: true }); }
+});
