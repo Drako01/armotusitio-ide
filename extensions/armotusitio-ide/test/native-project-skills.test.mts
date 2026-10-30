@@ -51,7 +51,7 @@ test('oversized project skills fail closed without exposing content', async () =
 	try {
 		const directory = path.join(root, '.agents', 'skills', 'unsafe');
 		await fs.mkdir(directory, { recursive: true });
-		await fs.writeFile(path.join(directory, 'SKILL.md'), 'A'.repeat(4097));
+		await fs.writeFile(path.join(directory, 'SKILL.md'), 'A'.repeat(64 * 1024 + 1));
 		await assert.rejects(listProjectSkills(await fs.realpath(root)), /HARNESS_PROJECT_SKILL_UNSAFE/);
 	} finally { await fs.rm(root, { recursive: true, force: true }); }
 });
