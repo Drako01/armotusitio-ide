@@ -503,6 +503,8 @@ test('uncommitted workflow intent preserves evidence and blocks execution and re
 		}));
 		await fs.writeFile(path.join(state, 'execution.lock'), JSON.stringify({ pid: 99999999 }));
 		const flow = new NativeAgentWorkflow(canonical, state);
+		assert.deepEqual(await flow.pendingJournalIds(), [id]);
+		await assert.rejects(flow.history(), /HARNESS_WORKFLOW_PENDING_JOURNAL/);
 		await assert.rejects(flow.reconcile(), /HARNESS_WORKFLOW_PENDING_JOURNAL/);
 		assert.equal(await fs.readFile(file, 'utf8'), raw);
 		assert.ok((await fs.readFile(intent, 'utf8')).includes('"after"'));
