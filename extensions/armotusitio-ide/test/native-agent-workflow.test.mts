@@ -395,3 +395,28 @@ test('workflow state path refuses an ordinary file before writing a lock', async
 		assert.equal(await fs.readFile(storage, 'utf8'), 'USER_EVIDENCE');
 	} finally { await fs.rm(root, { recursive: true, force: true }); }
 });
+
+test('completed workflow does not unlink a lock replaced by another execution', async () => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-workflow-lock-replaced-'));
+	try {
+		const canonical = await fs.realpath(root);
+		const state = path.join(root, 'private');
+		const flow = new NativeAgentWorkflow(canonical, state);
+		const plan = proposedWorkflow('codex', 'Inspect without running providers');
+		const foreignId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+		const unsubscribe = flow.onEvent(event => {
+			if (event.kind !== 'workflow-started') { return; }
+			fsSync.writeFileSync(path.join(state, 'execution.lock'),
+				JSON.stringify({ id: foreignId, pid: process.pid }));
+			flow.cancel();
+		});
+		try {
+			const run = await flow.start(plan, workflowDigest(canonical, plan), () => true);
+			await assert.rejects(run.result, /HARNESS_WORKFLOW_LOCK_CHANGED/);
+			const lock = JSON.parse(await fs.readFile(path.join(state, 'execution.lock'), 'utf8'));
+			assert.equal(lock.id, foreignId);
+			await assert.rejects(flow.start(plan, workflowDigest(canonical, plan), () => true),
+				/HARNESS_WORKFLOW_RECONCILIATION_REQUIRED/);
+		} finally { unsubscribe(); }
+	} finally { await fs.rm(root, { recursive: true, force: true }); }
+});
