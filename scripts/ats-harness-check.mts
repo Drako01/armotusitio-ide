@@ -21,6 +21,7 @@ const formatTargets = [
 	'test/native-agent-dag.test.mts',
 	'test/native-agent-adversarial.test.mts',
 	'test/native-agent-workflow.test.mts',
+	'test/native-agent-execution.test.mts',
 	'test/native-engine-contract.test.mts',
 	'test/native-provider-diagnostics.test.mts',
 	'src/native-agent-scope.ts',
