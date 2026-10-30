@@ -110,7 +110,14 @@ function validRecord(value: unknown): value is WorkflowRecord {
 		/^[a-f0-9]{64}$/.test(r.planDigest) && /^[a-f0-9]{64}$/.test(r.projectKey) &&
 		Number.isFinite(Date.parse(r.createdAt)) && Array.isArray(r.steps) && r.steps.length <= 16 &&
 		(r.events === undefined || (Array.isArray(r.events) && r.events.length <= 200 && r.events.every(e =>
-			e && e.workflowId === r.id && ['workflow-started', 'step-started', 'provider-progress', 'step-finished', 'verification-finished', 'workflow-finished'].includes(e.kind) && Number.isFinite(Date.parse(e.at))))) &&
+			e && e.workflowId === r.id &&
+			['workflow-started', 'step-started', 'provider-progress', 'step-finished', 'verification-finished', 'workflow-finished'].includes(e.kind) &&
+			typeof e.at === 'string' && Number.isFinite(Date.parse(e.at)) &&
+			(e.stepId === undefined || (typeof e.stepId === 'string' && IDENTIFIER.test(e.stepId))) &&
+			(e.status === undefined || ['pending', 'running', 'passed', 'failed', 'cancelled', 'interrupted'].includes(e.status)) &&
+			(e.durationMs === undefined || (Number.isFinite(e.durationMs) && e.durationMs >= 0 && e.durationMs <= MAX_WORKFLOW_DURATION_MS)) &&
+			(e.observedBytes === undefined || (Number.isSafeInteger(e.observedBytes) && e.observedBytes >= 0 && e.observedBytes <= 16 * 1024 * 1024)) &&
+			Object.keys(e).every(key => ['workflowId', 'kind', 'at', 'stepId', 'status', 'durationMs', 'observedBytes'].includes(key))))) &&
 		r.steps.every(step => IDENTIFIER.test(step.id) &&
 			['planner', 'reviewer', 'implementer'].includes(step.role) &&
 			['claude', 'codex'].includes(step.provider) &&
