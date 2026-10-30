@@ -198,6 +198,9 @@ export class NativeAgentWorkflow {
 	/** Explicit stale-state reconciliation. Never kills an agent or silently retries an interrupted step. */
 	async reconcile(): Promise<number> {
 		if (this.running) { throw Error('HARNESS_WORKFLOW_ALREADY_RUNNING'); }
+		// Validate all visible persisted records before changing the stale lock.
+		// A corrupt history must not unlock an uncertain workflow for a new writer.
+		const history = await this.history();
 		const lockFile = path.join(this.storage, 'execution.lock');
 		try {
 			const stat = await fs.lstat(lockFile);
@@ -215,7 +218,7 @@ export class NativeAgentWorkflow {
 			if ((error as NodeJS.ErrnoException).code !== 'ENOENT') { throw error; }
 		}
 		let recovered = 0;
-		for (const record of await this.history()) {
+		for (const record of history) {
 			if (record.status !== 'running') { continue; }
 			record.status = 'interrupted';
 			record.endedAt = new Date().toISOString();
