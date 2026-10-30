@@ -170,3 +170,45 @@ test('recovery guard prevents new leases; only its owner may remove it', async (
 		await fs.rm(storage, { recursive: true, force: true });
 	}
 });
+
+test('shared fence recovery refuses unfinished isolated verification even after parent workflow exits', async () => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-fence-isolated-root-'));
+	const storage = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-fence-isolated-state-'));
+	try {
+		const canonical = await fs.realpath(root);
+		await acquireSharedExecutionFence(canonical, storage, 'native-workflow');
+		const lock = path.join(storage, 'shared-execution.lock');
+		const owner = JSON.parse(await fs.readFile(lock, 'utf8'));
+		owner.pid = exitedOwnerPid();
+		await fs.writeFile(lock, JSON.stringify(owner));
+		const isolationId = 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa';
+		const taskId = 'bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb';
+		const isolated = path.join(storage, 'isolated-verification', isolationId);
+		await fs.mkdir(path.join(isolated, 'tasks'), { recursive: true });
+		await fs.writeFile(path.join(isolated, 'execution.lock'), '{}');
+		await assert.rejects(
+			reconcileSharedExecutionFence(canonical, storage, true, true),
+			/HARNESS_FENCE_RECOVERY_ISOLATED_LOCK/
+		);
+		assert.equal((await fs.lstat(lock)).isFile(), true);
+		await fs.unlink(path.join(isolated, 'execution.lock'));
+		const task = path.join(isolated, 'tasks', taskId + '.json');
+		await fs.writeFile(task, JSON.stringify({
+			schemaVersion: 1, id: taskId, attempts: [{ status: 'running' }]
+		}));
+		await assert.rejects(
+			reconcileSharedExecutionFence(canonical, storage, true, true),
+			/HARNESS_FENCE_RECOVERY_PENDING_TASK/
+		);
+		assert.equal((await fs.lstat(lock)).isFile(), true);
+		await fs.writeFile(task, JSON.stringify({
+			schemaVersion: 1, id: taskId, attempts: [{ status: 'interrupted' }]
+		}));
+		const outcome = await reconcileSharedExecutionFence(canonical, storage, true, true);
+		assert.equal(outcome.released, true);
+		assert.equal(outcome.epoch, 1);
+	} finally {
+		await fs.rm(root, { recursive: true, force: true });
+		await fs.rm(storage, { recursive: true, force: true });
+	}
+});
