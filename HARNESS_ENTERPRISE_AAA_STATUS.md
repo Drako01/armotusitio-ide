@@ -9,7 +9,7 @@
 
 Esta guía documenta el alcance acordado y diferencia **código agregado a la rama** de funcionalidad realmente certificada. Una casilla marcada no significa que el comportamiento haya pasado pruebas reales de extremo a extremo.
 
-**Inventario funcional:** 34 ítems implementados en código, 5 parciales y 15 pendientes (54 ítems de distinto tamaño y riesgo; no representan un porcentaje técnico de certificación). **Última validación automatizada local Windows aportada:** 196 tests aprobados, 0 fallidos, 1 omitido (197 total), con TypeScript, bundle, recursos e higiene en PASS, según el último log local del operador sobre el commit `ea76d52efcc`. Esto no equivale a CI multiplataforma ni a E2E completo.
+**Inventario funcional:** 34 ítems implementados en código, 5 parciales y 15 pendientes (54 ítems de distinto tamaño y riesgo; no representan un porcentaje técnico de certificación). **Última validación automatizada local Windows aportada:** 199 tests aprobados, 0 fallidos, 1 omitido (200 total), con TypeScript, bundle y recursos en PASS, pero **Focused hygiene falló por dos `no-unsafe-finally`** sobre el commit `364bf661179`. El lote actual corrige el código; todavía falta repetir higiene. Esto no equivale a CI multiplataforma ni a E2E completo.
 
 **Calificación:** no asignar una nueva nota 1–10 ni declarar nivel AAA hasta disponer de pruebas reproducibles y resultados E2E. El 70% mencionado en el seguimiento conversacional fue una apreciación de cobertura, **no** una medición auditada.
 
@@ -392,6 +392,20 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 - [x] **Propiedad del lock terminal:** al finalizar un workflow, solo elimina `execution.lock` si pertenece al `record.id` y PID actuales, sin ser un symlink. Una prueba simula que otro proceso reemplaza su contenido y verifica que el lock queda intacto.
 - [ ] **Retest de esta iteración:** ejecutar pruebas locales enfocadas, suite completa, TypeScript, recursos, higiene y revisar `git diff --check`. El último **196 PASS / 0 FAIL / 1 SKIP** es anterior a estas modificaciones.
 - [ ] **P0 pendiente:** fencing OS/IPC con exclusión efectiva durante toda la reconciliación, journal transaccional multioperación, sandbox OS y rollback seguro. No declarar AAA antes de cubrirlos.
+
+### Interoperabilidad híbrida con Harness de proyecto y skills (2026-10-30; pendiente de validación local)
+
+**Política deseada:** el IDE actúa como orquestador preferente de agentes y ofrece controles de seguridad, mientras que el proyecto conserva sus skills, reglas, contratos, gates y herramientas. No deben ejecutarse dos escritores concurrentes ni reemplazarse el Harness del proyecto sin un protocolo de coordinación verificable.
+
+- [x] **Descubrimiento seguro:** catálogo local de `.agents/skills/*/SKILL.md` y `.claude/skills/*/SKILL.md`, lectura acotada, validación de directorios reales, rechazo de archivos enlazados y digest SHA-256 para detectar cambios. Alias `.claude/skills` enlazado a `.agents/skills` se ignora sin seguirlo.
+- [x] **Agentes IDE read-only en proyectos externos:** revisión nativa y ejecución individual planner/reviewer habilitadas con consentimiento explícito y selección opcional de una skill; el contenido se presenta dentro de la instrucción revisable como datos del proyecto, no como permiso. Las tareas/gates nativos siguen sin sustituir el estado del Harness del proyecto.
+- [x] **Prevención de doble escritor:** los implementadores nativos quedan bloqueados mientras haya un Harness de proyecto; no se permite escribir sin coordinación de locks entre motores.
+- [x] **Seguridad de autoridad:** paths de Harness inseguros mantienen bloqueo, incluso al intentar operación híbrida. No se ejecuta un motor externo durante el descubrimiento.
+- [x] **Regresión de higiene:** retirados los dos `throw` directos del bloque `finally` de la liberación de locks, conservando el error `HARNESS_WORKFLOW_LOCK_CHANGED` fuera del bloque.
+- [x] **Pruebas incorporadas:** descubrimiento de skills, cambio de digest, alias Claude, límite de tamaño y revisión híbrida sin creación de tareas nativas.
+- [ ] **Retest:** correr la suite focal, verificador completo, `npm test`, `npm run check` y `git diff --check`; el último log tiene 199 PASS/0 FAIL/1 SKIP, pero higiene FAIL anterior a estos cambios.
+- [ ] **Fase híbrida de escritura:** protocolo ejecutable bidireccional con gates delegados, locks compartidos, control de concurrencia y E2E sobre RedEvent. El soporte actual **no certifica** prioridad completa del IDE ni integración de ejecutores de proyectos.
+- [ ] **Skills más extensas:** evaluar contexto fragmentado o retrieval explícito para instrucciones superiores al máximo seguro actual de 4 KiB; no truncar silenciosamente.
 
 ## Validación local obligatoria
 
