@@ -13,6 +13,7 @@ export interface ProviderDiagnostic {
 	version: string | null;
 	protocolVerified: false;
 	modelAuthenticated: false;
+	localSession: 'authenticated' | 'unauthenticated' | 'unknown';
 	commandCompatibility: 'verified' | 'unsupported' | 'unknown';
 	missingFlags: string[];
 	reason: 'cli-found' | 'cli-unavailable' | 'version-command-failed';
@@ -33,6 +34,56 @@ export function inspectProviderHelp(provider: NativeProvider, help: string): { c
 	return { compatibility: missingFlags.length ? 'unsupported' : 'verified', missingFlags };
 }
 
+
+/** Never persist raw auth status output: it can contain account identifiers. */
+export function parseLocalAuthStatus(provider: NativeProvider, stdout: string, exitCode: number): 'authenticated' | 'unauthenticated' | 'unknown' {
+	if (provider !== 'codex' && provider !== 'claude') { throw Error('HARNESS_PROVIDER_UNSUPPORTED'); }
+	if (stdout.length > 4096) { return 'unknown'; }
+	if (provider === 'claude') {
+		try {
+			const value = JSON.parse(stdout) as { loggedIn?: unknown };
+			if (value.loggedIn === true && exitCode === 0) { return 'authenticated'; }
+			if (value.loggedIn === false) { return 'unauthenticated'; }
+		} catch { /* Unknown output from older CLI versions. */ }
+		return 'unknown';
+	}
+	if (/not logged in|not authenticated/i.test(stdout)) { return 'unauthenticated'; }
+	if (exitCode === 0 && /logged in using|logged in with/i.test(stdout)) { return 'authenticated'; }
+	return 'unknown';
+}
+
+/** Local login probe; never sends a model prompt or stores account status output. */
+export async function probeProviderLocalAuth(provider: NativeProvider): Promise<'authenticated' | 'unauthenticated' | 'unknown'> {
+	if (provider !== 'codex' && provider !== 'claude') { throw Error('HARNESS_PROVIDER_UNSUPPORTED'); }
+	const args = provider === 'codex' ? ['login', 'status'] : ['auth', 'status'];
+	let resolved;
+	try { resolved = await resolveNativeCommand(provider, args); }
+	catch { return 'unknown'; }
+	const env: NodeJS.ProcessEnv = {};
+	for (const key of ['PATH', 'Path', 'PATHEXT', 'SystemRoot', 'WINDIR', 'HOME', 'USERPROFILE', 'TEMP', 'TMP', 'CODEX_HOME']) {
+		if (process.env[key]) { env[key] = process.env[key]; }
+	}
+	if (resolved.embeddedNode) { env.ELECTRON_RUN_AS_NODE = '1'; }
+	return await new Promise(resolve => {
+		let settled = false;
+		let stdout = '';
+		let bytes = 0;
+		const child = spawn(resolved.executable, resolved.args, { env, shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+		const finish = (code: number): void => {
+			if (settled) { return; }
+			settled = true;
+			clearTimeout(timer);
+			if (code < 0) { child.kill(); }
+			resolve(code >= 0 ? parseLocalAuthStatus(provider, stdout, code) : 'unknown');
+		};
+		const timer = setTimeout(() => finish(-1), VERSION_TIMEOUT);
+		timer.unref();
+		child.stdout?.on('data', (chunk: Buffer) => { bytes += chunk.length; if (bytes > MAX_CAPTURE) { finish(-1); return; } stdout += chunk.toString('utf8'); });
+		child.stderr?.on('data', (chunk: Buffer) => { bytes += chunk.length; if (bytes > MAX_CAPTURE) { finish(-1); } });
+		child.once('error', () => finish(-1));
+		child.once('close', code => finish(code ?? -1));
+	});
+}
 
 /** Queries local static help only; this operation never passes a prompt to a provider. */
 export async function probeProviderCommandFlags(provider: NativeProvider): Promise<{ compatibility: 'verified' | 'unsupported' | 'unknown'; missingFlags: string[] }> {
@@ -70,7 +121,7 @@ export async function diagnoseProvider(provider: NativeProvider): Promise<Provid
 	if (provider !== 'codex' && provider !== 'claude') { throw Error('HARNESS_PROVIDER_UNSUPPORTED'); }
 	let resolved;
 	try { resolved = await resolveNativeCommand(provider, ['--version']); }
-	catch { return { provider, installed: false, version: null, protocolVerified: false, modelAuthenticated: false, commandCompatibility: 'unknown', missingFlags: [], reason: 'cli-unavailable' }; }
+	catch { return { provider, installed: false, version: null, protocolVerified: false, modelAuthenticated: false, localSession: 'unknown', commandCompatibility: 'unknown', missingFlags: [], reason: 'cli-unavailable' }; }
 	const env: NodeJS.ProcessEnv = {};
 	for (const key of ['PATH', 'Path', 'PATHEXT', 'SystemRoot', 'WINDIR', 'HOME', 'USERPROFILE', 'TEMP', 'TMP']) {
 		if (process.env[key]) { env[key] = process.env[key]; }
@@ -106,9 +157,10 @@ export async function diagnoseProvider(provider: NativeProvider): Promise<Provid
 		});
 	});
 	const command = version ? await probeProviderCommandFlags(provider) : { compatibility: 'unknown' as const, missingFlags: [] as string[] };
+	const localSession = version ? await probeProviderLocalAuth(provider) : 'unknown';
 	return {
 		provider, installed: true, version,
-		protocolVerified: false, modelAuthenticated: false,
+		protocolVerified: false, modelAuthenticated: false, localSession,
 		commandCompatibility: command.compatibility, missingFlags: command.missingFlags,
 		reason: version ? 'cli-found' : 'version-command-failed'
 	};
