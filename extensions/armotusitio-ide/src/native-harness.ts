@@ -11,6 +11,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { fingerprintEvidence, evidenceKey, saveEvidenceMetadata, readEvidenceMetadata, type EvidenceFingerprint } from './native-evidence.ts';
 import { inspectHarnessAuthority } from './native-authority.ts';
 import { resolveNativeCommand } from './native-runtime.ts';
+import { acquireSharedExecutionFence, type SharedExecutionFence } from './native-shared-fence.ts';
 
 export type Gate = { id: string; executable: string; args: string[]; cwd?: string; timeoutMs?: number; dependsOn?: string[]; parallelSafe?: boolean; resources?: string[] };
 export type Plan = { schemaVersion: 1; gates: Gate[]; inputs?: string[] };
@@ -210,7 +211,7 @@ export class NativeHarness {
 		if (current.pid !== info.pid || current.hostname !== info.hostname || current.attempt !== info.attempt || current.task !== info.task || current.startedAt !== info.startedAt || processAlive(info.pid!)) { throw Error('HARNESS_LOCK_CHANGED'); }
 		await fs.rm(this.lockFile()); return true;
 	}
-	async execute(id: string, approved: string, trust: () => boolean, signal?: AbortSignal): Promise<Task> {
+	async execute(id: string, approved: string, trust: () => boolean, signal?: AbortSignal, borrowedFence?: SharedExecutionFence): Promise<Task> {
 		if (!trust()) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
 		if ((await inspectHarnessAuthority(this.project)).engine === 'project') { throw Error('HARNESS_PROJECT_AUTHORITY'); }
 		const task = await this.get(id); const root = await this.root();
@@ -221,6 +222,17 @@ export class NativeHarness {
 		if (approved !== await this.reviewDigest(task.plan)) { throw Error('HARNESS_APPROVAL_EXPIRED'); }
 		await fs.mkdir(this.storage, { recursive: true });
 		const handle = await fs.open(this.lockFile(), 'wx').catch((e: NodeJS.ErrnoException) => { if (e.code === 'EEXIST') { throw Error('HARNESS_LOCKED_REQUIRES_RECONCILIATION'); } throw e; });
+		let shared: SharedExecutionFence;
+		try {
+			shared = borrowedFence || await acquireSharedExecutionFence(root, this.storage, 'native-task');
+			await shared.assertCurrent();
+		} catch (error) {
+			await handle.close();
+			await fs.rm(this.lockFile());
+			throw error;
+		}
+		let attemptStarted = false;
+		let terminalPersisted = false;
 		const controller = new AbortController(); this.abortController = controller;
 		const onAbort = () => controller.abort(); signal?.addEventListener('abort', onAbort, { once: true });
 		const onLocalAbort = () => { for (const child of this.active) { this.stopChild(child); } };
@@ -234,7 +246,9 @@ export class NativeHarness {
 				if (task.plan.inputs?.length) { fingerprint = await fingerprintEvidence(root, approved, task.plan.inputs); }
 			} catch { /* Missing or unsafe inputs disable evidence reuse, never execution checks. */ }
 			await handle.writeFile(JSON.stringify({ pid: process.pid, hostname: os.hostname(), task: id, attempt: attempt.id, startedAt: attempt.startedAt }));
-			task.attempts.push(attempt); await writeAtomic(this.file(id), task);
+			task.attempts.push(attempt); attemptStarted = true;
+			await shared.assertCurrent();
+			await writeAtomic(this.file(id), task);
 			try {
 				const completed = new Set<string>();
 				// A bounded wave runs only independent gates. Preserve the plan order in persisted evidence.
@@ -245,6 +259,7 @@ export class NativeHarness {
 					if ((await inspectHarnessAuthority(root)).engine === 'project') { throw Error('HARNESS_PROJECT_AUTHORITY'); }
 					const ready = task.plan.gates.filter(g => !completed.has(g.id) && (g.dependsOn || []).every(d => completed.has(d)));
 					if (!ready.length) { throw Error('HARNESS_DEPENDENCY_UNRESOLVED'); }
+					await shared.assertCurrent();
 					const wave = selectNativeWave(ready);
 					const settled = await Promise.allSettled(wave.map(async gate => {
 						const cwd = await contained(root, gate.cwd);
@@ -277,12 +292,15 @@ export class NativeHarness {
 						}
 					} catch { attempt.evidence = { state: 'unavailable', error: 'HARNESS_EVIDENCE_PERSISTENCE' }; }
 				}
+				await shared.assertCurrent();
 				await writeAtomic(this.file(id), task);
+				terminalPersisted = true;
 			}
 			return task;
 		} finally {
 			signal?.removeEventListener('abort', onAbort); controller.signal.removeEventListener('abort', onLocalAbort);
 			this.abortController = undefined; await handle.close(); await fs.rm(this.lockFile(), { force: true });
+			if (!borrowedFence && (!attemptStarted || terminalPersisted)) { await shared.release(); }
 		}
 	}
 	private async runGate(gate: Gate, cwd: string, signal: AbortSignal): Promise<GateResult> {
