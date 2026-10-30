@@ -118,3 +118,19 @@ test('hybrid projects block native writers before any provider invocation', asyn
 		assert.equal(f.documents.length, 0);
 	} finally { await f.cleanup(); }
 });
+
+test('new project harness during approval cannot enable an uncoordinated native writer', async () => {
+	const f = await fixture();
+	try {
+		const root = f.roots[0];
+		f.vscode.window.showQuickPick = async (items, options) =>
+			options?.title === 'Rol del agente' ? 'implementer' : items[0];
+		f.vscode.window.showWarningMessage = async (_, __, action) => {
+			await fs.mkdir(path.join(root, '.harness'));
+			return action;
+		};
+		await f.invoke('nativeAgentExecute', root);
+		assert.ok(f.notices.some(notice => notice.includes('HARNESS_HYBRID_WRITER_UNAVAILABLE')));
+		assert.equal((await fs.readdir(path.join(root, '.harness'))).length, 0);
+	} finally { await f.cleanup(); }
+});
