@@ -233,6 +233,16 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 
 **Nota:** la evidencia demuestra funcionamiento de proveedores *simulados*, no autenticación, permisos de proveedor ni contención efectiva del sistema operativo.
 
+### Iteración E2E con proveedores reales: runner opt-in (pendiente de validación)
+
+- [x] **Código incorporado:** `scripts/ats-harness-real-provider-smoke.mts` implementa una prueba de una sola invocación con `codex` o `claude`, exigencia de `--acknowledge-real-model-call`, terminal interactiva, confirmación `RUN`, timeout de 90 segundos, revisión `read-only` y proyecto Git descartable. El resultado comunica únicamente metadatos agregados; no guarda prompts, respuestas ni credenciales. Un scope violation conserva el directorio temporal para auditoría.
+- [x] **Pruebas de consentimiento sin consumo:** `native-real-smoke.test.mts` verifica rechazo de argumentos incompletos y ayuda que no invoca al proveedor.
+- [x] **CI y checks actualizados en código:** el archivo y pruebas están incluidos en el scope de CI y los checks locales; el checkout CI dispone del script importado por el test. El CI automático NO ejecuta modelos ni solicita autenticación.
+- [ ] **Validación local del nuevo commit:** ejecutar `node scripts/ats-harness-check.mts --fix` (inspeccionar diff), `node scripts/ats-harness-check.mts`, `npm test --prefix extensions/armotusitio-ide`, `npm run check --prefix extensions/armotusitio-ide` y `git diff --check`. Los anteriores 182 PASS no validan este cambio.
+- [ ] **Smoke real controlado:** a decisión del operador, tras revisar `docs/native-harness-six-partial-validation.md`. Puede consumir cuota; no es requisito de los tests automáticos.
+- [ ] **CI Linux/macOS/Windows del último SHA:** todavía sin evidencia verificada. 
+- [ ] **Sandbox OS real:** sin implementar. Las restricciones de modelo y verificación Git no equivalen a aislamiento de procesos, filesystem y red.
+
 ## Validación local obligatoria
 
 Desde la raíz del repositorio, con las dependencias instaladas:
