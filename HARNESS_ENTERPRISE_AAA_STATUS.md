@@ -170,6 +170,14 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 - [ ] CI Windows/Linux/macOS y pruebas E2E de CLI reales.
 - [ ] Evidencia adicional para cerrar las cinco áreas que siguen siendo parciales, sin reducir el nivel de seguridad ni relajar checks.
 
+### Primera validación de la ampliación (Windows, 2026-10-30 17:18 ART)
+
+- **Suite de extensión:** 173 PASS, 0 FAIL, 9 SKIP; `npm run check`: PASS.
+- **Verificador focalizado:** TypeScript, recursos, renderer, bundle y diff whitespace: PASS. `Focused hygiene`: un único error ESLint `curly` por `else for` en `native-agent-workflow.ts`, línea 357.
+- [x] **Corrección publicada:** el fallback secuencial ahora utiliza un bloque `else { ... }`; sin modificaciones del flujo de decisiones. **Pendiente de nueva prueba**.
+- **Formato local no incorporado aún:** `--fix` modificó `native-integration.ts`, `native-agent-dag.test.mts` y `native-agent-execution.test.mts` en el checkout del operador. Preservar esos archivos y registrarlos con un commit después de validar; no descartarlos.
+- [ ] Volver a ejecutar el verificador y la batería en el SHA corregido; constatar la higiene verde antes de cerrar los gates.
+
 ## Validación local obligatoria
 
 Desde la raíz del repositorio, con las dependencias instaladas:
