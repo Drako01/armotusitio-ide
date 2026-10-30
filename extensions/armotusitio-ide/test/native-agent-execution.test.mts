@@ -16,11 +16,11 @@ const base = { schemaVersion: 1 as const, provider: 'codex' as const, role: 'rev
 test('Codex uses a bounded sandbox instead of approval bypass', () => {
   const call = buildAgentInvocation(base);
   assert.equal(call.executable, 'codex');
-  assert.deepEqual(call.args, ['exec', '--sandbox', 'read-only', '--skip-git-repo-check', '--ask-for-approval', 'never', '--ephemeral', '-']);
+  assert.deepEqual(call.args, ['exec', '--sandbox', 'read-only', '--skip-git-repo-check', '--ask-for-approval', 'never', '--ephemeral', '--json', '-']);
   assert.match(call.stdin, /Review API changes/);
   assert.ok(!call.args.some(x => x.includes('danger') || x.includes('yolo')));
   assert.ok(call.args.includes('--ephemeral'));
-  assert.deepEqual(call.args.slice(-4), ['--ask-for-approval', 'never', '--ephemeral', '-']);
+  assert.deepEqual(call.args.slice(-5), ['--ask-for-approval', 'never', '--ephemeral', '--json', '-']);
 });
 
 test('implementer is restricted to workspace-write, never danger-full-access', () => {
@@ -39,6 +39,7 @@ test('Claude uses plan for readers and fail-closed dontAsk for writers', () => {
   assert.ok(writer.args.includes('Bash,WebFetch,WebSearch'));
   assert.ok(!reader.args.includes('Read,Glob,Grep,Edit,Write'));
   assert.ok(!writer.args.includes('--dangerously-skip-permissions'));
+  assert.deepEqual(writer.args.slice(-2), ['--output-format', 'json']);
 });
 
 test('a changed review or invalid duration never starts an agent', async () => {
