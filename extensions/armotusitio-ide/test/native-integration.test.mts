@@ -257,3 +257,29 @@ test('explicit project handshake displays advisory capability routing without en
 		assert.deepEqual(displayed.comparison.projectOnly, ['os-sandbox']);
 	} finally { await f.cleanup(); }
 });
+
+test('explicit handshake displays project DAG gate metadata without granting execution', async () => {
+	const f = await fixture();
+	try {
+		const root = f.roots[0];
+		const manifests = path.join(root, '.harness', 'manifests');
+		await fs.mkdir(manifests, { recursive: true });
+		await fs.writeFile(path.join(manifests, 'ide-capabilities.json'), JSON.stringify({
+			schemaVersion: 2, engine: 'project', capabilities: ['verification-gates']
+		}));
+		await fs.writeFile(path.join(manifests, 'ide-gates.json'), JSON.stringify({
+			schemaVersion: 1, gates: [
+				{ id: 'lint', dependsOn: [], resources: ['cpu'] },
+				{ id: 'tests', dependsOn: ['lint'], resources: ['db'] }
+			]
+		}));
+		await fs.writeFile(path.join(root, '.harness', 'core.mjs'),
+			'console.log(JSON.stringify({ schemaVersion: 2, nonce: process.argv[process.argv.indexOf("--nonce") + 1], capabilities: ["verification-gates"] }));');
+		await f.invoke('nativeProjectHandshake', root);
+		const preview = JSON.parse(f.documents.at(-1)!.content);
+		assert.equal(preview.executionEnabled, false);
+		assert.equal(preview.gateCatalog.executionEnabled, false);
+		assert.deepEqual(preview.gateCatalog.gates[1].dependsOn, ['lint']);
+		assert.ok(/^[a-f0-9]{64}$/.test(preview.gateCatalog.digest));
+	} finally { await f.cleanup(); }
+});
