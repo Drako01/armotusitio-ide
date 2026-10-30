@@ -41,8 +41,10 @@ export function parseProviderOutput(provider: NativeProvider, raw: string): Pars
 				return {
 					message: data.result, structured: true, providerError: data.is_error === true,
 					usage: input !== undefined && output !== undefined
-						? { inputTokens: input, outputTokens: output, ...(cached === undefined ? {} : { cachedInputTokens: cached }),
-							...(estimatedCostUsd === undefined ? {} : { estimatedCostUsd }) }
+						? {
+							inputTokens: input, outputTokens: output, ...(cached === undefined ? {} : { cachedInputTokens: cached }),
+							...(estimatedCostUsd === undefined ? {} : { estimatedCostUsd })
+						}
 						: undefined
 				};
 			}

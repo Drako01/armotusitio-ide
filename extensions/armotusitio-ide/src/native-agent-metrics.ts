@@ -62,10 +62,14 @@ export async function recordAgentMetric(directory: string, provider: NativeProvi
 	const file = path.join(directory, 'agent-metrics.json');
 	await fs.mkdir(directory, { recursive: true, mode: 0o700 });
 	const existing = await load(file);
-	const entry: AgentMetric = { id: randomUUID(), at: new Date().toISOString(), provider, role,
+	const entry: AgentMetric = {
+		id: randomUUID(), at: new Date().toISOString(), provider, role,
 		status: result.status, durationMs: result.durationMs, truncated: result.truncated,
-		...(result.usage ? { inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens,
-			cachedInputTokens: result.usage.cachedInputTokens, estimatedCostUsd: result.usage.estimatedCostUsd } : {}) };
+		...(result.usage ? {
+			inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens,
+			cachedInputTokens: result.usage.cachedInputTokens, estimatedCostUsd: result.usage.estimatedCostUsd
+		} : {})
+	};
 	const next = [...existing, entry].slice(-LIMIT);
 	const tmp = file + '.' + randomUUID() + '.tmp';
 	try {
@@ -82,7 +86,8 @@ export async function readAgentStatistics(directory: string): Promise<AgentStati
 	const durations = entries.map(e => e.durationMs).sort((a, b) => a - b);
 	const metered = entries.filter(e => e.inputTokens !== undefined && e.outputTokens !== undefined);
 	const priced = entries.filter(e => e.estimatedCostUsd !== undefined);
-	return { count, successes, failures, cancelled,
+	return {
+		count, successes, failures, cancelled,
 		successRate: count ? Math.round(successes / count * 10000) / 100 : null,
 		averageDurationMs: count ? Math.round(durations.reduce((a, b) => a + b, 0) / count) : null,
 		p95DurationMs: count ? durations[Math.ceil(count * .95) - 1] : null,
@@ -90,5 +95,6 @@ export async function readAgentStatistics(directory: string): Promise<AgentStati
 		measuredInputTokens: metered.length ? metered.reduce((sum, e) => sum + e.inputTokens!, 0) : null,
 		measuredOutputTokens: metered.length ? metered.reduce((sum, e) => sum + e.outputTokens!, 0) : null,
 		estimatedCostUsd: priced.length ? Math.round(priced.reduce((sum, e) => sum + e.estimatedCostUsd!, 0) * 1e6) / 1e6 : null,
-		entries };
+		entries
+	};
 }

@@ -109,8 +109,10 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			const draft = { schemaVersion: 1 as const, provider, role, projectRoot: root, instruction, readOnly: role !== 'implementer' };
 			const review = reviewAgentDraft(draft);
 			const invocation = buildAgentInvocation(draft);
-			const preview = JSON.stringify({ project: root, role, provider, permissionMode: draft.readOnly ? 'read-only' : 'workspace-write (Codex) / dontAsk (Claude)',
-				command: invocation.executable, args: invocation.args, instruction, warning: 'Este proceso puede consumir tokens e interactuar con el workspace. Los l\u00edmites de aislamiento dependen del proveedor.' }, null, 2);
+			const preview = JSON.stringify({
+				project: root, role, provider, permissionMode: draft.readOnly ? 'read-only' : 'workspace-write (Codex) / dontAsk (Claude)',
+				command: invocation.executable, args: invocation.args, instruction, warning: 'Este proceso puede consumir tokens e interactuar con el workspace. Los l\u00edmites de aislamiento dependen del proveedor.'
+			}, null, 2);
 			await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({ language: 'json', content: preview }), { preview: true });
 			const approved = await vscode.window.showWarningMessage('\u00bfEjecutar este agente local con los permisos indicados? Sin autorizaci\u00f3n no se inicia ning\u00fan proveedor.', { modal: true }, 'Ejecutar agente');
 			if (approved !== 'Ejecutar agente' || !authorized(chosen.folder) || await fs.realpath(root) !== root) { return; }
@@ -127,8 +129,10 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 				try { await recordAgentMetric(metricsDirectory(root), provider, role, result); }
 				catch { void vscode.window.showWarningMessage('No se pudo registrar la m\u00e9trica local del agente.'); }
 				if (!authorized(chosen.folder)) { return; }
-				await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({ language: 'json',
-					content: JSON.stringify({ role, provider, ...result }, null, 2) }), { preview: true });
+				await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({
+					language: 'json',
+					content: JSON.stringify({ role, provider, ...result }, null, 2)
+				}), { preview: true });
 				vscode.window.showInformationMessage('Agente finalizado: ' + result.status);
 			} finally { runningAgents.delete(root); controller.refresh(); }
 		} catch (error) { showError(error); } finally { controller.refresh(); }
@@ -173,9 +177,12 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			const digest = workflowDigest(executionRoot, plan);
 			const verification = (await loadProjectConfig(root))?.plan;
 			const verificationSnapshot = JSON.stringify(verification || null);
-			await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({ language: 'json',
-				content: JSON.stringify({ project: root, executionRoot, isolationMode: mode.value, handoffs: plan.handoffs, maxCorrectiveCycles: 1, maxProviderCalls: 5, verification: verification || 'NOT_CONFIGURED', digest,
-					notice: mode.value === 'worktree' ? 'La IA operar\u00e1 \u00fanicamente en este checkout Git separado; se conservar\u00e1 despu\u00e9s para revisar los cambios. No se hace commit ni merge.' : 'La IA operar\u00e1 sobre el workspace actual sin aislamiento de archivos. No se hace commit ni merge.' }, null, 2)
+			await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({
+				language: 'json',
+				content: JSON.stringify({
+					project: root, executionRoot, isolationMode: mode.value, handoffs: plan.handoffs, maxCorrectiveCycles: 1, maxProviderCalls: 5, verification: verification || 'NOT_CONFIGURED', digest,
+					notice: mode.value === 'worktree' ? 'La IA operar\u00e1 \u00fanicamente en este checkout Git separado; se conservar\u00e1 despu\u00e9s para revisar los cambios. No se hace commit ni merge.' : 'La IA operar\u00e1 sobre el workspace actual sin aislamiento de archivos. No se hace commit ni merge.'
+				}, null, 2)
 			}), { preview: true });
 			const approved = await vscode.window.showWarningMessage('Autorizar plan, implementaci\u00f3n, revisi\u00f3n y hasta un ciclo correctivo adicional (m\u00e1ximo 5 invocaciones de IA)? Revis\u00e1 el plan antes de continuar.', { modal: true }, 'Autorizar workflow');
 			if (approved !== 'Autorizar workflow' || !authorized(chosen.folder) || await fs.realpath(chosen.folder.uri.fsPath) !== root) { return; }
@@ -188,14 +195,16 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			const engine = new NativeAgentWorkflow(executionRoot, path.join(metricsDirectory(root), 'workflows'));
 			const validationEngine = isolation ? new NativeHarness(executionRoot, path.join(metricsDirectory(root), 'isolated-verification', isolation.id)) : chosen.engine;
 			let run: WorkflowRun;
-			try { run = await engine.start(plan, digest, () => authorized(chosen.folder), verification ? async signal => {
-				const task = await validationEngine.create('Workflow verification', verification);
-				const approval = await validationEngine.reviewDigest(task.plan);
-				const result = await validationEngine.execute(task.id, approval, () => authorized(chosen.folder), signal);
-				return result.attempts.at(-1)?.status === 'passed';
-			} : undefined, async (stageProvider, stageRole, stageOutcome) => {
-				await recordAgentMetric(metricsDirectory(root!), stageProvider, stageRole, stageOutcome);
-			}); }
+			try {
+				run = await engine.start(plan, digest, () => authorized(chosen.folder), verification ? async signal => {
+					const task = await validationEngine.create('Workflow verification', verification);
+					const approval = await validationEngine.reviewDigest(task.plan);
+					const result = await validationEngine.execute(task.id, approval, () => authorized(chosen.folder), signal);
+					return result.attempts.at(-1)?.status === 'passed';
+				} : undefined, async (stageProvider, stageRole, stageOutcome) => {
+					await recordAgentMetric(metricsDirectory(root!), stageProvider, stageRole, stageOutcome);
+				});
+			}
 			finally { pendingWorkflows.delete(root); }
 			launched = true;
 			runningWorkflows.set(root, run); controller.refresh();
@@ -207,12 +216,14 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 				}
 			} finally { runningWorkflows.delete(root); controller.refresh(); }
 		} catch (error) { showError(error); }
-		finally { if (root) { pendingWorkflows.delete(root); }
+		finally {
+			if (root) { pendingWorkflows.delete(root); }
 			if (isolation && !launched) {
 				try { await removeCleanAgentWorktree(isolation); }
 				catch { void vscode.window.showWarningMessage('El worktree no se pudo retirar autom\u00e1ticamente. Revis\u00e1 git worktree list.'); }
 			}
-			controller.refresh(); }
+			controller.refresh();
+		}
 	}));
 	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.nativeWorkflowHistory', async (requested?: string) => {
 		try {
@@ -263,7 +274,8 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			const chosen = await choose(requested); if (!chosen) { return; }
 			const diagnostics = await Promise.all([diagnoseProvider('codex'), diagnoseProvider('claude')]);
 			if (!authorized(chosen.folder)) { return; }
-			await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({ language: 'json',
+			await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({
+				language: 'json',
 				content: JSON.stringify({ providers: diagnostics, note: 'CLI --version only. Authentication and supported flags require an explicit provider smoke test.' }, null, 2)
 			}), { preview: true });
 		} catch (error) { showError(error); }

@@ -152,9 +152,11 @@ export async function executeReviewedAgent(review: AgentReview, current: AgentDr
 						status = 'failed';
 					}
 				}
-				resolve({ status, exitCode, durationMs: Date.now() - started, truncated,
+				resolve({
+					status, exitCode, durationMs: Date.now() - started, truncated,
 					output: redactOutput(parsed.structured ? parsed.message : stdout + (stderr ? '\n' + stderr : '')),
-					scopeViolation, scopeVerified, structuredOutput: parsed.structured, usage: parsed.usage });
+					scopeViolation, scopeVerified, structuredOutput: parsed.structured, usage: parsed.usage
+				});
 			})();
 		};
 		child.once('error', () => finish(null));

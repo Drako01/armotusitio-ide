@@ -68,11 +68,13 @@ export function executionOrder(plan: HandoffPlan): string[] {
 
 export function proposedWorkflow(provider: NativeProvider, instruction: string): HandoffPlan {
 	if (!instruction.trim() || Buffer.byteLength(instruction, 'utf8') > 8000) { throw Error('HARNESS_AGENT_INSTRUCTION_INVALID'); }
-	return validateHandoffPlan({ schemaVersion: 1, handoffs: [
-		{ id: 'plan', role: 'planner', provider, dependsOn: [], instruction: 'Read-only assessment. Describe a safe implementation plan for the following task. No edits:\n' + instruction },
-		{ id: 'implement', role: 'implementer', provider, dependsOn: ['plan'], instruction: 'Implement only the following user-authorized task, then report the changed files:\n' + instruction },
-		{ id: 'review', role: 'reviewer', provider, dependsOn: ['implement'], instruction: 'Read-only audit of the current uncommitted changes against the task below. Report defects and missing checks without modifying files. End the response with exactly HARNESS_REVIEW: PASS only when there are no blocking defects; otherwise HARNESS_REVIEW: FAIL. Do not treat a CLI exit code as proof of quality:\n' + instruction }
-	] });
+	return validateHandoffPlan({
+		schemaVersion: 1, handoffs: [
+			{ id: 'plan', role: 'planner', provider, dependsOn: [], instruction: 'Read-only assessment. Describe a safe implementation plan for the following task. No edits:\n' + instruction },
+			{ id: 'implement', role: 'implementer', provider, dependsOn: ['plan'], instruction: 'Implement only the following user-authorized task, then report the changed files:\n' + instruction },
+			{ id: 'review', role: 'reviewer', provider, dependsOn: ['implement'], instruction: 'Read-only audit of the current uncommitted changes against the task below. Report defects and missing checks without modifying files. End the response with exactly HARNESS_REVIEW: PASS only when there are no blocking defects; otherwise HARNESS_REVIEW: FAIL. Do not treat a CLI exit code as proof of quality:\n' + instruction }
+		]
+	});
 }
 
 async function atomicWrite(file: string, record: WorkflowRecord): Promise<void> {
@@ -244,7 +246,7 @@ export class NativeAgentWorkflow {
 					// One authorized corrective cycle: reimplement the bounded reviewer feedback,
 					// then require a fresh independent read-only approval. No unbounded retries.
 					if (step.id === 'review' && step.status === 'failed' && correctiveCycles === 0 &&
-							!this.cancelled && trusted() && plan.handoffs.some(h => h.id === 'implement')) {
+						!this.cancelled && trusted() && plan.handoffs.some(h => h.id === 'implement')) {
 						correctiveCycles++;
 						const implement = plan.handoffs.find(h => h.id === 'implement')!;
 						const reviewer = plan.handoffs.find(h => h.id === 'review')!;
