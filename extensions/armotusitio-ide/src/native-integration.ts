@@ -191,6 +191,8 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 				await fence.assertCurrent();
 				const cap = providerCallsPer24h(chosen.folder);
 				if (cap > 0) { await reserveProviderInvocation(metricsDirectory(root), provider, fence, cap); }
+				if (!authorized(chosen.folder)) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
+				await fence.assertCurrent();
 				execution = await executeReviewedAgent(review, draft);
 			} catch (error) {
 				if (fence) { await fence.release(); }
