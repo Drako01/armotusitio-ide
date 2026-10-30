@@ -265,6 +265,19 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 
 **Alcance:** 184 pruebas locales aprobadas y un bloqueo de consentimiento correctamente aplicado **no** acreditan una invocación autenticada real de Codex ni seguridad OS. El test de symlink sensible permanece omitido en Windows.
 
+### Primer smoke real Codex: rechazo temprano y remediación de argumentos (2026-10-30)
+
+**Evidencia suministrada:** tras la confirmación literal `RUN`, `ats-harness-real-provider-smoke.mts --provider codex` reportó `status=failed` en 299 ms, `scopeVerified=true`, `scopeViolation=false`, `responseTruncated=false` y `tokenUsageReported=false`.
+
+- [x] **Invocación del runner con consentimiento correcto:** ejecutada. No equivale a sesión de modelo completada.
+- [ ] **Smoke real Codex exitoso:** **NO** demostrado. El error no incluye diagnóstico del CLI ni prueba de autenticación; un fallo casi inmediato es compatible con incompatibilidad de flags.
+- [x] **Corrección de compatibilidad en código:** se trasladó el flag global `--ask-for-approval never` antes del subcomando `exec`, manteniendo `--sandbox read-only/workspace-write`, `--ephemeral`, `--json` y el resto de restricciones. Las pruebas de argumentos y seguridad se actualizaron.
+- [x] **Diagnóstico agregado:** el smoke ahora informa `exitCode` y `failureCategory` con categorías fijas, sin imprimir texto crudo de Codex/Claude, prompts o credenciales.
+- [ ] **Nueva verificación local:** repetir los checks y luego, opcionalmente, el smoke con confirmación `RUN`. Puede consumir cuota; no habilitar automáticamente.
+- [ ] **Prueba real Claude, CI multiplataforma y sandbox OS:** sin evidencia de cierre.
+
+**Causa probable, aún no certificada:** las versiones recientes de Codex admiten `--ask-for-approval` como argumento global **antes** de `exec`, pero pueden rechazarlo cuando se coloca después del subcomando. No declarar la hipótesis confirmada sin salida diagnóstica o smoke exitoso.
+
 ## Validación local obligatoria
 
 Desde la raíz del repositorio, con las dependencias instaladas:
