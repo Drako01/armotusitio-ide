@@ -22,6 +22,7 @@ This ledger separates code shipped on the branch from work that has **not** been
 - [x] Observed gate/agent metrics shown in the IDE; v2 capability descriptor reports unsupported capabilities conservatively.
 - [x] Cross-platform native-test workflow defined; actual workflow run and installer E2E still unverified.
 - [x] Exactly one bounded corrective implement/re-review cycle when a reviewer rejects a change, preauthorized by the operator.
+- [x] Optional cross-provider review: planner/implementer on one provider and independent reviewer on the other, including corrective re-review.
 - [x] Strict terminal-only reviewer receipts; echoed, conflicting or truncated approvals fail closed.
 - [x] Nested ignored secret-file integrity scanning and symlink avoidance; changes are detected without restoring user data.
 - [x] Local provider concurrency limited to two active/pending operations and workflow duration bounded to one hour.
