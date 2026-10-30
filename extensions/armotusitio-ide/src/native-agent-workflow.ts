@@ -266,6 +266,61 @@ export class NativeAgentWorkflow {
 		}
 	}
 
+	/**
+	 * Reconcile only intents whose new state is already durable. This cannot
+	 * replay an uncertain write or execute any provider. Called under guard.
+	 */
+	private async resolveCommittedJournals(): Promise<void> {
+		const names = (await fs.readdir(this.storage)).filter(name =>
+			/^[a-f0-9-]{36}\\.json\\.intent$/i.test(name));
+		if (names.length > MAX_STORED) { throw Error('HARNESS_WORKFLOW_HISTORY_TOO_LARGE'); }
+		for (const name of names) {
+			const file = path.join(this.storage, name);
+			const stat = await fs.lstat(file);
+			if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 4096) {
+				throw Error('HARNESS_WORKFLOW_UNSAFE_JOURNAL');
+			}
+			let raw: string;
+			let parsed: unknown;
+			try {
+				raw = await fs.readFile(file, 'utf8');
+				if (Buffer.byteLength(raw) > 4096) { throw Error('HARNESS_WORKFLOW_UNSAFE_JOURNAL'); }
+				parsed = JSON.parse(raw);
+			} catch { throw Error('HARNESS_WORKFLOW_UNSAFE_JOURNAL'); }
+			if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+				throw Error('HARNESS_WORKFLOW_UNSAFE_JOURNAL');
+			}
+			const intent = parsed as { schemaVersion?: unknown; id?: unknown; before?: unknown; after?: unknown; createdAt?: unknown };
+			if (Object.keys(intent).sort().join(',') !== 'after,before,createdAt,id,schemaVersion' ||
+				intent.schemaVersion !== 1 || typeof intent.id !== 'string' ||
+				name !== intent.id + '.json.intent' ||
+				(intent.before !== null && (typeof intent.before !== 'string' || !/^[a-f0-9]{64}$/.test(intent.before))) ||
+				typeof intent.after !== 'string' || !/^[a-f0-9]{64}$/.test(intent.after) ||
+				typeof intent.createdAt !== 'string' || !Number.isFinite(Date.parse(intent.createdAt))) {
+				throw Error('HARNESS_WORKFLOW_UNSAFE_JOURNAL');
+			}
+			const target = path.join(this.storage, intent.id + '.json');
+			let bytes: Buffer;
+			try {
+				const state = await fs.lstat(target);
+				if (!state.isFile() || state.isSymbolicLink() || state.size > MAX_STATE_BYTES) {
+					throw Error('HARNESS_WORKFLOW_PENDING_JOURNAL');
+				}
+				bytes = await fs.readFile(target);
+			} catch { throw Error('HARNESS_WORKFLOW_PENDING_JOURNAL'); }
+			if (createHash('sha256').update(bytes).digest('hex') !== intent.after) {
+				throw Error('HARNESS_WORKFLOW_PENDING_JOURNAL');
+			}
+			const current = await fs.lstat(file);
+			if (!current.isFile() || current.isSymbolicLink() ||
+				current.ino !== stat.ino || current.dev !== stat.dev ||
+				await fs.readFile(file, 'utf8') !== raw) {
+				throw Error('HARNESS_WORKFLOW_UNSAFE_JOURNAL');
+			}
+			await fs.rm(file);
+		}
+	}
+
 	/** The IDE shows only recent records; recovery must inspect every bounded stored record. */
 	async history(): Promise<WorkflowRecord[]> {
 		return this.readHistory(MAX_HISTORY);
@@ -296,6 +351,8 @@ export class NativeAgentWorkflow {
 			await guard.writeFile(guardData);
 			await guard.sync();
 			guardRecorded = true;
+			await this.assertNoActiveExecutionLock();
+			await this.resolveCommittedJournals();
 			return await this.reconcileLocked();
 		} finally {
 			await guard.close();
@@ -308,6 +365,32 @@ export class NativeAgentWorkflow {
 					await fs.rm(guardFile);
 				}
 			}
+		}
+	}
+
+	/** Refuse journal repair while a potentially live writer owns the lock. */
+	private async assertNoActiveExecutionLock(): Promise<void> {
+		const lockFile = path.join(this.storage, 'execution.lock');
+		let stat;
+		try { stat = await fs.lstat(lockFile); }
+		catch (error) {
+			if ((error as NodeJS.ErrnoException).code === 'ENOENT') { return; }
+			throw error;
+		}
+		if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 4096) {
+			throw Error('HARNESS_WORKFLOW_UNSAFE_LOCK');
+		}
+		let lock: unknown;
+		try { lock = JSON.parse(await fs.readFile(lockFile, 'utf8')); }
+		catch { throw Error('HARNESS_WORKFLOW_UNSAFE_LOCK'); }
+		if (!lock || typeof lock !== 'object' ||
+			!Number.isSafeInteger((lock as { pid?: unknown }).pid) ||
+			(lock as { pid: number }).pid < 1) { throw Error('HARNESS_WORKFLOW_UNSAFE_LOCK'); }
+		try {
+			process.kill((lock as { pid: number }).pid, 0);
+			throw Error('HARNESS_WORKFLOW_ACTIVE_LOCK');
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== 'ESRCH') { throw error; }
 		}
 	}
 
