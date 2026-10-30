@@ -4,6 +4,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as path from 'node:path';
+import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
 import { buildAgentInvocation, executeReviewedAgent } from '../src/native-agent-execution.ts';
 import { reviewAgentDraft } from '../src/native-providers.ts';
 
@@ -37,4 +39,24 @@ test('a changed review or invalid duration never starts an agent', async () => {
   const review = reviewAgentDraft(base);
   await assert.rejects(executeReviewedAgent(review, { ...base, instruction: 'Other task' }), /HARNESS_AGENT_REVIEW_CHANGED/);
   await assert.rejects(executeReviewedAgent(review, base, -5), /HARNESS_AGENT_TIMEOUT_INVALID/);
+});
+
+test('approved agent runs a fake CLI without shell or provider network', { skip: process.platform === 'win32' }, async () => {
+  const folder = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-agent-e2e-'));
+  const originalPath = process.env.PATH;
+  try {
+    const cli = path.join(folder, 'codex');
+    await fs.writeFile(cli, '#!/usr/bin/env node\nlet input = ""; process.stdin.on("data", c => input += c); process.stdin.on("end", () => { console.log("SAFE_AGENT", process.argv.slice(2).join(" "), input.includes("Review API changes")); });\n', { mode: 0o755 });
+    await fs.chmod(cli, 0o755);
+    process.env.PATH = folder + path.delimiter + (originalPath || '');
+    const current = { ...base, projectRoot: await fs.realpath(folder) };
+    const execution = await executeReviewedAgent(reviewAgentDraft(current), current, 10000);
+    const result = await execution.outcome;
+    assert.equal(result.status, 'passed');
+    assert.match(result.output, /SAFE_AGENT exec --sandbox read-only/);
+    assert.match(result.output, /true/);
+  } finally {
+    if (originalPath === undefined) { delete process.env.PATH; } else { process.env.PATH = originalPath; }
+    await fs.rm(folder, { recursive: true, force: true });
+  }
 });
