@@ -481,14 +481,20 @@ export class NativeAgentWorkflow {
 				for (const run of this.activeDAG) { run.cancel(); }
 			} finally {
 				record.endedAt = new Date().toISOString();
-				try { this.emit(record, 'workflow-finished'); await atomicWrite(file, record); }
-				finally {
+				let terminalStatePersisted = false;
+				try {
+					this.emit(record, 'workflow-finished');
+					await atomicWrite(file, record);
+					terminalStatePersisted = true;
+				} finally {
 					this.active = undefined;
 					this.activeDAG.clear();
 					this.verificationController = undefined;
 					this.running = false;
 					await lock.close();
-					await fs.rm(lockFile, { force: true });
+					// Never unlock after a failed state write: a new writer must not
+					// mistake an uncertain workflow for a successfully finished one.
+					if (terminalStatePersisted) { await fs.rm(lockFile, { force: true }); }
 				}
 			}
 			return record;
