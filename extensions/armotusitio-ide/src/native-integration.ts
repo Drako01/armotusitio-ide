@@ -22,7 +22,7 @@ import { createAgentWorktree, removeCleanAgentWorktree, listAgentWorktrees, type
 import { describeEngine, probeProjectHandshake, compareHybridCapabilities, verifiedNativeCapabilities } from './native-engine-contract.ts';
 import { diagnoseProvider } from './native-provider-diagnostics.ts';
 import { summarizeGatePerformance } from './native-performance.ts';
-import { acquireSharedExecutionFence, type SharedExecutionFence } from './native-shared-fence.ts';
+import { acquireSharedExecutionFence, inspectSharedExecutionFence, reconcileSharedExecutionFence, type SharedExecutionFence } from './native-shared-fence.ts';
 import { createWorktreeCheckpoint, rollbackWorktreeCheckpoint, type WorktreeCheckpoint } from './native-worktree-checkpoint.ts';
 import { queryProjectEngineStatus } from './native-engine-interop.ts';
 
@@ -380,6 +380,36 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			const workflow = new NativeAgentWorkflow(root, path.join(metricsDirectory(root), 'workflows'));
 			const updated = await workflow.reconcile();
 			vscode.window.showInformationMessage('Workflows reconciliados: ' + updated);
+		} catch (error) { showError(error); } finally { controller.refresh(); }
+	}));
+
+
+	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.nativeSharedFenceReconcile', async (requested?: string) => {
+		try {
+			if (!ensureTrust()) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
+			const chosen = await choose(requested); if (!chosen) { return; }
+			const root = await fs.realpath(chosen.folder.uri.fsPath);
+			if ((await inspectHarnessAuthority(root)).engine === 'project') { throw Error('HARNESS_PROJECT_AUTHORITY'); }
+			if (runningAgents.has(root) || pendingAgents.has(root) || runningWorkflows.has(root) ||
+				pendingWorkflows.has(root) || running.has(chosen.folder.uri.toString())) {
+				throw Error('HARNESS_ALREADY_RUNNING');
+			}
+			const storage = metricsDirectory(root);
+			const current = await inspectSharedExecutionFence(root, storage);
+			if (!current.held) {
+				vscode.window.showInformationMessage('No hay un fence compartido pendiente.');
+				return;
+			}
+			const approved = await vscode.window.showWarningMessage(
+				'Recuperacion conservadora del fence compartido. Primero reconcilia tareas y workflows; ' +
+				'se rechaza cualquier propietario vivo, estado incierto o rollback incompleto. ' +
+				'No se reejecutan procesos ni se eliminan cambios del proyecto. Continuar?',
+				{ modal: true }, 'Reconciliar fence');
+			if (approved !== 'Reconciliar fence' || !authorized(chosen.folder)) { return; }
+			const outcome = await reconcileSharedExecutionFence(root, storage, true);
+			vscode.window.showInformationMessage(outcome.released
+				? 'Fence compartido reconciliado: epoch ' + outcome.epoch
+				: 'No habia un fence compartido para recuperar.');
 		} catch (error) { showError(error); } finally { controller.refresh(); }
 	}));
 
