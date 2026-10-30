@@ -95,6 +95,41 @@ export async function readProjectGateCatalog(root: string): Promise<ProjectGateC
 	};
 }
 
+/** Deterministic read-only schedule; no gate is ever executed by this planner. */
+export function planProjectGateWaves(catalog: ProjectGateCatalog, maxConcurrent = 4): string[][] {
+	if (!Number.isSafeInteger(maxConcurrent) || maxConcurrent < 1 || maxConcurrent > 8) {
+		throw Error('HARNESS_GATE_CAPACITY_INVALID');
+	}
+	if (catalog.executionEnabled !== false || catalog.schemaVersion !== 1 ||
+		!Array.isArray(catalog.gates) || catalog.gates.length > 32) {
+		throw Error('HARNESS_GATE_CATALOG_INVALID');
+	}
+	const validated = new Map<string, ProjectGate>();
+	for (const gate of catalog.gates) {
+		if (!gate || typeof gate.id !== 'string' || !IDENTIFIER.test(gate.id) ||
+			validated.has(gate.id) || !Array.isArray(gate.dependsOn) ||
+			!Array.isArray(gate.resources)) { throw Error('HARNESS_GATE_CATALOG_INVALID'); }
+		validated.set(gate.id, gate);
+	}
+	const completed = new Set<string>();
+	const waves: string[][] = [];
+	while (completed.size < validated.size) {
+		const claimed = new Set<string>();
+		const selected: ProjectGate[] = [];
+		for (const gate of validated.values()) {
+			if (completed.has(gate.id) || selected.length >= maxConcurrent) { continue; }
+			if (!gate.dependsOn.every(dep => completed.has(dep))) { continue; }
+			if (gate.resources.some(resource => claimed.has(resource))) { continue; }
+			selected.push(gate);
+			for (const resource of gate.resources) { claimed.add(resource); }
+		}
+		if (!selected.length) { throw Error('HARNESS_GATE_CATALOG_DEPENDENCY'); }
+		waves.push(selected.map(gate => gate.id));
+		for (const gate of selected) { completed.add(gate.id); }
+	}
+	return waves;
+}
+
 /** For an eventual explicit delegation, require fresh approval of the exact manifest. */
 export async function validateProjectGateCatalog(root: string, expectedDigest: string): Promise<void> {
 	if (!/^[a-f0-9]{64}$/.test(expectedDigest)) { throw Error('HARNESS_GATE_CATALOG_INVALID'); }
