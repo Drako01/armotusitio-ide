@@ -7,7 +7,7 @@ import { inspectHarnessAuthority } from './native-authority.ts';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { spawn } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, createHash } from 'node:crypto';
 
 export const ENGINE_CONTRACT_VERSION = 2 as const;
 export type Capability =
@@ -136,7 +136,8 @@ export async function probeProjectHandshake(root: string, trusted: () => boolean
 	if (authority.engine !== 'project' || !authority.entry || authority.reason !== 'project-entry') { throw Error('HARNESS_HANDSHAKE_ENTRY_UNAVAILABLE'); }
 	const target = path.join(canonical, authority.entry);
 	const entry = await fs.lstat(target);
-	if (!entry.isFile() || entry.isSymbolicLink() || await fs.realpath(target) !== target) { throw Error('HARNESS_HANDSHAKE_ENTRY_UNSAFE'); }
+	if (!entry.isFile() || entry.isSymbolicLink() || entry.size > 16 * 1024 * 1024 || await fs.realpath(target) !== target) { throw Error('HARNESS_HANDSHAKE_ENTRY_UNSAFE'); }
+	const originalEntryDigest = createHash('sha256').update(await fs.readFile(target)).digest('hex');
 	const declared = await readProjectCapabilities(canonical);
 	const nonce = randomBytes(16).toString('hex');
 	const environment: NodeJS.ProcessEnv = {};
@@ -179,6 +180,12 @@ export async function probeProjectHandshake(root: string, trusted: () => boolean
 		!result.capabilities.every(cap => typeof cap === 'string' && declared.includes(cap as Capability)) ||
 		new Set(result.capabilities).size !== result.capabilities.length) {
 		throw Error('HARNESS_HANDSHAKE_INVALID');
+	}
+	const currentEntry = await fs.lstat(target);
+	if (!currentEntry.isFile() || currentEntry.isSymbolicLink() || currentEntry.size > 16 * 1024 * 1024 ||
+		await fs.realpath(target) !== target ||
+		createHash('sha256').update(await fs.readFile(target)).digest('hex') !== originalEntryDigest) {
+		throw Error('HARNESS_HANDSHAKE_ENTRY_CHANGED');
 	}
 	const currentDeclaration = await readProjectCapabilities(canonical);
 	if (JSON.stringify(currentDeclaration) !== JSON.stringify(declared)) {
