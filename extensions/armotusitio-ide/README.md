@@ -47,7 +47,7 @@ de lectura y edición, y denegación explícita de Bash y herramientas web. Los 
 son responsables de comprobar el resultado. Las ejecuciones de Codex conservan sandbox
 `workspace-write` o `read-only` según el rol.
 
-Se limita a dos operaciones de proveedor simultáneas por ventana del IDE y a un máximo\nde una hora por workflow, incluyendo la verificación. El diagnóstico de CLI consulta\nversiones sin consumir tokens y sin afirmar que las sesiones estén autenticadas.\n\n**Pendiente para calificación AAA:** sandbox OS/red, integración transaccional automática,
+Se limita a dos operaciones de proveedor simultáneas por ventana del IDE y a un máximo\nde una hora por workflow, incluyendo la verificación. El diagnóstico de CLI consulta\nversiones sin consumir tokens y sin afirmar que las sesiones estén autenticadas.\nEl runner consume eventos JSONL de Codex y JSON de Claude, conserva solamente el mensaje\nfinal y métricas verificables de tokens, y muestra el costo estimado informado por Claude\ncuando existe. Los costos son estimaciones parciales y no equivalen a facturación real.\nCodex ejecuta con sesiones efímeras y política de aprobación no interactiva; Claude\nrecibe una señal para no persistir el historial de prompts cuando su versión la admite.\n\n**Pendiente para calificación AAA:** sandbox OS/red, integración transaccional automática,
 correcciones autónomas del feedback, contabilidad verificable de tokens/costos y benchmarks
 reales con proveedores autenticados.
 
