@@ -31,6 +31,13 @@ async function canonicalDirectory(root: string, location: string): Promise<boole
 	return true;
 }
 
+/** Validate both the top-level folder and the skills leaf; a safe leaf may hide a linked parent. */
+async function safeSource(root: string, source: ProjectSkill['source']): Promise<boolean> {
+	const parent = path.join(root, source.split('/')[0]);
+	if (!await canonicalDirectory(root, parent)) { return false; }
+	return canonicalDirectory(root, path.join(root, source));
+}
+
 /** Returns metadata only. No file contents are included in discovery output. */
 export async function listProjectSkills(root: string): Promise<ProjectSkill[]> {
 	const canonical = await fs.realpath(root);
@@ -49,7 +56,7 @@ export async function listProjectSkills(root: string): Promise<ProjectSkill[]> {
 				throw error;
 			}
 		}
-		if (!await canonicalDirectory(canonical, directory)) { continue; }
+		if (!await safeSource(canonical, source)) { continue; }
 		const entries = await fs.readdir(directory, { withFileTypes: true });
 		if (entries.length > MAX_SKILLS) { throw Error('HARNESS_PROJECT_SKILLS_TOO_MANY'); }
 		for (const entry of entries) {
@@ -84,7 +91,7 @@ export async function readProjectSkill(root: string, skill: ProjectSkill): Promi
 	const canonical = await fs.realpath(root);
 	if (canonical !== root) { throw Error('HARNESS_PROJECT_SKILL_ROOT_CHANGED'); }
 	const dir = path.join(canonical, skill.source, skill.name);
-	if (!await canonicalDirectory(canonical, path.join(canonical, skill.source)) ||
+	if (!await safeSource(canonical, skill.source) ||
 		!await canonicalDirectory(canonical, dir)) { throw Error('HARNESS_PROJECT_SKILL_CHANGED'); }
 	const file = path.join(dir, 'SKILL.md');
 	const stat = await fs.lstat(file);
