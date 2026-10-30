@@ -25,7 +25,7 @@ import { summarizeGatePerformance } from './native-performance.ts';
 import { acquireSharedExecutionFence, inspectSharedExecutionFence, reconcileSharedExecutionFence, type SharedExecutionFence } from './native-shared-fence.ts';
 import { createWorktreeCheckpoint, rollbackWorktreeCheckpoint, type WorktreeCheckpoint } from './native-worktree-checkpoint.ts';
 import { queryProjectEngineStatus } from './native-engine-interop.ts';
-import { reserveProviderInvocation } from './native-provider-quota.ts';
+import { reserveProviderInvocation, readProviderInvocationQuota } from './native-provider-quota.ts';
 
 type Host = any; // vscode host is injected by the existing extension (avoid duplicating the UI layer).
 const sessions = new Map<string, NativeHarness>();
@@ -503,6 +503,18 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({
 				language: 'json',
 				content: JSON.stringify({ providers: diagnostics, note: 'Local --version and --help flag diagnostics only. Authentication, effective permissions and provider protocol still require a real opt-in smoke test.' }, null, 2)
+			}), { preview: true });
+		} catch (error) { showError(error); }
+	}));
+	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.nativeProviderQuotaStatus', async (requested?: string) => {
+		try {
+			if (!ensureTrust()) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
+			const chosen = await choose(requested); if (!chosen) { return; }
+			const root = await fs.realpath(chosen.folder.uri.fsPath);
+			const status = await readProviderInvocationQuota(metricsDirectory(root), providerCallsPer24h(chosen.folder));
+			if (!authorized(chosen.folder)) { return; }
+			await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({
+				language: 'json', content: JSON.stringify(status, null, 2)
 			}), { preview: true });
 		} catch (error) { showError(error); }
 	}));
