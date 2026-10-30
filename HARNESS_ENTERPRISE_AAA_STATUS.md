@@ -541,6 +541,15 @@ Ejemplo local voluntario: `node scripts/ats-harness-benchmark.mts --command chec
 - [ ] **Sin attestation de sandbox ni protección OS ante TOCTOU:** un digest anterior/posterior no impide mutaciones entre ambas comprobaciones o escrituras fuera del proyecto. Los ejecutores externos siguen sin autorización de escritura del IDE.
 - [ ] Validación local completa de estos cambios sobre el SHA publicado y pruebas E2E posteriores.
 
+
+### Cierre de validación Windows del benchmark e integridad (2026-10-30, 19:20 ART)
+
+- [x] **Evidencia del operador sobre `fd6f1d98dec`:** `npm test --prefix extensions/armotusitio-ide` ejecutó **242 pruebas: 241 PASS, 0 FAIL, 1 SKIP**. Incluye las pruebas de integridad del entrypoint y benchmark offline.
+- [x] **Verificador focalizado:** 145 pruebas (144 PASS, 0 FAIL, 1 SKIP), con **7/7 gates PASS**: TypeScript, webview, renderer, bundle, recursos nativos, higiene y diff whitespace.
+- [x] **Check adicional:** `npm run check --prefix extensions/armotusitio-ide` pasó y `git diff --check` no reportó diferencias.
+- [x] **Baseline local offline**, Windows x64, Node v24.22.1, `--command check --runs 3`: 3 PASS, 0 FAIL; tiempos reales wall de 10035 ms, 9749 ms y 9923 ms. Mínimo **9749 ms**, mediana **9923 ms**, p95 observado **10035 ms**. No son métricas del IDE completo ni de proveedores IA.
+- [ ] **Certificación AAA:** siguen pendientes sandbox OS efectivo, protocolo común con escritura y fencing interproceso, rollback y reanudación segura, cuotas monetarias rígidas, E2E real de ambos proveedores, build completo del IDE en Windows/Linux/macOS y auditoría de seguridad.
+
 ## Validación local obligatoria
 
 Desde la raíz del repositorio, con las dependencias instaladas:
