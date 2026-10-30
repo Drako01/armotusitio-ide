@@ -20,7 +20,8 @@ export function parseReviewerVerdict(output: string, truncated = false): Reviewe
 export function boundedHandoff(role: string, text: string, maxChars = 2048): string {
   if (!/^[a-z0-9_-]{1,64}$/i.test(role)) { throw Error('HARNESS_HANDOFF_ROLE_INVALID'); }
   if (!Number.isSafeInteger(maxChars) || maxChars < 128 || maxChars > 8192) { throw Error('HARNESS_HANDOFF_BUDGET_INVALID'); }
-  const safe = String(text).replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').slice(-maxChars);
-  // Explicitly mark untrusted provider output; never elevate a handoff to policy.
-  return '<untrusted_handoff role="' + role + '">\n' + safe + '\n</untrusted_handoff>';
+  const content = String(text).replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').slice(-maxChars);
+  // JSON escaping prevents text from breaking out of a pseudo-XML delimiter.
+  // Provider content remains untrusted regardless of format.
+  return JSON.stringify({ kind: 'untrusted_agent_data', sourceRole: role, followInstructions: false, content });
 }
