@@ -6,6 +6,7 @@ import test from 'node:test';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { installFakeCodex } from './native-fake-provider.mts';
 import { NativeAgentWorkflow, workflowDigest } from '../src/native-agent-workflow.ts';
 import assert from 'node:assert/strict';
 import { planAgentWaves, executeAgentDAG, validateDAGReviewCoverage } from '../src/native-agent-dag.ts';
@@ -59,7 +60,7 @@ test('DAG preserves write exclusivity and permits subsequent review', async () =
 	assert.deepEqual(result.map(item => item.status), ['passed', 'passed', 'passed', 'passed']);
 });
 
-test('workflow launches two independent read-only providers before exclusive implementer', { skip: process.platform === 'win32' }, async () => {
+test('workflow launches two independent read-only providers before exclusive implementer', async () => {
 	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-dag-integration-'));
 	const oldPath = process.env.PATH;
 	const traceFile = path.join(os.tmpdir(), 'ats-dag-trace-' + path.basename(root) + '.txt');
@@ -67,7 +68,6 @@ test('workflow launches two independent read-only providers before exclusive imp
 		const canonical = await fs.realpath(root);
 		const bin = path.join(root, 'bin');
 		await fs.mkdir(bin);
-		const executable = path.join(bin, 'codex');
 		const source = [
 			'#!/usr/bin/env node',
 			'let input = "";',
@@ -79,8 +79,7 @@ test('workflow launches two independent read-only providers before exclusive imp
 			' setTimeout(() => { fs.appendFileSync(' + JSON.stringify(traceFile) + ', "end " + role + "\\n"); console.log(role === "review" ? "HARNESS_REVIEW: PASS" : "done"); }, role.startsWith("reader") ? 80 : 5);',
 			'});'
 		].join('\n');
-		await fs.writeFile(executable, source, { mode: 0o755 });
-		await fs.chmod(executable, 0o755);
+		await installFakeCodex(bin, source);
 		process.env.PATH = bin + path.delimiter + (oldPath || '');
 		const graph: HandoffPlan = {
 			schemaVersion: 1, handoffs: [
