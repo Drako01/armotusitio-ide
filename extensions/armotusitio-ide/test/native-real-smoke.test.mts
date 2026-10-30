@@ -30,7 +30,7 @@ test('real provider smoke defaults to help without contacting a provider', () =>
 });
 
 test('smoke errors are classified without emitting raw provider output', () => {
-	assert.equal(classifySmokeFailure("error: unexpected argument '--ask-for-approval' found", 2), 'cli-arguments');
+	assert.equal(classifySmokeFailure('error: unexpected argument --ask-for-approval found', 2), 'cli-arguments');
 	assert.equal(classifySmokeFailure('Please log in to continue', 1), 'authentication');
 	assert.equal(classifySmokeFailure('Rate limit exceeded', 1), 'quota');
 	assert.equal(classifySmokeFailure('some arbitrary message with private content', 1), 'provider-failed');
