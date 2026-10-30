@@ -526,3 +526,34 @@ test('normal workflow journal lifecycle leaves no pending intent after fake prov
 		assert.deepEqual((await fs.readdir(state)).filter(name => name.endsWith('.json.intent')), []);
 	} finally { await fs.rm(root, { recursive: true, force: true }); }
 });
+
+test('reconciliation refuses a committed journal belonging to another project', async () => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-workflow-intent-foreign-'));
+	try {
+		const canonical = await fs.realpath(root);
+		const state = path.join(root, 'private');
+		await fs.mkdir(state);
+		const id = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeed';
+		const plan = proposedWorkflow('codex', 'Inspect foreign state');
+		const raw = JSON.stringify({
+			schemaVersion: 1, id, createdAt: new Date().toISOString(),
+			projectKey: 'f'.repeat(64), planDigest: workflowDigest(canonical, plan),
+			status: 'running', steps: []
+		});
+		const file = path.join(state, id + '.json');
+		const intent = path.join(state, id + '.json.intent');
+		await fs.writeFile(file, raw);
+		await fs.writeFile(intent, JSON.stringify({
+			schemaVersion: 1, id, before: null,
+			after: (await import('node:crypto')).createHash('sha256').update(raw).digest('hex'),
+			createdAt: new Date().toISOString()
+		}));
+		const lockFile = path.join(state, 'execution.lock');
+		await fs.writeFile(lockFile, JSON.stringify({ pid: 99999999 }));
+		const flow = new NativeAgentWorkflow(canonical, state);
+		await assert.rejects(flow.reconcile(), /HARNESS_WORKFLOW_UNSAFE_JOURNAL/);
+		assert.equal(await fs.readFile(file, 'utf8'), raw);
+		assert.ok((await fs.readFile(intent, 'utf8')).includes('"after"'));
+		assert.ok((await fs.readFile(lockFile, 'utf8')).includes('99999999'));
+	} finally { await fs.rm(root, { recursive: true, force: true }); }
+});
