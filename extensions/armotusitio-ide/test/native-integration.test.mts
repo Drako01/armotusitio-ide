@@ -322,3 +322,15 @@ test('IDE shared-fence recovery refuses a live process without altering its lock
 		assert.ok(f.notices.some(message => String(message).includes('No hay un fence')));
 	} finally { await f.cleanup(); }
 });
+
+test('IDE quota diagnostics are read-only and disabled by default', async () => {
+	const f = await fixture();
+	try {
+		await f.invoke('nativeProviderQuotaStatus', f.roots[0]);
+		const status = JSON.parse(f.documents.at(-1)!.content);
+		assert.equal(status.enabled, false);
+		assert.equal(status.maxCallsPer24h, null);
+		assert.deepEqual(status.providers.codex, { used: 0, remaining: null });
+		assert.deepEqual(status.providers.claude, { used: 0, remaining: null });
+	} finally { await f.cleanup(); }
+});
