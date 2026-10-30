@@ -31,7 +31,7 @@ export function buildAgentInvocation(draft: AgentDraft): AgentInvocation {
   if (draft.provider === 'codex') {
     return {
       executable: 'codex',
-      args: ['exec', '--sandbox', draft.readOnly ? 'read-only' : 'workspace-write', '--skip-git-repo-check', '-'],
+      args: ['exec', '--sandbox', draft.readOnly ? 'read-only' : 'workspace-write', '--skip-git-repo-check', '--ask-for-approval', 'never', '--ephemeral', '-'],
       stdin: instruction
     };
   }
