@@ -228,7 +228,7 @@ export class NativeAgentWorkflow {
 
 	private async assertNoPendingJournals(): Promise<void> {
 		const entries = await fs.readdir(this.storage);
-		if (entries.some(name => /^[a-f0-9-]{36}\\.json\\.intent$/i.test(name))) {
+		if (entries.some(name => /^[a-f0-9-]{36}\.json\.intent$/i.test(name))) {
 			throw Error('HARNESS_WORKFLOW_PENDING_JOURNAL');
 		}
 	}
@@ -272,7 +272,7 @@ export class NativeAgentWorkflow {
 	 */
 	private async resolveCommittedJournals(): Promise<void> {
 		const names = (await fs.readdir(this.storage)).filter(name =>
-			/^[a-f0-9-]{36}\\.json\\.intent$/i.test(name));
+			/^[a-f0-9-]{36}\.json\.intent$/i.test(name));
 		if (names.length > MAX_STORED) { throw Error('HARNESS_WORKFLOW_HISTORY_TOO_LARGE'); }
 		for (const name of names) {
 			const file = path.join(this.storage, name);
@@ -334,7 +334,7 @@ export class NativeAgentWorkflow {
 	async pendingJournalIds(): Promise<string[]> {
 		if (!await this.assertSafeStorage(false)) { return []; }
 		const names = (await fs.readdir(this.storage)).filter(name =>
-			/^[a-f0-9-]{36}\\.json\\.intent$/i.test(name));
+			/^[a-f0-9-]{36}\.json\.intent$/i.test(name));
 		if (names.length > MAX_STORED) { throw Error('HARNESS_WORKFLOW_HISTORY_TOO_LARGE'); }
 		return names.map(name => name.slice(0, 36)).sort();
 	}
