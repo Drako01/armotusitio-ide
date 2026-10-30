@@ -76,7 +76,18 @@ test('workflow launches two independent read-only providers before exclusive imp
 			' const fs = require("node:fs");',
 			' const role = input.includes("This is a read-only assignment") ? (input.includes("DAG_READER_A") ? "reader_a" : input.includes("DAG_READER_B") ? "reader_b" : "review") : "writer";',
 			' fs.appendFileSync(' + JSON.stringify(traceFile) + ', "start " + role + "\\n");',
-			' setTimeout(() => { fs.appendFileSync(' + JSON.stringify(traceFile) + ', "end " + role + "\\n"); console.log(role === "review" ? "HARNESS_REVIEW: PASS" : "done"); }, role.startsWith("reader") ? 80 : 5);',
+			' const tracePath = ' + JSON.stringify(traceFile) + ';',
+			' const finish = () => { fs.appendFileSync(tracePath, "end " + role + "\\n"); console.log(role === "review" ? "HARNESS_REVIEW: PASS" : "done"); };',
+			' if (!role.startsWith("reader")) { finish(); return; }',
+			' // Synchronize two independent readers with an explicit bounded barrier, never timing guesses.',
+			' const deadline = Date.now() + 5000;',
+			' const poll = () => {',
+			'  const trace = fs.readFileSync(tracePath, "utf8");',
+			'  if (trace.includes("start reader_a\\n") && trace.includes("start reader_b\\n")) { finish(); return; }',
+			'  if (Date.now() >= deadline) { console.error("HARNESS_DAG_READER_BARRIER_TIMEOUT"); process.exitCode = 2; return; }',
+			'  setTimeout(poll, 15);',
+			' };',
+			' poll();',
 			'});'
 		].join('\n');
 		await installFakeCodex(bin, source);
