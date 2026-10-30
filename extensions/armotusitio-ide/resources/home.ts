@@ -96,6 +96,12 @@ window.addEventListener('message', event => {
 		const tools = document.createElement('div'); tools.className = 'actions';
 		const commands = { nativeNewTask: 'create', nativeConfigure: 'configure', nativeSupport: 'diagnostics', nativeStatus: 'history', nativeRemoveConfiguration: 'remove' };
 		for (const [tool, key] of Object.entries(commands)) { if (tool !== command) { tools.append(action(nativeLabels[key], project.root, 'native', tool)); } }
+		tools.append(action('Ejecutar agente IA', project.root, 'native', 'nativeAgentExecute'));
+		tools.append(action('Workflow multiagente', project.root, 'native', 'nativeAgentWorkflow'));
+		tools.append(action('Métricas IA', project.root, 'native', 'nativeAgentMetrics'));
+		tools.append(action('Historial multiagente', project.root, 'native', 'nativeWorkflowHistory'));
+		tools.append(action('Reconciliar workflows', project.root, 'native', 'nativeWorkflowReconcile'));
+		if (project.agentActive) { tools.append(action('Cancelar agente o workflow', project.root, 'native', 'nativeCancel')); }
 		if (current?.status === 'running' && !current.reconciliationRequired) { tools.append(action(nativeLabels.cancel, project.root, 'native', 'nativeCancel')); }
 		if (project.lock === 'stale' && command !== 'nativeReconcile') { tools.append(action(nativeLabels.reconcile, project.root, 'native', 'nativeReconcile')); }
 		details.append(tools); article.append(details); projects.append(article);
