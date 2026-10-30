@@ -233,11 +233,14 @@ export class NativeAgentWorkflow {
 			throw Error('HARNESS_WORKFLOW_FOREIGN_PROJECT_STATE');
 		}
 		const lockFile = path.join(this.storage, 'execution.lock');
+		let originalLock: { ino: number; dev: number; content: string } | undefined;
 		try {
 			const stat = await fs.lstat(lockFile);
 			if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 4096) { throw Error('HARNESS_WORKFLOW_UNSAFE_LOCK'); }
-			const lock = JSON.parse(await fs.readFile(lockFile, 'utf8')) as { pid?: number };
+			const content = await fs.readFile(lockFile, 'utf8');
+			const lock = JSON.parse(content) as { pid?: number };
 			if (!Number.isSafeInteger(lock.pid) || lock.pid! < 1) { throw Error('HARNESS_WORKFLOW_UNSAFE_LOCK'); }
+			originalLock = { ino: stat.ino, dev: stat.dev, content };
 			try {
 				process.kill(lock.pid!, 0);
 				throw Error('HARNESS_WORKFLOW_ACTIVE_LOCK');
@@ -259,9 +262,20 @@ export class NativeAgentWorkflow {
 			await atomicWrite(path.join(this.storage, record.id + '.json'), record);
 			recovered++;
 		}
-		// If any state write fails, the lock stays in place and no new writer can start.
-		// A missing lock is harmless here: reconciliation remains explicit and fail-closed.
-		await fs.rm(lockFile, { force: true });
+		// Never remove a lock replaced while recovery was in progress. This
+		// detects substitution; full cross-process fencing is still pending.
+		if (originalLock) {
+			const current = await fs.lstat(lockFile).catch(error => {
+				if ((error as NodeJS.ErrnoException).code === 'ENOENT') { throw Error('HARNESS_WORKFLOW_LOCK_CHANGED'); }
+				throw error;
+			});
+			if (!current.isFile() || current.isSymbolicLink() ||
+				current.ino !== originalLock.ino || current.dev !== originalLock.dev ||
+				await fs.readFile(lockFile, 'utf8') !== originalLock.content) {
+				throw Error('HARNESS_WORKFLOW_LOCK_CHANGED');
+			}
+			await fs.rm(lockFile);
+		}
 		return recovered;
 	}
 
