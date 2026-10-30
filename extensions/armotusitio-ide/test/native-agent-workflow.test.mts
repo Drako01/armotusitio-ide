@@ -180,3 +180,21 @@ test('persisted workflow rejects undeclared top-level and step content without r
 		assert.equal(history[0].status, 'interrupted');
 	} finally { await fs.rm(root, { recursive: true, force: true }); }
 });
+
+test('reconciliation preserves stale lock when persisted history is corrupt', async () => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-reconcile-invalid-history-'));
+	try {
+		const canonical = await fs.realpath(root);
+		const state = path.join(root, 'private');
+		await fs.mkdir(state);
+		const lockFile = path.join(state, 'execution.lock');
+		const lock = JSON.stringify({ pid: 99999999 });
+		await fs.writeFile(lockFile, lock);
+		const corrupt = path.join(state, 'dddddddd-dddd-4ddd-dddd-dddddddddddd.json');
+		await fs.writeFile(corrupt, JSON.stringify({ schemaVersion: 1, prompt: 'NEVER_PERSIST' }));
+		const workflow = new NativeAgentWorkflow(canonical, state);
+		await assert.rejects(workflow.reconcile(), /HARNESS_WORKFLOW_INVALID_STATE/);
+		assert.equal(await fs.readFile(lockFile, 'utf8'), lock);
+		await assert.rejects(workflow.history(), /HARNESS_WORKFLOW_INVALID_STATE/);
+	} finally { await fs.rm(root, { recursive: true, force: true }); }
+});
