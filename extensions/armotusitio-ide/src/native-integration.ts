@@ -41,6 +41,10 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 	const pendingAgents = new Set<string>();
 	const runningWorkflows = new Map<string, WorkflowRun>();
 	const pendingWorkflows = new Set<string>();
+	// Local backpressure: an IDE window may run at most two provider-intensive operations.
+	const maxConcurrentProviders = 2;
+	const providerSlots = (): number => runningAgents.size + pendingAgents.size + runningWorkflows.size + pendingWorkflows.size;
+	const assertProviderCapacity = (): void => { if (providerSlots() >= maxConcurrentProviders) { throw Error('HARNESS_PROVIDER_CAPACITY_REACHED'); } };
 	const metricsDirectory = (root: string): string => path.join(context.globalStorageUri.fsPath, 'native-harness', createHash('sha256').update(root).digest('hex'));
 	controller.nativeRunning = () => running.size + runningAgents.size + pendingAgents.size + runningWorkflows.size + pendingWorkflows.size;
 	controller.nativeProjects = async () => {
@@ -62,7 +66,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 		}
 		return rows;
 	};
-	const ticker = setInterval(() => { if (running.size) { controller.refresh(); } }, 1500);
+	const ticker = setInterval(() => { if (running.size || providerSlots()) { controller.refresh(); } }, 1500);
 	context.subscriptions.push({ dispose: () => clearInterval(ticker) });
 	const showError = (e: unknown): void => { const code = e instanceof Error && /^HARNESS_[A-Z_]+$/.test(e.message) ? e.message : 'HARNESS_OPERATION_FAILED'; void vscode.window.showErrorMessage(vscode.l10n.t('Harness nativo: {0}. Revis\u00e1 el diagn\u00f3stico y la configuraci\u00f3n.', code)); };
 	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.nativeAgentReview', async (requested?: string) => {
@@ -109,7 +113,8 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({ language: 'json', content: preview }), { preview: true });
 			const approved = await vscode.window.showWarningMessage('¿Ejecutar este agente local con los permisos indicados? Sin autorización no se inicia ningún proveedor.', { modal: true }, 'Ejecutar agente');
 			if (approved !== 'Ejecutar agente' || !authorized(chosen.folder) || await fs.realpath(root) !== root) { return; }
-			if (runningAgents.has(root) || running.has(chosen.folder.uri.toString())) { throw Error('HARNESS_ALREADY_RUNNING'); }
+			if (runningAgents.has(root) || pendingAgents.has(root) || runningWorkflows.has(root) || pendingWorkflows.has(root) || running.has(chosen.folder.uri.toString())) { throw Error('HARNESS_ALREADY_RUNNING'); }
+			assertProviderCapacity();
 			// Reserve the project before the async provider lookup to prevent parallel launches.
 			pendingAgents.add(root); controller.refresh();
 			let execution: AgentExecution;
@@ -170,6 +175,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 				throw Error('HARNESS_ALREADY_RUNNING');
 			}
 			if (JSON.stringify((await loadProjectConfig(root))?.plan || null) !== verificationSnapshot) { throw Error('HARNESS_WORKFLOW_VERIFICATION_CHANGED'); }
+			assertProviderCapacity();
 			pendingWorkflows.add(root); controller.refresh();
 			const engine = new NativeAgentWorkflow(executionRoot, path.join(metricsDirectory(root), 'workflows'));
 			const validationEngine = isolation ? new NativeHarness(executionRoot, path.join(metricsDirectory(root), 'isolated-verification', isolation.id)) : chosen.engine;
