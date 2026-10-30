@@ -2,6 +2,49 @@
 
 La barra de estado abre el inicio de ArmotuSitio IDE con un clic.
 
+
+## Ejecución nativa de agentes IA (experimental, opt-in)
+
+La paleta agrega **ArmoTuSitio: Ejecutar agente IA con autorización**
+(`atsHarness.nativeAgentExecute`). Se mantiene la prioridad del Harness del proyecto:
+el comando solo está habilitado para carpetas sin `.harness/` ni `harness/`.
+No modifica ninguna configuración de proveedor, no crea PRs, no hace push ni despliega.
+
+1. Instalá e iniciá sesión en Codex CLI o Claude Code CLI en la misma máquina donde corre el IDE.
+2. Abrí una carpeta de trabajo confiable, seleccioná el proveedor y el rol.
+3. Revisá el JSON que muestra el ejecutable, argumentos, permisos e instrucción.
+4. Confirmá **Ejecutar agente**. La ejecución tiene límite de 30 minutos, salida acotada,
+   cancelación manual desde **Cancelar tarea nativa** y resultado visible en un documento JSON.
+5. Revisá los cambios con `git diff` y corré las verificaciones del proyecto antes de incorporarlos.
+   El sistema no comitea ni integra cambios automáticamente.
+
+Codex: `exec --sandbox read-only` para planner/reviewer y `workspace-write` para implementer.
+Claude: `--permission-mode plan` para planner/reviewer y `dontAsk` para implementer.
+`dontAsk` no equivale a un sandbox de filesystem: depende de las reglas de permisos del
+proveedor y deniega herramientas no autorizadas. La ejecución nativa **no garantiza**
+aislamiento de red, secretos, filesystem o procesos externos; para código no confiable usá
+un contenedor/VM aislado. Nunca concedas permisos de bypass.
+
+Este comando es una primera ruta agentic explícita; todavía no implementa handoffs ejecutables,
+orquestación multiagente universal, worktrees automáticos ni evaluación de calidad autónoma.
+El Harness especializado de cada proyecto conserva sus capacidades anteriores.
+
+### Validación local
+
+Desde la raíz de este repositorio:
+
+```bash
+npm run ats:harness:check
+cd extensions/armotusitio-ide
+npm test
+npm run check
+```
+
+Si el script raíz no existe en tu checkout, ejecutá `node scripts/ats-harness-check.mts`
+desde la raíz. Este check no llama a proveedores de IA.
+El test de integración real de Codex/Claude requiere CLI, autenticación y aprobación del usuario;
+no se simulan credenciales ni se ejecutan agentes en las pruebas automatizadas.
+
 ## Ejecutar una tarea con el Harness
 
 1. Abrí **ArmotuSitio: Inicio** desde la paleta de comandos.
