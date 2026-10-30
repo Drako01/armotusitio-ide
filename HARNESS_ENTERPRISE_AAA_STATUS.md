@@ -301,6 +301,16 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 
 **Decisión:** no instalar Claude ni modificar PATH automáticamente sin evidencia del entorno; no relajar el `shell:false` ni las restricciones del ejecutor para ocultar un fallo de descubrimiento.
 
+### Claude Code instalado; corrección del resolver npm en Windows (2026-10-30)
+
+**Evidencia del operador:** `command -v claude` y `where.exe claude` encontraron el shim global npm en `C:\\Users\\addis\\AppData\\Roaming\\npm`; `claude --version` reportó **2.1.224** y `npm list -g @anthropic-ai/claude-code --depth=0` confirmó el paquete.
+
+- [x] **CLI de Claude instalada y accesible por la terminal:** demostrado. El anterior `HARNESS_EXECUTABLE_UNAVAILABLE` indica un problema de detección en el Harness, no instalación ausente.
+- [x] **Compatibilidad Windows npm añadida:** resolver ahora prueba `node_modules/@anthropic-ai/claude-code/bin/claude.exe` (binario nativo) y conserva `cli.js` como fallback de versiones anteriores, sin utilizar `.cmd`, `.ps1`, shell ni `exec` arbitrario.
+- [x] **Pruebas añadidas:** layout npm, precedencia de binario nativo, fallback JS. Integradas en la batería y CI multiplataforma.
+- [ ] **Nueva validación local:** verificar TypeScript, higiene y suites en Windows, y comprobar el smoke de Claude en el mismo entorno. Ningún resultado anterior certifica esta corrección recién publicada.
+- [ ] **E2E Claude autenticado, CI multiplataforma y sandbox OS:** pendientes.
+
 ## Validación local obligatoria
 
 Desde la raíz del repositorio, con las dependencias instaladas:
