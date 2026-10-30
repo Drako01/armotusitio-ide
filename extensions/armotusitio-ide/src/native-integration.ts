@@ -14,7 +14,7 @@ import { inspectHarnessAuthority } from './native-authority.ts';
 import { buildAgentInvocation, executeReviewedAgent, type AgentExecution } from './native-agent-execution.ts';
 import { readAgentStatistics, recordAgentMetric } from './native-agent-metrics.ts';
 import { NativeAgentWorkflow, proposedWorkflow, workflowDigest, type WorkflowRun } from './native-agent-workflow.ts';
-import { createAgentWorktree, removeCleanAgentWorktree, type ManagedWorktree } from './native-agent-worktree.ts';
+import { createAgentWorktree, removeCleanAgentWorktree, listAgentWorktrees, type ManagedWorktree } from './native-agent-worktree.ts';
 import { describeEngine } from './native-engine-contract.ts';
 import { summarizeGatePerformance } from './native-performance.ts';
 
@@ -209,6 +209,24 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 		} catch (error) { showError(error); }
 	}));
 
+
+	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.nativeWorktreeCleanup', async (requested?: string) => {
+		try {
+			if (!ensureTrust()) { return; }
+			const chosen = await choose(requested); if (!chosen) { return; }
+			const root = await fs.realpath(chosen.folder.uri.fsPath);
+			if (runningWorkflows.has(root) || pendingWorkflows.has(root)) { throw Error('HARNESS_WORKFLOW_ALREADY_RUNNING'); }
+			const storage = path.join(metricsDirectory(root), 'isolated-worktrees');
+			const list = await listAgentWorktrees(root, storage);
+			if (!list.length) { vscode.window.showInformationMessage('No hay Git worktrees administrados por el Harness.'); return; }
+			const selected = await vscode.window.showQuickPick(list.map(worktree => ({ label: worktree.id, description: worktree.root, worktree })), { title: 'Retirar únicamente un worktree limpio' });
+			if (!selected) { return; }
+			if (await vscode.window.showWarningMessage('Eliminar el worktree ' + selected.worktree.root + '? Se rechazará si contiene cambios.', { modal: true }, 'Retirar worktree limpio') !== 'Retirar worktree limpio') { return; }
+			if (!authorized(chosen.folder)) { return; }
+			await removeCleanAgentWorktree(selected.worktree);
+			vscode.window.showInformationMessage('Worktree limpio retirado.');
+		} catch (error) { showError(error); } finally { controller.refresh(); }
+	}));
 	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.nativeWorkflowReconcile', async (requested?: string) => {
 		try {
 			if (!ensureTrust()) { return; }
