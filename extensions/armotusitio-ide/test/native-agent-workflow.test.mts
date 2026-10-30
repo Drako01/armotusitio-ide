@@ -306,3 +306,53 @@ test('history rejects mismatched file identity without overwriting another workf
 		await assert.rejects(fs.stat(path.join(state, id + '.json')), { code: 'ENOENT' });
 	} finally { await fs.rm(root, { recursive: true, force: true }); }
 });
+
+test('reconciliation refuses workflow records from another project without removing lock', async () => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-foreign-state-'));
+	try {
+		const canonical = await fs.realpath(root);
+		const state = path.join(root, 'private');
+		await fs.mkdir(state);
+		const id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbc';
+		const plan = proposedWorkflow('codex', 'Inspect own root');
+		const lockFile = path.join(state, 'execution.lock');
+		const lock = JSON.stringify({ pid: 99999999 });
+		await fs.writeFile(lockFile, lock);
+		await fs.writeFile(path.join(state, id + '.json'), JSON.stringify({
+			schemaVersion: 1, id, createdAt: new Date().toISOString(),
+			projectKey: 'a'.repeat(64), planDigest: workflowDigest(canonical, plan),
+			status: 'running', steps: []
+		}));
+		const flow = new NativeAgentWorkflow(canonical, state);
+		await assert.rejects(flow.reconcile(), /HARNESS_WORKFLOW_FOREIGN_PROJECT_STATE/);
+		assert.equal(await fs.readFile(lockFile, 'utf8'), lock);
+		assert.equal((await flow.history())[0].status, 'running');
+	} finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
+test('restart locates old interrupted records outside 40 most recent UI entries', async () => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-resume-old-state-'));
+	try {
+		const canonical = await fs.realpath(root);
+		const state = path.join(root, 'private');
+		await fs.mkdir(state);
+		const plan = proposedWorkflow('codex', 'Inspect old execution');
+		const digest = workflowDigest(canonical, plan);
+		const key = (await import('node:crypto')).createHash('sha256').update(canonical).digest('hex');
+		const oldId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+		const base = Date.now() - 100_000;
+		for (let index = 0; index < 41; index++) {
+			const id = index === 0 ? oldId : 'dddddddd-dddd-4ddd-8ddd-' + index.toString(16).padStart(12, '0');
+			await fs.writeFile(path.join(state, id + '.json'), JSON.stringify({
+				schemaVersion: 1, id, createdAt: new Date(base + index * 1000).toISOString(),
+				projectKey: key, planDigest: digest,
+				status: index === 0 ? 'interrupted' : 'passed',
+				steps: index === 0 ? [{ id: 'implement', role: 'implementer', provider: 'codex', status: 'interrupted' }] : []
+			}));
+		}
+		const flow = new NativeAgentWorkflow(canonical, state);
+		assert.equal((await flow.history()).some(record => record.id === oldId), false);
+		await assert.rejects(flow.restartInterrupted(oldId, plan, digest, () => true),
+			/HARNESS_RESUME_WRITE_UNCERTAIN/);
+	} finally { await fs.rm(root, { recursive: true, force: true }); }
+});
