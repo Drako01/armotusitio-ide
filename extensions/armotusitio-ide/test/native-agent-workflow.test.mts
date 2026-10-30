@@ -228,3 +228,29 @@ test('reconciliation scans older running workflows beyond the 40-record UI windo
 		assert.equal((await workflow.history()).length, 40);
 	} finally { await fs.rm(root, { recursive: true, force: true }); }
 });
+
+test('reconciliation releases stale execution lock only after successful state recovery', async () => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-reconcile-lock-completion-'));
+	try {
+		const canonical = await fs.realpath(root);
+		const state = path.join(root, 'private');
+		await fs.mkdir(state);
+		const lockFile = path.join(state, 'execution.lock');
+		await fs.writeFile(lockFile, JSON.stringify({ pid: 99999999 }));
+		const id = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeef';
+		const plan = proposedWorkflow('codex', 'Inspect stale recovery');
+		const digest = workflowDigest(canonical, plan);
+		const projectKey = (await import('node:crypto')).createHash('sha256').update(canonical).digest('hex');
+		await fs.writeFile(path.join(state, id + '.json'), JSON.stringify({
+			schemaVersion: 1, id, createdAt: new Date().toISOString(),
+			projectKey, planDigest: digest, status: 'running',
+			steps: [{ id: 'plan', role: 'planner', provider: 'codex', status: 'running' }]
+		}));
+		const workflow = new NativeAgentWorkflow(canonical, state);
+		assert.equal(await workflow.reconcile(), 1);
+		await assert.rejects(fs.stat(lockFile), { code: 'ENOENT' });
+		const recovered = (await workflow.history())[0];
+		assert.equal(recovered.status, 'interrupted');
+		assert.equal(recovered.steps[0].status, 'interrupted');
+	} finally { await fs.rm(root, { recursive: true, force: true }); }
+});
