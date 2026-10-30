@@ -9,7 +9,7 @@ import * as os from 'os';
 import * as path from 'path';
 
 const nodeCompileCacheKinds = ['main', 'extension-host', 'shared-process', 'pty-host', 'agent-host'] as const;
-const nodeCompileCacheTagPattern = /^v\d+\.\d+\.\d+-(arm64|x64)-[0-9a-f]{8}$/;
+const nodeCompileCacheTagPattern = /^v\d+\.\d+\.\d+-(arm64|x64)-[0-9a-f]{8}(?:-\d+)?$/;
 const nodeCompileCacheEntryPattern = /^[0-9a-f]{8}$/;
 
 export interface INodeCompileCacheProduct {
@@ -100,7 +100,7 @@ export async function validateNodeCompileCache(rootDirectory: string, architectu
 		const entries = await fs.promises.readdir(kindDirectory, { withFileTypes: true });
 		const tagDirectories = entries.filter(entry => entry.isDirectory() && nodeCompileCacheTagPattern.exec(entry.name)?.[1] === architecture);
 		if (tagDirectories.length !== 1) {
-			throw new Error(`Node.js compile cache generation produced ${tagDirectories.length} ${architecture} version-tag directories for ${kind} in ${kindDirectory}; expected exactly one.`);
+			throw new Error(`Node.js compile cache generation produced ${tagDirectories.length} ${architecture} version-tag directories for ${kind} in ${kindDirectory}; expected exactly one. Found: ${entries.map(entry => entry.name).join(', ')}.`);
 		}
 		if (!entries.some(entry => entry.isFile() && entry.name === '.ready')) {
 			throw new Error(`Node.js compile cache generation did not produce a readiness marker for ${kind} in ${kindDirectory}.`);
