@@ -147,8 +147,13 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({ language: 'json', content: preview }), { preview: true });
 			const approved = await vscode.window.showWarningMessage('\u00bfEjecutar este agente local con los permisos indicados? Sin autorizaci\u00f3n no se inicia ning\u00fan proveedor.', { modal: true }, 'Ejecutar agente');
 			if (approved !== 'Ejecutar agente' || !authorized(chosen.folder) || await fs.realpath(root) !== root) { return; }
-			if (projectHarness && (await inspectHarnessAuthority(root)).reason === 'project-path-unsafe') {
-				throw Error('HARNESS_PROJECT_AUTHORITY_UNSAFE');
+			const currentAuthority = await inspectHarnessAuthority(root);
+			if (currentAuthority.reason === 'project-path-unsafe') { throw Error('HARNESS_PROJECT_AUTHORITY_UNSAFE'); }
+			if (role === 'implementer' && currentAuthority.engine === 'project') {
+				throw Error('HARNESS_HYBRID_WRITER_UNAVAILABLE');
+			}
+			if (currentAuthority.engine !== (projectHarness ? 'project' : 'ide-native')) {
+				throw Error('HARNESS_PROJECT_AUTHORITY_CHANGED');
 			}
 			if (selectedProjectSkill) { await readProjectSkill(root, selectedProjectSkill); }
 			if (runningAgents.has(root) || pendingAgents.has(root) || runningWorkflows.has(root) || pendingWorkflows.has(root) || running.has(chosen.folder.uri.toString())) { throw Error('HARNESS_ALREADY_RUNNING'); }
