@@ -9,7 +9,7 @@
 
 Esta guía documenta el alcance acordado y diferencia **código agregado a la rama** de funcionalidad realmente certificada. Una casilla marcada no significa que el comportamiento haya pasado pruebas reales de extremo a extremo.
 
-**Inventario funcional histórico (línea base anterior a los lotes incrementales):** 34 ítems implementados en código, 5 parciales y 15 pendientes. Este inventario es histórico y no representa el conteo vigente. **Última validación automatizada local Windows aportada:** suite completa de extensión **241 PASS, 0 FAIL, 1 SKIP** (242 total), sobre la rama en `fd6f1d98dec`, 2026-10-30 a las 19:19 ART; el verificador focalizado completó sus siete gates en PASS con **144 PASS, 0 FAIL, 1 SKIP** en el subconjunto de tests. El benchmark offline sobre Windows x64, Node v24.22.1 midió 3 ejecuciones exitosas del verificador, con mediana de **9923 ms**. **No certifica AAA, E2E con proveedores reales, aislamiento del sistema operativo, compilación completa del IDE ni portabilidad Windows/Linux/macOS.** Los lotes más recientes quedan detallados cronológicamente abajo.
+**Inventario funcional histórico (línea base anterior a los lotes incrementales):** 34 ítems implementados en código, 5 parciales y 15 pendientes. Este inventario es histórico y no representa el conteo vigente. **Última validación automatizada local Windows aportada:** suite completa de extensión **252 PASS, 0 FAIL, 1 SKIP** (253 total), sobre `44a684c23f0`, 2026-10-30; el verificador focalizado completó sus siete gates en PASS con **155 PASS, 0 FAIL, 1 SKIP** en el subconjunto. El test de concurrencia corregido también pasó **5 de 5 repeticiones**. El benchmark offline histórico sobre Windows x64, Node v24.22.1 midió 3 ejecuciones exitosas del verificador, con mediana de **9923 ms** (en `fd6f1d98dec`). **Los desarrollos posteriores a `44a684c23f0` todavía no están validados por esos logs. No certifica AAA, E2E con ambos proveedores reales, aislamiento del sistema operativo, compilación completa del IDE ni portabilidad Windows/Linux/macOS.** Los lotes se detallan cronológicamente abajo.
 
 **Calificación:** no asignar una nueva nota 1–10 ni declarar nivel AAA hasta disponer de pruebas reproducibles y resultados E2E. El 70% mencionado en el seguimiento conversacional fue una apreciación de cobertura, **no** una medición auditada.
 
@@ -582,6 +582,25 @@ Ejemplo local voluntario: `node scripts/ats-harness-benchmark.mts --command chec
 - [x] **MCP intacto:** no se modifica `mcp.ts`, `extension.ts` ni la configuración del proveedor `atsIde.armotusitioMcp`; las pruebas MCP están en PASS.
 - [ ] **Pendiente:** reejecutar los controles focalizados y los 253 tests completos sobre el nuevo HEAD. No se considera verde el nuevo SHA hasta disponer de ese resultado. Los warnings de detección ESM y Node TS experimental no son fallos ni justifican cambiar la extensión CommonJS.
 
+### Cierre de la carrera de concurrencia validado en Windows (2026-10-30)
+
+- [x] El operador ejecutó cinco repeticiones del test `concurrent attempts cannot both obtain execution lock`: **5 PASS, 0 FAIL**.
+- [x] El log de `44a684c23f0` confirma **7/7 gates PASS**, 156 tests focalizados (155 PASS, 0 FAIL, 1 SKIP), **253 tests totales** (252 PASS, 0 FAIL, 1 SKIP), typecheck/recursos y `git diff --check` sin fallos.
+- [x] Las pruebas locales MCP existentes continuaron en PASS; `mcp.ts` y `extension.ts` no fueron modificados.
+
+### Lote de recuperación y cuotas de invocaciones (2026-10-30; validación pendiente)
+
+- [x] **Recuperación operator-only del fence compartido:** `reconcileSharedExecutionFence()` requiere consentimiento, confirmación separada de ausencia de procesos hijos, prueba de que el propietario ha salido, epoch e inode estables y ausencia de locks/estados/rollback inciertos. `shared-execution.reconcile.guard` evita nuevos locks durante la reconciliación. Una situación dudosa se bloquea, sin reejecución de proveedores.
+- [x] **Comando del IDE:** `atsHarness.nativeSharedFenceReconcile`, con dos diálogos de confirmación y prohibición de recuperación automática en Harnesses de proyecto.
+- [x] **Regresiones de recovery:** tests nuevos para propiedad viva, PID realmente finalizado, guard concurrente, tareas/workflows pendientes, intención de rollback, datos corruptos y épocas monotónicas.
+- [x] **Fencing de workflow reforzado:** comprobaciones de lease antes de cada invocación en olas DAG y ruta secuencial. Revocación de Workspace Trust o cancelación antes del cierre terminal impide registrar `passed`.
+- [x] **Cupo opt-in de llamadas de IA:** `native-provider-quota.ts` usa ledger privado, ventana móvil de 24 horas, cupo independiente por proveedor (1–1000), serialización de reservas en DAG y fencing entre procesos. `atsHarness.providerCallsPer24h` predetermina `0` (sin cambio de comportamiento); cada invocación se reserva antes de lanzar el CLI. `atsHarness.nativeProviderQuotaStatus` informa uso y remanente, sin prompts o credenciales.
+- [x] **Pruebas del cupo:** conteo concurrente, corrupción, rollback de reloj, vencimiento de ventana, observabilidad sin consumo y workflow que evita lanzar el segundo proveedor simulado al agotar el presupuesto de llamadas.
+- [ ] **Retest obligatorio de ESTE lote:** `node scripts/ats-harness-check.mts`, `npm test --prefix extensions/armotusitio-ide`, `npm run check --prefix extensions/armotusitio-ide` y `git diff --check` sobre el commit que incluya este documento.
+- [ ] **No reclasificar a AAA:** los cupos no representan presupuestos monetarios ni límites de tokens, la recuperación sigue requiriendo comprobación manual de posibles procesos huérfanos, los motores externos aún no adoptan el fence, no existe sandbox OS para Windows/macOS ni rollback transaccional de cambios integrados, y Claude E2E sigue pendiente de cuota.
+
+Ver runbook: [`docs/native-harness-recovery-quota.md`](docs/native-harness-recovery-quota.md). El MCP original queda intacto.
+
 ## Validación local obligatoria
 
 Desde la raíz del repositorio, con las dependencias instaladas:
@@ -602,7 +621,7 @@ Después, validar manualmente en el IDE: arranque y apertura de proyectos con/si
 
 ### Criterios de salida para la rama
 
-- [ ] Los tres comandos locales finalizan satisfactoriamente sobre el HEAD de trabajo final en Windows. En `213e21246bf` el focalizado y el check pasaron, pero la suite completa tuvo 1 fallo de concurrencia; corrección posterior pendiente de retest.
+- [ ] Los tres comandos locales finalizan satisfactoriamente sobre el HEAD de trabajo final en Windows. La carrera de concurrencia quedó validada con 252 PASS/0 FAIL/1 SKIP y 7/7 gates en `44a684c23f0`; las nuevas funciones de recovery y cuota requieren repetir la suite sobre el commit posterior.
 - [ ] Reproducir los checks en un checkout limpio del SHA final; no se exige GitHub Actions.
 - [ ] Build **completo del IDE** y empaquetado de distribución validados; el bundle y chequeo de recursos de la extensión **sí** pasaron localmente.
 - [ ] Pruebas de permiso de lectura/escritura, aislamiento y secretos aprobadas.
