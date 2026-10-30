@@ -76,7 +76,7 @@ test('workflow launches two independent read-only providers before exclusive imp
 			' const fs = require("node:fs");',
 			' const role = input.includes("This is a read-only assignment") ? (input.includes("DAG_READER_A") ? "reader_a" : input.includes("DAG_READER_B") ? "reader_b" : "review") : "writer";',
 			' fs.appendFileSync(' + JSON.stringify(traceFile) + ', "start " + role + "\\n");',
-			' setTimeout(() => { fs.appendFileSync("trace.txt", "end " + role + "\\n"); console.log(role === "review" ? "HARNESS_REVIEW: PASS" : "done"); }, role.startsWith("reader") ? 80 : 5);',
+			' setTimeout(() => { fs.appendFileSync(' + JSON.stringify(traceFile) + ', "end " + role + "\\n"); console.log(role === "review" ? "HARNESS_REVIEW: PASS" : "done"); }, role.startsWith("reader") ? 80 : 5);',
 			'});'
 		].join('\n');
 		await fs.writeFile(executable, source, { mode: 0o755 });
