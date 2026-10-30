@@ -11,7 +11,7 @@ Un cierre inesperado puede dejar el fence ocupado. **Nunca se elimina automatica
 Procedimiento desde la paleta de comandos del IDE:
 
 1. Confirmar que no existan tareas o workflows activos para ese proyecto.
-2. Ejecutar las acciones separadas `ArmoTuSitio: Reconciliar intentos` o `ArmoTuSitio: Reconciliar workflows interrumpidos` cuando corresponda, y resolver los journals pendientes. Una escritura incierta debe conservarse para revision.
+2. Ejecutar las acciones separadas `ArmoTuSitio: Reconciliar estado nativo` o `ArmoTuSitio: Reconciliar workflows interrumpidos` cuando corresponda, y resolver los journals pendientes. Una escritura incierta debe conservarse para revision.
 3. Verificar **en el sistema operativo** que no queden procesos de Codex, Claude o gates de la ejecucion anterior. Un proceso padre terminado **no implica** que terminaron todos sus procesos hijos.
 4. Ejecutar `ArmoTuSitio: Reconciliar lock compartido obsoleto (confirmacion requerida)`. Hay dos confirmaciones independientes: consentimiento y verificacion manual de procesos.
 5. El comando solo libera el fence si el propietario registrado ya no existe, el epoch e identidad del lock no cambiaron y no quedan locks locales, workflows en ejecucion, tareas incompletas o intenciones de rollback. Rechaza un propietario declarado como `project` porque el Harness externo todavia no participa del protocolo.
