@@ -406,7 +406,13 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 				'No se reejecutan procesos ni se eliminan cambios del proyecto. Continuar?',
 				{ modal: true }, 'Reconciliar fence');
 			if (approved !== 'Reconciliar fence' || !authorized(chosen.folder)) { return; }
-			const outcome = await reconcileSharedExecutionFence(root, storage, true);
+			const processes = await vscode.window.showWarningMessage(
+				'Antes de liberar un fence obsoleto: verifica en el sistema operativo que no queden ' +
+				'procesos de Codex, Claude o gates heredados ejecutandose. Un PID padre finalizado ' +
+				'no demuestra que hayan terminado sus hijos.',
+				{ modal: true }, 'Procesos verificados');
+			if (processes !== 'Procesos verificados' || !authorized(chosen.folder)) { return; }
+			const outcome = await reconcileSharedExecutionFence(root, storage, true, true);
 			vscode.window.showInformationMessage(outcome.released
 				? 'Fence compartido reconciliado: epoch ' + outcome.epoch
 				: 'No habia un fence compartido para recuperar.');
