@@ -96,3 +96,33 @@ test('Git read-only role fails closed on unauthorized modification', { skip: pro
     await fs.rm(folder, { recursive: true, force: true });
   }
 });
+
+
+test('structured Codex provider usage flows through real local subprocess transport', { skip: process.platform === 'win32' }, async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-agent-usage-'));
+  const oldPath = process.env.PATH;
+  try {
+    const cli = path.join(root, 'codex');
+    const script = [
+      '#!/usr/bin/env node',
+      'const events = [',
+      ' { type: "item.completed", item: { type: "agent_message", text: "Validated\\nHARNESS_REVIEW: PASS" } },',
+      ' { type: "turn.completed", usage: { input_tokens: 90, output_tokens: 12, cached_input_tokens: 40 } }',
+      '];',
+      'process.stdin.resume(); process.stdin.on("end", () => { for (const e of events) console.log(JSON.stringify(e)); });'
+    ].join('\n');
+    await fs.writeFile(cli, script, { mode: 0o755 });
+    await fs.chmod(cli, 0o755);
+    process.env.PATH = root + path.delimiter + (oldPath || '');
+    const current = { ...base, projectRoot: await fs.realpath(root) };
+    const run = await executeReviewedAgent(reviewAgentDraft(current), current, 10000);
+    const outcome = await run.outcome;
+    assert.equal(outcome.status, 'passed');
+    assert.equal(outcome.structuredOutput, true);
+    assert.equal(outcome.output, 'Validated\nHARNESS_REVIEW: PASS');
+    assert.deepEqual(outcome.usage, { inputTokens: 90, outputTokens: 12, cachedInputTokens: 40 });
+  } finally {
+    if (oldPath === undefined) { delete process.env.PATH; } else { process.env.PATH = oldPath; }
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
