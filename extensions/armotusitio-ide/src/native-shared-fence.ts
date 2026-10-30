@@ -207,7 +207,7 @@ async function assertNoUncertainArtifacts(storage: string): Promise<void> {
 	const checkTaskDirectory = async (relative: string): Promise<void> => {
 		await checkDir(relative, async name => {
 			if (name.endsWith('.tmp') || name.endsWith('.intent')) { throw Error('HARNESS_FENCE_RECOVERY_PENDING_TASK'); }
-			if (!/^[a-f0-9-]{36}\\.json$/i.test(name)) { throw Error('HARNESS_FENCE_RECOVERY_UNSAFE_STATE'); }
+			if (!/^[a-f0-9-]{36}\.json$/i.test(name)) { throw Error('HARNESS_FENCE_RECOVERY_UNSAFE_STATE'); }
 			const file = path.join(storage, relative, name);
 			const task = await readJsonRecovery(file, 2 * 1024 * 1024);
 			if (!task || typeof task !== 'object' || Array.isArray(task) ||
