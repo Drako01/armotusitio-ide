@@ -167,7 +167,7 @@ export class NativeAgentWorkflow {
 	private readonly storage: string;
 	constructor(root: string, storage: string) { this.root = root; this.storage = storage; }
 
-	async history(): Promise<WorkflowRecord[]> {
+	private async readHistory(limit: number): Promise<WorkflowRecord[]> {
 		let files: string[];
 		try { files = await fs.readdir(this.storage); }
 		catch (error) {
@@ -185,7 +185,12 @@ export class NativeAgentWorkflow {
 			if (!validRecord(record)) { throw Error('HARNESS_WORKFLOW_INVALID_STATE'); }
 			records.push(record);
 		}
-		return records.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, MAX_HISTORY);
+		return records.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, limit);
+	}
+
+	/** The IDE shows only recent records; recovery must inspect every bounded stored record. */
+	async history(): Promise<WorkflowRecord[]> {
+		return this.readHistory(MAX_HISTORY);
 	}
 
 	cancel(): void {
@@ -200,7 +205,7 @@ export class NativeAgentWorkflow {
 		if (this.running) { throw Error('HARNESS_WORKFLOW_ALREADY_RUNNING'); }
 		// Validate all visible persisted records before changing the stale lock.
 		// A corrupt history must not unlock an uncertain workflow for a new writer.
-		const history = await this.history();
+		const history = await this.readHistory(MAX_STORED);
 		const lockFile = path.join(this.storage, 'execution.lock');
 		try {
 			const stat = await fs.lstat(lockFile);
