@@ -74,6 +74,8 @@ test('crashed local fence can be released only after explicit approval and safe-
 		await assert.rejects(reconcileSharedExecutionFence(canonical, storage, false),
 			/HARNESS_FENCE_RECOVERY_CONSENT_REQUIRED/);
 		await assert.rejects(reconcileSharedExecutionFence(canonical, storage, true),
+			/HARNESS_FENCE_RECOVERY_ORPHANS_UNVERIFIED/);
+		await assert.rejects(reconcileSharedExecutionFence(canonical, storage, true, true),
 			/HARNESS_FENCE_OWNER_ACTIVE/);
 		// Model a prior process having exited: preserve the exact nonce and epoch,
 		// but replace its PID with one which cannot be alive on the test host.
@@ -83,7 +85,7 @@ test('crashed local fence can be released only after explicit approval and safe-
 		await fs.writeFile(lock, JSON.stringify(record));
 		await fs.mkdir(path.join(storage, 'workflows'));
 		await fs.writeFile(path.join(storage, 'workflows', 'execution.lock'), '{}');
-		await assert.rejects(reconcileSharedExecutionFence(canonical, storage, true),
+		await assert.rejects(reconcileSharedExecutionFence(canonical, storage, true, true),
 			/HARNESS_FENCE_RECOVERY_PENDING_WORKFLOW/);
 		await fs.rm(path.join(storage, 'workflows', 'execution.lock'));
 		await fs.mkdir(path.join(storage, 'tasks'));
@@ -92,12 +94,12 @@ test('crashed local fence can be released only after explicit approval and safe-
 		await fs.writeFile(taskFile, JSON.stringify({
 			schemaVersion: 1, id: taskId, attempts: [{ status: 'running' }]
 		}));
-		await assert.rejects(reconcileSharedExecutionFence(canonical, storage, true),
+		await assert.rejects(reconcileSharedExecutionFence(canonical, storage, true, true),
 			/HARNESS_FENCE_RECOVERY_PENDING_TASK/);
 		await fs.writeFile(taskFile, JSON.stringify({
 			schemaVersion: 1, id: taskId, attempts: [{ status: 'interrupted' }]
 		}));
-		const result = await reconcileSharedExecutionFence(canonical, storage, true);
+		const result = await reconcileSharedExecutionFence(canonical, storage, true, true);
 		assert.deepEqual(result, { released: true, epoch: 1, owner: 'native-workflow' });
 		assert.deepEqual(await inspectSharedExecutionFence(canonical, storage), { held: false, epoch: null });
 		await assert.rejects(fence.release(), /HARNESS_FENCE_LOST/);
@@ -122,17 +124,17 @@ test('shared recovery never clears pending rollback, unknown project owners or f
 		await fs.writeFile(lock, JSON.stringify(record));
 		await fs.mkdir(path.join(storage, 'checkpoints'));
 		await fs.writeFile(path.join(storage, 'checkpoints', 'abc.rollback.intent'), '{}');
-		await assert.rejects(reconcileSharedExecutionFence(canonical, storage, true),
+		await assert.rejects(reconcileSharedExecutionFence(canonical, storage, true, true),
 			/HARNESS_FENCE_RECOVERY_PENDING_ROLLBACK/);
 		await fs.rm(path.join(storage, 'checkpoints', 'abc.rollback.intent'));
 		record.owner = 'project';
 		await fs.writeFile(lock, JSON.stringify(record));
-		await assert.rejects(reconcileSharedExecutionFence(canonical, storage, true),
+		await assert.rejects(reconcileSharedExecutionFence(canonical, storage, true, true),
 			/HARNESS_FENCE_PROJECT_OWNER_UNSUPPORTED/);
 		record.owner = 'native-agent';
 		record.projectKey = createHash('sha256').update('foreign root').digest('hex');
 		await fs.writeFile(lock, JSON.stringify(record));
-		await assert.rejects(reconcileSharedExecutionFence(canonical, storage, true),
+		await assert.rejects(reconcileSharedExecutionFence(canonical, storage, true, true),
 			/HARNESS_FENCE_UNSAFE_FILE/);
 		assert.equal((await fs.lstat(lock)).isFile(), true);
 	} finally {
@@ -150,7 +152,7 @@ test('recovery guard prevents new leases; only its owner may remove it', async (
 		await fs.writeFile(guard, '{}');
 		await assert.rejects(acquireSharedExecutionFence(canonical, storage, 'native-task'),
 			/HARNESS_FENCE_RECOVERY_ACTIVE/);
-		await assert.rejects(reconcileSharedExecutionFence(canonical, storage, true),
+		await assert.rejects(reconcileSharedExecutionFence(canonical, storage, true, true),
 			/HARNESS_FENCE_RECOVERY_ACTIVE/);
 		await fs.rm(guard);
 		const lease = await acquireSharedExecutionFence(canonical, storage, 'native-task');
