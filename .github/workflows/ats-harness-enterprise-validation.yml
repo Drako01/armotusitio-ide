@@ -7,6 +7,7 @@ on:
       - 'extensions/armotusitio-ide/src/native-*.ts'
       - 'extensions/armotusitio-ide/test/native-*.test.mts'
       - 'extensions/armotusitio-ide/package.json'
+      - 'scripts/ats-harness-real-provider-smoke.mts'
       - 'scripts/ats-harness-check.mts'
       - 'HARNESS_ENTERPRISE_AAA_STATUS.md'
       - '.github/workflows/ats-harness-enterprise-validation.yml'
@@ -37,6 +38,7 @@ jobs:
           persist-credentials: false
           sparse-checkout: |
             extensions/armotusitio-ide
+            scripts/ats-harness-real-provider-smoke.mts
           sparse-checkout-cone-mode: true
       - uses: actions/setup-node@v4
         with:
@@ -51,6 +53,7 @@ jobs:
         run: |
           set -o pipefail
           node --test \
+            extensions/armotusitio-ide/test/native-real-smoke.test.mts \
             extensions/armotusitio-ide/test/native-agent-execution.test.mts \
             extensions/armotusitio-ide/test/native-agent-metrics.test.mts \
             extensions/armotusitio-ide/test/native-agent-workflow.test.mts \
