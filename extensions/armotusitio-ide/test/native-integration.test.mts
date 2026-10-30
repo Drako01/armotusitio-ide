@@ -179,3 +179,17 @@ test('hybrid agent refuses more than eight project skills before launching provi
 		assert.equal(f.documents.length, 0);
 	} finally { await f.cleanup(); }
 });
+
+test('Codex-only project exposes its skills to native agent review without a project Harness', async () => {
+	const f = await fixture();
+	try {
+		const dir = path.join(f.roots[0], '.codex', 'skills', 'security');
+		await fs.mkdir(dir, { recursive: true });
+		await fs.writeFile(path.join(dir, 'SKILL.md'), '# Codex security guidance');
+		await f.invoke('nativeAgentReview', f.roots[0]);
+		const preview = JSON.parse(f.documents.at(-1)!.content);
+		assert.equal(preview.hybrid, false);
+		assert.equal(preview.executionEnabled, false);
+		assert.deepEqual(preview.skills.map(skill => [skill.name, skill.source]), [['security', '.codex/skills']]);
+	} finally { await f.cleanup(); }
+});
