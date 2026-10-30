@@ -518,6 +518,12 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 - [ ] **Retest obligatorio del SHA corregido:** verificar `node scripts/ats-harness-check.mts`, `npm test --prefix extensions/armotusitio-ide`, `npm run check --prefix extensions/armotusitio-ide` y `git diff --check`; aún no existe log para ese commit.
 - [ ] **Cierre enterprise AAA pendiente:** protocolo de ejecución externa coordinado y interoperable, sandbox OS probado, fences compartidos, rollback y checkpoints transaccionales, E2E con ambos proveedores autenticados, builds reales Windows/Linux/macOS y benchmarks reproducibles. Ninguna suite offline sustituye estos criterios de aceptación.
 
+### Evidencia de cierre Windows sobre la corrección de higiene (2026-10-30)
+
+- [x] Log recibido en la conversación: **238 PASS, 0 FAIL, 1 SKIP** (239 total) en `npm test --prefix extensions/armotusitio-ide`.
+- [x] `node scripts/ats-harness-check.mts`: siete gates **PASS**, incluido `Focused hygiene`, sin errores; subconjunto de 141 PASS / 0 FAIL / 1 SKIP. `npm run check --prefix extensions/armotusitio-ide` completado sin fallas y `git diff --check` sin salida.
+- [ ] Este log es **anterior** al benchmark P2 agregado después; no acredita los commits del nuevo lote ni constituye E2E real del IDE.
+
 ### Lote P2: benchmark reproducible offline (2026-10-30; validación pendiente)
 
 - [x] Nuevo `scripts/ats-harness-benchmark.mts` ejecuta localmente únicamente `check` o `test`, entre 1 y 10 repeticiones explícitas; sin agente, despliegue, publicación ni red de proveedor. Registra tiempos reales wall-clock y tasas observadas de éxito/fallo sin inventar CPU, RAM, precios ni mejora porcentual.
