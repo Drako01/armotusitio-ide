@@ -12,7 +12,7 @@ import { fingerprintEvidence, evidenceKey, saveEvidenceMetadata, readEvidenceMet
 import { inspectHarnessAuthority } from './native-authority.ts';
 import { resolveNativeCommand } from './native-runtime.ts';
 
-export type Gate = { id: string; executable: string; args: string[]; cwd?: string; timeoutMs?: number; dependsOn?: string[] };
+export type Gate = { id: string; executable: string; args: string[]; cwd?: string; timeoutMs?: number; dependsOn?: string[]; parallelSafe?: boolean; resources?: string[] };
 export type Plan = { schemaVersion: 1; gates: Gate[]; inputs?: string[] };
 export type GateResult = { id: string; exitCode: number | null; status: 'passed' | 'failed' | 'cancelled'; output: string; startedAt: string; endedAt: string };
 export type Attempt = { id: string; startedAt: string; endedAt?: string; status: 'running' | 'passed' | 'failed' | 'interrupted' | 'cancelled'; results: GateResult[]; revision: string; approval: string; evidence?: { fingerprint?: EvidenceFingerprint; key?: string; state: 'recorded' | 'changed' | 'unavailable'; error?: string } };
@@ -37,11 +37,31 @@ export function validateNativePlan(plan: Plan): void {
 		if (!EXEC.test(gate.executable) || !Array.isArray(gate.args) || gate.args.length > 64 || !gate.args.every(a => typeof a === 'string' && a.length <= 4096 && !a.includes('\0')) || (gate.timeoutMs !== undefined && (!Number.isSafeInteger(gate.timeoutMs) || gate.timeoutMs < 100 || gate.timeoutMs > MAX_MS))) { throw Error('HARNESS_INVALID_COMMAND'); }
 		if (gate.cwd !== undefined && (typeof gate.cwd !== 'string' || gate.cwd.length > 4096 || gate.cwd.includes('\0'))) { throw Error('HARNESS_INVALID_CWD'); }
 		if (gate.dependsOn !== undefined && (!Array.isArray(gate.dependsOn) || !gate.dependsOn.every(x => typeof x === 'string'))) { throw Error('HARNESS_INVALID_DEPENDENCY'); }
+		if (gate.parallelSafe !== undefined && typeof gate.parallelSafe !== 'boolean') { throw Error('HARNESS_INVALID_PARALLEL_POLICY'); }
+		if (gate.resources !== undefined && (!Array.isArray(gate.resources) || gate.resources.length > 16 || new Set(gate.resources).size !== gate.resources.length || !gate.resources.every(x => typeof x === 'string' && /^[a-z0-9][a-z0-9_.:-]{0,99}$/i.test(x)))) { throw Error('HARNESS_INVALID_RESOURCES'); }
 	}
 	const done = new Set<string>(), active = new Set<string>();
 	const visit = (id: string): void => { if (active.has(id)) { throw Error('HARNESS_CYCLE'); } if (done.has(id)) { return; } const g = seen.get(id); if (!g) { throw Error('HARNESS_INVALID_DEPENDENCY'); } active.add(id); for (const d of g.dependsOn || []) { visit(d); } active.delete(id); done.add(id); };
 	for (const id of seen.keys()) { visit(id); }
 }
+
+/** Preserve legacy two-gate execution; allow up to four only when all candidates explicitly declare safe parallelism. */
+export function selectNativeWave(ready: Gate[], availableCpus = os.availableParallelism()): Gate[] {
+	if (!ready.length) { return []; }
+	if (!ready.every(g => g.parallelSafe === true)) { return ready.slice(0, 2); }
+	const maxWorkers = Math.max(1, Math.min(4, availableCpus));
+	const selected: Gate[] = [];
+	const claimed = new Set<string>();
+	for (const gate of ready) {
+		const resources = gate.resources?.length ? gate.resources : ['cwd:' + (gate.cwd || '.')];
+		if (resources.some(resource => claimed.has(resource))) { continue; }
+		selected.push(gate);
+		for (const resource of resources) { claimed.add(resource); }
+		if (selected.length === maxWorkers) { break; }
+	}
+	return selected;
+}
+
 function redact(value: string): string {
 	return value.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').replace(/\b(Bearer\s+)\S+/gi, '$1[redacted]')
 		.replace(/((?:token|password|secret|api[_-]?key)\s*[=:]\s*)(?:"[^"]*"|'[^']*'|\S+)/gi, '$1[redacted]')
@@ -225,7 +245,7 @@ export class NativeHarness {
 					if ((await inspectHarnessAuthority(root)).engine === 'project') { throw Error('HARNESS_PROJECT_AUTHORITY'); }
 					const ready = task.plan.gates.filter(g => !completed.has(g.id) && (g.dependsOn || []).every(d => completed.has(d)));
 					if (!ready.length) { throw Error('HARNESS_DEPENDENCY_UNRESOLVED'); }
-					const wave = ready.slice(0, 2);
+					const wave = selectNativeWave(ready);
 					const settled = await Promise.allSettled(wave.map(async gate => {
 						const cwd = await contained(root, gate.cwd);
 						if (!trust() || controller.signal.aborted) { return { id: gate.id, exitCode: null, status: 'cancelled' as const, output: '', startedAt: new Date().toISOString(), endedAt: new Date().toISOString() }; }
