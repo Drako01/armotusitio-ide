@@ -330,6 +330,15 @@ export class NativeAgentWorkflow {
 		}
 	}
 
+	/** Read-only recovery inventory: identifiers only, never state or provider content. */
+	async pendingJournalIds(): Promise<string[]> {
+		if (!await this.assertSafeStorage(false)) { return []; }
+		const names = (await fs.readdir(this.storage)).filter(name =>
+			/^[a-f0-9-]{36}\\.json\\.intent$/i.test(name));
+		if (names.length > MAX_STORED) { throw Error('HARNESS_WORKFLOW_HISTORY_TOO_LARGE'); }
+		return names.map(name => name.slice(0, 36)).sort();
+	}
+
 	/** The IDE shows only recent records; recovery must inspect every bounded stored record. */
 	async history(): Promise<WorkflowRecord[]> {
 		return this.readHistory(MAX_HISTORY);
