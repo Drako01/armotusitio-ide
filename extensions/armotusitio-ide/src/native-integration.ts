@@ -88,7 +88,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			const readOnly = role !== 'implementer';
 			const projectHarness = (await inspectHarnessAuthority(root)).engine === 'project';
 			if (projectHarness && !readOnly) { throw Error('HARNESS_HYBRID_WRITER_UNAVAILABLE'); }
-			const skills = projectHarness ? await listProjectSkills(root) : [];
+			const skills = await listProjectSkills(root);
 			const preview = { skills: skills.map(skill => ({ name: skill.name, source: skill.source, digest: skill.digest })) };
 			const draft = { schemaVersion: 1 as const, provider, role, projectRoot: root, instruction, readOnly };
 			const reviewed = reviewAgentDraft(draft);
@@ -118,7 +118,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			if (!requestedInstruction) { return; }
 			let instruction = requestedInstruction;
 			const selectedProjectSkills: ProjectSkill[] = [];
-			if (projectHarness) {
+			{
 				const skills = await listProjectSkills(root);
 				if (skills.length) {
 					const selected: Array<{ skill: ProjectSkill }> | undefined = await vscode.window.showQuickPick(
