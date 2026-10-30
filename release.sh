@@ -2,6 +2,7 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License. See License.txt in the project root.
 # Run from Git Bash with Windows x64 Node (the existing build requires Windows).
+# ./release.sh --dry-run              Preflight, existing artifact audit and isolated end-to-end fixtures.
 # ./release.sh --plan                 Read-only plan; authenticated GitHub reads.
 # ./release.sh                        Prepare metadata through a PR, build and publish.
 # ./release.sh --no-publish           Prepare metadata, validate, build and sign only.
@@ -17,26 +18,32 @@ import { pathToFileURL } from 'node:url';
 
 const flags = process.argv.slice(2);
 if (flags.includes('--help') || flags.includes('-h')) {
-	console.log(`Usage: ./release.sh [--plan|--dry-run] [--no-publish]
+	console.log(`Usage: ./release.sh [--plan|--dry-run] [--no-publish] [--rebuild]
 Requires Git Bash, Windows x64 Node matching .nvmrc, git, gh authentication, pwsh.exe,
 dependencies, Docker Desktop (Linux containers), and the existing signing key.
 Start on clean, current main. This script never switches away from dirty sources.
 The version comes from package.json, checked against product/upstream metadata.
 The revision is max(published revisions for that version)+1, or 1; drafts do not count.
---plan / --dry-run performs authenticated reads only; no lock, metadata, git or build writes.
+--plan performs authenticated reads only.
+--dry-run also checks local prerequisites, existing signed artifacts and isolated end-to-end fixtures.
+It never runs a production build, signs, creates tags/PRs or publishes; test fixtures use temporary files.
 Normal execution may create a metadata branch, commit ONLY product-overrides.json,
 push it, create a PR and squash-merge through repository protections, then update main.
 It runs the existing validation, complete build, signed artifacts and publication recipes.
 --no-publish stops after signed artifacts so you can smoke-test the packaged IDE.
+Completed build stages resume only for the same source commit and unchanged output hashes.
+--rebuild disables validation/build reuse.
 Normal publication resumes a matching draft and never replaces a published release.
 No Actions settings, signing keys, Git protections or credentials are changed.
 Inspect retained PR/branch after an interrupted metadata update; merge/close it before retrying.`);
 	process.exit(0);
 }
-if (flags.some(flag => !['--plan', '--dry-run', '--no-publish'].includes(flag))) {
+if (flags.some(flag => !['--plan', '--dry-run', '--no-publish', '--rebuild'].includes(flag))) {
 	console.error('Unknown option. Run ./release.sh --help.'); process.exit(1);
 }
-const planning = flags.includes('--plan') || flags.includes('--dry-run');
+if (flags.includes('--plan') && flags.includes('--dry-run')) { throw new Error('Choose --plan or --dry-run.'); }
+const planning = flags.includes('--plan');
+const checking = flags.includes('--dry-run');
 const root = process.cwd();
 const metadata = 'build/armotusitio/product-overrides.json';
 const json = async file => JSON.parse(await readFile(path.join(root, file), 'utf8'));
@@ -112,7 +119,7 @@ async function recipe() {
 	let config = await configuration();
 	const selected = await releasePlan(config.version);
 	await requireActionsDisabled();
-	console.log(`Release ${selected.tag}\nRepository: ${repository}\nSource: ${commit}\nMetadata revision: ${config.revision} -> ${selected.revision}\nMode: ${planning ? 'read-only plan' : flags.includes('--no-publish') ? 'build and sign' : 'build, sign and publish'}`);
+	console.log(`Release ${selected.tag}\nRepository: ${repository}\nSource: ${commit}\nMetadata revision: ${config.revision} -> ${selected.revision}\nMode: ${checking ? 'safe end-to-end dry-run' : planning ? 'read-only plan' : flags.includes('--no-publish') ? 'build and sign' : 'build, sign and publish'}`);
 	if (selected.draft && (selected.draft.draft !== true || selected.draft.target_commitish !== commit || config.revision !== selected.revision)) {
 		throw new Error('The selected draft belongs to different source/metadata. Inspect it before retrying; no draft was changed.');
 	}
@@ -129,6 +136,9 @@ async function recipe() {
 	}
 	await command('pwsh.exe', ['-NoProfile', '-NonInteractive', '-Command', '$PSVersionTable.PSVersion.ToString()']);
 	if ((await command('docker', ['info', '--format', '{{.OSType}}'])).trim() !== 'linux') { throw new Error('Start Docker Desktop with Linux containers.'); }
+	const builder = await command('docker', ['buildx', 'inspect']);
+	const platforms = [...builder.matchAll(/^Platforms:\s*(.+)$/gm)].flatMap(match => match[1].split(',').map(value => value.trim().replace(/\*$/, '')));
+	if (!['linux/amd64', 'linux/arm64'].every(platform => platforms.includes(platform))) { throw new Error('Docker must support linux/amd64 and linux/arm64 before starting. Restore ARM64 emulation in Docker Desktop, then retry; no build was started.'); }
 	await access(path.join(root, 'node_modules', 'gulp', 'bin', 'gulp.js'));
 	const key = process.env.ATS_IDE_SIGNING_KEY ? path.resolve(process.env.ATS_IDE_SIGNING_KEY) : path.join(root, '.build/ats-autoupdate/signing/private.pem');
 	let publicKey;
@@ -136,6 +146,11 @@ async function recipe() {
 	catch { throw new Error('Restore the existing release signing key before running this recipe.'); }
 	if (publicKey !== config.overrides.armotusitioUpdate.publicKey) { throw new Error('Existing signing key does not match the trusted metadata.'); }
 	const { assertPackagedClosed, buildAll } = await import(pathToFileURL(path.join(root, 'scripts/ats-build-all.mts')).href);
+	if (checking) {
+		const { dryRun } = await import(pathToFileURL(path.join(root, 'scripts/ats-release-check.mts')).href);
+		await dryRun(root, publicKey);
+		return;
+	}
 	await assertPackagedClosed(path.resolve(root, '..', 'ArmotuSitio-IDE-win32-x64'));
 
 	async function unchanged() {
@@ -184,11 +199,16 @@ async function recipe() {
 		config = merged;
 	}
 	await unchanged();
-	console.log('Validating the selected release source...'); await update(['validate']);
+	const { releaseStages } = await import(pathToFileURL(path.join(root, 'scripts/ats-release-state.mts')).href);
+	const checkpoint = flags.includes('--rebuild') ? undefined : await releaseStages(path.join(root, '.build/ats-release-recipe'), JSON.stringify([commit, config.fingerprint, process.version, process.platform, process.arch]));
+	const stage = async (name, outputs, work) => checkpoint ? checkpoint(name, outputs, work) : work();
+	console.log('Validating the selected release source...');
+	await stage('validation', [path.join(root, '.build/ats-autoupdate/validation.json')], async () => { await update(['validate']); });
 	await unchanged();
-	console.log('Building all release platforms...'); await buildAll();
+	console.log('Building all release platforms...'); await buildAll(undefined, {}, true, !flags.includes('--rebuild'));
 	await unchanged();
-	console.log('Preparing signed release artifacts...'); await update(['artifacts']);
+	console.log('Preparing signed release artifacts...');
+	await stage('artifacts', [path.join(root, '.build/releases'), path.join(root, '.build/ats-autoupdate/build-receipt.json')], async () => { await update(['artifacts']); });
 	await unchanged();
 	if (!flags.includes('--no-publish')) {
 		console.log(`Publishing ${selected.tag} through the existing verified publication recipe...`);
@@ -198,7 +218,7 @@ async function recipe() {
 }
 
 try {
-	if (planning) { await recipe(); }
+	if (planning || checking) { await recipe(); }
 	else { await withLock(path.join(root, '.build/ats-release-recipe'), recipe); }
 } catch (error) {
 	console.error(error instanceof Error ? error.message : 'Release recipe failed.');

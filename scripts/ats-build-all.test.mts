@@ -29,7 +29,8 @@ async function cleanup(base: string): Promise<void> {
 
 function mock(root: string, fail = 0, changeCommit = false) {
 	const calls: string[] = []; let changed = false;
-	return { calls, assertClosed: async () => { },
+	return {
+		calls, assertClosed: async () => { },
 		git: async (args: string[]): Promise<string> => args[0] === 'branch' ? 'main' : args[0] === 'rev-parse' ? changed && changeCommit ? 'changed' : 'fixed' : '',
 		run: async (file: string, args: string[], _cwd: string, env?: NodeJS.ProcessEnv) => {
 			const stage = path.basename(args[0]); calls.push(file === 'pwsh.exe' ? 'archive' : stage);
@@ -131,7 +132,31 @@ test('Windows archive contains the application directory and its file, including
 		await assertPackagedClosed(application);
 		await archiveApplication(application, f.zip, f.root);
 		const command = `$zip=[IO.Compression.ZipFile]::OpenRead($env:ATS_TEST_ARCHIVE);try{ConvertTo-Json -InputObject @($zip.Entries.FullName) -Compress}finally{$zip.Dispose()}`;
-		const { stdout } = await promisify(execFile)('pwsh.exe', ['-NoProfile', '-NonInteractive', '-Command', 'Add-Type -AssemblyName System.IO.Compression.FileSystem;'+command], { windowsHide: true, env: { ...process.env, ATS_TEST_ARCHIVE: f.zip } });
+		const { stdout } = await promisify(execFile)('pwsh.exe', ['-NoProfile', '-NonInteractive', '-Command', 'Add-Type -AssemblyName System.IO.Compression.FileSystem;' + command], { windowsHide: true, env: { ...process.env, ATS_TEST_ARCHIVE: f.zip } });
 		assert.ok(JSON.parse(stdout.trim()).some((entry: string) => entry.replaceAll('\\', '/') === 'Application with spaces/ArmotuSitio IDE.txt'));
+	} finally { await cleanup(f.base); }
+});
+
+
+test('resume after a failed development stage preserves verified Windows outputs and rebuilds only unfinished work', async () => {
+	const f = await fixture();
+	try {
+		await assert.rejects(buildAll(f.root, mock(f.root, 3), true, true), /fixture failure/);
+		const deps = mock(f.root); const execute = deps.run;
+		deps.run = async (...args) => {
+			await execute(...args);
+			if (path.basename(args[1][0]) === 'ats-build-dev.mts') {
+				await mkdir(path.join(f.root, 'out'), { recursive: true });
+				await mkdir(path.join(f.root, 'extensions/armotusitio-ide/dist'), { recursive: true });
+				await writeFile(path.join(f.root, 'out/main.js'), 'development fixture');
+				await writeFile(path.join(f.root, '.build/ats-autoupdate/dev-build-receipt.json'), 'development receipt');
+			}
+		};
+		await buildAll(f.root, deps, true, true);
+		assert.deepEqual(deps.calls, ['ats-build-dev.mts', 'ats-build-linux.mts']);
+		deps.calls.length = 0;
+		await writeFile(path.join(f.root, '.build/win32-x64/user-setup/VSCodeSetup.exe'), 'tampered');
+		await buildAll(f.root, deps, true, true);
+		assert.deepEqual(deps.calls, ['ats-package-windows.mts', 'ats-build-linux.mts']);
 	} finally { await cleanup(f.base); }
 });

@@ -7,6 +7,7 @@ import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { copyFile, mkdir, readFile, rename, rm, stat } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
+import { releaseStages } from './ats-release-state.mts';
 import { fileDigest, run, withLock } from './ats-autoupdate.mts';
 
 const capture = promisify(execFile);
@@ -47,7 +48,7 @@ export async function archiveApplication(application: string, destination: strin
 }
 
 /** Package Windows, archive the complete application and refresh code.bat outputs, in that order. */
-export async function buildAll(root = path.resolve(import.meta.dirname, '..'), dependencies: Partial<Dependencies> = {}, includeLinux = true): Promise<void> {
+export async function buildAll(root = path.resolve(import.meta.dirname, '..'), dependencies: Partial<Dependencies> = {}, includeLinux = true, resume = false): Promise<void> {
 	const deps: Dependencies = { run: execute, git: (args, cwd) => run('git', args, cwd), assertClosed: assertPackagedClosed, ...dependencies };
 	await withLock(path.join(root, '.build', 'ats-build-all'), async () => {
 		const source = async () => {
@@ -55,6 +56,11 @@ export async function buildAll(root = path.resolve(import.meta.dirname, '..'), d
 			return deps.git(['rev-parse', 'HEAD'], root);
 		};
 		const commit = await source();
+		const cached = resume ? await releaseStages(path.join(root, '.build', 'ats-build-all'), JSON.stringify([commit, process.version, process.platform, process.arch])) : undefined;
+		const stage = async (name: string, outputs: string[], work: () => Promise<void>) => {
+			if (cached) { await cached(name, outputs, work); } else { await work(); }
+			if (await source() !== commit) { throw new Error('Source changed during the release build.'); }
+		};
 		const { version } = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
 		if (typeof version !== 'string' || !/^\d+\.\d+\.\d+$/.test(version)) { throw new Error('Invalid release version in package.json.'); }
 		const application = path.resolve(root, '..', 'ArmotuSitio-IDE-win32-x64');
@@ -64,11 +70,13 @@ export async function buildAll(root = path.resolve(import.meta.dirname, '..'), d
 		await deps.assertClosed(application);
 		const stages = includeLinux ? 4 : 3;
 		console.log(`[1/${stages}] Windows application and installer`);
-		await deps.run(process.execPath, [path.join(root, 'scripts', 'ats-package-windows.mts')], root);
+		await stage('windows', [application, path.join(root, '.build/win32-x64/user-setup/VSCodeSetup.exe'), path.join(root, '.build/ats-autoupdate/build-receipt.json')], async () => {
+			await deps.run(process.execPath, [path.join(root, 'scripts', 'ats-package-windows.mts')], root);
+		});
 		const receipt = JSON.parse(await readFile(path.join(root, '.build', 'ats-autoupdate', 'build-receipt.json'), 'utf8'));
 		if (receipt.commit !== commit || await source() !== commit) { throw new Error('Packaging did not validate the selected commit.'); }
 		console.log(`[2/${stages}] Versioned installer and ZIP`);
-		await withLock(path.join(root, '.build', 'ats-autoupdate'), async () => {
+		await stage('windows-archives', [installer, zip, path.join(root, '.build/ats-autoupdate/build-receipt.json')], async () => withLock(path.join(root, '.build', 'ats-autoupdate'), async () => {
 			const product = JSON.parse(await readFile(path.join(application, 'resources', 'app', 'product.json'), 'utf8'));
 			if (product.version !== version || product.commit !== commit) { throw new Error('Packaged application does not match the release version and commit.'); }
 			await mkdir(releases, { recursive: true });
@@ -80,13 +88,15 @@ export async function buildAll(root = path.resolve(import.meta.dirname, '..'), d
 			} finally { await rm(temporary, { force: true }); }
 			await archiveApplication(application, zip, root, deps.run);
 			if (await source() !== commit) { throw new Error('Source changed while creating the ZIP.'); }
-		});
+		}));
 		console.log(`[3/${stages}] Complete development build`);
-		await deps.run(process.execPath, [path.join(root, 'scripts', 'ats-build-dev.mts')], root);
+		await stage('development', [path.join(root, 'out'), path.join(root, 'extensions/armotusitio-ide/dist'), path.join(root, '.build/ats-autoupdate/dev-build-receipt.json')], async () => {
+			await deps.run(process.execPath, [path.join(root, 'scripts', 'ats-build-dev.mts')], root);
+		});
 		if (await source() !== commit) { throw new Error('Source changed during the development build.'); }
 		if (includeLinux) {
 			console.log('[4/4] Linux x64 desktop and Linux x64/arm64 remote servers');
-			await deps.run(process.execPath, [path.join(root, 'scripts', 'ats-build-linux.mts')], root);
+			await deps.run(process.execPath, [path.join(root, 'scripts', 'ats-build-linux.mts'), ...(resume ? ['--resume'] : [])], root);
 			if (await source() !== commit) { throw new Error('Source changed during Linux packaging.'); }
 		}
 		console.log(`Ready at ${commit}\nApplication: ${application}\nInstaller: ${installer}\nZIP: ${zip}\nDevelopment: scripts\\code.bat --new-window`);
@@ -95,6 +105,6 @@ export async function buildAll(root = path.resolve(import.meta.dirname, '..'), d
 
 if (import.meta.main) {
 	if (process.platform !== 'win32' || process.arch !== 'x64') { console.error('This recipe requires Windows x64.'); process.exitCode = 1; }
-	else if (process.argv.slice(2).some(arg => arg !== '--windows-only')) { console.error('Expected no flags or --windows-only.'); process.exitCode = 1; }
-	else { buildAll(undefined, {}, !process.argv.includes('--windows-only')).catch(error => { console.error(error.message); process.exitCode = 1; }); }
+	else if (process.argv.slice(2).some(arg => !['--windows-only', '--resume'].includes(arg))) { console.error('Expected --windows-only and/or --resume.'); process.exitCode = 1; }
+	else { buildAll(undefined, {}, !process.argv.includes('--windows-only'), process.argv.includes('--resume')).catch(error => { console.error(error.message); process.exitCode = 1; }); }
 }
