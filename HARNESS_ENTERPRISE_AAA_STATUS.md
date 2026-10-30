@@ -498,6 +498,17 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 - [x] Causa del único gate fallido: caracteres acentuados literales en dos mensajes de `native-integration.ts` (regla `no-unexpected-multiline`/Unicode del verificador). Se sustituyeron por escapes `\\u` manteniendo el texto de la interfaz.
 - [ ] Retest de `node scripts/ats-harness-check.mts` sobre `7c2f44881140`; todavía no afirmar higiene PASS sobre ese SHA.
 
+
+### Lote de endurecimiento del protocolo híbrido (2026-10-30; pendiente de retest)
+
+- [x] **Handshake estricto:** la respuesta JSON del motor externo se rechaza si contiene campos distintos de `schemaVersion`, `nonce` y `capabilities`. Un proyecto no puede introducir `executionGranted` u otro campo de autorización en la respuesta sin disparar `HARNESS_HANDSHAKE_INVALID`.
+- [x] **Planificador defensivo:** `planProjectGateWaves()` rechaza catálogos de memoria con campos inesperados o digest SHA-256 de formato inválido, antes de calcular olas. Mantiene `executionEnabled: false` y nunca invoca procesos externos.
+- [x] **Regresiones agregadas:** respuesta del handshake con nonce válido y elevación de autoridad simulada; catálogo adulterado con digest inválido y campo `executionGranted`.
+- [ ] **Validación local de este lote pendiente:** ejecutar `node scripts/ats-harness-check.mts`, `npm test --prefix extensions/armotusitio-ide` y `npm run check --prefix extensions/armotusitio-ide` sobre el SHA publicado. No inferir PASS por las pruebas anteriores.
+- [ ] **Sin cambio en los bloqueos críticos:** siguen pendientes fencing compartido, delegación ejecutable, sandbox OS, rollback transaccional y E2E mixto con RedEvent/Codex/Claude.
+
+**Evidencia aportada por el operador antes de este lote:** log del 30/10/2026 22:10 sobre `baca931b2ca`: verificador focalizado 140 PASS / 0 FAIL / 1 SKIP y siete etapas PASS (TypeScript, webview, renderer, bundle, recursos, higiene, diff). La cifra de 140 corresponde al subconjunto del verificador, no debe presentarse como la suite completa de la extensión.
+
 ## Validación local obligatoria
 
 Desde la raíz del repositorio, con las dependencias instaladas:
