@@ -17,9 +17,26 @@ const MAX_STDOUT_RETAINED = 512 * 1024;
 const MAX_STDERR_RETAINED = 64 * 1024;
 const MAX_DURATION_MS = 30 * 60 * 1000;
 const AUTH_ENV = ['PATH', 'Path', 'PATHEXT', 'SystemRoot', 'WINDIR', 'HOME', 'USERPROFILE', 'TEMP', 'TMP', 'TMPDIR', 'LANG', 'LC_ALL', 'CODEX_HOME', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY'];
-export interface AgentInvocation { executable: 'codex' | 'claude'; args: string[]; stdin: string; }
-export interface AgentOutcome { status: 'passed' | 'failed' | 'cancelled' | 'timeout'; exitCode: number | null; durationMs: number; output: string; truncated: boolean; scopeViolation?: boolean; scopeVerified?: boolean; usage?: ProviderUsage; structuredOutput?: boolean; }
-export interface AgentExecution { outcome: Promise<AgentOutcome>; cancel(): void; }
+export interface AgentInvocation {
+	executable: 'codex' | 'claude'
+	args: string[]
+	stdin: string
+}
+export interface AgentOutcome {
+	status: 'passed' | 'failed' | 'cancelled' | 'timeout'
+	exitCode: number | null
+	durationMs: number
+	output: string
+	truncated: boolean
+	scopeViolation?: boolean
+	scopeVerified?: boolean
+	usage?: ProviderUsage
+	structuredOutput?: boolean
+}
+export interface AgentExecution {
+	outcome: Promise<AgentOutcome>
+	cancel(): void
+}
 
 export function buildAgentInvocation(draft: AgentDraft): AgentInvocation {
 	reviewAgentDraft(draft);
