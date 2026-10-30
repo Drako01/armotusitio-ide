@@ -397,15 +397,15 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 
 **Política deseada:** el IDE actúa como orquestador preferente de agentes y ofrece controles de seguridad, mientras que el proyecto conserva sus skills, reglas, contratos, gates y herramientas. No deben ejecutarse dos escritores concurrentes ni reemplazarse el Harness del proyecto sin un protocolo de coordinación verificable.
 
-- [x] **Descubrimiento seguro:** catálogo local de `.agents/skills/*/SKILL.md` y `.claude/skills/*/SKILL.md`, lectura acotada, validación de directorios reales, rechazo de archivos enlazados y digest SHA-256 para detectar cambios. Alias `.claude/skills` enlazado a `.agents/skills` se ignora sin seguirlo.
-- [x] **Agentes IDE read-only en proyectos externos:** revisión nativa y ejecución individual planner/reviewer habilitadas con consentimiento explícito y selección opcional de una skill; el contenido se presenta dentro de la instrucción revisable como datos del proyecto, no como permiso. Las tareas/gates nativos siguen sin sustituir el estado del Harness del proyecto.
+- [x] **Descubrimiento seguro:** catálogo local de `.agents/skills/*/SKILL.md` y `.claude/skills/*/SKILL.md`, lectura acotada a 64 KiB por skill, validación de directorios reales, rechazo de archivos enlazados y digest SHA-256 para detectar cambios. Alias `.claude/skills` enlazado a `.agents/skills` se ignora sin seguirlo.
+- [x] **Agentes IDE read-only en proyectos externos:** revisión nativa y ejecución individual planner/reviewer habilitadas con consentimiento explícito y selección opcional de una skill; se comprueba el digest antes y después de la autorización, y se proporciona al agente su ruta relativa y digest, sin volcar ni truncar el contenido dentro del prompt. Las tareas/gates nativos siguen sin sustituir el estado del Harness del proyecto.
 - [x] **Prevención de doble escritor:** los implementadores nativos quedan bloqueados mientras haya un Harness de proyecto; no se permite escribir sin coordinación de locks entre motores.
 - [x] **Seguridad de autoridad:** paths de Harness inseguros mantienen bloqueo, incluso al intentar operación híbrida. No se ejecuta un motor externo durante el descubrimiento.
 - [x] **Regresión de higiene:** retirados los dos `throw` directos del bloque `finally` de la liberación de locks, conservando el error `HARNESS_WORKFLOW_LOCK_CHANGED` fuera del bloque.
 - [x] **Pruebas incorporadas:** descubrimiento de skills, cambio de digest, alias Claude, límite de tamaño y revisión híbrida sin creación de tareas nativas.
 - [ ] **Retest:** correr la suite focal, verificador completo, `npm test`, `npm run check` y `git diff --check`; el último log tiene 199 PASS/0 FAIL/1 SKIP, pero higiene FAIL anterior a estos cambios.
 - [ ] **Fase híbrida de escritura:** protocolo ejecutable bidireccional con gates delegados, locks compartidos, control de concurrencia y E2E sobre RedEvent. El soporte actual **no certifica** prioridad completa del IDE ni integración de ejecutores de proyectos.
-- [ ] **Skills más extensas:** evaluar contexto fragmentado o retrieval explícito para instrucciones superiores al máximo seguro actual de 4 KiB; no truncar silenciosamente.
+- [~] **Skills más extensas:** catálogo admite hasta 64 KiB por skill y evita truncar el prompt; queda pendiente la carga supervisada/selección de instrucciones muy extensas, incluyendo más de una skill por tarea.
 
 ## Validación local obligatoria
 
