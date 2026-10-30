@@ -176,6 +176,10 @@
         "title": "ArmoTuSitio: Reconciliar workflows interrumpidos"
       },
       {
+        "command": "atsHarness.nativeSharedFenceReconcile",
+        "title": "ArmoTuSitio: Reconciliar lock compartido obsoleto (confirmacion requerida)"
+      },
+      {
         "command": "atsHarness.nativeWorktreeCleanup",
         "title": "ArmoTuSitio: Retirar Git worktree limpio del Harness"
       },
