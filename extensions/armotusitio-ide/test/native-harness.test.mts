@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { NativeHarness, approvalDigest, validateNativePlan } from '../src/native-harness.ts';
+import { NativeHarness, approvalDigest, validateNativePlan, selectNativeWave } from '../src/native-harness.ts';
 
 async function fixture() {
 	const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-native-test-'));
@@ -102,17 +102,38 @@ test('corrupted persisted attempts fail closed before execution', async () => {
 	} finally { await f.cleanup(); }
 });
 test('concurrent attempts cannot both obtain execution lock', async () => {
-	const f = await fixture(); try {
-		const plan = { schemaVersion: 1 as const, gates: [{ id: 'slow', executable: 'node', args: ['-e', 'setTimeout(()=>{},2000)'] }] };
+	const f = await fixture();
+	try {
+		// Keep the first gate alive until cancellation. A fixed 2s timer can finish
+		// before the second attempt is rejected on busy Windows CI workers.
+		const plan = {
+			schemaVersion: 1 as const,
+			gates: [{
+				id: 'slow', executable: 'node',
+				args: ['-e', 'require("node:fs").writeFileSync("gate-started.flag","ready"); setInterval(()=>{},1000)'],
+				timeoutMs: 30000
+			}]
+		};
 		const t = await f.engine.create('locking', plan);
 		const digest = approvalDigest(plan, await fs.realpath(f.project));
 		const first = f.engine.execute(t.id, digest, () => true);
-		const lockfile = path.join(path.dirname(f.project), 'state', 'execution.lock');
-		for (let i = 0; i < 50; i++) { if (await fs.stat(lockfile).catch(() => null)) { break; } await new Promise(r => setTimeout(r, 10)); }
-		await assert.rejects(f.engine.execute(t.id, digest, () => true), /HARNESS_ALREADY_RUNNING|HARNESS_LOCKED_REQUIRES_RECONCILIATION|HARNESS_RECONCILIATION_REQUIRED/);
-		f.engine.cancel();
-		const result = await first;
-		assert.notEqual(result.attempts.at(-1)?.status, 'passed');
+		const started = path.join(f.project, 'gate-started.flag');
+		try {
+			// Do not assert contention until the subprocess really holds the lock.
+			let ready = false;
+			for (let i = 0; i < 500; i++) {
+				if (await fs.stat(started).catch(() => undefined)) { ready = true; break; }
+				await new Promise(resolve => setTimeout(resolve, 20));
+			}
+			assert.equal(ready, true, 'The first gate must start before contention is tested');
+			await assert.rejects(f.engine.execute(t.id, digest, () => true),
+				/HARNESS_ALREADY_RUNNING|HARNESS_LOCKED_REQUIRES_RECONCILIATION|HARNESS_RECONCILIATION_REQUIRED/);
+		} finally {
+			// Always stop and drain the child even when an assertion fails.
+			f.engine.cancel();
+			const result = await first;
+			assert.equal(result.attempts.at(-1)?.status, 'cancelled');
+		}
 	} finally { await f.cleanup(); }
 });
 test('already-aborted signal does not start a task or persist an attempt', async () => {
@@ -260,4 +281,49 @@ test('explicit reconciliation recovers an uncertain attempt whose lock is missin
 		assert.equal(await f.engine.reconcile(), true);
 		assert.equal((await f.engine.get(task.id)).attempts[0].status, 'interrupted');
 	} finally { await f.cleanup(); }
+});
+
+
+test('resource-aware gate scheduler caps concurrency and avoids shared resources', () => {
+	const ready = [
+		{ id: 'a', executable: 'node', args: [], parallelSafe: true, resources: ['db'] },
+		{ id: 'b', executable: 'node', args: [], parallelSafe: true, resources: ['files'] },
+		{ id: 'c', executable: 'node', args: [], parallelSafe: true, resources: ['db'] },
+		{ id: 'd', executable: 'node', args: [], parallelSafe: true, resources: ['network'] },
+		{ id: 'e', executable: 'node', args: [], parallelSafe: true, resources: ['cpu'] }
+	];
+	assert.deepEqual(selectNativeWave(ready, 8).map(x => x.id), ['a', 'b', 'd', 'e']);
+	assert.deepEqual(selectNativeWave(ready, 2).map(x => x.id), ['a', 'b']);
+	assert.deepEqual(selectNativeWave(ready.map(x => ({ ...x, parallelSafe: false })), 8).map(x => x.id), ['a', 'b']);
+	assert.throws(() => validateNativePlan({ schemaVersion: 1, gates: [{ id: 'bad', executable: 'node', args: [], resources: ['../secret'] }] }), /HARNESS_INVALID_RESOURCES/);
+});
+
+test('resume reuses passed gates from a safe checkpoint and re-runs only the failed remainder', async () => {
+	const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'ats-resume-')));
+	try {
+		await fs.writeFile(path.join(root, 'input.txt'), 'v1');
+		const engine = new NativeHarness(root, path.join(root, '.state'));
+		const task = await engine.create('Resumable', { schemaVersion: 1, inputs: ['input.txt'], gates: [
+			{ id: 'build', executable: 'node', args: ['-e', 'require("fs").appendFileSync("runs.txt", "b")'] },
+			{ id: 'verify', executable: 'node', args: ['-e', 'process.exit(require("fs").existsSync("ready") ? 0 : 1)'], dependsOn: ['build'] }
+		] });
+		const approval = await engine.reviewDigest(task.plan);
+		await assert.rejects(engine.execute(task.id, approval, () => true, undefined, undefined, { resume: true }), /HARNESS_RESUME_UNAVAILABLE/);
+		const first = await engine.execute(task.id, approval, () => true);
+		assert.equal(first.attempts.at(-1)?.status, 'failed');
+		assert.deepEqual(await engine.resumableGates(task.id), { attemptId: first.attempts.at(-1)!.id, gates: ['build'] });
+		await fs.writeFile(path.join(root, 'ready'), '');
+		const resumed = await engine.execute(task.id, approval, () => true, undefined, undefined, { resume: true });
+		const attempt = resumed.attempts.at(-1)!;
+		assert.deepEqual({
+			status: attempt.status, gates: attempt.results.map(result => [result.id, result.status, result.reusedFrom ?? null]),
+			buildRuns: await fs.readFile(path.join(root, 'runs.txt'), 'utf8')
+		}, { status: 'passed', gates: [['build', 'passed', first.attempts.at(-1)!.id], ['verify', 'passed', null]], buildRuns: 'b' });
+		// A passed attempt or changed declared inputs never offer a checkpoint.
+		assert.equal(await engine.resumableGates(task.id), null);
+		await fs.rm(path.join(root, 'ready'));
+		await engine.execute(task.id, approval, () => true);
+		await fs.writeFile(path.join(root, 'input.txt'), 'v2');
+		assert.equal(await engine.resumableGates(task.id), null);
+	} finally { await fs.rm(root, { recursive: true, force: true }); }
 });

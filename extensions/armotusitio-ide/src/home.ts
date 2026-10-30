@@ -103,7 +103,7 @@ function registerHome(context, controller, projects) {
 				return;
 			}
 			if (message.action === 'native') {
-				const commands = ['nativeConfigure', 'nativeRemoveConfiguration', 'nativeNewTask', 'nativeRunTask', 'nativeStatus', 'nativeSupport', 'nativeCancel', 'nativeReconcile'];
+				const commands = ['nativeConfigure', 'nativeRemoveConfiguration', 'nativeNewTask', 'nativeRunTask', 'nativeStatus', 'nativeSupport', 'nativeCancel', 'nativeReconcile', 'nativeAgentExecute', 'nativeAgentWorkflow', 'nativeAgentMetrics', 'nativeWorkflowHistory', 'nativeWorkflowReconcile', 'nativeWorktreeCleanup', 'nativeProviderDiagnostics'];
 				if (commands.includes(message.command) && typeof message.root === 'string' && (vscode.workspace.workspaceFolders || []).some(folder => folder.uri.fsPath === message.root)) { await vscode.commands.executeCommand('atsHarness.' + message.command, message.root, typeof message.id === 'string' && /^[a-z0-9][a-z0-9_-]{0,63}$/i.test(message.id) ? message.id : undefined); }
 				await update(); return;
 			}

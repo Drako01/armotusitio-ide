@@ -90,12 +90,36 @@ window.addEventListener('message', event => {
 			return row;
 		};
 		if (current) { article.append(taskRow(current)); } else { article.append(element('p', nativeLabels.empty, 'muted')); }
+		if (project.workflows?.length) {
+			const workflow = project.workflows[0];
+			article.append(element('p', '\u00daltimo workflow multiagente: ' + workflow.status + (workflow.verification ? ' \u00b7 verificaci\u00f3n: ' + workflow.verification : ''), 'muted'));
+		}
+		if (project.agentMetrics?.count) {
+			article.append(element('p', 'Agentes IA: ' + project.agentMetrics.count + ' ejecuciones \u00b7 \u00e9xito: ' + project.agentMetrics.successRate + '% \u00b7 p95: ' + project.agentMetrics.p95DurationMs + ' ms', 'muted'));
+			if (project.agentMetrics.usageSamples) {
+				const metric = project.agentMetrics;
+				article.append(element('p', 'Tokens medidos (' + metric.usageSamples + ' ejecuciones): ' + metric.measuredInputTokens + ' entrada / ' + metric.measuredOutputTokens + ' salida' +
+					(metric.estimatedCostUsd === null ? '' : ' \u00b7 costo estimado parcial: USD ' + metric.estimatedCostUsd.toFixed(4)), 'muted'));
+			}
+		}
+		if (project.gatePerformance?.attempts) {
+			const perf = project.gatePerformance;
+			article.append(element('p', 'Gates locales: ' + perf.attempts + ' intentos \u00b7 \u00e9xito: ' + perf.completionRate + '% \u00b7 p95: ' + perf.p95WallMs + ' ms \u00b7 paralelismo observado: ' + (perf.averageParallelFactor ?? 'sin datos') + '\u00d7', 'muted'));
+		}
 		const details = options(project.root);
 		for (const task of project.tasks.slice(1)) { details.append(taskRow(task)); }
 		details.append(element('p', project.root, 'muted path'));
 		const tools = document.createElement('div'); tools.className = 'actions';
 		const commands = { nativeNewTask: 'create', nativeConfigure: 'configure', nativeSupport: 'diagnostics', nativeStatus: 'history', nativeRemoveConfiguration: 'remove' };
 		for (const [tool, key] of Object.entries(commands)) { if (tool !== command) { tools.append(action(nativeLabels[key], project.root, 'native', tool)); } }
+		tools.append(action('Ejecutar agente IA', project.root, 'native', 'nativeAgentExecute'));
+		tools.append(action('Workflow multiagente', project.root, 'native', 'nativeAgentWorkflow'));
+		tools.append(action('M\u00e9tricas IA', project.root, 'native', 'nativeAgentMetrics'));
+		tools.append(action('Diagn\u00f3stico IA', project.root, 'native', 'nativeProviderDiagnostics'));
+		tools.append(action('Historial multiagente', project.root, 'native', 'nativeWorkflowHistory'));
+		tools.append(action('Reconciliar workflows', project.root, 'native', 'nativeWorkflowReconcile'));
+		tools.append(action('Limpiar worktree inactivo', project.root, 'native', 'nativeWorktreeCleanup'));
+		if (project.agentActive) { tools.append(action('Cancelar agente o workflow', project.root, 'native', 'nativeCancel')); }
 		if (current?.status === 'running' && !current.reconciliationRequired) { tools.append(action(nativeLabels.cancel, project.root, 'native', 'nativeCancel')); }
 		if (project.lock === 'stale' && command !== 'nativeReconcile') { tools.append(action(nativeLabels.reconcile, project.root, 'native', 'nativeReconcile')); }
 		details.append(tools); article.append(details); projects.append(article);

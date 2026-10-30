@@ -10,6 +10,7 @@ import * as path from 'node:path';
 import { registerNativeHarness } from '../src/native-integration.ts';
 import { writeProjectConfig } from '../src/native-project.ts';
 import { inspectHarnessAuthority } from '../src/native-authority.ts';
+import { acquireSharedExecutionFence, inspectSharedExecutionFence } from '../src/native-shared-fence.ts';
 
 async function fixture() {
 	const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-native-ui-'));
@@ -85,5 +86,340 @@ test('project Harness symlink is blocked without reading or replacing its state'
 		assert.deepEqual(await inspectHarnessAuthority(f.roots[0]), { engine: 'project', reason: 'project-path-unsafe' });
 		await f.invoke('nativeConfigure', f.roots[0]);
 		await assert.rejects(fs.stat(path.join(f.roots[0], '.ats-harness.json')), { code: 'ENOENT' });
+	} finally { await f.cleanup(); }
+});
+
+test('hybrid project keeps its task engine but exposes native read-only agent review and skill catalog', async () => {
+	const f = await fixture();
+	try {
+		const project = f.roots[0];
+		await fs.mkdir(path.join(project, '.harness'));
+		const skillDir = path.join(project, '.agents', 'skills', 'security');
+		await fs.mkdir(skillDir, { recursive: true });
+		await fs.writeFile(path.join(skillDir, 'SKILL.md'), '# Review security boundaries');
+		await f.invoke('nativeAgentReview', project);
+		const preview = JSON.parse(f.documents.at(-1)!.content);
+		assert.equal(preview.hybrid, true);
+		assert.equal(preview.executionEnabled, false);
+		assert.deepEqual(preview.skills.map(skill => skill.name), ['security']);
+		await f.invoke('nativeNewTask', project);
+		const rows = await f.controller.nativeProjects();
+		assert.deepEqual(rows.map(row => row.root), [f.roots[1]]);
+	} finally { await f.cleanup(); }
+});
+
+test('hybrid projects block native writers before any provider invocation', async () => {
+	const f = await fixture();
+	try {
+		await fs.mkdir(path.join(f.roots[0], '.harness'));
+		f.vscode.window.showQuickPick = async (items, options) =>
+			options?.title === 'Rol del agente' ? 'implementer' : items[0];
+		await f.invoke('nativeAgentExecute', f.roots[0]);
+		assert.ok(f.notices.some(notice => notice.includes('HARNESS_HYBRID_WRITER_UNAVAILABLE')));
+		assert.equal(f.documents.length, 0);
+	} finally { await f.cleanup(); }
+});
+
+test('new project harness during approval cannot enable an uncoordinated native writer', async () => {
+	const f = await fixture();
+	try {
+		const root = f.roots[0];
+		f.vscode.window.showQuickPick = async (items, options) =>
+			options?.title === 'Rol del agente' ? 'implementer' : items[0];
+		f.vscode.window.showWarningMessage = async (_, __, action) => {
+			await fs.mkdir(path.join(root, '.harness'));
+			return action;
+		};
+		await f.invoke('nativeAgentExecute', root);
+		assert.ok(f.notices.some(notice => notice.includes('HARNESS_HYBRID_WRITER_UNAVAILABLE')));
+		assert.equal((await fs.readdir(path.join(root, '.harness'))).length, 0);
+	} finally { await f.cleanup(); }
+});
+
+test('hybrid skill selection refuses content changed during approval without launching provider', async () => {
+	const f = await fixture();
+	try {
+		const root = f.roots[0];
+		await fs.mkdir(path.join(root, '.harness'));
+		const dir = path.join(root, '.agents', 'skills', 'go-api');
+		await fs.mkdir(dir, { recursive: true });
+		const file = path.join(dir, 'SKILL.md');
+		await fs.writeFile(file, '# Approved conventions');
+		f.vscode.window.showQuickPick = async (items, options) => {
+			if (options?.title === 'Rol del agente') { return 'planner'; }
+			if (options?.canPickMany) { return [items[0]]; }
+			return items[0];
+		};
+		f.vscode.window.showWarningMessage = async (_, __, action) => {
+			await fs.writeFile(file, '# Mutated conventions');
+			return action;
+		};
+		await f.invoke('nativeAgentExecute', root);
+		assert.ok(f.notices.some(notice => notice.includes('HARNESS_PROJECT_SKILL_CHANGED')));
+		assert.ok(f.documents.length >= 1);
+	} finally { await f.cleanup(); }
+});
+
+test('hybrid agent refuses more than eight project skills before launching provider', async () => {
+	const f = await fixture();
+	try {
+		const root = f.roots[0];
+		await fs.mkdir(path.join(root, '.harness'));
+		for (let i = 0; i < 9; i++) {
+			const dir = path.join(root, '.agents', 'skills', 'skill_' + i);
+			await fs.mkdir(dir, { recursive: true });
+			await fs.writeFile(path.join(dir, 'SKILL.md'), '# Skill');
+		}
+		f.vscode.window.showQuickPick = async (items, options) => {
+			if (options?.title === 'Rol del agente') { return 'planner'; }
+			if (options?.canPickMany) { return items.slice(0, 9); }
+			return items[0];
+		};
+		await f.invoke('nativeAgentExecute', root);
+		assert.ok(f.notices.some(notice => notice.includes('HARNESS_PROJECT_SKILL_SELECTION_INVALID')));
+		assert.equal(f.documents.length, 0);
+	} finally { await f.cleanup(); }
+});
+
+test('Codex-only project exposes its skills to native agent review without a project Harness', async () => {
+	const f = await fixture();
+	try {
+		const dir = path.join(f.roots[0], '.codex', 'skills', 'security');
+		await fs.mkdir(dir, { recursive: true });
+		await fs.writeFile(path.join(dir, 'SKILL.md'), '# Codex security guidance');
+		await f.invoke('nativeAgentReview', f.roots[0]);
+		const preview = JSON.parse(f.documents.at(-1)!.content);
+		assert.equal(preview.hybrid, false);
+		assert.equal(preview.executionEnabled, false);
+		assert.deepEqual(preview.skills.map(skill => [skill.name, skill.source]), [['security', '.codex/skills']]);
+	} finally { await f.cleanup(); }
+});
+
+test('native multi-skill selection rejects duplicated entries before provider invocation', async () => {
+	const f = await fixture();
+	try {
+		const dir = path.join(f.roots[0], '.codex', 'skills', 'go-api');
+		await fs.mkdir(dir, { recursive: true });
+		await fs.writeFile(path.join(dir, 'SKILL.md'), '# Codex');
+		f.vscode.window.showQuickPick = async (items, options) => {
+			if (options?.title === 'Rol del agente') { return 'planner'; }
+			if (options?.canPickMany) { return [items[0], items[0]]; }
+			return items[0];
+		};
+		await f.invoke('nativeAgentExecute', f.roots[0]);
+		assert.ok(f.notices.some(notice => notice.includes('HARNESS_PROJECT_SKILL_SELECTION_INVALID')));
+		assert.equal(f.documents.length, 0);
+	} finally { await f.cleanup(); }
+});
+
+test('project guidance changed during consent prevents launching a native agent', async () => {
+	const f = await fixture();
+	try {
+		const root = f.roots[0];
+		const guide = path.join(root, 'AGENTS.md');
+		await fs.writeFile(guide, '# First version');
+		f.vscode.window.showQuickPick = async (items, options) =>
+			options?.title === 'Rol del agente' ? 'planner' : items[0];
+		f.vscode.window.showWarningMessage = async (_, __, action) => {
+			await fs.writeFile(guide, '# Changed during approval');
+			return action;
+		};
+		await f.invoke('nativeAgentExecute', root);
+		assert.ok(f.notices.some(message => message.includes('HARNESS_PROJECT_GUIDANCE_CHANGED')));
+		assert.ok(f.documents.length >= 1);
+	} finally { await f.cleanup(); }
+});
+
+test('project guidance metadata is available for review without invoking a provider', async () => {
+	const f = await fixture();
+	try {
+		await fs.writeFile(path.join(f.roots[0], 'AGENTS.md'), '# Team conventions');
+		await f.invoke('nativeAgentReview', f.roots[0]);
+		const review = JSON.parse(f.documents.at(-1)!.content);
+		assert.deepEqual(review.guides.map(guide => guide.path), ['AGENTS.md']);
+		assert.equal(f.documents.at(-1)!.content.includes('Team conventions'), false);
+	} finally { await f.cleanup(); }
+});
+
+test('explicit project handshake displays advisory capability routing without enabling external execution', async () => {
+	const f = await fixture();
+	try {
+		const root = f.roots[0];
+		await fs.mkdir(path.join(root, '.harness', 'manifests'), { recursive: true });
+		await fs.writeFile(path.join(root, '.harness', 'manifests', 'ide-capabilities.json'),
+			JSON.stringify({ schemaVersion: 2, engine: 'project', capabilities: ['parallel-gates', 'os-sandbox'] }));
+		await fs.writeFile(path.join(root, '.harness', 'core.mjs'),
+			'console.log(JSON.stringify({ schemaVersion: 2, nonce: process.argv[process.argv.indexOf("--nonce") + 1], capabilities: ["parallel-gates", "os-sandbox"] }));');
+		await f.invoke('nativeProjectHandshake', root);
+		const displayed = JSON.parse(f.documents.at(-1)!.content);
+		assert.equal(displayed.executionEnabled, false);
+		assert.equal(displayed.comparison.executionGranted, false);
+		assert.ok(displayed.comparison.overlap.includes('parallel-gates'));
+		assert.deepEqual(displayed.comparison.projectOnly, ['os-sandbox']);
+	} finally { await f.cleanup(); }
+});
+
+test('explicit handshake displays project DAG gate metadata without granting execution', async () => {
+	const f = await fixture();
+	try {
+		const root = f.roots[0];
+		const manifests = path.join(root, '.harness', 'manifests');
+		await fs.mkdir(manifests, { recursive: true });
+		await fs.writeFile(path.join(manifests, 'ide-capabilities.json'), JSON.stringify({
+			schemaVersion: 2, engine: 'project', capabilities: ['verification-gates']
+		}));
+		await fs.writeFile(path.join(manifests, 'ide-gates.json'), JSON.stringify({
+			schemaVersion: 1, gates: [
+				{ id: 'lint', dependsOn: [], resources: ['cpu'] },
+				{ id: 'tests', dependsOn: ['lint'], resources: ['db'] }
+			]
+		}));
+		await fs.writeFile(path.join(root, '.harness', 'core.mjs'),
+			'console.log(JSON.stringify({ schemaVersion: 2, nonce: process.argv[process.argv.indexOf("--nonce") + 1], capabilities: ["verification-gates"] }));');
+		await f.invoke('nativeProjectHandshake', root);
+		const preview = JSON.parse(f.documents.at(-1)!.content);
+		assert.equal(preview.executionEnabled, false);
+		assert.equal(preview.gateCatalog.executionEnabled, false);
+		assert.deepEqual(preview.gateCatalog.gates[1].dependsOn, ['lint']);
+		assert.deepEqual(preview.simulatedGateWaves, [['lint'], ['tests']]);
+		assert.equal(preview.gateReadiness.declarativeReady, true);
+		assert.equal(preview.gateReadiness.executionEnabled, false);
+		assert.ok(preview.gateReadiness.blockers.includes('shared-writer-fencing-unverified'));
+		assert.ok(/^[a-f0-9]{64}$/.test(preview.gateCatalog.digest));
+	} finally { await f.cleanup(); }
+});
+
+test('workflow history reports unresolved journal IDs without exposing uncertain record content', async () => {
+	const f = await fixture();
+	try {
+		const root = f.roots[0];
+		const digest = (await import('node:crypto')).createHash('sha256').update(root).digest('hex');
+		const store = path.join(path.dirname(root), 'private', 'native-harness', digest, 'workflows');
+		await fs.mkdir(store, { recursive: true });
+		const id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab';
+		await fs.writeFile(path.join(store, id + '.json.intent'), 'UNCERTAIN_PRIVATE_CONTENT');
+		await f.invoke('nativeWorkflowHistory', root);
+		const preview = JSON.parse(f.documents.at(-1)!.content);
+		assert.equal(preview.status, 'recovery-required');
+		assert.equal(preview.executionEnabled, false);
+		assert.deepEqual(preview.pendingJournalIds, [id]);
+		assert.equal(f.documents.at(-1)!.content.includes('UNCERTAIN_PRIVATE_CONTENT'), false);
+	} finally { await f.cleanup(); }
+});
+
+test('IDE shared-fence recovery refuses a live process without altering its lock', async () => {
+	const f = await fixture();
+	try {
+		const root = await fs.realpath(f.roots[0]);
+		const digest = (await import('node:crypto')).createHash('sha256').update(root).digest('hex');
+		const storage = path.join(path.dirname(root), 'private', 'native-harness', digest);
+		const lease = await acquireSharedExecutionFence(root, storage, 'native-task');
+		await f.invoke('nativeSharedFenceReconcile', root);
+		assert.deepEqual(await inspectSharedExecutionFence(root, storage),
+			{ held: true, epoch: lease.epoch, owner: 'native-task' });
+		await lease.release();
+		await f.invoke('nativeSharedFenceReconcile', root);
+		assert.ok(f.notices.some(message => String(message).includes('No hay un fence')));
+	} finally { await f.cleanup(); }
+});
+
+test('IDE quota diagnostics are read-only and disabled by default', async () => {
+	const f = await fixture();
+	try {
+		await f.invoke('nativeProviderQuotaStatus', f.roots[0]);
+		const status = JSON.parse(f.documents.at(-1)!.content);
+		assert.equal(status.enabled, false);
+		assert.equal(status.maxCallsPer24h, null);
+		assert.deepEqual(status.providers.codex, { used: 0, remaining: null });
+		assert.deepEqual(status.providers.claude, { used: 0, remaining: null });
+	} finally { await f.cleanup(); }
+});
+
+test('IDE integrates a reviewed worktree into the primary checkout and rolls it back on request', async () => {
+	const f = await fixture();
+	try {
+		const { execFileSync } = await import('node:child_process');
+		const { createAgentWorktree, removeCleanAgentWorktree } = await import('../src/native-agent-worktree.ts');
+		const { createWorktreeCheckpoint } = await import('../src/native-worktree-checkpoint.ts');
+		const root = await fs.realpath(f.roots[0]);
+		execFileSync('git', ['init', '-q', root]);
+		execFileSync('git', ['-C', root, 'config', 'core.autocrlf', 'false']);
+		await fs.writeFile(path.join(root, 'app.txt'), 'baseline\n');
+		execFileSync('git', ['-C', root, 'add', '.']);
+		execFileSync('git', ['-C', root, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-qm', 'seed']);
+		const digest = (await import('node:crypto')).createHash('sha256').update(root).digest('hex');
+		const storage = path.join(path.dirname(root), 'private', 'native-harness', digest);
+		const managed = await createAgentWorktree(root, path.join(storage, 'isolated-worktrees'));
+		const fence = await acquireSharedExecutionFence(root, storage, 'native-workflow');
+		try { await createWorktreeCheckpoint(managed, path.join(storage, 'checkpoints'), fence); }
+		finally { await fence.release(); }
+		await fs.writeFile(path.join(managed.root, 'app.txt'), 'reviewed\n');
+		await f.invoke('nativeWorktreeIntegrate', root);
+		const integrated = JSON.parse(f.documents.at(-1)!.content);
+		assert.deepEqual({ status: integrated.status, files: integrated.files, content: await fs.readFile(path.join(root, 'app.txt'), 'utf8') },
+			{ status: 'applied', files: ['app.txt'], content: 'reviewed\n' });
+		await f.invoke('nativeWorktreeIntegrationRollback', root);
+		assert.equal(await fs.readFile(path.join(root, 'app.txt'), 'utf8'), 'baseline\n');
+		assert.equal((await inspectSharedExecutionFence(root, storage)).held, false);
+		execFileSync('git', ['-C', managed.root, 'checkout', '-q', '--', '.']);
+		await removeCleanAgentWorktree(managed);
+	} finally { await f.cleanup(); }
+});
+
+test('IDE token budget refuses an agent before launching its provider and releases the fence', async () => {
+	const f = await fixture();
+	try {
+		const { recordProviderSpend } = await import('../src/native-provider-quota.ts');
+		const root = await fs.realpath(f.roots[0]);
+		const digest = (await import('node:crypto')).createHash('sha256').update(root).digest('hex');
+		const storage = path.join(path.dirname(root), 'private', 'native-harness', digest);
+		const lease = await acquireSharedExecutionFence(root, storage, 'native-agent');
+		try { await recordProviderSpend(storage, 'codex', lease, { usage: { inputTokens: 5, outputTokens: 5 } }); }
+		finally { await lease.release(); }
+		const settings: Record<string, number> = { providerTokensPer24h: 10 };
+		f.vscode.workspace.getConfiguration = () => ({ get: (key: string, fallback: unknown) => settings[key] ?? fallback });
+		await f.invoke('nativeAgentExecute', root);
+		assert.ok(f.notices.some(message => String(message).includes('HARNESS_PROVIDER_TOKEN_BUDGET_EXCEEDED')));
+		assert.equal((await inspectSharedExecutionFence(root, storage)).held, false);
+		await f.invoke('nativeProviderQuotaStatus', root);
+		assert.deepEqual(JSON.parse(f.documents.at(-1)!.content).budget.providers.codex,
+			{ tokens: 10, costUsd: 0, unmeteredCalls: 0, rateLimitedUntil: null });
+	} finally { await f.cleanup(); }
+});
+
+test('IDE delegates a cataloged project gate under its shared fence and releases it afterwards', async () => {
+	const f = await fixture();
+	try {
+		const root = await fs.realpath(f.roots[0]);
+		const harness = path.join(root, '.harness');
+		await fs.mkdir(path.join(harness, 'manifests'), { recursive: true });
+		await fs.writeFile(path.join(harness, 'manifests', 'ide-capabilities.json'), JSON.stringify({ schemaVersion: 2, engine: 'project', capabilities: ['verification-gates', 'bounded-processes'] }));
+		await fs.writeFile(path.join(harness, 'manifests', 'ide-gates.json'), JSON.stringify({ schemaVersion: 1, gates: [{ id: 'unit', dependsOn: [], resources: [] }] }));
+		await fs.writeFile(path.join(harness, 'core.mjs'), [
+			'const arg = name => process.argv[process.argv.indexOf(name) + 1];',
+			'const nonce = arg("--nonce");',
+			'if (process.argv[2] === "capabilities") { console.log(JSON.stringify({ schemaVersion: 2, nonce, capabilities: ["verification-gates", "bounded-processes"] })); }',
+			'else if (process.argv[2] === "ide-gate") { console.log(JSON.stringify({ schemaVersion: 2, nonce, gate: arg("--gate"), status: "passed", durationMs: 1, fenceEpoch: Number(arg("--fence-epoch")), evidenceDigest: "a".repeat(64) })); }'
+		].join('\n'));
+		await f.invoke('nativeProjectGateDelegate', root);
+		const result = JSON.parse(f.documents.at(-1)!.content);
+		const digest = (await import('node:crypto')).createHash('sha256').update(root).digest('hex');
+		const storage = path.join(path.dirname(root), 'private', 'native-harness', digest);
+		assert.deepEqual({ gate: result.gate, status: result.status, held: (await inspectSharedExecutionFence(root, storage)).held },
+			{ gate: 'unit', status: 'passed', held: false });
+	} finally { await f.cleanup(); }
+});
+
+test('IDE trace command exposes executed gate spans without task output', async () => {
+	const f = await fixture();
+	try {
+		await writeProjectConfig(f.roots[0], { schemaVersion: 1, runtime: 'ide-native', profile: 'custom', plan: { schemaVersion: 1, gates: [{ id: 'version', executable: 'node', args: ['--version'] }] } });
+		await f.invoke('nativeNewTask', f.roots[0]);
+		await f.invoke('nativeRunTask', f.roots[0]);
+		await f.invoke('nativeTrace', f.roots[0]);
+		const trace = JSON.parse(f.documents.at(-1)!.content);
+		assert.deepEqual({ kinds: trace.spans.map(span => span.kind), statuses: trace.spans.map(span => span.status), lines: trace.summary[0].length },
+			{ kinds: ['task', 'gate'], statuses: ['ok', 'ok'], lines: 2 });
+		assert.equal(f.documents.at(-1)!.content.includes(process.version), false);
 	} finally { await f.cleanup(); }
 });

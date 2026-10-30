@@ -2,6 +2,72 @@
 
 La barra de estado abre el inicio de ArmotuSitio IDE con un clic.
 
+
+## Ejecución nativa de agentes IA (experimental, opt-in)
+
+La paleta agrega **ArmoTuSitio: Ejecutar agente IA con autorización**
+(`atsHarness.nativeAgentExecute`). Se mantiene la prioridad del Harness del proyecto:
+el comando solo está habilitado para carpetas sin `.harness/` ni `harness/`.
+No modifica ninguna configuración de proveedor, no crea PRs, no hace push ni despliega.
+
+1. Instalá e iniciá sesión en Codex CLI o Claude Code CLI en la misma máquina donde corre el IDE.
+2. Abrí una carpeta de trabajo confiable, seleccioná el proveedor y el rol.
+3. Revisá el JSON que muestra el ejecutable, argumentos, permisos e instrucción.
+4. Confirmá **Ejecutar agente**. La ejecución tiene límite de 30 minutos, salida acotada,
+   cancelación manual desde **Cancelar tarea nativa** y resultado visible en un documento JSON.
+   Las últimas 100 ejecuciones se resumen localmente en **ArmoTuSitio: Métricas locales de agentes IA**:
+   porcentaje de éxito, duración promedio y p95, sin prompts, rutas de proyecto ni salidas.
+5. Revisá los cambios con `git diff` y corré las verificaciones del proyecto antes de incorporarlos.
+   El sistema no comitea ni integra cambios automáticamente.
+
+Codex: `exec --sandbox read-only` para planner/reviewer y `workspace-write` para implementer.
+Claude: `--permission-mode plan` para planner/reviewer y `dontAsk` para implementer.
+`dontAsk` no equivale a un sandbox de filesystem: depende de las reglas de permisos del
+proveedor y deniega herramientas no autorizadas. La ejecución nativa **no garantiza**
+aislamiento de red, secretos, filesystem o procesos externos; para código no confiable usá
+un contenedor/VM aislado. Nunca concedas permisos de bypass.
+
+Ahora también existe **ArmoTuSitio: Ejecutar workflow multiagente nativo** con opción\nde revisión cruzada entre Codex y Claude (requiere ambos proveedores configurados) y handoffs
+ejecutables (plan → implementación → revisión), aprobación explícita, bloqueo de ejecución,
+historial persistente y recuperación conservadora desde **Reconciliar workflows interrumpidos**.
+El reviewer debe terminar con una única línea `HARNESS_REVIEW: PASS` para aprobar;\nuna respuesta ambigua o truncada falla cerrado. Si detecta defectos, el Harness puede\nhacer **un solo ciclo correctivo** (implementador + nueva revisión) previamente autorizado;\nno hay reintentos ilimitados.
+Si el proyecto configura `.ats-harness.json`, el workflow ejecuta los gates después de la revisión;
+sin esos gates, el estado de verificación es `not-configured` y no equivale a un resultado verificado.
+
+**El modo recomendado crea un Git worktree aislado automáticamente** después de solicitar autorización.
+No modifica el checkout principal y conserva el worktree al finalizar para revisar el diff. La
+alternativa es ejecutar en el workspace actual bajo autorización explícita. El worktree por sí
+solo no es un sandbox de sistema operativo; un proceso puede conservar acceso a recursos del
+usuario. Los handoffs transportan resúmenes acotados en memoria y no guardan prompts en el
+historial. Los roles de solo lectura verifican un fingerprint de Git y de archivos sensibles
+antes y después de la ejecución; las diferencias bloquean el avance sin borrar cambios.
+
+La ejecución de Claude con rol implementador usa `dontAsk` con autorización explícita de herramientas
+de lectura y edición, y denegación explícita de Bash y herramientas web. Los gates del proyecto
+son responsables de comprobar el resultado. Las ejecuciones de Codex conservan sandbox
+`workspace-write` o `read-only` según el rol.
+
+Se limita a dos operaciones de proveedor simultáneas por ventana del IDE y a un máximo\nde una hora por workflow, incluyendo la verificación. El diagnóstico de CLI consulta\nversiones sin consumir tokens y sin afirmar que las sesiones estén autenticadas.\nEl runner consume eventos JSONL de Codex y JSON de Claude, conserva solamente el mensaje\nfinal y métricas verificables de tokens, y muestra el costo estimado informado por Claude\ncuando existe. Los costos son estimaciones parciales y no equivalen a facturación real.\nCodex ejecuta con sesiones efímeras y política de aprobación no interactiva; Claude\nrecibe una señal para no persistir el historial de prompts cuando su versión la admite.\n\n**Pendiente para calificación AAA:** sandbox OS/red, integración transaccional automática,
+correcciones autónomas del feedback, contabilidad verificable de tokens/costos y benchmarks
+reales con proveedores autenticados.
+
+El Harness especializado de cada proyecto conserva sus capacidades anteriores.
+
+### Validación local
+
+Desde la raíz de este repositorio:
+
+```bash
+node scripts/ats-harness-check.mts
+cd extensions/armotusitio-ide
+npm test
+npm run check
+```
+
+El check focalizado no llama a proveedores de IA.
+El test de integración real de Codex/Claude requiere CLI, autenticación y aprobación del usuario;
+no se simulan credenciales ni se ejecutan agentes en las pruebas automatizadas.
+
 ## Ejecutar una tarea con el Harness
 
 1. Abrí **ArmotuSitio: Inicio** desde la paleta de comandos.
