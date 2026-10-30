@@ -23,5 +23,15 @@ test('native engine declares implemented features only', async () => {
     assert.equal(project.engine, 'project');
     assert.equal(project.requiresExternalHandshake, true);
     assert.deepEqual(project.supported, []);
+    assert.deepEqual(project.projectDeclared, []);
+    await fs.mkdir(path.join(root, '.harness', 'manifests'));
+    const manifestPath = path.join(root, '.harness', 'manifests', 'ide-capabilities.json');
+    await fs.writeFile(manifestPath, JSON.stringify({ schemaVersion: 2, engine: 'project', capabilities: ['agent-handoffs', 'parallel-gates'] }));
+    const advertised = await describeEngine(await fs.realpath(root));
+    assert.deepEqual(advertised.projectDeclared, ['agent-handoffs', 'parallel-gates']);
+    assert.deepEqual(advertised.supported, []);
+    assert.equal(advertised.executionEnabled, false);
+    await fs.writeFile(manifestPath, JSON.stringify({ schemaVersion: 2, engine: 'project', capabilities: ['unknown-capability'] }));
+    await assert.rejects(describeEngine(await fs.realpath(root)), /HARNESS_CAPABILITIES_INVALID/);
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 });
