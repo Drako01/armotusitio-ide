@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { readProjectGateCatalog, validateProjectGateCatalog } from '../src/native-project-gates.ts';
+import { readProjectGateCatalog, validateProjectGateCatalog, planProjectGateWaves } from '../src/native-project-gates.ts';
 
 test('project gates are discovered as bounded read-only metadata and pin a digest', async () => {
 	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-project-gates-'));
@@ -74,4 +74,26 @@ test('gate catalog rejects linked manifest parents and preserves external files'
 		await fs.rm(root, { recursive: true, force: true });
 		await fs.rm(outside, { recursive: true, force: true });
 	}
+});
+
+test('read-only gate scheduler honors dependencies, resource conflicts and capacity', async () => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-gate-waves-'));
+	try {
+		const canonical = await fs.realpath(root);
+		const manifests = path.join(root, '.harness', 'manifests');
+		await fs.mkdir(manifests, { recursive: true });
+		await fs.writeFile(path.join(manifests, 'ide-gates.json'), JSON.stringify({
+			schemaVersion: 1, gates: [
+				{ id: 'lint', dependsOn: [], resources: ['cpu'] },
+				{ id: 'audit', dependsOn: [], resources: ['cpu'] },
+				{ id: 'check', dependsOn: [], resources: ['network'] },
+				{ id: 'tests', dependsOn: ['lint'], resources: ['db'] }
+			]
+		}));
+		const catalog = await readProjectGateCatalog(canonical);
+		assert.ok(catalog);
+		assert.deepEqual(planProjectGateWaves(catalog, 2), [['lint', 'check'], ['audit', 'tests']]);
+		assert.deepEqual(planProjectGateWaves(catalog, 1), [['lint'], ['audit'], ['check'], ['tests']]);
+		assert.throws(() => planProjectGateWaves(catalog, 0), /HARNESS_GATE_CAPACITY_INVALID/);
+	} finally { await fs.rm(root, { recursive: true, force: true }); }
 });
