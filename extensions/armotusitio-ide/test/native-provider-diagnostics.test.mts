@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { diagnoseProvider, inspectProviderHelp } from '../src/native-provider-diagnostics.ts';
+import { diagnoseProvider, inspectProviderHelp, parseLocalAuthStatus } from '../src/native-provider-diagnostics.ts';
 
 test('provider diagnostics reject unknown hosts without invoking any model', async () => {
 	await assert.rejects(diagnoseProvider('unknown' as unknown as Parameters<typeof diagnoseProvider>[0]), /HARNESS_PROVIDER_UNSUPPORTED/);
@@ -39,4 +39,14 @@ test('CLI flag matrix rejects unknown versions of the invocation protocol', () =
 	assert.equal(inspectProviderHelp('claude', 'Usage: claude ' + claude).compatibility, 'verified');
 	assert.deepEqual(inspectProviderHelp('codex', 'Usage: codex exec --json and no safety flags').missingFlags, ['--sandbox', '--skip-git-repo-check', '--ask-for-approval', '--ephemeral']);
 	assert.equal(inspectProviderHelp('claude', '').compatibility, 'unknown');
+});
+
+test('local auth detection never promotes ambiguous output to authenticated model access', () => {
+	assert.equal(parseLocalAuthStatus('codex', 'Logged in using ChatGPT', 0), 'authenticated');
+	assert.equal(parseLocalAuthStatus('codex', 'Not logged in', 0), 'unauthenticated');
+	assert.equal(parseLocalAuthStatus('codex', 'Logged in using ChatGPT', 1), 'unknown');
+	assert.equal(parseLocalAuthStatus('claude', '{"loggedIn":true}', 0), 'authenticated');
+	assert.equal(parseLocalAuthStatus('claude', '{"loggedIn":false}', 0), 'unauthenticated');
+	assert.equal(parseLocalAuthStatus('claude', '{"loggedIn":true}', 1), 'unknown');
+	assert.equal(parseLocalAuthStatus('claude', 'Welcome! Account: private@example.test', 0), 'unknown');
 });
