@@ -176,6 +176,10 @@
         "title": "ArmoTuSitio: Reconciliar workflows interrumpidos"
       },
       {
+        "command": "atsHarness.nativeWorktreeCleanup",
+        "title": "ArmoTuSitio: Retirar Git worktree limpio del Harness"
+      },
+      {
         "command": "atsHarness.nativeAgentMetrics",
         "title": "ArmoTuSitio: Métricas locales de agentes IA"
       },
