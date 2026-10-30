@@ -3,16 +3,18 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 /**
- * Explicit, bounded project-engine status query. This invokes trusted project
- * code only after a separate user consent. No project execution authority,
- * writer lease or gate dispatch can be obtained from a status response.
+ * Explicit, bounded project-engine protocol v2: read-only status queries and
+ * single-gate delegation under the IDE shared fence. Both invoke trusted project
+ * code only after a separate user consent. No project execution authority or
+ * writer lease can be obtained from a response.
  */
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import { spawn } from 'node:child_process';
-import { createHash, randomBytes } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { inspectHarnessAuthority } from './native-authority.ts';
-import { probeProjectHandshake, readProjectCapabilities } from './native-engine-contract.ts';
+import { entryDigest, probeProjectHandshake, readProjectCapabilities, runProjectEntry, type Capability } from './native-engine-contract.ts';
+import { readProjectGateCatalog, validateProjectGateCatalog } from './native-project-gates.ts';
+import type { SharedExecutionFence } from './native-shared-fence.ts';
 
 export interface ProjectEngineTaskStatus {
 	id: string;
@@ -23,7 +25,6 @@ export interface ProjectEngineObservation {
 	tasks: ProjectEngineTaskStatus[];
 	executionEnabled: false;
 }
-const MAX_BYTES = 16 * 1024;
 const VALID_STATES = ['running', 'passed', 'failed', 'cancelled', 'interrupted'];
 
 function validateStatusOutput(raw: string, nonce: string): ProjectEngineObservation {
@@ -64,48 +65,11 @@ export async function queryProjectEngineStatus(root: string, consent: boolean, t
 		throw Error('HARNESS_PROJECT_STATUS_UNSUPPORTED');
 	}
 	const entry = path.join(canonical, authority.entry);
-	const stat = await fs.lstat(entry);
-	if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 16 * 1024 * 1024 ||
-		await fs.realpath(entry) !== entry) {
-		throw Error('HARNESS_PROJECT_STATUS_ENTRY_UNSAFE');
-	}
-	const digest = createHash('sha256').update(await fs.readFile(entry)).digest('hex');
+	const digest = await entryDigest(entry, 'HARNESS_PROJECT_STATUS_ENTRY_UNSAFE');
 	const nonce = randomBytes(16).toString('hex');
-	const env: NodeJS.ProcessEnv = {};
-	for (const key of ['PATH', 'Path', 'SystemRoot', 'WINDIR', 'HOME', 'USERPROFILE', 'TEMP', 'TMP']) {
-		if (process.env[key]) { env[key] = process.env[key]; }
-	}
-	env.ELECTRON_RUN_AS_NODE = '1';
-	const output = await new Promise<string>((resolve, reject) => {
-		const child = spawn(process.execPath, [entry, 'ide-status', '--ide-protocol', '2', '--nonce', nonce], {
-			cwd: canonical, shell: false, windowsHide: true, env, stdio: ['ignore', 'pipe', 'pipe']
-		});
-		let buffer = '', size = 0, finished = false;
-		const finish = (error?: Error): void => {
-			if (finished) { return; }
-			finished = true;
-			clearTimeout(timer);
-			if (error) { child.kill(); reject(error); } else { resolve(buffer); }
-		};
-		const timer = setTimeout(() => finish(Error('HARNESS_PROJECT_STATUS_TIMEOUT')), 5000);
-		timer.unref();
-		child.stdout?.on('data', (part: Buffer) => {
-			size += part.length;
-			if (size > MAX_BYTES) { finish(Error('HARNESS_PROJECT_STATUS_OVERSIZED')); }
-			else { buffer += part.toString('utf8'); }
-		});
-		child.stderr?.on('data', (part: Buffer) => {
-			size += part.length;
-			if (size > MAX_BYTES) { finish(Error('HARNESS_PROJECT_STATUS_OVERSIZED')); }
-		});
-		child.once('error', () => finish(Error('HARNESS_PROJECT_STATUS_PROCESS')));
-		child.once('close', code => finish(code === 0 ? undefined : Error('HARNESS_PROJECT_STATUS_FAILED')));
-	});
+	const { output } = await runProjectEntry(canonical, entry, ['ide-status', '--ide-protocol', '2', '--nonce', nonce], 5000, 'HARNESS_PROJECT_STATUS');
 	if (!trusted()) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
-	const current = await fs.lstat(entry);
-	if (!current.isFile() || current.isSymbolicLink() || current.size > 16 * 1024 * 1024 ||
-		await fs.realpath(entry) !== entry ||
-		createHash('sha256').update(await fs.readFile(entry)).digest('hex') !== digest) {
+	if (await entryDigest(entry, 'HARNESS_PROJECT_STATUS_ENTRY_CHANGED').catch(() => '') !== digest) {
 		throw Error('HARNESS_PROJECT_STATUS_ENTRY_CHANGED');
 	}
 	const currentDeclared = await readProjectCapabilities(canonical);
@@ -113,4 +77,83 @@ export async function queryProjectEngineStatus(root: string, consent: boolean, t
 		throw Error('HARNESS_PROJECT_STATUS_CAPABILITIES_CHANGED');
 	}
 	return validateStatusOutput(output, nonce);
+}
+
+/** Evidence returned by a project engine for one delegated gate; never contains logs. */
+export interface DelegatedGateResult {
+	schemaVersion: 2;
+	gate: string;
+	status: 'passed' | 'failed' | 'cancelled';
+	durationMs: number;
+	fenceEpoch: number;
+	evidenceDigest: string | null;
+}
+
+function validateGateOutput(raw: string, nonce: string, gate: string, epoch: number): DelegatedGateResult {
+	let parsed: unknown;
+	try { parsed = JSON.parse(raw); }
+	catch { throw Error('HARNESS_PROJECT_GATE_INVALID'); }
+	const value = parsed as Record<string, unknown>;
+	if (!value || typeof value !== 'object' || Array.isArray(value) ||
+		Object.keys(value).sort().join(',') !== 'durationMs,evidenceDigest,fenceEpoch,gate,nonce,schemaVersion,status' ||
+		value.schemaVersion !== 2 || value.nonce !== nonce || value.gate !== gate ||
+		(value.status !== 'passed' && value.status !== 'failed') ||
+		!Number.isSafeInteger(value.durationMs) || (value.durationMs as number) < 0 ||
+		typeof value.evidenceDigest !== 'string' || !/^[a-f0-9]{64}$/.test(value.evidenceDigest)) {
+		throw Error('HARNESS_PROJECT_GATE_INVALID');
+	}
+	// Echoing the IDE epoch proves the engine observed the shared writer fence.
+	if (value.fenceEpoch !== epoch) { throw Error('HARNESS_PROJECT_GATE_FENCE_IGNORED'); }
+	return { schemaVersion: 2, gate, status: value.status, durationMs: value.durationMs as number, fenceEpoch: epoch, evidenceDigest: value.evidenceDigest };
+}
+
+/**
+ * Protocol v2 gate delegation: the IDE holds the shared fence, the project engine
+ * runs ONE gate declared in its catalog and must echo nonce, gate and fence epoch.
+ * Requires explicit consent and both declared and handshake-reported
+ * `verification-gates` + `bounded-processes`. The entrypoint, capability manifest
+ * and gate catalog must be unchanged afterwards. Cancellation kills the process.
+ */
+export async function delegateProjectGate(
+	root: string, gateId: string, consent: boolean, trusted: () => boolean,
+	fence: SharedExecutionFence, signal?: AbortSignal, timeoutMs = 120_000
+): Promise<DelegatedGateResult> {
+	if (!consent) { throw Error('HARNESS_PROJECT_GATE_CONSENT_REQUIRED'); }
+	if (!trusted()) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
+	if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 30 * 60_000) { throw Error('HARNESS_PROJECT_GATE_INVALID'); }
+	const canonical = await fs.realpath(root);
+	if (canonical !== root) { throw Error('HARNESS_PROJECT_STATUS_ROOT_CHANGED'); }
+	const authority = await inspectHarnessAuthority(canonical);
+	if (authority.engine !== 'project' || !authority.entry || authority.reason !== 'project-entry') {
+		throw Error('HARNESS_PROJECT_STATUS_ENTRY_UNAVAILABLE');
+	}
+	const catalog = await readProjectGateCatalog(canonical);
+	if (!catalog?.gates.some(gate => gate.id === gateId)) { throw Error('HARNESS_PROJECT_GATE_UNKNOWN'); }
+	const handshake = await probeProjectHandshake(canonical, trusted);
+	const declared = await readProjectCapabilities(canonical);
+	const required: Capability[] = ['verification-gates', 'bounded-processes'];
+	if (!required.every(capability => handshake.reported.includes(capability) && declared.includes(capability))) {
+		throw Error('HARNESS_PROJECT_GATE_UNSUPPORTED');
+	}
+	const entry = path.join(canonical, authority.entry);
+	const digest = await entryDigest(entry, 'HARNESS_PROJECT_STATUS_ENTRY_UNSAFE');
+	const nonce = randomBytes(16).toString('hex');
+	await fence.assertCurrent();
+	const started = Date.now();
+	const { output, cancelled } = await runProjectEntry(canonical, entry, [
+		'ide-gate', '--ide-protocol', '2', '--nonce', nonce, '--gate', gateId, '--fence-epoch', String(fence.epoch)
+	], timeoutMs, 'HARNESS_PROJECT_GATE', signal);
+	await fence.assertCurrent();
+	if (!trusted()) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
+	if (await entryDigest(entry, 'HARNESS_PROJECT_STATUS_ENTRY_CHANGED').catch(() => '') !== digest) {
+		throw Error('HARNESS_PROJECT_STATUS_ENTRY_CHANGED');
+	}
+	if (JSON.stringify(await readProjectCapabilities(canonical)) !== JSON.stringify(declared)) {
+		throw Error('HARNESS_PROJECT_STATUS_CAPABILITIES_CHANGED');
+	}
+	await validateProjectGateCatalog(canonical, catalog.digest);
+	if (cancelled) {
+		return { schemaVersion: 2, gate: gateId, status: 'cancelled', durationMs: Date.now() - started, fenceEpoch: fence.epoch, evidenceDigest: null };
+	}
+	return validateGateOutput(output, nonce, gateId, fence.epoch);
 }

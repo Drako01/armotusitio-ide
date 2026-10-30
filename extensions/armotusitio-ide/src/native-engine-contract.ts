@@ -135,40 +135,10 @@ export async function probeProjectHandshake(root: string, trusted: () => boolean
 	const authority = await inspectHarnessAuthority(canonical);
 	if (authority.engine !== 'project' || !authority.entry || authority.reason !== 'project-entry') { throw Error('HARNESS_HANDSHAKE_ENTRY_UNAVAILABLE'); }
 	const target = path.join(canonical, authority.entry);
-	const entry = await fs.lstat(target);
-	if (!entry.isFile() || entry.isSymbolicLink() || entry.size > 16 * 1024 * 1024 || await fs.realpath(target) !== target) { throw Error('HARNESS_HANDSHAKE_ENTRY_UNSAFE'); }
-	const originalEntryDigest = createHash('sha256').update(await fs.readFile(target)).digest('hex');
+	const originalEntryDigest = await entryDigest(target, 'HARNESS_HANDSHAKE_ENTRY_UNSAFE');
 	const declared = await readProjectCapabilities(canonical);
 	const nonce = randomBytes(16).toString('hex');
-	const environment: NodeJS.ProcessEnv = {};
-	for (const key of ['PATH', 'Path', 'SystemRoot', 'WINDIR', 'HOME', 'USERPROFILE', 'TEMP', 'TMP']) {
-		if (process.env[key]) { environment[key] = process.env[key]; }
-	}
-	environment.ELECTRON_RUN_AS_NODE = '1';
-	const output = await new Promise<string>((resolve, reject) => {
-		const child = spawn(process.execPath, [target, 'capabilities', '--ide-protocol', '2', '--nonce', nonce], {
-			cwd: canonical, shell: false, windowsHide: true, env: environment, stdio: ['ignore', 'pipe', 'pipe']
-		});
-		let stdout = '';
-		let bytes = 0;
-		let finished = false;
-		const finish = (error?: Error): void => {
-			if (finished) { return; }
-			finished = true;
-			clearTimeout(timer);
-			if (error) { child.kill(); reject(error); } else { resolve(stdout); }
-		};
-		const timer = setTimeout(() => finish(Error('HARNESS_HANDSHAKE_TIMEOUT')), 5000);
-		timer.unref();
-		child.stdout?.on('data', (data: Buffer) => {
-			bytes += data.length;
-			if (bytes > 16 * 1024) { finish(Error('HARNESS_HANDSHAKE_OVERSIZED')); return; }
-			stdout += data.toString('utf8');
-		});
-		child.stderr?.on('data', (data: Buffer) => { bytes += data.length; if (bytes > 16 * 1024) { finish(Error('HARNESS_HANDSHAKE_OVERSIZED')); } });
-		child.once('error', () => finish(Error('HARNESS_HANDSHAKE_PROCESS')));
-		child.once('close', code => finish(code === 0 ? undefined : Error('HARNESS_HANDSHAKE_FAILED')));
-	});
+	const { output } = await runProjectEntry(canonical, target, ['capabilities', '--ide-protocol', '2', '--nonce', nonce], 5000, 'HARNESS_HANDSHAKE');
 	if (!trusted()) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
 	let parsed: unknown;
 	try { parsed = JSON.parse(output); } catch { throw Error('HARNESS_HANDSHAKE_INVALID'); }
@@ -181,10 +151,7 @@ export async function probeProjectHandshake(root: string, trusted: () => boolean
 		new Set(result.capabilities).size !== result.capabilities.length) {
 		throw Error('HARNESS_HANDSHAKE_INVALID');
 	}
-	const currentEntry = await fs.lstat(target);
-	if (!currentEntry.isFile() || currentEntry.isSymbolicLink() || currentEntry.size > 16 * 1024 * 1024 ||
-		await fs.realpath(target) !== target ||
-		createHash('sha256').update(await fs.readFile(target)).digest('hex') !== originalEntryDigest) {
+	if (await entryDigest(target, 'HARNESS_HANDSHAKE_ENTRY_CHANGED').catch(() => '') !== originalEntryDigest) {
 		throw Error('HARNESS_HANDSHAKE_ENTRY_CHANGED');
 	}
 	const currentDeclaration = await readProjectCapabilities(canonical);
@@ -193,4 +160,61 @@ export async function probeProjectHandshake(root: string, trusted: () => boolean
 	}
 	if (!trusted()) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
 	return { protocol: 2, reported: result.capabilities as Capability[] };
+}
+
+const MAX_ENTRY_OUTPUT_BYTES = 16 * 1024;
+/** SHA-256 of a regular, canonical, non-linked project entrypoint (max 16 MiB). */
+export async function entryDigest(entry: string, unsafe: string): Promise<string> {
+	const stat = await fs.lstat(entry);
+	if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 16 * 1024 * 1024 || await fs.realpath(entry) !== entry) {
+		throw Error(unsafe);
+	}
+	return createHash('sha256').update(await fs.readFile(entry)).digest('hex');
+}
+
+/**
+ * Run the project's Node entrypoint without a shell, with a minimal environment,
+ * bounded output and a deadline. Aborting kills the process and reports `cancelled`.
+ */
+export async function runProjectEntry(
+	cwd: string, entry: string, args: string[], timeoutMs: number, scope: 'HARNESS_HANDSHAKE' | 'HARNESS_PROJECT_STATUS' | 'HARNESS_PROJECT_GATE', signal?: AbortSignal
+): Promise<{ output: string; cancelled: boolean }> {
+	const env: NodeJS.ProcessEnv = {};
+	for (const key of ['PATH', 'Path', 'SystemRoot', 'WINDIR', 'HOME', 'USERPROFILE', 'TEMP', 'TMP']) {
+		if (process.env[key]) { env[key] = process.env[key]; }
+	}
+	env.ELECTRON_RUN_AS_NODE = '1';
+	if (signal?.aborted) { return { output: '', cancelled: true }; }
+	return new Promise((resolve, reject) => {
+		const child = spawn(process.execPath, [entry, ...args], {
+			cwd, shell: false, windowsHide: true, env, stdio: ['ignore', 'pipe', 'pipe']
+		});
+		let buffer = '', size = 0, finished = false, exited = false;
+		let settle: (() => void) | undefined;
+		// Settle only after the process exited, so a caller never releases the
+		// shared fence while a cancelled or timed-out engine is still running.
+		child.once('close', () => { exited = true; settle?.(); });
+		const finish = (error?: Error, cancelled = false): void => {
+			if (finished) { return; }
+			finished = true;
+			clearTimeout(timer);
+			signal?.removeEventListener('abort', onAbort);
+			settle = () => error ? reject(error) : resolve({ output: cancelled ? '' : buffer, cancelled });
+			if (exited) { settle(); }
+			else if (error || cancelled) { child.kill('SIGKILL'); }
+		};
+		const onAbort = (): void => finish(undefined, true);
+		signal?.addEventListener('abort', onAbort, { once: true });
+		const timer = setTimeout(() => finish(Error(`${scope}_TIMEOUT`)), timeoutMs);
+		timer.unref();
+		const oversized = (part: Buffer, keep: boolean): void => {
+			size += part.length;
+			if (size > MAX_ENTRY_OUTPUT_BYTES) { finish(Error(`${scope}_OVERSIZED`)); }
+			else if (keep) { buffer += part.toString('utf8'); }
+		};
+		child.stdout?.on('data', (part: Buffer) => oversized(part, true));
+		child.stderr?.on('data', (part: Buffer) => oversized(part, false));
+		child.once('error', () => { exited = true; finish(Error(`${scope}_PROCESS`)); });
+		child.once('close', code => finish(code === 0 ? undefined : Error(`${scope}_FAILED`)));
+	});
 }
