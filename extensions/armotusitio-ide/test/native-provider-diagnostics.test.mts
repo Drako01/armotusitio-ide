@@ -7,19 +7,18 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { installFakeCodex } from './native-fake-provider.mts';
 import { diagnoseProvider, inspectProviderHelp, parseLocalAuthStatus } from '../src/native-provider-diagnostics.ts';
 
 test('provider diagnostics reject unknown hosts without invoking any model', async () => {
 	await assert.rejects(diagnoseProvider('unknown' as unknown as Parameters<typeof diagnoseProvider>[0]), /HARNESS_PROVIDER_UNSUPPORTED/);
 });
 
-test('diagnostics report availability but never imply authentication', { skip: process.platform === 'win32' }, async () => {
+test('diagnostics report availability but never imply authentication', async () => {
 	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-provider-diagnostic-'));
 	const oldPath = process.env.PATH;
 	try {
-		const cli = path.join(root, 'codex');
-		await fs.writeFile(cli, '#!/bin/sh\necho "codex-cli 1.2.3"\n', { mode: 0o755 });
-		await fs.chmod(cli, 0o755);
+		await installFakeCodex(root, '#!/usr/bin/env node\nconsole.log("codex-cli 1.2.3");\n');
 		process.env.PATH = root + path.delimiter + (oldPath || '');
 		const result = await diagnoseProvider('codex');
 		assert.equal(result.installed, true);
