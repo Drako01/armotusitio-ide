@@ -206,6 +206,10 @@ export class NativeAgentWorkflow {
 		// Validate all visible persisted records before changing the stale lock.
 		// A corrupt history must not unlock an uncertain workflow for a new writer.
 		const history = await this.readHistory(MAX_STORED);
+		const projectKey = createHash('sha256').update(await fs.realpath(this.root)).digest('hex');
+		if (history.some(record => record.projectKey !== projectKey)) {
+			throw Error('HARNESS_WORKFLOW_FOREIGN_PROJECT_STATE');
+		}
 		const lockFile = path.join(this.storage, 'execution.lock');
 		try {
 			const stat = await fs.lstat(lockFile);
@@ -328,7 +332,7 @@ export class NativeAgentWorkflow {
 		if (canonical !== this.root) { throw Error('HARNESS_WORKFLOW_ROOT_CHANGED'); }
 		const digest = workflowDigest(canonical, plan);
 		if (approvedDigest !== digest) { throw Error('HARNESS_WORKFLOW_APPROVAL_CHANGED'); }
-		const previous = (await this.history()).find(record => record.id === previousId);
+		const previous = (await this.readHistory(MAX_STORED)).find(record => record.id === previousId);
 		if (!previous || previous.status !== 'interrupted' ||
 			previous.projectKey !== createHash('sha256').update(canonical).digest('hex') ||
 			previous.planDigest !== digest) {
