@@ -344,7 +344,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			if (!worktrees.length) { vscode.window.showInformationMessage('No hay worktrees administrados para recuperar.'); return; }
 			const chosenWorktree = await vscode.window.showQuickPick(
 				worktrees.map(worktree => ({ label: worktree.id, description: worktree.root, worktree })),
-				{ title: 'Worktree administrado para rollback explícito' });
+				{ title: 'Worktree administrado para rollback expl\u00edcito' });
 			if (!chosenWorktree) { return; }
 			const checkpointDir = path.join(metricsDirectory(root), 'checkpoints');
 			const entries = await fs.readdir(checkpointDir, { withFileTypes: true }).catch(error => {
@@ -355,11 +355,11 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			const ids = entries.filter(entry => entry.isFile() && !entry.isSymbolicLink() &&
 				/^[a-f0-9-]{36}\.json$/i.test(entry.name)).map(entry => entry.name.slice(0, -5));
 			if (!ids.length) { vscode.window.showInformationMessage('No hay checkpoints para recuperar.'); return; }
-			const id = await vscode.window.showQuickPick(ids, { title: 'Seleccioná el checkpoint del worktree' });
+			const id = await vscode.window.showQuickPick(ids, { title: 'Seleccion\u00e1 el checkpoint del worktree' });
 			if (!id) { return; }
 			const confirmation = await vscode.window.showWarningMessage(
 				'ROLLBACK DESTRUCTIVO: descartar cambios rastreados y archivos nuevos NO ignorados solo en ' +
-				chosenWorktree.worktree.root + '. No modifica el checkout principal. ¿Confirmar?',
+				chosenWorktree.worktree.root + '. No modifica el checkout principal. \u00bfConfirmar?',
 				{ modal: true }, 'Revertir worktree');
 			if (confirmation !== 'Revertir worktree' || !authorized(chosen.folder)) { return; }
 			const fence = await acquireSharedExecutionFence(root, metricsDirectory(root), 'native-workflow');
@@ -422,12 +422,12 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 				folders.length === 1 ? folders[0] :
 					(await vscode.window.showQuickPick(folders.map((folder: Host) => ({
 						label: folder.name, description: folder.uri.fsPath, folder
-					})), { placeHolder: 'Elegí el Harness externo' }))?.folder;
+					})), { placeHolder: 'Eleg\u00ed el Harness externo' }))?.folder;
 			if (!selected || !authorized(selected)) { return; }
 			const root = await fs.realpath(selected.uri.fsPath);
 			if ((await inspectHarnessAuthority(root)).engine !== 'project') { throw Error('HARNESS_PROJECT_STATUS_NOT_PROJECT'); }
 			const confirmation = await vscode.window.showWarningMessage(
-				'Consultar estado ejecuta código del Harness del proyecto bajo tu usuario. El protocolo limita la respuesta, pero NO impone aislamiento OS ni permite escrituras híbridas. ¿Continuar?',
+				'Consultar estado ejecuta c\u00f3digo del Harness del proyecto bajo tu usuario. El protocolo limita la respuesta, pero NO impone aislamiento OS ni permite escrituras h\u00edbridas. \u00bfContinuar?',
 				{ modal: true }, 'Consultar estado externo');
 			if (confirmation !== 'Consultar estado externo' || !authorized(selected)) { return; }
 			const status = await queryProjectEngineStatus(root, true, () => authorized(selected));
@@ -436,7 +436,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 				language: 'json',
 				content: JSON.stringify({
 					project: root, ...status,
-					note: 'Observación declarada por el motor del proyecto, sin autoridad para ejecutar tareas ni modificar archivos.'
+					note: 'Observaci\u00f3n declarada por el motor del proyecto, sin autoridad para ejecutar tareas ni modificar archivos.'
 				}, null, 2)
 			}), { preview: true });
 		} catch (error) { showError(error); }
