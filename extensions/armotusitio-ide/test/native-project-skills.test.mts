@@ -79,3 +79,55 @@ test('symlinked top-level skill parent is rejected instead of following outside 
 		await fs.rm(outside, { recursive: true, force: true });
 	}
 });
+
+test('Codex-only project skills are discovered without any project Harness', async () => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-codex-skills-'));
+	try {
+		const canonical = await fs.realpath(root);
+		const directory = path.join(root, '.codex', 'skills', 'database-migrations');
+		await fs.mkdir(directory, { recursive: true });
+		await fs.writeFile(path.join(directory, 'SKILL.md'), '# Codex migration conventions');
+		const skills = await listProjectSkills(canonical);
+		assert.deepEqual(skills.map(skill => [skill.name, skill.source]), [['database-migrations', '.codex/skills']]);
+		assert.equal(await readProjectSkill(canonical, skills[0]), '# Codex migration conventions');
+	} finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
+test('shared project skill takes precedence over duplicate Codex and Claude names', async () => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-skill-precedence-'));
+	try {
+		for (const source of ['.agents', '.codex', '.claude']) {
+			const directory = path.join(root, source, 'skills', 'go-api');
+			await fs.mkdir(directory, { recursive: true });
+			await fs.writeFile(path.join(directory, 'SKILL.md'), source);
+		}
+		const canonical = await fs.realpath(root);
+		const skills = await listProjectSkills(canonical);
+		assert.equal(skills.length, 1);
+		assert.equal(skills[0].source, '.agents/skills');
+		assert.equal(await readProjectSkill(canonical, skills[0]), '.agents');
+	} finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
+test('Codex skills directory symlink is never traversed', async (t) => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-codex-link-'));
+	const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-codex-outside-'));
+	try {
+		await fs.mkdir(path.join(root, '.codex'));
+		await fs.mkdir(path.join(outside, 'hidden'), { recursive: true });
+		await fs.writeFile(path.join(outside, 'hidden', 'SKILL.md'), '# Outside');
+		try {
+			await fs.symlink(outside, path.join(root, '.codex', 'skills'), process.platform === 'win32' ? 'junction' : 'dir');
+		} catch (error) {
+			if (['EPERM', 'EACCES', 'ENOTSUP'].includes((error as NodeJS.ErrnoException).code || '')) {
+				t.skip('Directory links unavailable on this machine');
+				return;
+			}
+			throw error;
+		}
+		assert.deepEqual(await listProjectSkills(await fs.realpath(root)), []);
+	} finally {
+		await fs.rm(root, { recursive: true, force: true });
+		await fs.rm(outside, { recursive: true, force: true });
+	}
+});
