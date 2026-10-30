@@ -16,6 +16,7 @@ import { readAgentStatistics, recordAgentMetric } from './native-agent-metrics.t
 import { NativeAgentWorkflow, proposedWorkflow, workflowDigest, type WorkflowRun } from './native-agent-workflow.ts';
 import { createAgentWorktree, removeCleanAgentWorktree, listAgentWorktrees, type ManagedWorktree } from './native-agent-worktree.ts';
 import { describeEngine } from './native-engine-contract.ts';
+import { diagnoseProvider } from './native-provider-diagnostics.ts';
 import { summarizeGatePerformance } from './native-performance.ts';
 
 type Host = any; // vscode host is injected by the existing extension (avoid duplicating the UI layer).
@@ -247,6 +248,18 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			const updated = await workflow.reconcile();
 			vscode.window.showInformationMessage('Workflows reconciliados: ' + updated);
 		} catch (error) { showError(error); } finally { controller.refresh(); }
+	}));
+
+	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.nativeProviderDiagnostics', async (requested?: string) => {
+		try {
+			if (!ensureTrust()) { return; }
+			const chosen = await choose(requested); if (!chosen) { return; }
+			const diagnostics = await Promise.all([diagnoseProvider('codex'), diagnoseProvider('claude')]);
+			if (!authorized(chosen.folder)) { return; }
+			await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({ language: 'json',
+				content: JSON.stringify({ providers: diagnostics, note: 'CLI --version only. Authentication and supported flags require an explicit provider smoke test.' }, null, 2)
+			}), { preview: true });
+		} catch (error) { showError(error); }
 	}));
 	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.nativeAgentMetrics', async (requested?: string) => {
 		try {
