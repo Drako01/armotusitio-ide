@@ -127,3 +127,27 @@ test('structured Codex provider usage flows through real local subprocess transp
 		await fs.rm(root, { recursive: true, force: true });
 	}
 });
+
+test('provider progress exposes only bounded byte counts, never secrets or prompts', { skip: process.platform === 'win32' }, async () => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-progress-'));
+	const previousPath = process.env.PATH;
+	try {
+		const bin = path.join(root, 'bin');
+		await fs.mkdir(bin);
+		const cli = path.join(bin, 'codex');
+		await fs.writeFile(cli, '#!/usr/bin/env node\nprocess.stdout.write("a".repeat(18000));\n', { mode: 0o755 });
+		await fs.chmod(cli, 0o755);
+		process.env.PATH = bin + path.delimiter + (previousPath || '');
+		const draft = { ...base, projectRoot: await fs.realpath(root), instruction: 'SECRET-DO-NOT-EMIT' };
+		const observed: Array<{ observedBytes: number; at: string }> = [];
+		const run = await executeReviewedAgent(reviewAgentDraft(draft), draft, 10000, event => observed.push(event));
+		const outcome = await run.outcome;
+		assert.equal(outcome.status, 'passed');
+		assert.ok(observed.length >= 1);
+		assert.ok(observed.every(event => typeof event.observedBytes === 'number' && event.observedBytes <= 18000));
+		assert.ok(observed.every(event => !JSON.stringify(event).includes('SECRET-DO-NOT-EMIT')));
+	} finally {
+		if (previousPath === undefined) { delete process.env.PATH; } else { process.env.PATH = previousPath; }
+		await fs.rm(root, { recursive: true, force: true });
+	}
+});
