@@ -243,16 +243,25 @@ export class NativeAgentWorkflow {
 			}
 			throw error;
 		});
+		const guardData = JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() });
+		const guardIdentity = await guard.stat();
 		let guardRecorded = false;
 		try {
-			await guard.writeFile(JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }));
+			await guard.writeFile(guardData);
 			await guard.sync();
 			guardRecorded = true;
 			return await this.reconcileLocked();
 		} finally {
 			await guard.close();
-			// Failed guard initialization leaves its evidence in place for manual recovery.
-			if (guardRecorded) { await fs.rm(guardFile); }
+			// Never unlink a guard replaced by another process.
+			if (guardRecorded) {
+				const current = await fs.lstat(guardFile).catch(() => undefined);
+				if (current?.isFile() && !current.isSymbolicLink() &&
+					current.ino === guardIdentity.ino && current.dev === guardIdentity.dev &&
+					await fs.readFile(guardFile, 'utf8') === guardData) {
+					await fs.rm(guardFile);
+				}
+			}
 		}
 	}
 
