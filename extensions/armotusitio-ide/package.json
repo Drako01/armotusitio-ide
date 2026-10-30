@@ -149,7 +149,7 @@
     "commands": [
       {
         "command": "atsHarness.nativeRemoveConfiguration",
-        "title": "ArmoTuSitio: Retirar Configuraci\u00f3n Generada del Harness"
+        "title": "ArmoTuSitio: Retirar Configuración Generada del Harness"
       },
       {
         "command": "atsHarness.nativeSupport",
@@ -158,6 +158,10 @@
       {
         "command": "atsHarness.nativeAgentReview",
         "title": "ArmoTuSitio: Revisar propuesta de agente nativo"
+      },
+      {
+        "command": "atsHarness.nativeAgentExecute",
+        "title": "ArmoTuSitio: Ejecutar agente IA con autorización"
       },
       {
         "command": "atsHarness.nativeConfigure",
