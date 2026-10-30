@@ -559,3 +559,32 @@ test('reconciliation refuses a committed journal belonging to another project', 
 		assert.ok((await fs.readFile(lockFile, 'utf8')).includes('99999999'));
 	} finally { await fs.rm(root, { recursive: true, force: true }); }
 });
+
+test('workflow does not record passed after workspace trust is revoked inside verification', async () => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-workflow-trust-final-'));
+	const oldPath = process.env.PATH;
+	try {
+		const canonical = await fs.realpath(root);
+		const bin = path.join(root, 'bin');
+		await fs.mkdir(bin);
+		await installFakeCodex(bin, [
+			'#!/usr/bin/env node',
+			'process.stdin.resume();',
+			'process.stdin.on("end", () => console.log("HARNESS_REVIEW: PASS"));'
+		].join('\n'));
+		process.env.PATH = bin + path.delimiter + (oldPath || '');
+		const flow = new NativeAgentWorkflow(canonical, path.join(root, 'private'));
+		const plan = proposedWorkflow('codex', 'Validate cancellation after verification');
+		let trusted = true;
+		const run = await flow.start(plan, workflowDigest(canonical, plan), () => trusted, async () => {
+			trusted = false;
+			return true;
+		});
+		const result = await run.result;
+		assert.equal(result.status, 'cancelled');
+		assert.equal((await flow.history())[0].status, 'cancelled');
+	} finally {
+		if (oldPath === undefined) { delete process.env.PATH; } else { process.env.PATH = oldPath; }
+		await fs.rm(root, { recursive: true, force: true });
+	}
+});
