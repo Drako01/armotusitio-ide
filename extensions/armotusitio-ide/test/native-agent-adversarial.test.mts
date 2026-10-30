@@ -40,7 +40,7 @@ test('provider invocation holds command arguments fixed regardless of hostile in
 	};
 	const invocation = buildAgentInvocation(draft);
 	assert.equal(invocation.executable, 'codex');
-	assert.deepEqual(invocation.args.slice(0, 3), ['exec', '--sandbox', 'workspace-write']);
+	assert.deepEqual(invocation.args.slice(0, 5), ['--ask-for-approval', 'never', 'exec', '--sandbox', 'workspace-write']);
 	assert.equal(invocation.args.includes('danger-full-access'), false);
 	assert.equal(invocation.args.includes('--dangerously-bypass-approvals'), false);
 	assert.ok(invocation.stdin.includes(draft.instruction));
