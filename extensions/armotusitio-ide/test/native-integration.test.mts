@@ -193,3 +193,20 @@ test('Codex-only project exposes its skills to native agent review without a pro
 		assert.deepEqual(preview.skills.map(skill => [skill.name, skill.source]), [['security', '.codex/skills']]);
 	} finally { await f.cleanup(); }
 });
+
+test('native multi-skill selection rejects duplicated entries before provider invocation', async () => {
+	const f = await fixture();
+	try {
+		const dir = path.join(f.roots[0], '.codex', 'skills', 'go-api');
+		await fs.mkdir(dir, { recursive: true });
+		await fs.writeFile(path.join(dir, 'SKILL.md'), '# Codex');
+		f.vscode.window.showQuickPick = async (items, options) => {
+			if (options?.title === 'Rol del agente') { return 'planner'; }
+			if (options?.canPickMany) { return [items[0], items[0]]; }
+			return items[0];
+		};
+		await f.invoke('nativeAgentExecute', f.roots[0]);
+		assert.ok(f.notices.some(notice => notice.includes('HARNESS_PROJECT_SKILL_SELECTION_INVALID')));
+		assert.equal(f.documents.length, 0);
+	} finally { await f.cleanup(); }
+});
