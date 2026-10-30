@@ -486,6 +486,7 @@ export class NativeAgentWorkflow {
 		const byStep = new Map(record.steps.map(step => [step.id, step]));
 		const previous: string[] = [];
 		for (const wave of planAgentWaves(plan)) {
+			await this.sharedFence?.assertCurrent();
 			if (this.cancelled || !trusted()) { record.status = 'cancelled'; return; }
 			if (Date.now() >= deadline) { record.status = 'failed'; return; }
 			const staged = wave.ids.map(id => {
@@ -497,11 +498,13 @@ export class NativeAgentWorkflow {
 				return { handoff, step };
 			});
 			for (const { step } of staged) { this.emit(record, 'step-started', step); }
+			await this.sharedFence?.assertCurrent();
 			await atomicWrite(file, record);
 			const outputs = await Promise.all(staged.map(async ({ handoff, step }) => {
 				let output: string | undefined;
 				try {
 					if (this.cancelled || !trusted()) { step.status = 'cancelled'; return output; }
+					await this.sharedFence?.assertCurrent();
 					const draft = {
 						schemaVersion: 1 as const, provider: handoff.provider, role: handoff.role,
 						projectRoot: canonical, readOnly: handoff.role !== 'implementer',
@@ -536,6 +539,7 @@ export class NativeAgentWorkflow {
 				if (outputs[index]) { previous.push(outputs[index]!); }
 				this.emit(record, 'step-finished', staged[index].step);
 			}
+			await this.sharedFence?.assertCurrent();
 			await atomicWrite(file, record);
 			if (staged.some(({ step }) => step.status !== 'passed') || this.cancelled || !trusted()) {
 				record.status = this.cancelled || !trusted() || staged.some(({ step }) => step.status === 'cancelled') ? 'cancelled' : 'failed';
@@ -651,6 +655,7 @@ export class NativeAgentWorkflow {
 						await atomicWrite(file, record);
 						this.emit(record, 'step-started', step);
 						try {
+							await fence.assertCurrent();
 							const draft = {
 								schemaVersion: 1 as const, provider: handoff.provider, role: handoff.role,
 								projectRoot: canonical, readOnly: handoff.role !== 'implementer',
@@ -681,6 +686,7 @@ export class NativeAgentWorkflow {
 						} finally {
 							this.active = undefined;
 							step.endedAt = new Date().toISOString();
+							await fence.assertCurrent();
 							await atomicWrite(file, record);
 							this.emit(record, 'step-finished', step);
 						}
@@ -735,12 +741,13 @@ export class NativeAgentWorkflow {
 					}
 				} else if (!verify) { record.verification = 'not-configured'; }
 				if (record.verification) { this.emit(record, 'verification-finished'); }
-				if (record.status === 'running') { record.status = 'passed'; }
+				if (record.status === 'running') { record.status = this.cancelled || !trusted() ? 'cancelled' : 'passed'; }
 			} catch {
 				record.status = 'failed';
 				for (const run of this.activeDAG) { run.cancel(); }
 			} finally {
 				record.endedAt = new Date().toISOString();
+				if (record.status === 'passed' && (this.cancelled || !trusted())) { record.status = 'cancelled'; }
 				let terminalStatePersisted = false;
 				try {
 					this.emit(record, 'workflow-finished');
