@@ -101,17 +101,55 @@ export function proposedWorkflow(provider: NativeProvider, instruction: string):
 async function atomicWrite(file: string, record: WorkflowRecord): Promise<void> {
 	const payload = JSON.stringify(record, null, 2);
 	if (Buffer.byteLength(payload) > MAX_STATE_BYTES) { throw Error('HARNESS_WORKFLOW_STATE_TOO_LARGE'); }
+	const journal = file + '.intent';
+	let previous: Buffer | undefined;
+	try {
+		const stat = await fs.lstat(file);
+		if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_STATE_BYTES) {
+			throw Error('HARNESS_WORKFLOW_UNSAFE_STATE');
+		}
+		previous = await fs.readFile(file);
+		if (previous.length > MAX_STATE_BYTES) { throw Error('HARNESS_WORKFLOW_UNSAFE_STATE'); }
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== 'ENOENT') { throw error; }
+	}
+	// Persist metadata-only write intent first. If state replacement fails, the
+	// intent remains and blocks future work; no uncertain write is replayed.
+	const intent = JSON.stringify({
+		schemaVersion: 1, id: record.id,
+		before: previous ? createHash('sha256').update(previous).digest('hex') : null,
+		after: createHash('sha256').update(payload).digest('hex'),
+		createdAt: new Date().toISOString()
+	});
+	const intentHandle = await fs.open(journal, 'wx', 0o600).catch(error => {
+		if ((error as NodeJS.ErrnoException).code === 'EEXIST') { throw Error('HARNESS_WORKFLOW_PENDING_JOURNAL'); }
+		throw error;
+	});
+	let prepared = false;
+	let identity;
+	try {
+		identity = await intentHandle.stat();
+		await intentHandle.writeFile(intent);
+		await intentHandle.sync();
+		prepared = true;
+	} finally { await intentHandle.close(); }
+	if (!prepared || !identity) { throw Error('HARNESS_WORKFLOW_PENDING_JOURNAL'); }
 	const temp = file + '.' + randomUUID() + '.tmp';
 	try {
 		const handle = await fs.open(temp, 'wx', 0o600);
 		try {
 			await handle.writeFile(payload);
-			// Flush the completed temporary record before replacing durable state.
-			// Directory metadata durability and multi-record journaling remain future work.
 			await handle.sync();
 		} finally { await handle.close(); }
 		await fs.rename(temp, file);
 	} finally { await fs.rm(temp, { force: true }); }
+	const current = await fs.lstat(journal);
+	if (!current.isFile() || current.isSymbolicLink() ||
+		current.ino !== identity.ino || current.dev !== identity.dev ||
+		await fs.readFile(journal, 'utf8') !== intent) {
+		throw Error('HARNESS_WORKFLOW_PENDING_JOURNAL');
+	}
+	await fs.rm(journal);
 }
 
 function validRecord(value: unknown): value is WorkflowRecord {
@@ -188,8 +226,16 @@ export class NativeAgentWorkflow {
 		return true;
 	}
 
+	private async assertNoPendingJournals(): Promise<void> {
+		const entries = await fs.readdir(this.storage);
+		if (entries.some(name => /^[a-f0-9-]{36}\\.json\\.intent$/i.test(name))) {
+			throw Error('HARNESS_WORKFLOW_PENDING_JOURNAL');
+		}
+	}
+
 	private async readHistory(limit: number): Promise<WorkflowRecord[]> {
 		if (!await this.assertSafeStorage(false)) { return []; }
+		await this.assertNoPendingJournals();
 		let files: string[];
 		try { files = await fs.readdir(this.storage); }
 		catch (error) {
@@ -434,13 +480,17 @@ export class NativeAgentWorkflow {
 		if (ordered.length > MAX_WORKFLOW_PROVIDER_CALLS) { throw Error('HARNESS_WORKFLOW_CALL_BUDGET_EXCEEDED'); }
 		if (planAgentWaves(plan).some(wave => wave.ids.length > 1)) { validateDAGReviewCoverage(plan); }
 		await this.assertSafeStorage(true);
+		await this.assertNoPendingJournals();
 		await this.assertNoReconciliation();
 		const lockFile = path.join(this.storage, 'execution.lock');
 		const lock = await fs.open(lockFile, 'wx', 0o600).catch(error => {
 			if ((error as NodeJS.ErrnoException).code === 'EEXIST') { throw Error('HARNESS_WORKFLOW_RECONCILIATION_REQUIRED'); }
 			throw error;
 		});
-		try { await this.assertNoReconciliation(); }
+		try {
+			await this.assertNoReconciliation();
+			await this.assertNoPendingJournals();
+		}
 		catch (error) {
 			await lock.close();
 			await fs.rm(lockFile);
