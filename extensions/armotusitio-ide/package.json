@@ -184,6 +184,10 @@
         "title": "ArmoTuSitio: Métricas locales de agentes IA"
       },
       {
+        "command": "atsHarness.nativeProjectHandshake",
+        "title": "ArmoTuSitio: Negociar capacidades del Harness externo (autorización explícita)"
+      },
+      {
         "command": "atsHarness.nativeProviderDiagnostics",
         "title": "ArmoTuSitio: Diagnosticar Codex y Claude locales"
       },
