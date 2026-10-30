@@ -346,6 +346,14 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 - [ ] **CI como gate de PR**: futura integración según política de ramas, tras demostrar runs reales.
 - [ ] **Sandbox OS y recuperación transaccional de archivos**: pendientes; ninguna prueba de barrera o CI sustituye aislamiento efectivo.
 
+### Redis opcional y política Local First (decisión 2026-10-30)
+
+- [x] **Decisión arquitectónica:** Redis es una capacidad **opcional**, no una dependencia del IDE. El Harness debe funcionar íntegramente sin Redis ni Docker.
+- [ ] **Adaptador futuro, condicionado a necesidad demostrada:** detectar Redis únicamente en un endpoint configurado y permitido; utilizarlo para colas, coordinación o eventos solo cuando aporte valor.
+- [ ] **Fallback seguro:** ante indisponibilidad inicial, seguir con coordinación local. Ante pérdida de Redis con trabajos distribuidos activos, no sustituir locks ni reejecutar tareas de forma silenciosa: bloquear y reconciliar explícitamente.
+- [ ] **Pruebas:** ejecución sin Redis, Redis disponible, caída durante operaciones, recuperación y separación entre instancias. No iniciar contenedores ni instalar Redis automáticamente.
+- [x] **Validación sin GitHub Actions:** el responsable descarta Actions por consumo. Se retiró el workflow específico del Harness de esta rama. Los controles deben seguir ejecutándose localmente.
+
 ## Validación local obligatoria
 
 Desde la raíz del repositorio, con las dependencias instaladas:
