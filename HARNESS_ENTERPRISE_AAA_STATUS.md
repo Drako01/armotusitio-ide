@@ -278,6 +278,17 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 
 **Causa probable, aún no certificada:** las versiones recientes de Codex admiten `--ask-for-approval` como argumento global **antes** de `exec`, pero pueden rechazarlo cuando se coloca después del subcomando. No declarar la hipótesis confirmada sin salida diagnóstica o smoke exitoso.
 
+### Primer E2E Codex autenticado: PASS; higiene de test corregida (2026-10-30, 17:44 ART)
+
+**Evidencia del operador:** `Texto pegado(20261030-204436).txt` (validación automatizada Windows) y transcripción de `ats-harness-real-provider-smoke.mts --provider codex` con autorización interactiva `RUN`.
+
+- [x] **Smoke real Codex autenticado completado**: `passed=true`, `status=passed`, `exitCode=0`, duración **27.864 ms**, `scopeVerified=true`, `scopeViolation=false`, `responseTruncated=false`, `tokenUsageReported=true`. Confirma una única ejecución real de solo lectura y revisión explícita sobre fixture Git temporal; **no certifica** un workflow completo con escritura, permisos OS, cancelación o recuperación.
+- [x] **Pruebas automatizadas locales:** `npm test --prefix extensions/armotusitio-ide`: **185 PASS, 0 FAIL, 1 SKIP** (186 tests); TypeScript, renderer, bundle y recursos PASS.
+- [x] **Incidente de higiene identificado y corregido en código:** `Focused hygiene` marcaba un literal de comillas dobles en `native-real-smoke.test.mts`, línea 33, regla `local/code-no-unexternalized-strings`. Se sustituyó por un literal de fixture compatible sin alterar la clasificación funcional. Cambio publicado en `ff799d97b283`.
+- [ ] **Verificación posterior al fix de higiene:** volver a ejecutar `node scripts/ats-harness-check.mts` y los checks regulares sobre el nuevo commit. No declarar higiene final PASS antes de obtener nuevo log.
+- [ ] **Smoke real Claude y CI Windows/Linux/macOS:** pendientes. El test de enlaces simbólicos sensibles permanece omitido en Windows.
+- [ ] **Seguridad OS, recuperación transaccional y protocolo común de motores:** aún no certificados.
+
 ## Validación local obligatoria
 
 Desde la raíz del repositorio, con las dependencias instaladas:
