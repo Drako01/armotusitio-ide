@@ -3,6 +3,10 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 import test from 'node:test';
+import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { NativeAgentWorkflow, workflowDigest } from '../src/native-agent-workflow.ts';
 import assert from 'node:assert/strict';
 import { planAgentWaves, executeAgentDAG } from '../src/native-agent-dag.ts';
 import type { HandoffPlan } from '../src/native-providers.ts';
@@ -53,4 +57,48 @@ test('DAG preserves write exclusivity and permits subsequent review', async () =
 	});
 	assert.equal(maxRunning, 2);
 	assert.deepEqual(result.map(item => item.status), ['passed', 'passed', 'passed', 'passed']);
+});
+
+test('workflow launches two independent read-only providers before exclusive implementer', { skip: process.platform === 'win32' }, async () => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-dag-integration-'));
+	const oldPath = process.env.PATH;
+	try {
+		const canonical = await fs.realpath(root);
+		const bin = path.join(root, 'bin');
+		await fs.mkdir(bin);
+		const executable = path.join(bin, 'codex');
+		const source = [
+			'#!/usr/bin/env node',
+			'let input = "";',
+			'process.stdin.on("data", chunk => input += chunk);',
+			'process.stdin.on("end", () => {',
+			' const fs = require("node:fs");',
+			' const role = input.includes("This is a read-only assignment") ? (input.includes("DAG_READER_A") ? "reader_a" : input.includes("DAG_READER_B") ? "reader_b" : "review") : "writer";',
+			' fs.appendFileSync("trace.txt", "start " + role + "\\n");',
+			' setTimeout(() => { fs.appendFileSync("trace.txt", "end " + role + "\\n"); console.log(role === "review" ? "HARNESS_REVIEW: PASS" : "done"); }, role.startsWith("reader") ? 80 : 5);',
+			'});'
+		].join('\n');
+		await fs.writeFile(executable, source, { mode: 0o755 });
+		await fs.chmod(executable, 0o755);
+		process.env.PATH = bin + path.delimiter + (oldPath || '');
+		const graph: HandoffPlan = { schemaVersion: 1, handoffs: [
+			{ id: 'reader_a', role: 'planner', provider: 'codex', dependsOn: [], instruction: 'DAG_READER_A inspect source' },
+			{ id: 'reader_b', role: 'planner', provider: 'codex', dependsOn: [], instruction: 'DAG_READER_B inspect tests' },
+			{ id: 'writer', role: 'implementer', provider: 'codex', dependsOn: ['reader_a', 'reader_b'], instruction: 'DAG_WRITE implement' },
+			{ id: 'review', role: 'reviewer', provider: 'codex', dependsOn: ['writer'], instruction: 'Read-only review; print HARNESS_REVIEW: PASS' }
+		] };
+		const workflow = new NativeAgentWorkflow(canonical, path.join(root, 'private'));
+		const run = await workflow.start(graph, workflowDigest(canonical, graph), () => true);
+		const result = await run.result;
+		assert.equal(result.status, 'passed');
+		const trace = (await fs.readFile(path.join(root, 'trace.txt'), 'utf8')).trim().split('\n');
+		assert.ok(trace.indexOf('start reader_b') < trace.indexOf('end reader_a'));
+		assert.ok(trace.indexOf('start reader_a') < trace.indexOf('end reader_b'));
+		assert.ok(trace.indexOf('start writer') > trace.indexOf('end reader_a'));
+		assert.ok(trace.indexOf('start writer') > trace.indexOf('end reader_b'));
+		assert.equal((await workflow.history())[0].events?.at(-1)?.kind, 'workflow-finished');
+	} finally {
+		if (oldPath === undefined) { delete process.env.PATH; } else { process.env.PATH = oldPath; }
+		await fs.rm(root, { recursive: true, force: true });
+	}
 });
