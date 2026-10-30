@@ -25,6 +25,7 @@ import { summarizeGatePerformance } from './native-performance.ts';
 import { acquireSharedExecutionFence, inspectSharedExecutionFence, reconcileSharedExecutionFence, type SharedExecutionFence } from './native-shared-fence.ts';
 import { createWorktreeCheckpoint, rollbackWorktreeCheckpoint, type WorktreeCheckpoint } from './native-worktree-checkpoint.ts';
 import { queryProjectEngineStatus } from './native-engine-interop.ts';
+import { reserveProviderInvocation } from './native-provider-quota.ts';
 
 type Host = any; // vscode host is injected by the existing extension (avoid duplicating the UI layer).
 const sessions = new Map<string, NativeHarness>();
@@ -56,6 +57,13 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 	const providerSlots = (): number => runningAgents.size + pendingAgents.size + runningWorkflows.size + pendingWorkflows.size;
 	const assertProviderCapacity = (): void => { if (providerSlots() >= maxConcurrentProviders) { throw Error('HARNESS_PROVIDER_CAPACITY_REACHED'); } };
 	const metricsDirectory = (root: string): string => path.join(context.globalStorageUri.fsPath, 'native-harness', createHash('sha256').update(root).digest('hex'));
+	const providerCallsPer24h = (folder: Host): number => {
+		const limit: unknown = vscode.workspace.getConfiguration('atsHarness', folder.uri).get('providerCallsPer24h', 0);
+		if (!Number.isSafeInteger(limit) || (limit as number) < 0 || (limit as number) > 1000) {
+			throw Error('HARNESS_PROVIDER_QUOTA_POLICY_INVALID');
+		}
+		return limit as number;
+	};
 	controller.nativeRunning = () => running.size + runningAgents.size + pendingAgents.size + runningWorkflows.size + pendingWorkflows.size;
 	controller.nativeProjects = async () => {
 		const rows = [];
@@ -181,6 +189,8 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			try {
 				fence = await acquireSharedExecutionFence(root, metricsDirectory(root), 'native-agent');
 				await fence.assertCurrent();
+				const cap = providerCallsPer24h(chosen.folder);
+				if (cap > 0) { await reserveProviderInvocation(metricsDirectory(root), provider, fence, cap); }
 				execution = await executeReviewedAgent(review, draft);
 			} catch (error) {
 				if (fence) { await fence.release(); }
@@ -271,6 +281,13 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 				}, async fence => {
 					if (isolation) {
 						checkpoint = await createWorktreeCheckpoint(isolation, path.join(metricsDirectory(root!), 'checkpoints'), fence);
+					}
+				}, async stageProvider => {
+					const cap = providerCallsPer24h(chosen.folder);
+					if (cap > 0) {
+						const fence = engine.activeFence();
+						if (!fence) { throw Error('HARNESS_PROVIDER_QUOTA_FENCE_REQUIRED'); }
+						await reserveProviderInvocation(metricsDirectory(root!), stageProvider, fence, cap);
 					}
 				});
 			}
