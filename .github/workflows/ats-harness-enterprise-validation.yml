@@ -10,6 +10,7 @@ on:
       - 'scripts/ats-harness-real-provider-smoke.mts'
       - 'scripts/ats-harness-check.mts'
       - 'HARNESS_ENTERPRISE_AAA_STATUS.md'
+      - 'extensions/armotusitio-ide/test/native-fake-provider.mts'
       - '.github/workflows/ats-harness-enterprise-validation.yml'
   workflow_dispatch:
 
@@ -49,6 +50,20 @@ jobs:
           echo "Testing SHA: ${GITHUB_SHA}"
           git rev-parse HEAD
           test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+      - name: Verify sparse test fixture
+        run: |
+          test -f extensions/armotusitio-ide/src/native-agent-workflow.ts
+          test -f extensions/armotusitio-ide/test/native-fake-provider.mts
+          test -f extensions/armotusitio-ide/test/native-agent-dag.test.mts
+          test -f scripts/ats-harness-real-provider-smoke.mts
+          git status --porcelain
+      - name: Repeated parallel DAG regression (offline)
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            echo "DAG offline attempt: ${attempt}/3"
+            node --test extensions/armotusitio-ide/test/native-agent-dag.test.mts
+          done
       - name: Native provider and workflow contracts
         run: |
           set -o pipefail
