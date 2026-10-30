@@ -473,6 +473,25 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 }
 ```
 
+### Lote P0: guard de reconciliación y write-ahead intent por registro (2026-10-30; retest pendiente)
+
+- [x] `NativeAgentWorkflow.reconcile()` obtiene un guard exclusivo `reconcile.guard` mediante `open('wx')` y `fsync` antes de inspeccionar estados; dos reconciliadores simultáneos no pueden participar. `start()` comprueba el guard antes y después de reservar `execution.lock`, sin ejecutar agentes durante una recuperación activa.
+- [x] El guard comprueba identidad de dispositivo/inodo y contenido antes de eliminarse. Si fue reemplazado, no se retira. Un guard persistente tras cierre abrupto requiere revisión manual; no se presume autorización por PID obsoleto.
+- [x] **Journal de intención de un solo registro:** antes de reemplazar cada JSON de estado, persiste `<workflow-id>.json.intent` con únicamente ID, versión, timestamp, digest previo y digest esperado; `fsync` precede al `rename`. Una escritura fallida deja la intención y bloquea nuevos workflows.
+- [x] **Recuperación conservadora:** bajo el guard exclusivo, se permite retirar un journal pendiente solamente cuando el estado escrito coincide con el digest esperado y es un `WorkflowRecord` válido del mismo proyecto. Si el estado está incompleto, falta, no coincide o es ajeno, se conserva y no se reejecutan proveedores.
+- [x] **Diagnóstico operativo:** `pendingJournalIds()` permite ver los IDs pendientes. El historial del IDE presenta `recovery-required` sin exponer contenido de prompts, rutas absolutas ni archivos inciertos.
+- [x] **Regresiones offline incorporadas:** concurrencia/guard, preservación de guard ajeno, recuperación de intento confirmado, bloqueo de escritura no confirmada, ciclo normal de journal sin proveedores y diagnóstico desde la UI.
+- [ ] **Validación local pendiente:** la evidencia confirmada de 227 PASS es previa a este lote. Repetir el verificador focal, suite y TypeScript en un checkout del SHA final.
+- [ ] **Límites pendientes:** no hay garantía de durabilidad de directorio universal, journal atómico multi-registro, fencing coordinado con el motor externo ni rollback del filesystem. La detección de reemplazos entre verificación y eliminación sigue sujeta a carreras OS/TOCTOU. **No certificar aún recuperación transaccional completa.**
+
+### Lote P1: preparación de delegación y validación estricta de scheduling (2026-10-30; retest pendiente)
+
+- [x] `assessHybridGateReadiness()` explicita bloqueos al habilitar gates: falta de capacidad declarada, catálogo ausente, fencing sin demostrar, protocolo ejecutable sin demostrar y sandbox OS sin demostrar.
+- [x] El handshake muestra `gateReadiness` pero mantiene `executionEnabled: false` incluso si el catálogo y el DAG son correctos.
+- [x] `planProjectGateWaves()` revalida íntegramente también los catálogos suministrados desde memoria: nombres, recursos, duplicados, campos extra y dependencias, sin asumir que pasaron por el lector seguro de JSON.
+- [x] Nuevas pruebas offline e integración de diagnóstico y rechazo de catálogo adulterado; los módulos nuevos se añadieron al verificador local.
+- [ ] Queda pendiente un protocolo de delegación *real* que coopere con los locks y permisos del proyecto, además de E2E mixto validado con RedEvent. La simulación de waves no significa ejecución automática.
+
 ## Validación local obligatoria
 
 Desde la raíz del repositorio, con las dependencias instaladas:
