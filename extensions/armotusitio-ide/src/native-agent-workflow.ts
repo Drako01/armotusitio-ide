@@ -10,6 +10,7 @@ import { executeReviewedAgent, type AgentExecution, type AgentOutcome } from './
 import { reviewAgentDraft, validateHandoffPlan, type HandoffPlan, type Handoff, type AgentRole, type NativeProvider } from './native-providers.ts';
 import { parseReviewerVerdict, boundedHandoff } from './native-review.ts';
 import { planAgentWaves, validateDAGReviewCoverage } from './native-agent-dag.ts';
+import { acquireSharedExecutionFence, type SharedExecutionFence } from './native-shared-fence.ts';
 
 export type WorkflowStatus = 'running' | 'passed' | 'failed' | 'cancelled' | 'interrupted';
 export interface WorkflowStep {
@@ -209,7 +210,11 @@ export class NativeAgentWorkflow {
 
 	private readonly root: string;
 	private readonly storage: string;
-	constructor(root: string, storage: string) { this.root = root; this.storage = storage; }
+	private readonly coordinationRoot: string;
+	private sharedFence?: SharedExecutionFence;
+	constructor(root: string, storage: string, coordinationRoot = root) { this.root = root; this.storage = storage; this.coordinationRoot = coordinationRoot; }
+	/** Only an owned nested verification gate may borrow this lease; it must never release it. */
+	activeFence(): SharedExecutionFence | undefined { return this.sharedFence; }
 
 	private async assertSafeStorage(create: boolean): Promise<boolean> {
 		if (create) { await fs.mkdir(this.storage, { recursive: true, mode: 0o700 }); }
@@ -597,6 +602,17 @@ export class NativeAgentWorkflow {
 			await fs.rm(lockFile);
 			throw error;
 		}
+		let fence: SharedExecutionFence;
+		try {
+			fence = await acquireSharedExecutionFence(await fs.realpath(this.coordinationRoot),
+				path.dirname(this.storage), 'native-workflow');
+			await fence.assertCurrent();
+		} catch (error) {
+			await lock.close();
+			await fs.rm(lockFile);
+			throw error;
+		}
+		this.sharedFence = fence;
 		this.cancelled = false;
 		this.running = true;
 		const record: WorkflowRecord = {
@@ -611,6 +627,7 @@ export class NativeAgentWorkflow {
 		const result = (async (): Promise<WorkflowRecord> => {
 			let lockReleaseError: Error | undefined;
 			try {
+				await fence.assertCurrent();
 				await lock.writeFile(JSON.stringify({ id: record.id, startedAt: record.createdAt, pid: process.pid }));
 				await atomicWrite(file, record);
 				this.emit(record, 'workflow-started');
@@ -626,6 +643,7 @@ export class NativeAgentWorkflow {
 						if (this.cancelled || !trusted()) { record.status = 'cancelled'; break; }
 						if (Date.now() >= deadline) { record.status = 'failed'; break; }
 						const handoff = corrective.get(step.id) || plan.handoffs.find(item => item.id === step.id)!;
+						await fence.assertCurrent();
 						step.status = 'running';
 						step.startedAt = new Date().toISOString();
 						await atomicWrite(file, record);
@@ -724,6 +742,7 @@ export class NativeAgentWorkflow {
 				let terminalStatePersisted = false;
 				try {
 					this.emit(record, 'workflow-finished');
+					await fence.assertCurrent();
 					await atomicWrite(file, record);
 					terminalStatePersisted = true;
 				} finally {
@@ -741,8 +760,11 @@ export class NativeAgentWorkflow {
 						const sameOwner = !!current && typeof current === 'object' &&
 							(current as { id?: unknown }).id === record.id &&
 							(current as { pid?: unknown }).pid === process.pid;
-						if (safeLock && sameOwner) { await fs.rm(lockFile); }
-						else { lockReleaseError = Error('HARNESS_WORKFLOW_LOCK_CHANGED'); }
+						if (safeLock && sameOwner) {
+							await fs.rm(lockFile);
+							await fence.release();
+							this.sharedFence = undefined;
+						} else { lockReleaseError = Error('HARNESS_WORKFLOW_LOCK_CHANGED'); }
 					}
 				}
 			}
