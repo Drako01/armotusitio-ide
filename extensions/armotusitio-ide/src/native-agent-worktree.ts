@@ -75,3 +75,22 @@ export async function removeCleanAgentWorktree(worktree: ManagedWorktree): Promi
   if (status.length) { throw Error('HARNESS_WORKTREE_DIRTY'); }
   await git(parent, ['worktree', 'remove', root]);
 }
+
+
+/** Enumerate only names provisioned by this Harness. Never follow symlinked entries. */
+export async function listAgentWorktrees(parent: string, storage: string): Promise<ManagedWorktree[]> {
+  const canonical = await fs.realpath(parent);
+  let entries;
+  try { entries = await fs.readdir(storage, { withFileTypes: true }); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') { return []; } throw error; }
+  if (entries.length > 500) { throw Error('HARNESS_WORKTREE_LIST_TOO_LARGE'); }
+  const worktrees: ManagedWorktree[] = [];
+  for (const entry of entries) {
+    const match = /^wt-([a-f0-9-]{36})$/i.exec(entry.name);
+    if (!match || !entry.isDirectory() || entry.isSymbolicLink()) { continue; }
+    const target = path.join(storage, entry.name);
+    if (await fs.realpath(target) !== target) { throw Error('HARNESS_WORKTREE_PATH_CHANGED'); }
+    worktrees.push({ id: match[1], root: target, parent: canonical });
+  }
+  return worktrees.sort((a, b) => a.id.localeCompare(b.id));
+}
