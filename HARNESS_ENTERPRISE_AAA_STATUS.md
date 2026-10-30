@@ -402,7 +402,7 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 - [x] **Prevención de doble escritor:** los implementadores nativos quedan bloqueados mientras haya un Harness de proyecto; no se permite escribir sin coordinación de locks entre motores.
 - [x] **Seguridad de autoridad:** paths de Harness inseguros mantienen bloqueo, incluso al intentar operación híbrida. No se ejecuta un motor externo durante el descubrimiento.
 - [x] **Regresión de higiene:** retirados los dos `throw` directos del bloque `finally` de la liberación de locks, conservando el error `HARNESS_WORKFLOW_LOCK_CHANGED` fuera del bloque.
-- [x] **Pruebas incorporadas:** descubrimiento de skills, cambio de digest, alias Claude, límite de tamaño y revisión híbrida sin creación de tareas nativas.
+- [x] **Pruebas incorporadas:** descubrimiento de skills, cambio de digest, alias Claude, límite de tamaño, revisión híbrida sin creación de tareas nativas y rechazo de implementadores híbridos antes de invocar proveedores.
 - [ ] **Retest:** correr la suite focal, verificador completo, `npm test`, `npm run check` y `git diff --check`; el último log tiene 199 PASS/0 FAIL/1 SKIP, pero higiene FAIL anterior a estos cambios.
 - [ ] **Fase híbrida de escritura:** protocolo ejecutable bidireccional con gates delegados, locks compartidos, control de concurrencia y E2E sobre RedEvent. El soporte actual **no certifica** prioridad completa del IDE ni integración de ejecutores de proyectos.
 - [~] **Skills más extensas:** catálogo admite hasta 64 KiB por skill y evita truncar el prompt; queda pendiente la carga supervisada/selección de instrucciones muy extensas, incluyendo más de una skill por tarea.
