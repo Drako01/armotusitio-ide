@@ -173,6 +173,20 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({ language: 'json', content: JSON.stringify(history, null, 2) }), { preview: true });
 		} catch (error) { showError(error); }
 	}));
+
+	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.nativeWorkflowReconcile', async (requested?: string) => {
+		try {
+			if (!ensureTrust()) { return; }
+			const chosen = await choose(requested); if (!chosen) { return; }
+			const root = await fs.realpath(chosen.folder.uri.fsPath);
+			if (runningWorkflows.has(root) || pendingWorkflows.has(root)) { throw Error('HARNESS_WORKFLOW_ALREADY_RUNNING'); }
+			if (await vscode.window.showWarningMessage('Marcar workflows interrumpidos sin repetir agentes ni modificar archivos?', { modal: true }, 'Reconciliar workflows') !== 'Reconciliar workflows') { return; }
+			if (!authorized(chosen.folder)) { return; }
+			const workflow = new NativeAgentWorkflow(root, path.join(metricsDirectory(root), 'workflows'));
+			const updated = await workflow.reconcile();
+			vscode.window.showInformationMessage('Workflows reconciliados: ' + updated);
+		} catch (error) { showError(error); } finally { controller.refresh(); }
+	}));
 	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.nativeAgentMetrics', async (requested?: string) => {
 		try {
 			if (!ensureTrust()) { return; }
