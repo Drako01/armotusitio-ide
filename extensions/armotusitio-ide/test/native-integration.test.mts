@@ -158,3 +158,24 @@ test('hybrid skill selection refuses content changed during approval without lau
 		assert.ok(f.documents.length >= 1);
 	} finally { await f.cleanup(); }
 });
+
+test('hybrid agent refuses more than eight project skills before launching provider', async () => {
+	const f = await fixture();
+	try {
+		const root = f.roots[0];
+		await fs.mkdir(path.join(root, '.harness'));
+		for (let i = 0; i < 9; i++) {
+			const dir = path.join(root, '.agents', 'skills', 'skill_' + i);
+			await fs.mkdir(dir, { recursive: true });
+			await fs.writeFile(path.join(dir, 'SKILL.md'), '# Skill');
+		}
+		f.vscode.window.showQuickPick = async (items, options) => {
+			if (options?.title === 'Rol del agente') { return 'planner'; }
+			if (options?.canPickMany) { return items.slice(0, 9); }
+			return items[0];
+		};
+		await f.invoke('nativeAgentExecute', root);
+		assert.ok(f.notices.some(notice => notice.includes('HARNESS_PROJECT_SKILL_SELECTION_INVALID')));
+		assert.equal(f.documents.length, 0);
+	} finally { await f.cleanup(); }
+});
