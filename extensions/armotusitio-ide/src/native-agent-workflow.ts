@@ -60,6 +60,10 @@ const MAX_AGENT_DURATION_MS = 30 * 60 * 1000;
 /** The IDE authorization dialog currently grants at most five provider invocations. */
 export const MAX_WORKFLOW_PROVIDER_CALLS = 5;
 const IDENTIFIER = /^[a-z0-9][a-z0-9_-]{0,63}$/i;
+/** Persisted workflow metadata is an exact allowlist: never deserialize arbitrary provider content. */
+const RECORD_FIELDS = new Set(['schemaVersion', 'id', 'createdAt', 'endedAt', 'projectKey', 'planDigest', 'status', 'steps', 'events', 'verification']);
+const STEP_FIELDS = new Set(['id', 'role', 'provider', 'status', 'startedAt', 'endedAt', 'durationMs', 'exitCode']);
+
 
 export function workflowDigest(root: string, plan: HandoffPlan): string {
 	validateHandoffPlan(plan);
@@ -107,7 +111,8 @@ async function atomicWrite(file: string, record: WorkflowRecord): Promise<void> 
 function validRecord(value: unknown): value is WorkflowRecord {
 	if (!value || typeof value !== 'object') { return false; }
 	const r = value as WorkflowRecord;
-	return r.schemaVersion === 1 && IDENTIFIER.test(r.id) &&
+	return Object.keys(r).every(key => RECORD_FIELDS.has(key)) &&
+		r.schemaVersion === 1 && IDENTIFIER.test(r.id) &&
 		['running', 'passed', 'failed', 'cancelled', 'interrupted'].includes(r.status) &&
 		/^[a-f0-9]{64}$/.test(r.planDigest) && /^[a-f0-9]{64}$/.test(r.projectKey) &&
 		Number.isFinite(Date.parse(r.createdAt)) && Array.isArray(r.steps) && r.steps.length <= 16 &&
@@ -120,7 +125,8 @@ function validRecord(value: unknown): value is WorkflowRecord {
 			(e.durationMs === undefined || (Number.isFinite(e.durationMs) && e.durationMs >= 0 && e.durationMs <= MAX_WORKFLOW_DURATION_MS)) &&
 			(e.observedBytes === undefined || (Number.isSafeInteger(e.observedBytes) && e.observedBytes >= 0 && e.observedBytes <= 16 * 1024 * 1024)) &&
 			Object.keys(e).every(key => ['workflowId', 'kind', 'at', 'stepId', 'status', 'durationMs', 'observedBytes'].includes(key))))) &&
-		r.steps.every(step => IDENTIFIER.test(step.id) &&
+		r.steps.every(step => step && typeof step === 'object' && !Array.isArray(step) &&
+			Object.keys(step).every(key => STEP_FIELDS.has(key)) && IDENTIFIER.test(step.id) &&
 			['planner', 'reviewer', 'implementer'].includes(step.role) &&
 			['claude', 'codex'].includes(step.provider) &&
 			['pending', 'running', 'passed', 'failed', 'cancelled', 'interrupted'].includes(step.status));
