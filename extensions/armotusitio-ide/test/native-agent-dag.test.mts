@@ -62,6 +62,7 @@ test('DAG preserves write exclusivity and permits subsequent review', async () =
 test('workflow launches two independent read-only providers before exclusive implementer', { skip: process.platform === 'win32' }, async () => {
 	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-dag-integration-'));
 	const oldPath = process.env.PATH;
+	const traceFile = path.join(os.tmpdir(), 'ats-dag-trace-' + path.basename(root) + '.txt');
 	try {
 		const canonical = await fs.realpath(root);
 		const bin = path.join(root, 'bin');
@@ -74,7 +75,7 @@ test('workflow launches two independent read-only providers before exclusive imp
 			'process.stdin.on("end", () => {',
 			' const fs = require("node:fs");',
 			' const role = input.includes("This is a read-only assignment") ? (input.includes("DAG_READER_A") ? "reader_a" : input.includes("DAG_READER_B") ? "reader_b" : "review") : "writer";',
-			' fs.appendFileSync("trace.txt", "start " + role + "\\n");',
+			' fs.appendFileSync(' + JSON.stringify(traceFile) + ', "start " + role + "\\n");',
 			' setTimeout(() => { fs.appendFileSync("trace.txt", "end " + role + "\\n"); console.log(role === "review" ? "HARNESS_REVIEW: PASS" : "done"); }, role.startsWith("reader") ? 80 : 5);',
 			'});'
 		].join('\n');
@@ -93,7 +94,7 @@ test('workflow launches two independent read-only providers before exclusive imp
 		const run = await workflow.start(graph, workflowDigest(canonical, graph), () => true);
 		const result = await run.result;
 		assert.equal(result.status, 'passed');
-		const trace = (await fs.readFile(path.join(root, 'trace.txt'), 'utf8')).trim().split('\n');
+		const trace = (await fs.readFile(traceFile, 'utf8')).trim().split('\n');
 		assert.ok(trace.indexOf('start reader_b') < trace.indexOf('end reader_a'));
 		assert.ok(trace.indexOf('start reader_a') < trace.indexOf('end reader_b'));
 		assert.ok(trace.indexOf('start writer') > trace.indexOf('end reader_a'));
@@ -101,6 +102,7 @@ test('workflow launches two independent read-only providers before exclusive imp
 		assert.equal((await workflow.history())[0].events?.at(-1)?.kind, 'workflow-finished');
 	} finally {
 		if (oldPath === undefined) { delete process.env.PATH; } else { process.env.PATH = oldPath; }
+		await fs.rm(traceFile, { force: true });
 		await fs.rm(root, { recursive: true, force: true });
 	}
 });
