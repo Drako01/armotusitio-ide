@@ -161,10 +161,10 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			const verification = (await loadProjectConfig(root))?.plan;
 			const verificationSnapshot = JSON.stringify(verification || null);
 			await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({ language: 'json',
-				content: JSON.stringify({ project: root, executionRoot, isolationMode: mode.value, handoffs: plan.handoffs, verification: verification || 'NOT_CONFIGURED', digest,
+				content: JSON.stringify({ project: root, executionRoot, isolationMode: mode.value, handoffs: plan.handoffs, maxCorrectiveCycles: 1, maxProviderCalls: 5, verification: verification || 'NOT_CONFIGURED', digest,
 					notice: mode.value === 'worktree' ? 'La IA operará únicamente en este checkout Git separado; se conservará después para revisar los cambios. No se hace commit ni merge.' : 'La IA operará sobre el workspace actual sin aislamiento de archivos. No se hace commit ni merge.' }, null, 2)
 			}), { preview: true });
-			const approved = await vscode.window.showWarningMessage('Autorizar los tres agentes y la escritura local del implementador? Revisá el plan antes de continuar.', { modal: true }, 'Autorizar workflow');
+			const approved = await vscode.window.showWarningMessage('Autorizar plan, implementación, revisión y hasta un ciclo correctivo adicional (máximo 5 invocaciones de IA)? Revisá el plan antes de continuar.', { modal: true }, 'Autorizar workflow');
 			if (approved !== 'Autorizar workflow' || !authorized(chosen.folder) || await fs.realpath(chosen.folder.uri.fsPath) !== root) { return; }
 			if (runningAgents.has(root) || pendingAgents.has(root) || runningWorkflows.has(root) || pendingWorkflows.has(root) || running.has(chosen.folder.uri.toString())) {
 				throw Error('HARNESS_ALREADY_RUNNING');
