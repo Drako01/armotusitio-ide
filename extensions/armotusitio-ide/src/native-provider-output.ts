@@ -81,3 +81,56 @@ export function parseProviderOutput(provider: NativeProvider, raw: string): Pars
   }
   return { message: raw, structured: false, providerError: false };
 }
+
+
+/** Incremental Codex JSONL reducer. Retains final text/usage, not command logs or rollout data. */
+export class CodexEventAccumulator {
+  private pending = '';
+  private seen = 0;
+  private invalid = false;
+  private message = '';
+  private providerError = false;
+  private usage: ProviderUsage | undefined;
+
+  push(text: string): void {
+    if (this.invalid) { return; }
+    this.pending += text;
+    if (this.pending.length > 1024 * 1024) { this.invalid = true; this.pending = ''; return; }
+    let boundary = this.pending.indexOf('\n');
+    while (boundary !== -1) {
+      const line = this.pending.slice(0, boundary).trim();
+      this.pending = this.pending.slice(boundary + 1);
+      if (line) { this.accept(line); }
+      if (this.invalid) { this.pending = ''; return; }
+      boundary = this.pending.indexOf('\n');
+    }
+  }
+
+  private accept(line: string): void {
+    try {
+      const event = object(JSON.parse(line));
+      if (!event || typeof event.type !== 'string') { this.invalid = true; return; }
+      this.seen++;
+      if (event.type === 'error' || event.type === 'turn.failed') { this.providerError = true; }
+      if (event.type === 'item.completed') {
+        const item = object(event.item);
+        if ((item?.type === 'agent_message' || item?.type === 'assistant_message') && typeof item.text === 'string') {
+          this.message = item.text.slice(-64 * 1024);
+        }
+      }
+      if (event.type === 'turn.completed') {
+        const u = object(event.usage);
+        const input = amount(u?.input_tokens), output = amount(u?.output_tokens), cached = amount(u?.cached_input_tokens);
+        if (input !== undefined && output !== undefined) {
+          this.usage = { inputTokens: input, outputTokens: output, ...(cached === undefined ? {} : { cachedInputTokens: cached }) };
+        }
+      }
+    } catch { this.invalid = true; }
+  }
+
+  finish(): ParsedProviderOutput | null {
+    if (this.pending.trim()) { this.accept(this.pending.trim()); }
+    if (this.invalid || !this.seen || (!this.message && !this.providerError)) { return null; }
+    return { message: this.message, structured: true, providerError: this.providerError, usage: this.usage };
+  }
+}
