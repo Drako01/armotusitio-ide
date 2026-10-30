@@ -77,3 +77,31 @@ test('executes three stages in order with fake provider; persists only metadata'
 		await fs.rm(root, { recursive: true, force: true });
 	}
 });
+
+test('interrupted workflow cannot replay an uncertain writer or use a changed plan', async () => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-workflow-resume-'));
+	try {
+		const canonical = await fs.realpath(root);
+		const state = path.join(root, 'private');
+		await fs.mkdir(state);
+		const plan = proposedWorkflow('codex', 'Maintain a fixture');
+		const digest = workflowDigest(canonical, plan);
+		const id = 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa';
+		const key = (await import('node:crypto')).createHash('sha256').update(canonical).digest('hex');
+		const record = {
+			schemaVersion: 1, id, createdAt: new Date().toISOString(),
+			projectKey: key, planDigest: digest, status: 'interrupted',
+			steps: [
+				{ id: 'plan', provider: 'codex', role: 'planner', status: 'passed' },
+				{ id: 'implement', provider: 'codex', role: 'implementer', status: 'interrupted' },
+				{ id: 'review', provider: 'codex', role: 'reviewer', status: 'pending' }
+			]
+		};
+		await fs.writeFile(path.join(state, id + '.json'), JSON.stringify(record));
+		const workflow = new NativeAgentWorkflow(canonical, state);
+		await assert.rejects(workflow.restartInterrupted(id, plan, digest, () => true), /HARNESS_RESUME_WRITE_UNCERTAIN/);
+		assert.equal((await workflow.history())[0].status, 'interrupted');
+		await assert.rejects(workflow.restartInterrupted(id, plan, 'forged', () => true), /HARNESS_WORKFLOW_APPROVAL_CHANGED/);
+		await assert.rejects(workflow.restartInterrupted('../outside', plan, digest, () => true), /HARNESS_RESUME_ID_INVALID/);
+	} finally { await fs.rm(root, { recursive: true, force: true }); }
+});
