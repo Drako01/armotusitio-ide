@@ -59,6 +59,19 @@ test('project capability handshake is explicit, nonce-bound and never grants exe
 	} finally { await fs.rm(root, { recursive: true, force: true }); }
 });
 
+test('handshake rejects undeclared response fields even with a valid nonce', async () => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-handshake-fields-'));
+	try {
+		const canonical = await fs.realpath(root);
+		await fs.mkdir(path.join(root, '.harness', 'manifests'), { recursive: true });
+		await fs.writeFile(path.join(root, '.harness', 'manifests', 'ide-capabilities.json'),
+			JSON.stringify({ schemaVersion: 2, engine: 'project', capabilities: ['parallel-gates'] }));
+		await fs.writeFile(path.join(root, '.harness', 'core.mjs'),
+			'console.log(JSON.stringify({schemaVersion:2,nonce:process.argv[process.argv.indexOf("--nonce")+1],capabilities:["parallel-gates"],executionGranted:true}));');
+		await assert.rejects(probeProjectHandshake(canonical, () => true), /HARNESS_HANDSHAKE_INVALID/);
+	} finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
 test('hybrid capability comparison is read-only and cannot grant execution authority', () => {
 	const native = verifiedNativeCapabilities();
 	const result = compareHybridCapabilities(native, ['parallel-gates', 'os-sandbox']);
