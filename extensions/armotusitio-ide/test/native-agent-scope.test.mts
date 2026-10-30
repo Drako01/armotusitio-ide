@@ -24,6 +24,6 @@ test('protects sensitive root files even without Git metadata', async () => {
 test('rejects noncanonical roots', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-scope-canonical-'));
   try {
-    await assert.rejects(captureAgentScope(path.join(root, '.')), /HARNESS_SCOPE_ROOT_CHANGED/);
+    await assert.rejects(captureAgentScope(root + path.sep + '.'), /HARNESS_SCOPE_ROOT_CHANGED/);
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 });
