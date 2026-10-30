@@ -9,7 +9,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { executeReviewedAgent, type AgentExecution, type AgentOutcome } from './native-agent-execution.ts';
 import { reviewAgentDraft, validateHandoffPlan, type HandoffPlan, type Handoff, type AgentRole, type NativeProvider } from './native-providers.ts';
 import { parseReviewerVerdict, boundedHandoff } from './native-review.ts';
-import { planAgentWaves } from './native-agent-dag.ts';
+import { planAgentWaves, validateDAGReviewCoverage } from './native-agent-dag.ts';
 
 export type WorkflowStatus = 'running' | 'passed' | 'failed' | 'cancelled' | 'interrupted';
 export interface WorkflowStep {
@@ -283,6 +283,7 @@ export class NativeAgentWorkflow {
 		const digest = workflowDigest(canonical, plan);
 		if (approvedDigest !== digest) { throw Error('HARNESS_WORKFLOW_APPROVAL_CHANGED'); }
 		const ordered = executionOrder(plan);
+		if (planAgentWaves(plan).some(wave => wave.ids.length > 1)) { validateDAGReviewCoverage(plan); }
 		await fs.mkdir(this.storage, { recursive: true, mode: 0o700 });
 		const lockFile = path.join(this.storage, 'execution.lock');
 		const lock = await fs.open(lockFile, 'wx', 0o600).catch(error => {
@@ -405,6 +406,7 @@ export class NativeAgentWorkflow {
 				if (record.status === 'running') { record.status = 'passed'; }
 			} catch {
 				record.status = 'failed';
+				for (const run of this.activeDAG) { run.cancel(); }
 			} finally {
 				record.endedAt = new Date().toISOString();
 				try { this.emit(record, 'workflow-finished'); await atomicWrite(file, record); }
