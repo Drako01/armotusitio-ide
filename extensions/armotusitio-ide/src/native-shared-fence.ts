@@ -241,9 +241,12 @@ async function readJsonRecovery(file: string, maxBytes: number): Promise<unknown
  * Never removes an active, foreign or replaced lock. No automatic retry.
  */
 export async function reconcileSharedExecutionFence(
-	root: string, storage: string, approved: boolean
+	root: string, storage: string, approved: boolean, confirmedNoOrphanProcesses = false
 ): Promise<SharedFenceRecovery> {
 	if (!approved) { throw Error('HARNESS_FENCE_RECOVERY_CONSENT_REQUIRED'); }
+	// A dead parent PID does not prove spawned CLIs or grandchildren have exited.
+	// Require a separate, deliberate operator attestation; never infer from PID alone.
+	if (!confirmedNoOrphanProcesses) { throw Error('HARNESS_FENCE_RECOVERY_ORPHANS_UNVERIFIED'); }
 	const canonical = await fs.realpath(root);
 	if (canonical !== root || !(await fs.stat(canonical)).isDirectory()) {
 		throw Error('HARNESS_FENCE_ROOT_CHANGED');
