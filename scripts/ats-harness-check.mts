@@ -55,7 +55,9 @@ const formatTargets = [
 	'test/native-runtime.test.mts'
 ].map(file => `${extension}/${file}`).concat('scripts/ats-harness-real-provider-smoke.mts', 'scripts/ats-harness-benchmark.mts');
 const fixRequested = process.argv.includes('--fix');
-const logPath = path.join(root, 'test.log');
+// Keep the log out of the repository root: full `npm run hygiene` scans root files even when ignored.
+const logPath = path.join(root, '.build', 'ats-harness-check.log');
+fs.mkdirSync(path.dirname(logPath), { recursive: true });
 const log = fs.createWriteStream(logPath, { flags: 'w' });
 const results: Array<{ name: string; result: string }> = [];
 const write = (value: string): void => { process.stdout.write(value); log.write(value); };
