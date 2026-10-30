@@ -30,6 +30,7 @@ export interface WorkflowRecord {
 	planDigest: string;
 	status: WorkflowStatus;
 	steps: WorkflowStep[];
+	events?: WorkflowEvent[];
 	verification?: 'passed' | 'failed' | 'not-configured';
 }
 export type WorkflowEventKind = 'workflow-started' | 'step-started' | 'step-finished' | 'verification-finished' | 'workflow-finished';
@@ -106,6 +107,8 @@ function validRecord(value: unknown): value is WorkflowRecord {
 		['running', 'passed', 'failed', 'cancelled', 'interrupted'].includes(r.status) &&
 		/^[a-f0-9]{64}$/.test(r.planDigest) && /^[a-f0-9]{64}$/.test(r.projectKey) &&
 		Number.isFinite(Date.parse(r.createdAt)) && Array.isArray(r.steps) && r.steps.length <= 16 &&
+		(r.events === undefined || (Array.isArray(r.events) && r.events.length <= 200 && r.events.every(e =>
+			e && e.workflowId === r.id && ['workflow-started', 'step-started', 'step-finished', 'verification-finished', 'workflow-finished'].includes(e.kind) && Number.isFinite(Date.parse(e.at))))) &&
 		r.steps.every(step => IDENTIFIER.test(step.id) &&
 			['planner', 'reviewer', 'implementer'].includes(step.role) &&
 			['claude', 'codex'].includes(step.provider) &&
@@ -129,6 +132,8 @@ export class NativeAgentWorkflow {
 			workflowId: record.id, kind, at: new Date().toISOString(),
 			...(step ? { stepId: step.id, status: step.status, ...(step.durationMs === undefined ? {} : { durationMs: step.durationMs }) } : { status: record.status })
 		});
+		if (!record.events) { record.events = []; }
+		if (record.events.length < 200) { record.events.push(event); }
 		for (const listener of this.listeners) { try { listener(event); } catch { /* UI observers cannot change workflow results. */ } }
 	}
 
@@ -326,7 +331,7 @@ export class NativeAgentWorkflow {
 				record.status = 'failed';
 			} finally {
 				record.endedAt = new Date().toISOString();
-				try { await atomicWrite(file, record); this.emit(record, 'workflow-finished'); }
+				try { this.emit(record, 'workflow-finished'); await atomicWrite(file, record); }
 				finally {
 					this.active = undefined;
 					this.verificationController = undefined;
