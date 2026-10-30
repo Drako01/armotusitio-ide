@@ -9,7 +9,7 @@
 
 Esta guía documenta el alcance acordado y diferencia **código agregado a la rama** de funcionalidad realmente certificada. Una casilla marcada no significa que el comportamiento haya pasado pruebas reales de extremo a extremo.
 
-**Inventario:** 33 ítems con implementación en código, 6 parciales y 15 pendientes. Son ítems de diferente tamaño y riesgo; no equivalen a un porcentaje técnico de avance.
+**Inventario:** 34 ítems con implementación en código, 5 parciales y 15 pendientes. Son ítems de diferente tamaño y riesgo; no equivalen a un porcentaje técnico de avance.
 
 **Calificación:** no asignar una nueva nota 1–10 ni declarar nivel AAA hasta disponer de pruebas reproducibles y resultados E2E. El 70% mencionado en el seguimiento conversacional fue una apreciación de cobertura, **no** una medición auditada.
 
@@ -26,7 +26,7 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 - [x] Integración de controles nativos del Harness en el IDE.
 - [x] Detección de proyectos y prioridad del Harness propio frente al motor nativo.
 - [x] Contrato declarativo de capacidades versionado (v2).
-- [~] Declaración de capacidades de Harness externos: lectura de manifiestos, sin handshake ejecutable ni validación de capacidades reales.
+- [~] Capacidades externas: lectura de manifiesto v2 y handshake **ejecutable, explícito y con nonce** agregado. Sigue faltando demostrar los comportamientos auto-reportados contra motores externos reales; no se conceden permisos por el handshake.
 - [ ] Unificar el motor Python y el motor nativo detrás de un protocolo ejecutable estable.
 - [ ] Eliminar dependencias y convenciones heredadas de RedEvent para portabilidad plena.
 
@@ -38,7 +38,7 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 - [x] Revisión opcional cruzada entre Codex y Claude.
 - [x] Recepción de veredicto explícito del reviewer, con fallo cerrado ante respuestas ambiguas.
 - [x] Un ciclo correctivo acotado y re-revisión independiente, autorizado previamente.
-- [~] Grafo de dependencias: el workflow de agentes es principalmente secuencial y no constituye todavía un DAG paralelo general.
+- [x] DAG acotado de agentes: lectores independientes en olas concurrentes (hasta dos), escritores exclusivos y cobertura de revisión de implementers; el camino plan → implement → review conserva su ciclo correctivo.
 - [ ] Planificación adaptativa y coordinación de agentes ejecutados simultáneamente.
 - [ ] Generación dinámica de agentes y distribución de tareas según capacidades, costo y carga.
 
@@ -51,7 +51,7 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 - [x] Escaneo de archivos sensibles anidados y sin seguir enlaces simbólicos.
 - [x] Límites temporales, de captura de salida y concurrencia.
 - [x] Validación de veredictos de revisión e identificación de handoffs como datos no confiables.
-- [~] Defensas frente a prompt injection: algunas comprobaciones existen, sin auditoría adversarial integral.
+- [~] Defensas ante prompt injection: encapsulado de handoffs, revisión explícita, límites de permisos y nueva batería adversarial automatizada; aún falta red-team integral contra proveedores reales y aislamiento OS.
 - [ ] Sandbox OS con políticas efectivas de filesystem, proceso y red: un worktree NO es un límite de seguridad.
 - [ ] Pruebas adversariales de exfiltración, symlinks, TOCTOU y escalada de permisos.
 
@@ -62,7 +62,7 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 - [x] Cancelación de agentes, workflows y gates.
 - [x] Reconciliación explícita de ejecuciones interrumpidas, sin reejecución automática.
 - [x] Administración y retiro de worktrees limpios, conservando los modificados.
-- [~] Recuperación: detección/registro de estados interrumpidos, sin replay seguro por etapa.
+- [~] Recuperación: reconciliación más reinicio explícito con aprobación renovada, nuevo ID y rechazo si comenzó un writer. La reanudación granular desde checkpoints con escrituras previas permanece pendiente.
 - [ ] Integración transaccional de cambios, gestión automática de conflictos y rollback validado.
 - [ ] Reanudación granular de tareas desde checkpoints seguros.
 
@@ -75,7 +75,7 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 - [x] Duración, tasa de éxito y percentil 95 basados en ejecuciones registradas.
 - [x] Lectura estructurada de tokens reportados por Codex/Claude.
 - [x] Costo estimado reportado por proveedor cuando existe; no equipararlo a facturación.
-- [~] Compatibilidad CLI: diagnóstico de versión, sin negociación completa de flags ni autenticación verificada.
+- [~] Compatibilidad CLI: ahora inspección acotada de versión, flags declarados por `--help` y sesión local de login; falta certificar compatibilidad del protocolo real y autenticación efectiva con ejecución E2E.
 - [ ] Topes monetarios rígidos por proveedor/proyecto y tratamiento de cuotas/rate limiting.
 - [ ] Benchmarks cold/warm reales: CPU, RAM, latencia, éxito, tokens, costos y comparación secuencial/paralela.
 - [ ] Scheduler adaptativo basado en telemetría de carga y capacidad.
@@ -87,7 +87,7 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 - [x] Diagnóstico local de instalaciones Codex/Claude sin invocar modelos.
 - [x] Pruebas unitarias y de integración con proveedores simulados incorporadas.
 - [x] Definición de workflow CI para Windows, Linux y macOS.
-- [~] Observabilidad: datos resumidos disponibles, no tracing distribuido/streaming completo.
+- [~] Observabilidad: eventos de ciclo de vida y avance de bytes sin contenido, emitidos y persistidos de forma acotada; faltan trazas distribuidas completas y validación E2E de streaming.
 - [ ] Streaming estructurado del ciclo de vida completo y trazas accionables en el IDE.
 - [ ] E2E con Codex y Claude autenticados, cubriendo permisos, cancelación y recuperación.
 - [ ] Compilación, tests e instaladores validados en los tres sistemas operativos.
@@ -152,6 +152,23 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 - [x] **Incidente de formato e higiene: cerrado en validación local Windows**. Sin errores en la batería ejecutada. Este cierre reemplaza los pendientes de las validaciones del 30/10 anteriores, pero no demuestra una validación CI multiplataforma.
 - [ ] **Pendiente para certificación enterprise:** confirmar CI Linux/macOS/Windows, los 7 casos omitidos (según su compatibilidad de plataforma) y pruebas E2E con proveedores reales, incluida autorización, cancelación, límites, recuperación y aislamiento.
 - **Notas no bloqueantes:** warnings de `MODULE_TYPELESS_PACKAGE_JSON`, `stripTypeScriptTypes` experimental y configuración npm antigua; no se consideran fallas de las pruebas realizadas.
+
+## Ampliación de las seis áreas previamente parciales (pendiente de validación)
+
+**Rama:** `feat/native-harness-enterprise-upgrade`. Esta entrega agrega código para **las seis áreas** y una suite de regresiones. El último resultado de 160 PASS corresponde al código **anterior** a esta ampliación; no debe utilizarse como evidencia de los cambios nuevos.
+
+- **Contrato externo:** `probeProjectHandshake` ejecuta la entrada reconocida del Harness del proyecto solo tras autorización explícita, con nonce, timeout, límites de respuesta y comprobación contra capacidades declaradas. El contrato continúa *fail closed*: los datos auto-reportados no habilitan ejecución automática.
+- **DAG real:** nueva ejecución en olas para agentes independientes de solo lectura, con escritores exclusivos, dependencias topológicas y validación de reviewer posterior a cada escritor. Ruta secuencial conservada para workflows tradicionales.
+- **Seguridad adversarial:** nueva suite de handoffs hostiles, veredictos falsificados, argumentos de CLI y dependencias; comprobación de campos de trazas persistidas. No es auditoría de sandbox OS.
+- **Recuperación:** API `restartInterrupted` permite reiniciar un flujo interrumpido tras nueva autorización **únicamente** si ningún implementer empezó; rechaza escrituras inciertas y conserva historial anterior.
+- **CLIs:** `--version`, `--help`, `login status` / `auth status` con respuestas `unknown` donde no hay certeza. `modelAuthenticated` sigue en `false` hasta un smoke test de modelo autenticado.
+- **Observabilidad:** eventos estructurados, progreso por bytes, persistencia sin prompts ni datos sensibles y actualización del panel desde el ciclo de vida.
+
+**Matriz de pruebas y limitaciones:** [`docs/native-harness-six-partial-validation.md`](docs/native-harness-six-partial-validation.md).
+
+- [ ] Ejecutar los tres comandos de validación **sobre el nuevo SHA** y corregir errores reales detectados; verificar el hook de higiene.
+- [ ] CI Windows/Linux/macOS y pruebas E2E de CLI reales.
+- [ ] Evidencia adicional para cerrar las cinco áreas que siguen siendo parciales, sin reducir el nivel de seguridad ni relajar checks.
 
 ## Validación local obligatoria
 
