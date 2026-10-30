@@ -37,6 +37,9 @@ const VERIFIED_NATIVE: Capability[] = [
 	'agent-handoffs', 'reconciliation', 'bounded-processes', 'parallel-gates', 'worktree-isolation'
 ];
 
+/** Native capability inventory independent from the opened project's authority. */
+export function verifiedNativeCapabilities(): Capability[] { return [...VERIFIED_NATIVE]; }
+
 /** Read-only disclosure; a declaration never grants execution authority or counts as verified support. */
 export async function readProjectCapabilities(root: string): Promise<Capability[]> {
 	const canonical = await fs.realpath(root);
