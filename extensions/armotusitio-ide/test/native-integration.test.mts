@@ -210,3 +210,32 @@ test('native multi-skill selection rejects duplicated entries before provider in
 		assert.equal(f.documents.length, 0);
 	} finally { await f.cleanup(); }
 });
+
+test('project guidance changed during consent prevents launching a native agent', async () => {
+	const f = await fixture();
+	try {
+		const root = f.roots[0];
+		const guide = path.join(root, 'AGENTS.md');
+		await fs.writeFile(guide, '# First version');
+		f.vscode.window.showQuickPick = async (items, options) =>
+			options?.title === 'Rol del agente' ? 'planner' : items[0];
+		f.vscode.window.showWarningMessage = async (_, __, action) => {
+			await fs.writeFile(guide, '# Changed during approval');
+			return action;
+		};
+		await f.invoke('nativeAgentExecute', root);
+		assert.ok(f.notices.some(message => message.includes('HARNESS_PROJECT_GUIDANCE_CHANGED')));
+		assert.ok(f.documents.length >= 1);
+	} finally { await f.cleanup(); }
+});
+
+test('project guidance metadata is available for review without invoking a provider', async () => {
+	const f = await fixture();
+	try {
+		await fs.writeFile(path.join(f.roots[0], 'AGENTS.md'), '# Team conventions');
+		await f.invoke('nativeAgentReview', f.roots[0]);
+		const review = JSON.parse(f.documents.at(-1)!.content);
+		assert.deepEqual(review.guides.map(guide => guide.path), ['AGENTS.md']);
+		assert.equal(f.documents.at(-1)!.content.includes('Team conventions'), false);
+	} finally { await f.cleanup(); }
+});
