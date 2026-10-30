@@ -129,11 +129,11 @@ test('concurrent attempts cannot both obtain execution lock', async () => {
 			await assert.rejects(f.engine.execute(t.id, digest, () => true),
 				/HARNESS_ALREADY_RUNNING|HARNESS_LOCKED_REQUIRES_RECONCILIATION|HARNESS_RECONCILIATION_REQUIRED/);
 		} finally {
-			// Always stop the child even when an assertion fails.
+			// Always stop and drain the child even when an assertion fails.
 			f.engine.cancel();
+			const result = await first;
+			assert.equal(result.attempts.at(-1)?.status, 'cancelled');
 		}
-		const result = await first;
-		assert.equal(result.attempts.at(-1)?.status, 'cancelled');
 	} finally { await f.cleanup(); }
 });
 test('already-aborted signal does not start a task or persist an attempt', async () => {
