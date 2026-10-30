@@ -509,6 +509,15 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 
 **Evidencia aportada por el operador antes de este lote:** log del 30/10/2026 22:10 sobre `baca931b2ca`: verificador focalizado 140 PASS / 0 FAIL / 1 SKIP y siete etapas PASS (TypeScript, webview, renderer, bundle, recursos, higiene, diff). La cifra de 140 corresponde al subconjunto del verificador, no debe presentarse como la suite completa de la extensión.
 
+### Retest Windows del protocolo híbrido y corrección final de higiene (2026-10-30)
+
+- [x] **Evidencia aportada:** sobre `7c67107a7fb`, el verificador focalizado ejecutó 142 tests: **141 PASS, 0 FAIL, 1 SKIP**; TypeScript, recursos, renderer, bundle, empaquetado de recursos y diff PASS.
+- [x] **Suite completa de extensión:** **238 PASS, 0 FAIL, 1 SKIP** (239 total). `npm run check --prefix extensions/armotusitio-ide` finalizó sin error.
+- [x] **Causa del único gate fallido:** `Focused hygiene` señaló `local/code-no-dangerous-type-assertions` en `test/native-project-gates.test.mts`, línea 121, por un `as never` nuevo en el fixture adversarial.
+- [x] **Corrección publicada:** el caso adversarial conserva el campo no autorizado sin forzar el tipo con `as never`. Commit `97d9bc453e5f9bae54493e1edd247c4d4f38a297`.
+- [ ] **Retest obligatorio del SHA corregido:** verificar `node scripts/ats-harness-check.mts`, `npm test --prefix extensions/armotusitio-ide`, `npm run check --prefix extensions/armotusitio-ide` y `git diff --check`; aún no existe log para ese commit.
+- [ ] **Cierre enterprise AAA pendiente:** protocolo de ejecución externa coordinado y interoperable, sandbox OS probado, fences compartidos, rollback y checkpoints transaccionales, E2E con ambos proveedores autenticados, builds reales Windows/Linux/macOS y benchmarks reproducibles. Ninguna suite offline sustituye estos criterios de aceptación.
+
 ## Validación local obligatoria
 
 Desde la raíz del repositorio, con las dependencias instaladas:
