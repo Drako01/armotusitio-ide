@@ -192,6 +192,10 @@
         "title": "ArmoTuSitio: Negociar capacidades del Harness externo (autorización explícita)"
       },
       {
+        "command": "atsHarness.nativeProjectStatus",
+        "title": "ArmoTuSitio: Consultar estado del Harness externo (consentimiento explícito)"
+      },
+      {
         "command": "atsHarness.nativeProviderDiagnostics",
         "title": "ArmoTuSitio: Diagnosticar Codex y Claude locales"
       },
