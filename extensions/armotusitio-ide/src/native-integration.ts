@@ -138,8 +138,10 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			if (!instruction) { return; }
 			const plan = proposedWorkflow(provider, instruction);
 			const digest = workflowDigest(root, plan);
+			const verification = (await loadProjectConfig(root))?.plan;
+			const verificationSnapshot = JSON.stringify(verification || null);
 			await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({ language: 'json',
-				content: JSON.stringify({ project: root, handoffs: plan.handoffs, digest,
+				content: JSON.stringify({ project: root, handoffs: plan.handoffs, verification: verification || 'NOT_CONFIGURED', digest,
 					notice: 'Ejecución secuencial en el workspace actual. No se crean worktrees ni commits. Se consumen tokens en cada etapa.' }, null, 2)
 			}), { preview: true });
 			const approved = await vscode.window.showWarningMessage('Autorizar los tres agentes y la escritura local del implementador? Revisá el plan antes de continuar.', { modal: true }, 'Autorizar workflow');
@@ -147,10 +149,16 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			if (runningAgents.has(root) || pendingAgents.has(root) || runningWorkflows.has(root) || pendingWorkflows.has(root) || running.has(chosen.folder.uri.toString())) {
 				throw Error('HARNESS_ALREADY_RUNNING');
 			}
+			if (JSON.stringify((await loadProjectConfig(root))?.plan || null) !== verificationSnapshot) { throw Error('HARNESS_WORKFLOW_VERIFICATION_CHANGED'); }
 			pendingWorkflows.add(root); controller.refresh();
 			const engine = new NativeAgentWorkflow(root, path.join(metricsDirectory(root), 'workflows'));
 			let run: WorkflowRun;
-			try { run = await engine.start(plan, digest, () => authorized(chosen.folder)); }
+			try { run = await engine.start(plan, digest, () => authorized(chosen.folder), verification ? async signal => {
+				const task = await chosen.engine.create('Workflow verification', verification);
+				const approval = await chosen.engine.reviewDigest(task.plan);
+				const result = await chosen.engine.execute(task.id, approval, () => authorized(chosen.folder), signal);
+				return result.attempts.at(-1)?.status === 'passed';
+			} : undefined); }
 			finally { pendingWorkflows.delete(root); }
 			runningWorkflows.set(root, run); controller.refresh();
 			try {
@@ -290,7 +298,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			const exact = task.plan.gates.map(g => `${g.executable} ${JSON.stringify(g.args)}  (${g.cwd || '.'})`).join('\n');
 			if (await vscode.window.showWarningMessage(`Autorizar ejecuci\u00f3n local:\n${exact}`, { modal: true }, 'Ejecutar') !== 'Ejecutar') { return; }
 			if (!ensureTrust()) { return; }
-			if (running.has(p.folder.uri.toString())) { throw Error('HARNESS_ALREADY_RUNNING'); }
+			if (running.has(p.folder.uri.toString()) || runningAgents.has(p.folder.uri.fsPath) || runningWorkflows.has(p.folder.uri.fsPath)) { throw Error('HARNESS_ALREADY_RUNNING'); }
 			running.set(p.folder.uri.toString(), { engine: p.engine, taskId: task.id });
 			controller.refresh();
 			let result;
