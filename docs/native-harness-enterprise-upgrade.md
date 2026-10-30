@@ -15,17 +15,23 @@ This ledger separates code shipped on the branch from work that has **not** been
 - [x] Contract tests and a fake-provider execution test (POSIX only).
 - [x] Extended focused checks and updated local validation documentation.
 - [x] Existing project Harness authority remains unchanged.
+- [x] Durable plan → implement → review orchestration with explicit reviewer PASS and fail-closed gate verification.
+- [x] Explicit Git worktree isolation as the default execution choice for a native workflow (retained for manual review).
+- [x] Bounded read-only Git/sensitive-file scope attestation and explicit stale-workflow reconciliation.
+- [x] Resource-aware gate waves for explicitly parallel-safe checks, up to four workers.
+- [x] Observed gate/agent metrics shown in the IDE; v2 capability descriptor reports unsupported capabilities conservatively.
+- [x] Cross-platform native-test workflow defined; actual workflow run and installer E2E still unverified.
 
 ## Mandatory remaining work for an AAA release
 
 - [ ] Consolidate the project Python Harness and IDE-native engine behind one versioned runtime protocol.
-- [ ] Implement a persistent multi-agent DAG for the generic native engine, including handoffs, retries and feedback loops.
-- [ ] Isolate every writing agent in a disposable worktree/container or equivalent sandbox with filesystem/network policy.
-- [ ] Provide transactional integration, conflict resolution and recovery of interrupted agent work.
+- [ ] Extend the durable sequential handoff chain into a concurrent multi-agent DAG with corrective retries and adaptive feedback loops.
+- [ ] Add OS-level sandboxing with explicit filesystem/network permissions on top of the new default Git worktree isolation.
+- [ ] Provide transactional integration, conflict resolution and granular retry of interrupted work (stale-state reconciliation is implemented).
 - [ ] Implement complete provider capability negotiation, CLI-version compatibility, quota/backpressure and token/cost budgets.
 - [ ] Run cold/warm real-provider benchmarks with CPU, RAM, cost, tokens, latency, success rate and reference workloads.
 - [ ] Add fault injection, red-team prompt-injection, symlink/TOCTOU and secret-exfiltration exercises.
-- [ ] Wire agent lifecycle/progress, structured evidence and metrics into the main dashboard (currently command-only).
+- [ ] Implement full streamed agent lifecycle and traces; the dashboard now shows recent workflow status and measured summary metrics.
 - [ ] Validate Windows, Linux and macOS behavior under CI with actual installer builds and E2E smoke tests.
 - [ ] Complete the project-independent migration of legacy RedEvent policies/docs and expand semantic contract tests.
 - [ ] Verify CI is green on this exact branch SHA before review/merge.
@@ -40,4 +46,4 @@ npm test --prefix extensions/armotusitio-ide
 npm run check --prefix extensions/armotusitio-ide
 ```
 
-These tests exercise contracts and local fake providers. A true Codex/Claude smoke test is opt-in and requires authenticated local CLI installations. The absence of a CI run or runtime results must be reported as **unverified**.
+These tests exercise contracts and local fake providers. A true Codex/Claude smoke test is opt-in and requires authenticated local CLI installations. The absence of a CI run or runtime results must be reported as **unverified**. The code has been pushed, but neither a successful CI run nor real authenticated agent execution was observed in this environment.
