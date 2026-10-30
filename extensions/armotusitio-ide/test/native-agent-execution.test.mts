@@ -22,7 +22,7 @@ test('Codex uses a bounded sandbox instead of approval bypass', () => {
 
 test('implementer is restricted to workspace-write, never danger-full-access', () => {
   const call = buildAgentInvocation({ ...base, role: 'implementer', readOnly: false });
-  assert.equal(call.args[3], 'workspace-write');
+  assert.equal(call.args[2], 'workspace-write');
   assert.throws(() => buildAgentInvocation({ ...base, role: 'reviewer', readOnly: false }), /HARNESS_READ_ONLY_ROLE_REQUIRED/);
   assert.throws(() => buildAgentInvocation({ ...base, role: 'implementer', readOnly: true }), /HARNESS_IMPLEMENTER_MODE_MISMATCH/);
 });
