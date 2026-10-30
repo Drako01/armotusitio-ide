@@ -145,6 +145,14 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 
 **Atención al actualizar el checkout:** `node scripts/ats-harness-check.mts --fix` pudo dejar cambios locales en siete archivos. Antes de `git pull --ff-only`, inspeccionar `git status --short`; no descartar modificaciones ajenas ni forzar la rama. Si solo existen diferencias de formato conocidas, guardarlas con `git stash push -m "formatter-local-20261030" -- <rutas>` antes de actualizar, o copiarlas para revisión.
 
+### Cierre de validación local Windows (2026-10-30, 16:06–16:07)
+
+- **Evidencia:** validación local adjunta tras aplicar `harness-local-formatting` sobre `7904850d6b6`: `node scripts/ats-harness-check.mts` **PASS** en las siete etapas, incluido `Focused hygiene`; `npm test --prefix extensions/armotusitio-ide`: **160 PASS, 0 FAIL, 7 SKIP**; `npm run check --prefix extensions/armotusitio-ide`: **PASS**. `git diff --check` sin observaciones.
+- **Publicación:** commit `10aa50a1296` (`style(harness): finalize native enterprise formatting`) subido a `feat/native-harness-enterprise-upgrade`, con precommit Husky e higiene de los cinco archivos **PASS**.
+- [x] **Incidente de formato e higiene: cerrado en validación local Windows**. Sin errores en la batería ejecutada. Este cierre reemplaza los pendientes de las validaciones del 30/10 anteriores, pero no demuestra una validación CI multiplataforma.
+- [ ] **Pendiente para certificación enterprise:** confirmar CI Linux/macOS/Windows, los 7 casos omitidos (según su compatibilidad de plataforma) y pruebas E2E con proveedores reales, incluida autorización, cancelación, límites, recuperación y aislamiento.
+- **Notas no bloqueantes:** warnings de `MODULE_TYPELESS_PACKAGE_JSON`, `stripTypeScriptTypes` experimental y configuración npm antigua; no se consideran fallas de las pruebas realizadas.
+
 ## Validación local obligatoria
 
 Desde la raíz del repositorio, con las dependencias instaladas:
