@@ -16,6 +16,10 @@ export interface AgentMetric {
   status: AgentOutcome['status'];
   durationMs: number;
   truncated: boolean;
+  inputTokens?: number;
+  outputTokens?: number;
+  cachedInputTokens?: number;
+  estimatedCostUsd?: number;
 }
 export interface AgentStatistics {
   count: number;
@@ -25,16 +29,24 @@ export interface AgentStatistics {
   successRate: number | null;
   averageDurationMs: number | null;
   p95DurationMs: number | null;
+  usageSamples: number;
+  measuredInputTokens: number | null;
+  measuredOutputTokens: number | null;
+  estimatedCostUsd: number | null;
   entries: AgentMetric[];
 }
 const LIMIT = 100;
 const MAX_LEDGER_BYTES = 64 * 1024;
 
+function validInteger(value: number | undefined): boolean { return value === undefined || (Number.isSafeInteger(value) && value >= 0); }
+function validCost(value: number | undefined): boolean { return value === undefined || (typeof value === 'number' && Number.isFinite(value) && value >= 0 && value < 1_000_000); }
 function validateRecord(record: AgentMetric): boolean {
   return !!record && /^[a-f0-9-]{36}$/.test(record.id) && Number.isFinite(Date.parse(record.at))
     && ['codex', 'claude'].includes(record.provider) && ['planner', 'reviewer', 'implementer'].includes(record.role)
     && ['passed', 'failed', 'cancelled', 'timeout'].includes(record.status)
-    && Number.isSafeInteger(record.durationMs) && record.durationMs >= 0 && typeof record.truncated === 'boolean';
+    && Number.isSafeInteger(record.durationMs) && record.durationMs >= 0 && typeof record.truncated === 'boolean'
+    && validInteger(record.inputTokens) && validInteger(record.outputTokens)
+    && validInteger(record.cachedInputTokens) && validCost(record.estimatedCostUsd);
 }
 async function load(file: string): Promise<AgentMetric[]> {
   let stat;
@@ -50,7 +62,9 @@ export async function recordAgentMetric(directory: string, provider: NativeProvi
   await fs.mkdir(directory, { recursive: true, mode: 0o700 });
   const existing = await load(file);
   const entry: AgentMetric = { id: randomUUID(), at: new Date().toISOString(), provider, role,
-    status: result.status, durationMs: result.durationMs, truncated: result.truncated };
+    status: result.status, durationMs: result.durationMs, truncated: result.truncated,
+    ...(result.usage ? { inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens,
+      cachedInputTokens: result.usage.cachedInputTokens, estimatedCostUsd: result.usage.estimatedCostUsd } : {}) };
   const next = [...existing, entry].slice(-LIMIT);
   const tmp = file + '.' + randomUUID() + '.tmp';
   try {
@@ -65,9 +79,15 @@ export async function readAgentStatistics(directory: string): Promise<AgentStati
   const cancelled = entries.filter(e => e.status === 'cancelled').length;
   const failures = count - successes - cancelled;
   const durations = entries.map(e => e.durationMs).sort((a, b) => a - b);
+  const metered = entries.filter(e => e.inputTokens !== undefined && e.outputTokens !== undefined);
+  const priced = entries.filter(e => e.estimatedCostUsd !== undefined);
   return { count, successes, failures, cancelled,
     successRate: count ? Math.round(successes / count * 10000) / 100 : null,
     averageDurationMs: count ? Math.round(durations.reduce((a, b) => a + b, 0) / count) : null,
     p95DurationMs: count ? durations[Math.ceil(count * .95) - 1] : null,
+    usageSamples: metered.length,
+    measuredInputTokens: metered.length ? metered.reduce((sum, e) => sum + e.inputTokens!, 0) : null,
+    measuredOutputTokens: metered.length ? metered.reduce((sum, e) => sum + e.outputTokens!, 0) : null,
+    estimatedCostUsd: priced.length ? Math.round(priced.reduce((sum, e) => sum + e.estimatedCostUsd!, 0) * 1e6) / 1e6 : null,
     entries };
 }
