@@ -9,7 +9,7 @@
 
 Esta guía documenta el alcance acordado y diferencia **código agregado a la rama** de funcionalidad realmente certificada. Una casilla marcada no significa que el comportamiento haya pasado pruebas reales de extremo a extremo.
 
-**Inventario funcional:** 34 ítems implementados en código, 5 parciales y 15 pendientes (54 ítems de distinto tamaño y riesgo; no representan un porcentaje técnico de certificación). **Última validación automatizada local Windows aportada:** 204 tests aprobados, 0 fallidos, 1 omitido (205 total), con TypeScript, bundle, recursos, higiene y diff en PASS según el log Windows del 2026-10-30 21:38, sobre el commit `80d7a7bb867`. Los cambios posteriores requieren nuevo retest. Esto no equivale a CI multiplataforma ni a E2E completo.
+**Inventario funcional:** 34 ítems implementados en código, 5 parciales y 15 pendientes (54 ítems de distinto tamaño y riesgo; no representan un porcentaje técnico de certificación). **Última validación automatizada local Windows aportada:** 208 tests aprobados, 0 fallidos, 1 omitido (209 total), con TypeScript, bundle, recursos, higiene y diff en PASS según el último log Windows del 2026-10-30 21:42, sobre el commit `afcd7a92a645`. Las mejoras posteriores aún requieren retest. Esto no equivale a CI multiplataforma ni a E2E completo.
 
 **Calificación:** no asignar una nueva nota 1–10 ni declarar nivel AAA hasta disponer de pruebas reproducibles y resultados E2E. El 70% mencionado en el seguimiento conversacional fue una apreciación de cobertura, **no** una medición auditada.
 
@@ -416,6 +416,17 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 - [x] Regresiones offline para alteración de skill durante la confirmación y rechazo de más de ocho skills. No se hace ninguna llamada real a Codex ni Claude.
 - [ ] **Retest del lote:** pruebas de skills, integración, workflow, verificador local, suite global, TypeScript e higiene. Hasta disponer de un nuevo log, no contar los tests nuevos como PASS.
 - [ ] **Interoperabilidad completa aún pendiente:** adaptar la ejecución de gates del proyecto, handshake con permisos, fencing interproceso y exclusividad de escritores, sandbox OS y E2E mixto sobre RedEvent. Los implementadores del IDE siguen bloqueados en proyectos con Harness propio.
+
+### Lote P1: compatibilidad con directorios Codex y selección segura (2026-10-30; retest pendiente)
+
+- [x] **Detección de `.codex/skills`:** reconocimiento de `SKILL.md` por carpeta, igual que `.agents/skills` y `.claude/skills`, sin ejecutar contenido ni procesos del proyecto. El directorio `.codex` por sí solo **no** se interpreta como Harness independiente.
+- [x] **Prioridad determinista ante skills duplicadas:** `.agents/skills` > `.codex/skills` > `.claude/skills`. Cada nombre se publica una sola vez; el orden no concede autoridad ni sobrescribe archivos.
+- [x] **Skills en proyectos sin Harness:** catálogo y selector disponibles para agentes nativos también cuando existe únicamente `.codex` o `.agents` y no hay `.harness`.
+- [x] **Seguridad y límites conservados:** no seguir directorios de skills de Codex que sean symlinks/junctions, validar padres canónicos, máximo 64 KiB por archivo y hasta ocho skills seleccionadas.
+- [x] **Protección del selector múltiple:** rechazo de elementos duplicados, no declarados o de más de ocho elementos antes de iniciar proveedores.
+- [x] **Regresiones añadidas:** Codex-only, prioridades cruzadas, enlaces hacia fuera del proyecto, revisión nativa sin Harness y selección duplicada.
+- [ ] **Validación local pendiente para este lote:** último baseline confirmado **208 PASS / 0 FAIL / 1 SKIP**. No se han ejecutado pruebas contra los commits de este bloque en el equipo del operador.
+- [ ] **Interoperabilidad completa:** pendiente protocolo de control compartido, fencing de escrituras, delegación de gates y pruebas reales multi-Harness. Las skills se consumen como convenciones, nunca como permiso para ejecutar arbitrariamente.
 
 ## Validación local obligatoria
 
