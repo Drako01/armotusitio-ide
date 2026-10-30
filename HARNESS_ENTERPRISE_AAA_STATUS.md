@@ -9,7 +9,7 @@
 
 Esta guía documenta el alcance acordado y diferencia **código agregado a la rama** de funcionalidad realmente certificada. Una casilla marcada no significa que el comportamiento haya pasado pruebas reales de extremo a extremo.
 
-**Inventario funcional:** 34 ítems implementados en código, 5 parciales y 15 pendientes (54 ítems de distinto tamaño y riesgo; no representan un porcentaje técnico de certificación). **Última validación automatizada local Windows aportada:** 188 tests aprobados, 0 fallidos, 1 omitido, con TypeScript, bundle, recursos e higiene en PASS (evidencia del operador previa a los cambios de esquema estricto indicados abajo). Esto no equivale a CI multiplataforma ni a E2E completo.
+**Inventario funcional:** 34 ítems implementados en código, 5 parciales y 15 pendientes (54 ítems de distinto tamaño y riesgo; no representan un porcentaje técnico de certificación). **Última validación automatizada local Windows aportada:** 190 tests aprobados, 0 fallidos, 1 omitido (191 total), con TypeScript, bundle, recursos e higiene en PASS, sobre el commit previo a la mejora de recuperación de historial completo. Esto no equivale a CI multiplataforma ni a E2E completo.
 
 **Calificación:** no asignar una nueva nota 1–10 ni declarar nivel AAA hasta disponer de pruebas reproducibles y resultados E2E. El 70% mencionado en el seguimiento conversacional fue una apreciación de cobertura, **no** una medición auditada.
 
@@ -143,7 +143,7 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 - [x] **Corrección publicada tras el log:** los 19 miembros de interfaces multilinea vuelven a terminar en punto y coma conforme a `@stylistic/member-delimiter-style`. No se modificó lógica de agentes.
 - [ ] **Pendiente de verificación:** repetir los tres comandos para observar si `Focused hygiene` queda verde. Los warnings `MODULE_TYPELESS_PACKAGE_JSON`, Node experimental y configuraciones npm no son el motivo de fallo actual.
 
-**Atención al actualizar el checkout:** `node scripts/ats-harness-check.mts --fix` pudo dejar cambios locales en siete archivos. Antes de `git pull --ff-only`, inspeccionar `git status --short`; no descartar modificaciones ajenas ni forzar la rama. Si solo existen diferencias de formato conocidas, guardarlas con `git stash push -m "formatter-local-20261030" -- <rutas>` antes de actualizar, o copiarlas para revisión.
+**Atención al actualizar el checkout:** `node scripts/ats-harness-check.mts --fix` pudo dejar cambios locales en siete archivos. Antes de `git fetch origin feat/native-harness-enterprise-upgrade\ngit merge --ff-only FETCH_HEAD`, inspeccionar `git status --short`; no descartar modificaciones ajenas ni forzar la rama. Si solo existen diferencias de formato conocidas, guardarlas con `git stash push -m "formatter-local-20261030" -- <rutas>` antes de actualizar, o copiarlas para revisión.
 
 ### Cierre de validación local Windows (2026-10-30, 16:06–16:07)
 
@@ -353,6 +353,13 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 - [ ] **Fallback seguro:** ante indisponibilidad inicial, seguir con coordinación local. Ante pérdida de Redis con trabajos distribuidos activos, no sustituir locks ni reejecutar tareas de forma silenciosa: bloquear y reconciliar explícitamente.
 - [ ] **Pruebas:** ejecución sin Redis, Redis disponible, caída durante operaciones, recuperación y separación entre instancias. No iniciar contenedores ni instalar Redis automáticamente.
 - [x] **Validación sin GitHub Actions:** el responsable descarta Actions por consumo. Se retiró el workflow específico del Harness de esta rama. Los controles deben seguir ejecutándose localmente.
+
+### Recuperación de estados antiguos fuera de la vista de historial (pendiente de retest)
+
+- [x] La vista de historial conserva un límite de 40 entradas recientes para el IDE.
+- [x] `reconcile()` ahora lee hasta el máximo interno de 500 registros almacenados antes de liberar locks y marcar interrupciones; un workflow antiguo no queda excluido por el límite de visualización.
+- [x] Nueva prueba offline con 41 registros: el workflow más antiguo está oculto para la UI y debe reconciliarse igualmente.
+- [ ] Repetir tests locales y verificar el commit `6f5040690035`. Los 190 PASS reportados son anteriores a esta modificación.
 
 ## Validación local obligatoria
 
