@@ -575,7 +575,7 @@ export class NativeAgentWorkflow {
 		return this.start(plan, approvedDigest, trusted, verify, onOutcome);
 	}
 
-	async start(plan: HandoffPlan, approvedDigest: string, trusted: () => boolean, verify?: (signal: AbortSignal) => Promise<boolean>, onOutcome?: (provider: NativeProvider, role: AgentRole, outcome: AgentOutcome) => Promise<void>): Promise<WorkflowRun> {
+	async start(plan: HandoffPlan, approvedDigest: string, trusted: () => boolean, verify?: (signal: AbortSignal) => Promise<boolean>, onOutcome?: (provider: NativeProvider, role: AgentRole, outcome: AgentOutcome) => Promise<void>, onFence?: (fence: SharedExecutionFence) => Promise<void>): Promise<WorkflowRun> {
 		if (this.running) { throw Error('HARNESS_WORKFLOW_ALREADY_RUNNING'); }
 		if (!trusted()) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
 		const canonical = await fs.realpath(this.root);
@@ -602,12 +602,14 @@ export class NativeAgentWorkflow {
 			await fs.rm(lockFile);
 			throw error;
 		}
-		let fence: SharedExecutionFence;
+		let fence: SharedExecutionFence | undefined;
 		try {
 			fence = await acquireSharedExecutionFence(await fs.realpath(this.coordinationRoot),
 				path.dirname(this.storage), 'native-workflow');
 			await fence.assertCurrent();
+			await onFence?.(fence);
 		} catch (error) {
+			if (fence) { await fence.release(); }
 			await lock.close();
 			await fs.rm(lockFile);
 			throw error;
