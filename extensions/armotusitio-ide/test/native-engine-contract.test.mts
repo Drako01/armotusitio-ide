@@ -69,3 +69,34 @@ test('hybrid capability comparison is read-only and cannot grant execution autho
 	assert.throws(() => compareHybridCapabilities(native, ['unsupported'] as never), /HARNESS_HYBRID_CAPABILITY_INVALID/);
 	assert.throws(() => compareHybridCapabilities(native, ['parallel-gates', 'parallel-gates']), /HARNESS_HYBRID_CAPABILITY_INVALID/);
 });
+
+test('capability discovery rejects unknown fields and linked manifest parents', async (t) => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-capability-manifest-'));
+	try {
+		const canonical = await fs.realpath(root);
+		const manifests = path.join(root, '.harness', 'manifests');
+		await fs.mkdir(manifests, { recursive: true });
+		const file = path.join(manifests, 'ide-capabilities.json');
+		await fs.writeFile(file, JSON.stringify({
+			schemaVersion: 2, engine: 'project', capabilities: [], privileged: true
+		}));
+		await assert.rejects(describeEngine(canonical), /HARNESS_CAPABILITIES_INVALID/);
+		await fs.rm(path.join(root, '.harness'), { recursive: true });
+		const external = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-capability-escape-'));
+		try {
+			await fs.mkdir(path.join(external, 'manifests'));
+			await fs.writeFile(path.join(external, 'manifests', 'ide-capabilities.json'),
+				JSON.stringify({ schemaVersion: 2, engine: 'project', capabilities: [] }));
+			try {
+				await fs.symlink(external, path.join(root, '.harness'), process.platform === 'win32' ? 'junction' : 'dir');
+			} catch (error) {
+				if (['EPERM', 'EACCES', 'ENOTSUP'].includes((error as NodeJS.ErrnoException).code || '')) {
+					t.skip('Directory link creation requires OS privileges');
+					return;
+				}
+				throw error;
+			}
+			await assert.rejects(describeEngine(canonical), /HARNESS_CAPABILITIES_UNSAFE/);
+		} finally { await fs.rm(external, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true }); }
+});
