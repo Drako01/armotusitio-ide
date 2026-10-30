@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { NativeHarness, approvalDigest, validateNativePlan } from '../src/native-harness.ts';
+import { NativeHarness, approvalDigest, validateNativePlan, selectNativeWave } from '../src/native-harness.ts';
 
 async function fixture() {
 	const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-native-test-'));
@@ -260,4 +260,19 @@ test('explicit reconciliation recovers an uncertain attempt whose lock is missin
 		assert.equal(await f.engine.reconcile(), true);
 		assert.equal((await f.engine.get(task.id)).attempts[0].status, 'interrupted');
 	} finally { await f.cleanup(); }
+});
+
+
+test('resource-aware gate scheduler caps concurrency and avoids shared resources', () => {
+	const ready = [
+		{ id: 'a', executable: 'node', args: [], parallelSafe: true, resources: ['db'] },
+		{ id: 'b', executable: 'node', args: [], parallelSafe: true, resources: ['files'] },
+		{ id: 'c', executable: 'node', args: [], parallelSafe: true, resources: ['db'] },
+		{ id: 'd', executable: 'node', args: [], parallelSafe: true, resources: ['network'] },
+		{ id: 'e', executable: 'node', args: [], parallelSafe: true, resources: ['cpu'] }
+	];
+	assert.deepEqual(selectNativeWave(ready, 8).map(x => x.id), ['a', 'b', 'd', 'e']);
+	assert.deepEqual(selectNativeWave(ready, 2).map(x => x.id), ['a', 'b']);
+	assert.deepEqual(selectNativeWave(ready.map(x => ({ ...x, parallelSafe: false })), 8).map(x => x.id), ['a', 'b']);
+	assert.throws(() => validateNativePlan({ schemaVersion: 1, gates: [{ id: 'bad', executable: 'node', args: [], resources: ['../secret'] }] }), /HARNESS_INVALID_RESOURCES/);
 });
