@@ -7,6 +7,7 @@ import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { resolveNativeCommand } from './native-runtime.ts';
+import { sensitiveScopeDigest } from './native-sensitive-scope.ts';
 
 const MAX_CAPTURE = 12 * 1024 * 1024;
 const CAPTURE_TIMEOUT = 25_000;
@@ -59,6 +60,7 @@ export async function captureAgentScope(root: string): Promise<ScopeSnapshot> {
     throw error;
   });
   for (const name of SENSITIVE) { hash.update(name + ':' + await fingerprintFile(path.join(root, name))); }
+  hash.update((await sensitiveScopeDigest(root)).digest);
   if (!marker) { return { source: 'none', digest: hash.digest('hex') }; }
   hash.update(await gitHash(root, ['status', '--porcelain=v1', '-z', '--untracked-files=normal']));
   hash.update(await gitHash(root, ['diff', '--no-ext-diff', '--binary', 'HEAD']));
