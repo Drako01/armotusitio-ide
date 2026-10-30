@@ -10,6 +10,7 @@ import * as path from 'node:path';
 import { registerNativeHarness } from '../src/native-integration.ts';
 import { writeProjectConfig } from '../src/native-project.ts';
 import { inspectHarnessAuthority } from '../src/native-authority.ts';
+import { acquireSharedExecutionFence, inspectSharedExecutionFence } from '../src/native-shared-fence.ts';
 
 async function fixture() {
 	const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-native-ui-'));
@@ -303,5 +304,21 @@ test('workflow history reports unresolved journal IDs without exposing uncertain
 		assert.equal(preview.executionEnabled, false);
 		assert.deepEqual(preview.pendingJournalIds, [id]);
 		assert.equal(f.documents.at(-1)!.content.includes('UNCERTAIN_PRIVATE_CONTENT'), false);
+	} finally { await f.cleanup(); }
+});
+
+test('IDE shared-fence recovery refuses a live process without altering its lock', async () => {
+	const f = await fixture();
+	try {
+		const root = await fs.realpath(f.roots[0]);
+		const digest = (await import('node:crypto')).createHash('sha256').update(root).digest('hex');
+		const storage = path.join(path.dirname(root), 'private', 'native-harness', digest);
+		const lease = await acquireSharedExecutionFence(root, storage, 'native-task');
+		await f.invoke('nativeSharedFenceReconcile', root);
+		assert.deepEqual(await inspectSharedExecutionFence(root, storage),
+			{ held: true, epoch: lease.epoch, owner: 'native-task' });
+		await lease.release();
+		await f.invoke('nativeSharedFenceReconcile', root);
+		assert.ok(f.notices.some(message => String(message).includes('No hay un fence')));
 	} finally { await f.cleanup(); }
 });
