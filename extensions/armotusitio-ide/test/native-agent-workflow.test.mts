@@ -105,3 +105,23 @@ test('interrupted workflow cannot replay an uncertain writer or use a changed pl
 		await assert.rejects(workflow.restartInterrupted('../outside', plan, digest, () => true), /HARNESS_RESUME_ID_INVALID/);
 	} finally { await fs.rm(root, { recursive: true, force: true }); }
 });
+
+test('workflow history refuses injected fields inside persisted lifecycle events', async () => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-events-state-'));
+	try {
+		const canonical = await fs.realpath(root);
+		const dir = path.join(root, 'private');
+		await fs.mkdir(dir);
+		const id = 'bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb';
+		const digest = workflowDigest(canonical, proposedWorkflow('codex', 'Inspect code'));
+		const key = (await import('node:crypto')).createHash('sha256').update(canonical).digest('hex');
+		const record = {
+			schemaVersion: 1, id, createdAt: new Date().toISOString(),
+			projectKey: key, planDigest: digest, status: 'passed', steps: [],
+			events: [{ workflowId: id, kind: 'workflow-started', at: new Date().toISOString(), injectedPrompt: 'SECRET' }]
+		};
+		await fs.writeFile(path.join(dir, id + '.json'), JSON.stringify(record));
+		const workflow = new NativeAgentWorkflow(canonical, dir);
+		await assert.rejects(workflow.history(), /HARNESS_WORKFLOW_INVALID_STATE/);
+	} finally { await fs.rm(root, { recursive: true, force: true }); }
+});
