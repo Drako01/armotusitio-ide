@@ -115,7 +115,10 @@ function validRecord(value: unknown): value is WorkflowRecord {
 		r.schemaVersion === 1 && IDENTIFIER.test(r.id) &&
 		['running', 'passed', 'failed', 'cancelled', 'interrupted'].includes(r.status) &&
 		/^[a-f0-9]{64}$/.test(r.planDigest) && /^[a-f0-9]{64}$/.test(r.projectKey) &&
-		Number.isFinite(Date.parse(r.createdAt)) && Array.isArray(r.steps) && r.steps.length <= 16 &&
+		typeof r.createdAt === 'string' && Number.isFinite(Date.parse(r.createdAt)) &&
+		(r.endedAt === undefined || (typeof r.endedAt === 'string' && Number.isFinite(Date.parse(r.endedAt)))) &&
+		(r.verification === undefined || ['passed', 'failed', 'not-configured'].includes(r.verification)) &&
+		Array.isArray(r.steps) && r.steps.length <= 16 &&
 		(r.events === undefined || (Array.isArray(r.events) && r.events.length <= 200 && r.events.every(e =>
 			e && e.workflowId === r.id &&
 			['workflow-started', 'step-started', 'provider-progress', 'step-finished', 'verification-finished', 'workflow-finished'].includes(e.kind) &&
@@ -129,7 +132,11 @@ function validRecord(value: unknown): value is WorkflowRecord {
 			Object.keys(step).every(key => STEP_FIELDS.has(key)) && IDENTIFIER.test(step.id) &&
 			['planner', 'reviewer', 'implementer'].includes(step.role) &&
 			['claude', 'codex'].includes(step.provider) &&
-			['pending', 'running', 'passed', 'failed', 'cancelled', 'interrupted'].includes(step.status));
+			['pending', 'running', 'passed', 'failed', 'cancelled', 'interrupted'].includes(step.status) &&
+			(step.startedAt === undefined || (typeof step.startedAt === 'string' && Number.isFinite(Date.parse(step.startedAt)))) &&
+			(step.endedAt === undefined || (typeof step.endedAt === 'string' && Number.isFinite(Date.parse(step.endedAt)))) &&
+			(step.durationMs === undefined || (Number.isSafeInteger(step.durationMs) && step.durationMs >= 0 && step.durationMs <= MAX_WORKFLOW_DURATION_MS)) &&
+			(step.exitCode === undefined || step.exitCode === null || (Number.isSafeInteger(step.exitCode) && step.exitCode >= 0 && step.exitCode <= 255)));
 }
 
 export class NativeAgentWorkflow {
