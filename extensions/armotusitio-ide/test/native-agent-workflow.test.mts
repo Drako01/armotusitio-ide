@@ -450,3 +450,77 @@ test('successful explicit reconciliation releases its own guard without touching
 		await assert.rejects(fs.stat(path.join(state, 'reconcile.guard')), { code: 'ENOENT' });
 	} finally { await fs.rm(root, { recursive: true, force: true }); }
 });
+
+test('recovery resolves only already committed workflow state intents without replaying providers', async () => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-workflow-intent-commit-'));
+	try {
+		const canonical = await fs.realpath(root);
+		const state = path.join(root, 'private');
+		await fs.mkdir(state);
+		const id = 'cccccccc-cccc-4ccc-8ccc-cccccccccccd';
+		const plan = proposedWorkflow('codex', 'Inspect recovery metadata without providers');
+		const record = {
+			schemaVersion: 1, id, createdAt: new Date().toISOString(),
+			projectKey: (await import('node:crypto')).createHash('sha256').update(canonical).digest('hex'),
+			planDigest: workflowDigest(canonical, plan), status: 'running',
+			steps: [{ id: 'plan', role: 'planner', provider: 'codex', status: 'running' }]
+		};
+		const bytes = JSON.stringify(record);
+		await fs.writeFile(path.join(state, id + '.json'), bytes);
+		const hash = (await import('node:crypto')).createHash('sha256').update(bytes).digest('hex');
+		await fs.writeFile(path.join(state, id + '.json.intent'), JSON.stringify({
+			schemaVersion: 1, id, before: null, after: hash, createdAt: new Date().toISOString()
+		}));
+		await fs.writeFile(path.join(state, 'execution.lock'), JSON.stringify({ pid: 99999999 }));
+		const flow = new NativeAgentWorkflow(canonical, state);
+		await assert.rejects(flow.history(), /HARNESS_WORKFLOW_PENDING_JOURNAL/);
+		assert.equal(await flow.reconcile(), 1);
+		await assert.rejects(fs.stat(path.join(state, id + '.json.intent')), { code: 'ENOENT' });
+		assert.equal((await flow.history())[0].status, 'interrupted');
+	} finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
+test('uncommitted workflow intent preserves evidence and blocks execution and reconciliation', async () => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-workflow-intent-pending-'));
+	try {
+		const canonical = await fs.realpath(root);
+		const state = path.join(root, 'private');
+		await fs.mkdir(state);
+		const id = 'dddddddd-dddd-4ddd-8ddd-ddddddddddde';
+		const plan = proposedWorkflow('codex', 'Inspect incomplete record');
+		const record = {
+			schemaVersion: 1, id, createdAt: new Date().toISOString(),
+			projectKey: (await import('node:crypto')).createHash('sha256').update(canonical).digest('hex'),
+			planDigest: workflowDigest(canonical, plan), status: 'running', steps: []
+		};
+		const raw = JSON.stringify(record);
+		const file = path.join(state, id + '.json');
+		const intent = path.join(state, id + '.json.intent');
+		await fs.writeFile(file, raw);
+		await fs.writeFile(intent, JSON.stringify({
+			schemaVersion: 1, id, before: null,
+			after: 'a'.repeat(64), createdAt: new Date().toISOString()
+		}));
+		await fs.writeFile(path.join(state, 'execution.lock'), JSON.stringify({ pid: 99999999 }));
+		const flow = new NativeAgentWorkflow(canonical, state);
+		await assert.rejects(flow.reconcile(), /HARNESS_WORKFLOW_PENDING_JOURNAL/);
+		assert.equal(await fs.readFile(file, 'utf8'), raw);
+		assert.ok((await fs.readFile(intent, 'utf8')).includes('"after"'));
+		await assert.rejects(flow.start(plan, workflowDigest(canonical, plan), () => true),
+			/HARNESS_WORKFLOW_PENDING_JOURNAL/);
+		await assert.rejects(fs.stat(path.join(state, 'reconcile.guard')), { code: 'ENOENT' });
+	} finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
+test('normal workflow journal lifecycle leaves no pending intent after fake provider execution', async () => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-workflow-intent-clean-'));
+	try {
+		const canonical = await fs.realpath(root);
+		const state = path.join(root, 'private');
+		const plan = proposedWorkflow('codex', 'Inspect fake provider transitions');
+		const workflow = new NativeAgentWorkflow(canonical, state);
+		const fake = await workflow.start(plan, workflowDigest(canonical, plan), () => false);
+		await fake.result;
+		assert.deepEqual((await fs.readdir(state)).filter(name => name.endsWith('.json.intent')), []);
+	} finally { await fs.rm(root, { recursive: true, force: true }); }
+});
