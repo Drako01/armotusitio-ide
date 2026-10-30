@@ -107,3 +107,41 @@ export async function reserveProviderInvocation(
 		return { used: used + 1, remaining: maxCallsPer24h - used - 1 };
 	});
 }
+
+export interface ProviderInvocationQuotaStatus {
+	enabled: boolean;
+	maxCallsPer24h: number | null;
+	windowHours: 24;
+	providers: {
+		codex: { used: number; remaining: number | null };
+		claude: { used: number; remaining: number | null };
+	};
+}
+
+/** Metadata-only view; never reads model output, prompts, token contents or credentials. */
+export async function readProviderInvocationQuota(
+	directory: string, maxCallsPer24h: number, now = Date.now()
+): Promise<ProviderInvocationQuotaStatus> {
+	if (!Number.isSafeInteger(maxCallsPer24h) || maxCallsPer24h < 0 || maxCallsPer24h > 1000 ||
+		!Number.isSafeInteger(now) || now < 0) { throw Error('HARNESS_PROVIDER_QUOTA_POLICY_INVALID'); }
+	let info;
+	try { info = await fs.lstat(directory); }
+	catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== 'ENOENT') { throw error; }
+	}
+	if (info && (!info.isDirectory() || info.isSymbolicLink() ||
+		await fs.realpath(directory) !== path.resolve(directory))) {
+		throw Error('HARNESS_PROVIDER_QUOTA_STORAGE_UNSAFE');
+	}
+	const ledger = info ? await readLedger(path.join(directory, FILE)) : { schemaVersion: 1 as const, entries: [] as Entry[] };
+	if (ledger.entries.some(entry => entry.at > now)) { throw Error('HARNESS_PROVIDER_QUOTA_CLOCK_ROLLBACK'); }
+	const active = ledger.entries.filter(entry => now - entry.at < WINDOW_MS);
+	const count = (provider: NativeProvider): { used: number; remaining: number | null } => {
+		const used = active.filter(entry => entry.provider === provider).length;
+		return { used, remaining: maxCallsPer24h === 0 ? null : Math.max(0, maxCallsPer24h - used) };
+	};
+	return {
+		enabled: maxCallsPer24h > 0, maxCallsPer24h: maxCallsPer24h || null, windowHours: 24,
+		providers: { codex: count('codex'), claude: count('claude') }
+	};
+}
