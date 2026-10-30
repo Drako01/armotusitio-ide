@@ -72,6 +72,23 @@ test('handshake rejects undeclared response fields even with a valid nonce', asy
 	} finally { await fs.rm(root, { recursive: true, force: true }); }
 });
 
+test('handshake rejects project entry modified while its own process executes', async () => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-handshake-entry-change-'));
+	try {
+		const canonical = await fs.realpath(root);
+		await fs.mkdir(path.join(root, '.harness', 'manifests'), { recursive: true });
+		await fs.writeFile(path.join(root, '.harness', 'manifests', 'ide-capabilities.json'),
+			JSON.stringify({ schemaVersion: 2, engine: 'project', capabilities: ['parallel-gates'] }));
+		const entry = path.join(root, '.harness', 'core.mjs');
+		await fs.writeFile(entry, [
+			'import { appendFileSync } from "node:fs";',
+			'appendFileSync(".harness/core.mjs", "\\n// modified");',
+			'console.log(JSON.stringify({ schemaVersion: 2, nonce: process.argv[process.argv.indexOf("--nonce") + 1], capabilities: ["parallel-gates"] }));'
+		].join('\n'));
+		await assert.rejects(probeProjectHandshake(canonical, () => true), /HARNESS_HANDSHAKE_ENTRY_CHANGED/);
+	} finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
 test('hybrid capability comparison is read-only and cannot grant execution authority', () => {
 	const native = verifiedNativeCapabilities();
 	const result = compareHybridCapabilities(native, ['parallel-gates', 'os-sandbox']);
