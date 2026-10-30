@@ -9,7 +9,7 @@
 
 Esta guía documenta el alcance acordado y diferencia **código agregado a la rama** de funcionalidad realmente certificada. Una casilla marcada no significa que el comportamiento haya pasado pruebas reales de extremo a extremo.
 
-**Inventario funcional:** 34 ítems implementados en código, 5 parciales y 15 pendientes (54 ítems de distinto tamaño y riesgo; no representan un porcentaje técnico de certificación). **Validación automatizada local Windows:** PASS en el árbol de trabajo que se consolidó con el commit de formato `18f35f8d374`; 173 tests aprobados, 0 fallidos, 9 omitidos. No equivale a CI ni E2E real.
+**Inventario funcional:** 34 ítems implementados en código, 5 parciales y 15 pendientes (54 ítems de distinto tamaño y riesgo; no representan un porcentaje técnico de certificación). **Última validación automatizada local Windows aportada:** 188 tests aprobados, 0 fallidos, 1 omitido, con TypeScript, bundle, recursos e higiene en PASS (evidencia del operador previa a los cambios de esquema estricto indicados abajo). Esto no equivale a CI multiplataforma ni a E2E completo.
 
 **Calificación:** no asignar una nueva nota 1–10 ni declarar nivel AAA hasta disponer de pruebas reproducibles y resultados E2E. El 70% mencionado en el seguimiento conversacional fue una apreciación de cobertura, **no** una medición auditada.
 
@@ -319,6 +319,13 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 - [ ] **E2E Claude exitoso:** pendiente por disponibilidad de cuota; el mensaje genérico `provider-failed` no demuestra por sí solo que la cuota sea la causa exacta. No repetir llamadas reales hasta contar con cuota.
 - [x] **Validación local Windows del último cambio de resolución:** `npm test --prefix extensions/armotusitio-ide` **188 PASS, 0 FAIL, 1 SKIP** de 189; `ats-harness-check.mts --fix` y sin `--fix` con todos los gates PASS (incluida higiene), `npm run check` PASS; sin cambios rastreados, `script_test.log` sin seguimiento.
 - [ ] **Próximo foco independiente de cuota:** CI multiplataforma, fixtures de error/limitación del proveedor sin red, aislamiento OS, recuperación transaccional y protocolo de motores.
+
+### Estado durable estrictamente tipado y rechazo de datos no autorizados (iteración pendiente de retest)
+
+- [x] **Control de seguridad incorporado:** el lector del historial de workflows ahora valida una allowlist de campos tanto en el registro raíz como en cada paso, además de la allowlist ya existente para eventos. Se rechazan metadatos desconocidos, incluidos posibles prompts, respuestas del proveedor o credenciales inyectados en JSON de estado.
+- [x] **Regresión sin modelos:** test que escribe estados contaminados al archivo privado, comprueba fallo cerrado y ausencia de reescritura, y verifica que el estado legítimo continúa siendo legible.
+- [ ] **Nueva ejecución de tests:** la batería previa de 188 PASS no contiene esta nueva prueba. Repetir `ats-harness-check.mts --fix` / sin `--fix`, suite npm, `npm run check` y `git diff --check`.
+- [ ] **No certificado aún:** CI Windows/Linux/macOS y protección transaccional del filesystem; la allowlist endurece la persistencia, **no constituye rollback ni sandbox OS**.
 
 ## Validación local obligatoria
 
