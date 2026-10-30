@@ -81,12 +81,14 @@ test('workflow launches two independent read-only providers before exclusive imp
 		await fs.writeFile(executable, source, { mode: 0o755 });
 		await fs.chmod(executable, 0o755);
 		process.env.PATH = bin + path.delimiter + (oldPath || '');
-		const graph: HandoffPlan = { schemaVersion: 1, handoffs: [
-			{ id: 'reader_a', role: 'planner', provider: 'codex', dependsOn: [], instruction: 'DAG_READER_A inspect source' },
-			{ id: 'reader_b', role: 'planner', provider: 'codex', dependsOn: [], instruction: 'DAG_READER_B inspect tests' },
-			{ id: 'writer', role: 'implementer', provider: 'codex', dependsOn: ['reader_a', 'reader_b'], instruction: 'DAG_WRITE implement' },
-			{ id: 'review', role: 'reviewer', provider: 'codex', dependsOn: ['writer'], instruction: 'Read-only review; print HARNESS_REVIEW: PASS' }
-		] };
+		const graph: HandoffPlan = {
+			schemaVersion: 1, handoffs: [
+				{ id: 'reader_a', role: 'planner', provider: 'codex', dependsOn: [], instruction: 'DAG_READER_A inspect source' },
+				{ id: 'reader_b', role: 'planner', provider: 'codex', dependsOn: [], instruction: 'DAG_READER_B inspect tests' },
+				{ id: 'writer', role: 'implementer', provider: 'codex', dependsOn: ['reader_a', 'reader_b'], instruction: 'DAG_WRITE implement' },
+				{ id: 'review', role: 'reviewer', provider: 'codex', dependsOn: ['writer'], instruction: 'Read-only review; print HARNESS_REVIEW: PASS' }
+			]
+		};
 		const workflow = new NativeAgentWorkflow(canonical, path.join(root, 'private'));
 		const run = await workflow.start(graph, workflowDigest(canonical, graph), () => true);
 		const result = await run.result;
@@ -105,10 +107,12 @@ test('workflow launches two independent read-only providers before exclusive imp
 
 test('DAG blocks unreviewed writes before launching agents', () => {
 	validateDAGReviewCoverage(plan);
-	const unsafe: HandoffPlan = { schemaVersion: 1, handoffs: [
-		{ id: 'read_a', role: 'planner', provider: 'codex', dependsOn: [], instruction: 'Read A' },
-		{ id: 'read_b', role: 'planner', provider: 'claude', dependsOn: [], instruction: 'Read B' },
-		{ id: 'unreviewed_writer', role: 'implementer', provider: 'codex', dependsOn: ['read_a', 'read_b'], instruction: 'Write' }
-	] };
+	const unsafe: HandoffPlan = {
+		schemaVersion: 1, handoffs: [
+			{ id: 'read_a', role: 'planner', provider: 'codex', dependsOn: [], instruction: 'Read A' },
+			{ id: 'read_b', role: 'planner', provider: 'claude', dependsOn: [], instruction: 'Read B' },
+			{ id: 'unreviewed_writer', role: 'implementer', provider: 'codex', dependsOn: ['read_a', 'read_b'], instruction: 'Write' }
+		]
+	};
 	assert.throws(() => validateDAGReviewCoverage(unsafe), /HARNESS_DAG_REVIEW_REQUIRED/);
 });

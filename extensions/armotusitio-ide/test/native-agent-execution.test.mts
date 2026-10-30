@@ -11,8 +11,10 @@ import { execFileSync } from 'node:child_process';
 import { buildAgentInvocation, executeReviewedAgent } from '../src/native-agent-execution.ts';
 import { reviewAgentDraft } from '../src/native-providers.ts';
 
-const base = { schemaVersion: 1 as const, provider: 'codex' as const, role: 'reviewer' as const,
-	projectRoot: path.resolve('native-agent-test'), instruction: 'Review API changes', readOnly: true };
+const base = {
+	schemaVersion: 1 as const, provider: 'codex' as const, role: 'reviewer' as const,
+	projectRoot: path.resolve('native-agent-test'), instruction: 'Review API changes', readOnly: true
+};
 
 test('Codex uses a bounded sandbox instead of approval bypass', () => {
 	const call = buildAgentInvocation(base);

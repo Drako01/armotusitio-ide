@@ -275,7 +275,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			const folders = vscode.workspace.workspaceFolders || [];
 			const selected = requested ? folders.find((folder: Host) => folder.uri.fsPath === requested) :
 				folders.length === 1 ? folders[0] :
-				(await vscode.window.showQuickPick(folders.map((folder: Host) => ({ label: folder.name, description: folder.uri.fsPath, folder })), { placeHolder: 'Eleg\u00ed el Harness externo a verificar' }))?.folder;
+					(await vscode.window.showQuickPick(folders.map((folder: Host) => ({ label: folder.name, description: folder.uri.fsPath, folder })), { placeHolder: 'Eleg\u00ed el Harness externo a verificar' }))?.folder;
 			if (!selected || !authorized(selected)) { return; }
 			const root = await fs.realpath(selected.uri.fsPath);
 			const descriptor = await describeEngine(root);
@@ -287,8 +287,10 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			const handshake = await probeProjectHandshake(root, () => authorized(selected));
 			await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({
 				language: 'json',
-				content: JSON.stringify({ project: root, declared: descriptor.projectDeclared, handshake, executionEnabled: false,
-					note: 'Capacidades reportadas por proceso externo, no demostradas por E2E ni autorizadas para ejecutar operaciones.' }, null, 2)
+				content: JSON.stringify({
+					project: root, declared: descriptor.projectDeclared, handshake, executionEnabled: false,
+					note: 'Capacidades reportadas por proceso externo, no demostradas por E2E ni autorizadas para ejecutar operaciones.'
+				}, null, 2)
 			}), { preview: true });
 		} catch (error) { showError(error); }
 	}));
