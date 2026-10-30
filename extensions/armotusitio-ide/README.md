@@ -30,7 +30,7 @@ un contenedor/VM aislado. Nunca concedas permisos de bypass.
 Ahora también existe **ArmoTuSitio: Ejecutar workflow multiagente nativo** con handoffs
 ejecutables (plan → implementación → revisión), aprobación explícita, bloqueo de ejecución,
 historial persistente y recuperación conservadora desde **Reconciliar workflows interrumpidos**.
-El reviewer debe emitir `HARNESS_REVIEW: PASS` para que el flujo continúe; si no, falla cerrado.
+El reviewer debe terminar con una única línea `HARNESS_REVIEW: PASS` para aprobar;\nuna respuesta ambigua o truncada falla cerrado. Si detecta defectos, el Harness puede\nhacer **un solo ciclo correctivo** (implementador + nueva revisión) previamente autorizado;\nno hay reintentos ilimitados.
 Si el proyecto configura `.ats-harness.json`, el workflow ejecuta los gates después de la revisión;
 sin esos gates, el estado de verificación es `not-configured` y no equivale a un resultado verificado.
 
@@ -47,7 +47,7 @@ de lectura y edición, y denegación explícita de Bash y herramientas web. Los 
 son responsables de comprobar el resultado. Las ejecuciones de Codex conservan sandbox
 `workspace-write` o `read-only` según el rol.
 
-**Pendiente para calificación AAA:** sandbox OS/red, integración transaccional automática,
+Se limita a dos operaciones de proveedor simultáneas por ventana del IDE y a un máximo\nde una hora por workflow, incluyendo la verificación. El diagnóstico de CLI consulta\nversiones sin consumir tokens y sin afirmar que las sesiones estén autenticadas.\n\n**Pendiente para calificación AAA:** sandbox OS/red, integración transaccional automática,
 correcciones autónomas del feedback, contabilidad verificable de tokens/costos y benchmarks
 reales con proveedores autenticados.
 
