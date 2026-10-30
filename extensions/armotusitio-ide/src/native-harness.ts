@@ -279,7 +279,7 @@ export class NativeHarness {
 						break;
 					}
 				}
-				if (attempt.status === 'running') { attempt.status = 'passed'; }
+				if (attempt.status === 'running') { attempt.status = controller.signal.aborted || !trust() ? 'cancelled' : 'passed'; }
 			} catch (e) { attempt.status = controller.signal.aborted ? 'cancelled' : 'failed'; throw e; }
 			finally {
 				attempt.endedAt = new Date().toISOString();
@@ -294,6 +294,9 @@ export class NativeHarness {
 						}
 					} catch { attempt.evidence = { state: 'unavailable', error: 'HARNESS_EVIDENCE_PERSISTENCE' }; }
 				}
+				// Cancellation may arrive while persisting evidence after the final gate.
+				// Never commit a successful terminal state after trust was revoked or abort won.
+				if (attempt.status === 'passed' && (controller.signal.aborted || !trust())) { attempt.status = 'cancelled'; }
 				await shared.assertCurrent();
 				await writeAtomic(this.file(id), task);
 				terminalPersisted = true;
