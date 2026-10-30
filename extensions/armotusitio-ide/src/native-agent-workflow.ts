@@ -354,7 +354,8 @@ export class NativeAgentWorkflow {
 				let reviewFeedback = '';
 				if (planAgentWaves(plan).some(wave => wave.ids.length > 1)) {
 					await this.executeParallelDAG(plan, record, file, canonical, trusted, deadline, onOutcome);
-				} else for (const step of record.steps) {
+				} else {
+					for (const step of record.steps) {
 					if (this.cancelled || !trusted()) { record.status = 'cancelled'; break; }
 					if (Date.now() >= deadline) { record.status = 'failed'; break; }
 					const handoff = corrective.get(step.id) || plan.handoffs.find(item => item.id === step.id)!;
@@ -422,6 +423,7 @@ export class NativeAgentWorkflow {
 					if (step.status !== 'passed') {
 						record.status = step.status === 'cancelled' ? 'cancelled' : 'failed';
 						break;
+					}
 					}
 				}
 				if (record.status === 'running' && verify) {
