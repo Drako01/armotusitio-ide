@@ -15,8 +15,8 @@ No modifica ninguna configuración de proveedor, no crea PRs, no hace push ni de
 3. Revisá el JSON que muestra el ejecutable, argumentos, permisos e instrucción.
 4. Confirmá **Ejecutar agente**. La ejecución tiene límite de 30 minutos, salida acotada,
    cancelación manual desde **Cancelar tarea nativa** y resultado visible en un documento JSON.
-Las últimas 100 ejecuciones se resumen localmente en **ArmoTuSitio: Métricas locales de agentes IA**:
-porcentaje de éxito, duración promedio y p95, sin prompts, rutas de proyecto ni salidas.
+   Las últimas 100 ejecuciones se resumen localmente en **ArmoTuSitio: Métricas locales de agentes IA**:
+   porcentaje de éxito, duración promedio y p95, sin prompts, rutas de proyecto ni salidas.
 5. Revisá los cambios con `git diff` y corré las verificaciones del proyecto antes de incorporarlos.
    El sistema no comitea ni integra cambios automáticamente.
 
@@ -27,7 +27,30 @@ proveedor y deniega herramientas no autorizadas. La ejecución nativa **no garan
 aislamiento de red, secretos, filesystem o procesos externos; para código no confiable usá
 un contenedor/VM aislado. Nunca concedas permisos de bypass.
 
-Ahora también existe **ArmoTuSitio: Ejecutar workflow multiagente nativo** con handoffs ejecutables\n(plan → implementación → revisión), aprobación explícita, lock de ejecución, historial durable\ny recuperación conservadora mediante **Reconciliar workflows interrumpidos**. El reviewer debe\nemitir `HARNESS_REVIEW: PASS` para que el flujo continúe; de lo contrario falla cerrado.\nSi el proyecto tiene `.ats-harness.json`, la verificación final ejecuta todos los gates\nconfigurados; sin esa configuración, la ejecución queda registrada como `not-configured`\ny no debe interpretarse como calidad verificada.\n\nLos handoffs comparten solo un resumen acotado en memoria. No se persisten prompts ni salidas\nen el historial de workflow. Las tareas se ejecutan sobre el workspace actual: para aislar\nlos cambios del checkout principal, creá y abrí un Git worktree desde el IDE antes de ejecutar.\n**Todavía no hay sandbox de contenedor/VM, integración automática de worktrees, remediación\nautónoma del feedback ni verificación reproducible de tokens/costos.**
+Ahora también existe **ArmoTuSitio: Ejecutar workflow multiagente nativo** con handoffs
+ejecutables (plan → implementación → revisión), aprobación explícita, bloqueo de ejecución,
+historial persistente y recuperación conservadora desde **Reconciliar workflows interrumpidos**.
+El reviewer debe emitir `HARNESS_REVIEW: PASS` para que el flujo continúe; si no, falla cerrado.
+Si el proyecto configura `.ats-harness.json`, el workflow ejecuta los gates después de la revisión;
+sin esos gates, el estado de verificación es `not-configured` y no equivale a un resultado verificado.
+
+**El modo recomendado crea un Git worktree aislado automáticamente** después de solicitar autorización.
+No modifica el checkout principal y conserva el worktree al finalizar para revisar el diff. La
+alternativa es ejecutar en el workspace actual bajo autorización explícita. El worktree por sí
+solo no es un sandbox de sistema operativo; un proceso puede conservar acceso a recursos del
+usuario. Los handoffs transportan resúmenes acotados en memoria y no guardan prompts en el
+historial. Los roles de solo lectura verifican un fingerprint de Git y de archivos sensibles
+antes y después de la ejecución; las diferencias bloquean el avance sin borrar cambios.
+
+La ejecución de Claude con rol implementador usa `dontAsk` con autorización explícita de herramientas
+de lectura y edición, y denegación explícita de Bash y herramientas web. Los gates del proyecto
+son responsables de comprobar el resultado. Las ejecuciones de Codex conservan sandbox
+`workspace-write` o `read-only` según el rol.
+
+**Pendiente para calificación AAA:** sandbox OS/red, integración transaccional automática,
+correcciones autónomas del feedback, contabilidad verificable de tokens/costos y benchmarks
+reales con proveedores autenticados.
+
 El Harness especializado de cada proyecto conserva sus capacidades anteriores.
 
 ### Validación local
