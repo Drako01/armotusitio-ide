@@ -27,7 +27,7 @@ proveedor y deniega herramientas no autorizadas. La ejecución nativa **no garan
 aislamiento de red, secretos, filesystem o procesos externos; para código no confiable usá
 un contenedor/VM aislado. Nunca concedas permisos de bypass.
 
-Ahora también existe **ArmoTuSitio: Ejecutar workflow multiagente nativo** con handoffs
+Ahora también existe **ArmoTuSitio: Ejecutar workflow multiagente nativo** con opción\nde revisión cruzada entre Codex y Claude (requiere ambos proveedores configurados) y handoffs
 ejecutables (plan → implementación → revisión), aprobación explícita, bloqueo de ejecución,
 historial persistente y recuperación conservadora desde **Reconciliar workflows interrumpidos**.
 El reviewer debe terminar con una única línea `HARNESS_REVIEW: PASS` para aprobar;\nuna respuesta ambigua o truncada falla cerrado. Si detecta defectos, el Harness puede\nhacer **un solo ciclo correctivo** (implementador + nueva revisión) previamente autorizado;\nno hay reintentos ilimitados.
