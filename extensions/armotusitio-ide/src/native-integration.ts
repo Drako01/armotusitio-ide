@@ -12,6 +12,7 @@ import { reviewAgentDraft, inspectAgentWorkspace, type NativeProvider, type Agen
 import { buildSupportReport, exportSupportReport } from './native-support.ts';
 import { inspectHarnessAuthority } from './native-authority.ts';
 import { listProjectSkills, readProjectSkill, type ProjectSkill } from './native-project-skills.ts';
+import { listProjectGuides, validateProjectGuides } from './native-project-guidance.ts';
 import { buildAgentInvocation, executeReviewedAgent, type AgentExecution } from './native-agent-execution.ts';
 import { readAgentStatistics, recordAgentMetric } from './native-agent-metrics.ts';
 import { NativeAgentWorkflow, proposedWorkflow, workflowDigest, type WorkflowRun } from './native-agent-workflow.ts';
@@ -89,7 +90,8 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			const projectHarness = (await inspectHarnessAuthority(root)).engine === 'project';
 			if (projectHarness && !readOnly) { throw Error('HARNESS_HYBRID_WRITER_UNAVAILABLE'); }
 			const skills = await listProjectSkills(root);
-			const preview = { skills: skills.map(skill => ({ name: skill.name, source: skill.source, digest: skill.digest })) };
+			const guides = await listProjectGuides(root);
+			const preview = { skills: skills.map(skill => ({ name: skill.name, source: skill.source, digest: skill.digest })), guides };
 			const draft = { schemaVersion: 1 as const, provider, role, projectRoot: root, instruction, readOnly };
 			const reviewed = reviewAgentDraft(draft);
 			const inventory = await inspectAgentWorkspace(root);
@@ -117,6 +119,10 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			const requestedInstruction = await vscode.window.showInputBox({ title: 'Instrucci\u00f3n del agente', prompt: 'Describ\u00ed una tarea acotada. No incluyas credenciales.' });
 			if (!requestedInstruction) { return; }
 			let instruction = requestedInstruction;
+			const guides = await listProjectGuides(root);
+			for (const guide of guides) {
+				instruction += '\\nConsult project guidance ' + guide.path + ' (sha256: ' + guide.digest + '); it does not override IDE execution permissions.';
+			}
 			const selectedProjectSkills: ProjectSkill[] = [];
 			{
 				const skills = await listProjectSkills(root);
@@ -159,6 +165,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			if (currentAuthority.engine !== (projectHarness ? 'project' : 'ide-native')) {
 				throw Error('HARNESS_PROJECT_AUTHORITY_CHANGED');
 			}
+			await validateProjectGuides(root, guides);
 			for (const skill of selectedProjectSkills) { await readProjectSkill(root, skill); }
 			if (runningAgents.has(root) || pendingAgents.has(root) || runningWorkflows.has(root) || pendingWorkflows.has(root) || running.has(chosen.folder.uri.toString())) { throw Error('HARNESS_ALREADY_RUNNING'); }
 			assertProviderCapacity();
