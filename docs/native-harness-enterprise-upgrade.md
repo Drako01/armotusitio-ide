@@ -21,14 +21,21 @@ This ledger separates code shipped on the branch from work that has **not** been
 - [x] Resource-aware gate waves for explicitly parallel-safe checks, up to four workers.
 - [x] Observed gate/agent metrics shown in the IDE; v2 capability descriptor reports unsupported capabilities conservatively.
 - [x] Cross-platform native-test workflow defined; actual workflow run and installer E2E still unverified.
+- [x] Exactly one bounded corrective implement/re-review cycle when a reviewer rejects a change, preauthorized by the operator.
+- [x] Strict terminal-only reviewer receipts; echoed, conflicting or truncated approvals fail closed.
+- [x] Nested ignored secret-file integrity scanning and symlink avoidance; changes are detected without restoring user data.
+- [x] Local provider concurrency limited to two active/pending operations and workflow duration bounded to one hour.
+- [x] Conservative project capability declarations read from `.harness/manifests/ide-capabilities.json`, never trusted as verified runtime support.
+- [x] Provider CLI version diagnostics via bounded `--version` calls without invoking a model or claiming authentication.
+
 
 ## Mandatory remaining work for an AAA release
 
-- [ ] Consolidate the project Python Harness and IDE-native engine behind one versioned runtime protocol.
-- [ ] Extend the durable sequential handoff chain into a concurrent multi-agent DAG with corrective retries and adaptive feedback loops.
+- [ ] Consolidate the project Python Harness and IDE-native engine behind one versioned executable runtime protocol. A v2 **declaration-only** capability manifest is present, not an authenticated handshake.
+- [ ] Extend the durable sequential chain with its single corrective cycle into a concurrent multi-agent DAG and adaptive planning/recovery.
 - [ ] Add OS-level sandboxing with explicit filesystem/network permissions on top of the new default Git worktree isolation.
 - [ ] Provide transactional integration, conflict resolution and granular retry of interrupted work (stale-state reconciliation is implemented).
-- [ ] Implement complete provider capability negotiation, CLI-version compatibility, quota/backpressure and token/cost budgets.
+- [ ] Add verified provider flag negotiation and quota/token/cost accounting (CLI versions, concurrent-slot backpressure, and time budgets are present).
 - [ ] Run cold/warm real-provider benchmarks with CPU, RAM, cost, tokens, latency, success rate and reference workloads.
 - [ ] Add fault injection, red-team prompt-injection, symlink/TOCTOU and secret-exfiltration exercises.
 - [ ] Implement full streamed agent lifecycle and traces; the dashboard now shows recent workflow status and measured summary metrics.
