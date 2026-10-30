@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { diagnoseProvider } from '../src/native-provider-diagnostics.ts';
+import { diagnoseProvider, inspectProviderHelp } from '../src/native-provider-diagnostics.ts';
 
 test('provider diagnostics reject unknown hosts without invoking any model', async () => {
 	await assert.rejects(diagnoseProvider('unknown' as unknown as Parameters<typeof diagnoseProvider>[0]), /HARNESS_PROVIDER_UNSUPPORTED/);
@@ -30,4 +30,13 @@ test('diagnostics report availability but never imply authentication', { skip: p
 		if (oldPath === undefined) { delete process.env.PATH; } else { process.env.PATH = oldPath; }
 		await fs.rm(root, { recursive: true, force: true });
 	}
+});
+
+test('CLI flag matrix rejects unknown versions of the invocation protocol', () => {
+	const codex = ['--sandbox', '--skip-git-repo-check', '--ask-for-approval', '--ephemeral', '--json'].join(' ');
+	const claude = ['--permission-mode', '--allowedTools', '--disallowedTools', '--max-turns', '--output-format'].join(' ');
+	assert.equal(inspectProviderHelp('codex', 'Usage: codex exec ' + codex).compatibility, 'verified');
+	assert.equal(inspectProviderHelp('claude', 'Usage: claude ' + claude).compatibility, 'verified');
+	assert.deepEqual(inspectProviderHelp('codex', 'Usage: codex exec --json and no safety flags').missingFlags, ['--sandbox', '--skip-git-repo-check', '--ask-for-approval', '--ephemeral']);
+	assert.equal(inspectProviderHelp('claude', '').compatibility, 'unknown');
 });
