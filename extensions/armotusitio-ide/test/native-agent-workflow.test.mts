@@ -5,6 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
+import * as fsSync from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { installFakeCodex } from './native-fake-provider.mts';
@@ -252,5 +253,31 @@ test('reconciliation releases stale execution lock only after successful state r
 		const recovered = (await workflow.history())[0];
 		assert.equal(recovered.status, 'interrupted');
 		assert.equal(recovered.steps[0].status, 'interrupted');
+	} finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
+test('failed final state persistence keeps the execution lock for explicit repair', async () => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-workflow-terminal-failure-'));
+	try {
+		const canonical = await fs.realpath(root);
+		const state = path.join(root, 'private');
+		const workflow = new NativeAgentWorkflow(canonical, state);
+		const plan = proposedWorkflow('codex', 'Inspect fixture without running an agent');
+		const unsubscribe = workflow.onEvent(event => {
+			if (event.kind !== 'workflow-started') { return; }
+			const recordFile = path.join(state, event.workflowId + '.json');
+			// Simulate an external filesystem fault after the initial durable write:
+			// replacing the record with a directory makes subsequent atomic renames fail.
+			fsSync.rmSync(recordFile);
+			fsSync.mkdirSync(recordFile);
+		});
+		try {
+			const run = await workflow.start(plan, workflowDigest(canonical, plan), () => true);
+			await assert.rejects(run.result);
+			const lock = JSON.parse(await fs.readFile(path.join(state, 'execution.lock'), 'utf8'));
+			assert.equal(lock.id, run.id);
+			await assert.rejects(workflow.start(plan, workflowDigest(canonical, plan), () => true),
+				/HARNESS_WORKFLOW_RECONCILIATION_REQUIRED/);
+		} finally { unsubscribe(); }
 	} finally { await fs.rm(root, { recursive: true, force: true }); }
 });
