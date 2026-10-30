@@ -137,3 +137,156 @@ export async function inspectSharedExecutionFence(root: string, storage: string)
 	if (!validFence(record, projectKey)) { throw Error('HARNESS_FENCE_UNSAFE_FILE'); }
 	return { held: true, epoch: record.epoch, owner: record.owner };
 }
+
+export interface SharedFenceRecovery {
+	released: boolean;
+	epoch: number | null;
+	owner?: FenceOwner;
+}
+
+/** A missing process is necessary but not sufficient for recovery. EPERM remains uncertain. */
+function assertOwnerExited(pid: number): void {
+	try {
+		process.kill(pid, 0);
+		throw Error('HARNESS_FENCE_OWNER_ACTIVE');
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== 'ESRCH') { throw error; }
+	}
+}
+
+async function assertNoUncertainArtifacts(storage: string): Promise<void> {
+	const checkDir = async (name: string, inspect: (file: string) => Promise<void>): Promise<void> => {
+		const directory = path.join(storage, name);
+		let info;
+		try { info = await fs.lstat(directory); }
+		catch (error) {
+			if ((error as NodeJS.ErrnoException).code === 'ENOENT') { return; }
+			throw error;
+		}
+		if (!info.isDirectory() || info.isSymbolicLink() ||
+			await fs.realpath(directory) !== directory) { throw Error('HARNESS_FENCE_RECOVERY_UNSAFE_STATE'); }
+		const entries = await fs.readdir(directory, { withFileTypes: true });
+		if (entries.length > 600) { throw Error('HARNESS_FENCE_RECOVERY_UNSAFE_STATE'); }
+		for (const entry of entries) {
+			if (entry.isSymbolicLink()) { throw Error('HARNESS_FENCE_RECOVERY_UNSAFE_STATE'); }
+			await inspect(entry.name);
+		}
+	};
+	for (const file of ['execution.lock']) {
+		try {
+			await fs.lstat(path.join(storage, file));
+			throw Error('HARNESS_FENCE_RECOVERY_LOCAL_LOCK');
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== 'ENOENT') { throw error; }
+		}
+	}
+	await checkDir('workflows', async name => {
+		if (name === 'execution.lock' || name === 'reconcile.guard' ||
+			name.endsWith('.intent')) { throw Error('HARNESS_FENCE_RECOVERY_PENDING_WORKFLOW'); }
+		if (!/^[a-f0-9-]{36}\.json$/i.test(name)) { return; }
+		const file = path.join(storage, 'workflows', name);
+		const record = await readJsonRecovery(file, 128 * 1024);
+		if (!record || typeof record !== 'object' || Array.isArray(record) ||
+			!['passed', 'failed', 'cancelled', 'interrupted'].includes((record as { status?: string }).status ?? '')) {
+			throw Error('HARNESS_FENCE_RECOVERY_PENDING_WORKFLOW');
+		}
+	});
+	await checkDir('tasks', async name => {
+		if (!/^[a-f0-9-]{36}\.json$/i.test(name)) { return; }
+		const file = path.join(storage, 'tasks', name);
+		const task = await readJsonRecovery(file, 2 * 1024 * 1024);
+		if (!task || typeof task !== 'object' || Array.isArray(task) ||
+			!Array.isArray((task as { attempts?: unknown }).attempts) ||
+			(task as { attempts: Array<{ status?: string }> }).attempts.some(attempt =>
+				!attempt || !['passed', 'failed', 'cancelled', 'interrupted'].includes(attempt.status ?? ''))) {
+			throw Error('HARNESS_FENCE_RECOVERY_PENDING_TASK');
+		}
+	});
+	await checkDir('checkpoints', async name => {
+		if (name.endsWith('.rollback.intent')) { throw Error('HARNESS_FENCE_RECOVERY_PENDING_ROLLBACK'); }
+	});
+}
+
+async function readJsonRecovery(file: string, maxBytes: number): Promise<unknown> {
+	const stat = await fs.lstat(file);
+	if (!stat.isFile() || stat.isSymbolicLink() || stat.size > maxBytes) {
+		throw Error('HARNESS_FENCE_RECOVERY_UNSAFE_STATE');
+	}
+	const bytes = await fs.readFile(file);
+	if (bytes.length > maxBytes) { throw Error('HARNESS_FENCE_RECOVERY_UNSAFE_STATE'); }
+	try { return JSON.parse(bytes.toString('utf8')); }
+	catch { throw Error('HARNESS_FENCE_RECOVERY_UNSAFE_STATE'); }
+}
+
+/**
+ * Explicit operator-only recovery of a CRASHED local fence. Reconcile the task
+ * and workflow records separately first. This API cannot prove remote writers
+ * exited or repair an uncertain rollback, so it refuses those situations.
+ * Never removes an active, foreign or replaced lock. No automatic retry.
+ */
+export async function reconcileSharedExecutionFence(
+	root: string, storage: string, approved: boolean
+): Promise<SharedFenceRecovery> {
+	if (!approved) { throw Error('HARNESS_FENCE_RECOVERY_CONSENT_REQUIRED'); }
+	const canonical = await fs.realpath(root);
+	if (canonical !== root || !(await fs.stat(canonical)).isDirectory()) {
+		throw Error('HARNESS_FENCE_ROOT_CHANGED');
+	}
+	const directory = await fs.lstat(storage);
+	if (!directory.isDirectory() || directory.isSymbolicLink() ||
+		await fs.realpath(storage) !== path.resolve(storage)) {
+		throw Error('HARNESS_FENCE_STORAGE_UNSAFE');
+	}
+	const guardPath = path.join(storage, 'shared-execution.reconcile.guard');
+	const guard = await fs.open(guardPath, 'wx', 0o600).catch(error => {
+		if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+			throw Error('HARNESS_FENCE_RECOVERY_ACTIVE');
+		}
+		throw error;
+	});
+	const identity = await guard.stat();
+	const guardData = JSON.stringify({ pid: process.pid, token: randomBytes(16).toString('hex') });
+	let recorded = false;
+	try {
+		await guard.writeFile(guardData);
+		await guard.sync();
+		recorded = true;
+		const projectKey = createHash('sha256').update(canonical).digest('hex');
+		const file = path.join(storage, LOCK);
+		let value: unknown;
+		try { value = await readJson(file); }
+		catch (error) {
+			if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+				return { released: false, epoch: null };
+			}
+			throw error;
+		}
+		if (!validFence(value, projectKey)) { throw Error('HARNESS_FENCE_UNSAFE_FILE'); }
+		if (value.owner === 'project') { throw Error('HARNESS_FENCE_PROJECT_OWNER_UNSUPPORTED'); }
+		const stat = await fs.lstat(file);
+		if (!stat.isFile() || stat.isSymbolicLink()) { throw Error('HARNESS_FENCE_UNSAFE_FILE'); }
+		assertOwnerExited(value.pid);
+		if (await currentEpoch(storage, projectKey) !== value.epoch) { throw Error('HARNESS_FENCE_EPOCH_INVALID'); }
+		await assertNoUncertainArtifacts(storage);
+		assertOwnerExited(value.pid);
+		const currentStat = await fs.lstat(file);
+		if (!currentStat.isFile() || currentStat.isSymbolicLink() ||
+			currentStat.dev !== stat.dev || currentStat.ino !== stat.ino ||
+			JSON.stringify(await readJson(file)) !== JSON.stringify(value) ||
+			await currentEpoch(storage, projectKey) !== value.epoch) {
+			throw Error('HARNESS_FENCE_LOST');
+		}
+		await fs.unlink(file);
+		return { released: true, epoch: value.epoch, owner: value.owner };
+	} finally {
+		await guard.close();
+		if (recorded) {
+			const info = await fs.lstat(guardPath).catch(() => undefined);
+			if (info?.isFile() && !info.isSymbolicLink() &&
+				info.dev === identity.dev && info.ino === identity.ino &&
+				await fs.readFile(guardPath, 'utf8') === guardData) {
+				await fs.unlink(guardPath);
+			}
+		}
+	}
+}
