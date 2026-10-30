@@ -23,6 +23,7 @@ import { describeEngine, probeProjectHandshake, compareHybridCapabilities, verif
 import { diagnoseProvider } from './native-provider-diagnostics.ts';
 import { summarizeGatePerformance } from './native-performance.ts';
 import { acquireSharedExecutionFence, type SharedExecutionFence } from './native-shared-fence.ts';
+import { createWorktreeCheckpoint, rollbackWorktreeCheckpoint, type WorktreeCheckpoint } from './native-worktree-checkpoint.ts';
 
 type Host = any; // vscode host is injected by the existing extension (avoid duplicating the UI layer).
 const sessions = new Map<string, NativeHarness>();
@@ -256,6 +257,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			const engine = new NativeAgentWorkflow(executionRoot, path.join(metricsDirectory(root), 'workflows'), root);
 			const unsubscribeEvents = engine.onEvent(() => { controller.refresh(); });
 			const validationEngine = isolation ? new NativeHarness(executionRoot, path.join(metricsDirectory(root), 'isolated-verification', isolation.id)) : chosen.engine;
+			let checkpoint: WorktreeCheckpoint | undefined;
 			let run: WorkflowRun;
 			try {
 				run = await engine.start(plan, digest, () => authorized(chosen.folder), verification ? async signal => {
@@ -265,6 +267,10 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 					return result.attempts.at(-1)?.status === 'passed';
 				} : undefined, async (stageProvider, stageRole, stageOutcome) => {
 					await recordAgentMetric(metricsDirectory(root!), stageProvider, stageRole, stageOutcome);
+				}, async fence => {
+					if (isolation) {
+						checkpoint = await createWorktreeCheckpoint(isolation, path.join(metricsDirectory(root!), 'checkpoints'), fence);
+					}
 				});
 			}
 			finally { pendingWorkflows.delete(root); }
@@ -273,7 +279,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			try {
 				const outcome = await run.result;
 				if (authorized(chosen.folder)) {
-					await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({ language: 'json', content: JSON.stringify(outcome, null, 2) }), { preview: true });
+					await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({ language: 'json', content: JSON.stringify({ ...outcome, ...(checkpoint ? { checkpointId: checkpoint.id } : {}) }, null, 2) }), { preview: true });
 					vscode.window.showInformationMessage('Workflow multiagente finalizado: ' + outcome.status + (isolation ? '. Worktree conservado: ' + isolation.root : ''));
 				}
 			} finally { unsubscribeEvents(); runningWorkflows.delete(root); controller.refresh(); }
@@ -322,6 +328,44 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			if (!authorized(chosen.folder)) { return; }
 			await removeCleanAgentWorktree(selected.worktree);
 			vscode.window.showInformationMessage('Worktree limpio retirado.');
+		} catch (error) { showError(error); } finally { controller.refresh(); }
+	}));
+	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.nativeWorktreeRollback', async (requested?: string) => {
+		try {
+			if (!ensureTrust()) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
+			const chosen = await choose(requested); if (!chosen) { return; }
+			const root = await fs.realpath(chosen.folder.uri.fsPath);
+			if (runningAgents.has(root) || pendingAgents.has(root) || runningWorkflows.has(root) ||
+				pendingWorkflows.has(root) || running.has(chosen.folder.uri.toString())) {
+				throw Error('HARNESS_ALREADY_RUNNING');
+			}
+			const worktrees = await listAgentWorktrees(root, path.join(metricsDirectory(root), 'isolated-worktrees'));
+			if (!worktrees.length) { vscode.window.showInformationMessage('No hay worktrees administrados para recuperar.'); return; }
+			const chosenWorktree = await vscode.window.showQuickPick(
+				worktrees.map(worktree => ({ label: worktree.id, description: worktree.root, worktree })),
+				{ title: 'Worktree administrado para rollback explícito' });
+			if (!chosenWorktree) { return; }
+			const checkpointDir = path.join(metricsDirectory(root), 'checkpoints');
+			const entries = await fs.readdir(checkpointDir, { withFileTypes: true }).catch(error => {
+				if ((error as NodeJS.ErrnoException).code === 'ENOENT') { return []; }
+				throw error;
+			});
+			if (entries.length > 500) { throw Error('HARNESS_CHECKPOINT_HISTORY_TOO_LARGE'); }
+			const ids = entries.filter(entry => entry.isFile() && !entry.isSymbolicLink() &&
+				/^[a-f0-9-]{36}\.json$/i.test(entry.name)).map(entry => entry.name.slice(0, -5));
+			if (!ids.length) { vscode.window.showInformationMessage('No hay checkpoints para recuperar.'); return; }
+			const id = await vscode.window.showQuickPick(ids, { title: 'Seleccioná el checkpoint del worktree' });
+			if (!id) { return; }
+			const confirmation = await vscode.window.showWarningMessage(
+				'ROLLBACK DESTRUCTIVO: descartar cambios rastreados y archivos nuevos NO ignorados solo en ' +
+				chosenWorktree.worktree.root + '. No modifica el checkout principal. ¿Confirmar?',
+				{ modal: true }, 'Revertir worktree');
+			if (confirmation !== 'Revertir worktree' || !authorized(chosen.folder)) { return; }
+			const fence = await acquireSharedExecutionFence(root, metricsDirectory(root), 'native-workflow');
+			try {
+				const result = await rollbackWorktreeCheckpoint(chosenWorktree.worktree, checkpointDir, id, fence, true);
+				vscode.window.showInformationMessage('Rollback de worktree completado: ' + result.id);
+			} finally { await fence.release(); }
 		} catch (error) { showError(error); } finally { controller.refresh(); }
 	}));
 	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.nativeWorkflowReconcile', async (requested?: string) => {
