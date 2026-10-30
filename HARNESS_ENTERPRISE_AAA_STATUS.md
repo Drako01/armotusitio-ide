@@ -1,8 +1,8 @@
 # Harness Enterprise AAA — estado de implementación y checklist
 
 > **Proyecto:** `Drako01/armotusitio-ide`  
-> **Rama de trabajo:** `feat/native-harness-enterprise-upgrade` (creada desde `main`)  
-> **Fecha de corte:** 2026-10-30  
+> **Rama de trabajo:** `feat/native-harness-enterprise-upgrade` (creada desde `main`)
+> **Fecha de corte:** 2026-10-30
 > **Estado:** desarrollo experimental; **NO certificado para merge ni producción**.
 
 ## Resumen ejecutivo
@@ -96,7 +96,7 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 ## Pendientes críticos priorizados
 
 | Prioridad | Trabajo | Condición de aceptación |
-|---|---|---|
+| --- | --- | --- |
 | **P0** | CI reproducible y E2E | Typecheck, tests e integración con CLI reales aprobados sobre un mismo SHA, además de builds de extensión/IDE. |
 | **P0** | Sandbox fuerte | Acceso a archivos, procesos y red denegado por controles del sistema, no únicamente por instrucciones al modelo o worktrees. |
 | **P1** | Contrato ejecutable común | Motor nativo y motores de proyecto operan mediante un protocolo versionado, con semántica de cancelación, evidencia y capacidades. |
@@ -112,7 +112,7 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 **Evidencia aportada:** `harness-validation-20261030-154253.log`, ejecutado en Windows `win32/x64`, Node `v24.22.1`, npm `11.6.2`, commit base `49a17187bf2`.
 
 | Comando | Resultado observado en ese log | Diagnóstico |
-|---|---|---|
+| --- | --- | --- |
 | `node scripts/ats-harness-check.mts` | **FAIL** | Tres archivos de test bloqueados por el parser TypeScript; higiene de estilo con 1332 errores. TypeScript, recursos y bundle informaron PASS. |
 | `npm test --prefix extensions/armotusitio-ide` | **FAIL**: 155/163 passed, 3 failed, 5 skipped | Las fallas de `native-agent-corrective`, `native-agent-workflow` y `native-integration` comparten la misma causa de importación de `native-agent-workflow.ts`. |
 | `npm run check --prefix extensions/armotusitio-ide` | **PASS** | Typecheck y validación de recursos completados; no implica que higiene y tests estén aprobados. |
@@ -183,7 +183,7 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 **Evidencia del operador:** log `Texto pegado(20261030-202342).txt`, Windows `win32/x64`, Node `v24.22.1`.
 
 | Control | Resultado observado |
-|---|---|
+| --- | --- |
 | `node scripts/ats-harness-check.mts --fix` | PASS; el formateador ajustó `native-agent-workflow.ts` |
 | `node scripts/ats-harness-check.mts` (sin `--fix`) | **PASS**: TypeScript, webview, UI/renderer, bundle, recursos nativos, `Focused hygiene` y `Diff whitespace` |
 | `npm test --prefix extensions/armotusitio-ide` | **173 PASS, 0 FAIL, 9 SKIP** (182 tests en total) |
@@ -218,7 +218,7 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 **Evidencia aportada por el operador:** log `Texto pegado(20261030-203500).txt` en Windows `win32/x64`, Node `v24.22.1`; rama `feat/native-harness-enterprise-upgrade` actualizada antes de ejecutar.
 
 | Gate | Resultado |
-|---|---|
+| --- | --- |
 | `node scripts/ats-harness-check.mts --fix` | **PASS** en todos los gates, incluidos formato e higiene |
 | `node scripts/ats-harness-check.mts` | **PASS**: TypeScript, recursos, UI/renderer, bundle, paquete nativo, higiene y diff |
 | `npm test --prefix extensions/armotusitio-ide` | **182 PASS, 0 FAIL, 1 SKIP** (183 tests) |
@@ -240,7 +240,7 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 - [x] **CI y checks actualizados en código:** el archivo y pruebas están incluidos en el scope de CI y los checks locales; el checkout CI dispone del script importado por el test. El CI automático NO ejecuta modelos ni solicita autenticación.
 - [ ] **Validación local del nuevo commit:** ejecutar `node scripts/ats-harness-check.mts --fix` (inspeccionar diff), `node scripts/ats-harness-check.mts`, `npm test --prefix extensions/armotusitio-ide`, `npm run check --prefix extensions/armotusitio-ide` y `git diff --check`. Los anteriores 182 PASS no validan este cambio.
 - [ ] **Smoke real controlado:** a decisión del operador, tras revisar `docs/native-harness-six-partial-validation.md`. Puede consumir cuota; no es requisito de los tests automáticos.
-- [ ] **CI Linux/macOS/Windows del último SHA:** todavía sin evidencia verificada. 
+- [ ] **CI Linux/macOS/Windows del último SHA:** todavía sin evidencia verificada.
 - [ ] **Sandbox OS real:** sin implementar. Las restricciones de modelo y verificación Git no equivalen a aislamiento de procesos, filesystem y red.
 
 ### Validación Windows del smoke opt-in y negativa de consentimiento (2026-10-30, 17:39–17:40 ART)
@@ -248,7 +248,7 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 **Evidencia del operador:** `Texto pegado(20261030-204012).txt` y transcripción de la ejecución manual. Sistema `win32/x64`, Node `v24.22.1`, rama `feat/native-harness-enterprise-upgrade`.
 
 | Validación | Resultado observado |
-|---|---|
+| --- | --- |
 | `node scripts/ats-harness-check.mts --fix` | **PASS**, incluidas pruebas, formato, bundle, higiene y diff |
 | `node scripts/ats-harness-check.mts` | **PASS** en sus siete controles sin `--fix` |
 | `npm test --prefix extensions/armotusitio-ide` | **184 PASS / 0 FAIL / 1 SKIP** (185 tests) |
