@@ -20,16 +20,16 @@ const base = {
 test('Codex uses a bounded sandbox instead of approval bypass', () => {
 	const call = buildAgentInvocation(base);
 	assert.equal(call.executable, 'codex');
-	assert.deepEqual(call.args, ['exec', '--sandbox', 'read-only', '--skip-git-repo-check', '--ask-for-approval', 'never', '--ephemeral', '--json', '-']);
+	assert.deepEqual(call.args, ['--ask-for-approval', 'never', 'exec', '--sandbox', 'read-only', '--skip-git-repo-check', '--ephemeral', '--json', '-']);
 	assert.match(call.stdin, /Review API changes/);
 	assert.ok(!call.args.some(x => x.includes('danger') || x.includes('yolo')));
 	assert.ok(call.args.includes('--ephemeral'));
-	assert.deepEqual(call.args.slice(-5), ['--ask-for-approval', 'never', '--ephemeral', '--json', '-']);
+	assert.deepEqual(call.args.slice(0, 3), ['--ask-for-approval', 'never', 'exec']);
 });
 
 test('implementer is restricted to workspace-write, never danger-full-access', () => {
 	const call = buildAgentInvocation({ ...base, role: 'implementer', readOnly: false });
-	assert.equal(call.args[2], 'workspace-write');
+	assert.equal(call.args[4], 'workspace-write');
 	assert.throws(() => buildAgentInvocation({ ...base, role: 'reviewer', readOnly: false }), /HARNESS_READ_ONLY_ROLE_REQUIRED/);
 	assert.throws(() => buildAgentInvocation({ ...base, role: 'implementer', readOnly: true }), /HARNESS_IMPLEMENTER_MODE_MISMATCH/);
 });
@@ -62,7 +62,7 @@ test('approved agent runs a fake CLI without shell or provider network', async (
 		const execution = await executeReviewedAgent(reviewAgentDraft(current), current, 10000);
 		const result = await execution.outcome;
 		assert.equal(result.status, 'passed');
-		assert.match(result.output, /SAFE_AGENT exec --sandbox read-only/);
+		assert.match(result.output, /SAFE_AGENT --ask-for-approval never exec --sandbox read-only/);
 		assert.match(result.output, /true/);
 	} finally {
 		if (originalPath === undefined) { delete process.env.PATH; } else { process.env.PATH = originalPath; }
