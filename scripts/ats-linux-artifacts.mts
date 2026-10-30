@@ -7,12 +7,23 @@ import { readFile, readdir, mkdir, copyFile, stat, writeFile, rename, mkdtemp, r
 import { tmpdir } from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { armotusitioProduct as product } from '../build/lib/armotusitioProduct.ts';
 
 const execute = promisify(execFile);
 const root = path.resolve(import.meta.dirname, '..');
+
+/** Replace the receipt without reopening an older file owned by a different container user. */
+export async function writeLinuxReceipt(output: string, arch: string, receipt: object): Promise<void> {
+	if (!['x64', 'arm64'].includes(arch)) { throw new Error('Invalid receipt architecture.'); }
+	const destination = path.join(output, `linux-${arch}-receipt.json`);
+	const temporary = `${destination}.${randomUUID()}.tmp`;
+	try {
+		await writeFile(temporary, JSON.stringify(receipt, null, 2) + '\n', { flag: 'wx', mode: 0o644 });
+		await rename(temporary, destination);
+	} finally { await rm(temporary, { force: true }); }
+}
 
 /** Validate immutable product identity before archiving or publishing any Linux output. */
 export function validateIdentity(value: unknown, commit: string, version: string): void {
@@ -82,7 +93,7 @@ export async function linuxArtifacts(arch: string, output: string): Promise<void
 			const name = `${stem}-linux-x64${extension}`; await copyFile(file, path.join(output, name)); await register(`linux-x64-${kind}`, name);
 		}
 	}
-	await writeFile(path.join(output, `linux-${arch}-receipt.json`), JSON.stringify({ commit, version, arch, quality: metadata.quality, serverApplicationName: product.serverApplicationName, node, serverHelp: true, assets }, null, 2) + '\n');
+	await writeLinuxReceipt(output, arch, { commit, version, arch, quality: metadata.quality, serverApplicationName: product.serverApplicationName, node, serverHelp: true, assets });
 }
 
 if (import.meta.main) { linuxArtifacts(process.argv[2], path.resolve(process.argv[3] || '.build/releases')).catch(error => { console.error(error.message); process.exitCode = 1; }); }

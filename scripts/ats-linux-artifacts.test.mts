@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { armotusitioProduct as product } from '../build/lib/armotusitioProduct.ts';
-import { validateIdentity, findLinuxPackage } from './ats-linux-artifacts.mts';
+import { validateIdentity, findLinuxPackage, writeLinuxReceipt } from './ats-linux-artifacts.mts';
 import { exclusiveReleaseWorkflow } from './ats-autoupdate.mts';
 import { archiveLinuxSources } from './ats-build-linux.mts';
 import { execFile } from 'node:child_process';
@@ -13,6 +13,17 @@ import { promisify } from 'node:util';
 import { mkdtemp, writeFile, readFile, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
+
+test('receipt replacement preserves the previous result on serialization failure', async () => {
+	const directory = await mkdtemp(path.join(tmpdir(), 'ats-receipt-'));
+	try {
+		await writeLinuxReceipt(directory, 'x64', { commit: 'old' });
+		await assert.rejects(writeLinuxReceipt(directory, 'x64', { invalid: 1n }));
+		assert.deepEqual(JSON.parse(await readFile(path.join(directory, 'linux-x64-receipt.json'), 'utf8')), { commit: 'old' });
+		await writeLinuxReceipt(directory, 'x64', { commit: 'new' });
+		assert.deepEqual(JSON.parse(await readFile(path.join(directory, 'linux-x64-receipt.json'), 'utf8')), { commit: 'new' });
+	} finally { await rm(directory, { recursive: true, force: true }); }
+});
 
 test('WSL template and server identity bind the release revision and full client commit', () => {
 	const commit = 'a'.repeat(40);
