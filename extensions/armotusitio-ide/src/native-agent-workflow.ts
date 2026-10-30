@@ -293,6 +293,7 @@ export class NativeAgentWorkflow {
 			const intent = parsed as { schemaVersion?: unknown; id?: unknown; before?: unknown; after?: unknown; createdAt?: unknown };
 			if (Object.keys(intent).sort().join(',') !== 'after,before,createdAt,id,schemaVersion' ||
 				intent.schemaVersion !== 1 || typeof intent.id !== 'string' ||
+				!/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(intent.id) ||
 				name !== intent.id + '.json.intent' ||
 				(intent.before !== null && (typeof intent.before !== 'string' || !/^[a-f0-9]{64}$/.test(intent.before))) ||
 				typeof intent.after !== 'string' || !/^[a-f0-9]{64}$/.test(intent.after) ||
@@ -310,6 +311,14 @@ export class NativeAgentWorkflow {
 			} catch { throw Error('HARNESS_WORKFLOW_PENDING_JOURNAL'); }
 			if (createHash('sha256').update(bytes).digest('hex') !== intent.after) {
 				throw Error('HARNESS_WORKFLOW_PENDING_JOURNAL');
+			}
+			let nextRecord: unknown;
+			try { nextRecord = JSON.parse(bytes.toString('utf8')); }
+			catch { throw Error('HARNESS_WORKFLOW_UNSAFE_JOURNAL'); }
+			const ownProject = createHash('sha256').update(await fs.realpath(this.root)).digest('hex');
+			if (!validRecord(nextRecord) || nextRecord.id !== intent.id ||
+				nextRecord.projectKey !== ownProject) {
+				throw Error('HARNESS_WORKFLOW_UNSAFE_JOURNAL');
 			}
 			const current = await fs.lstat(file);
 			if (!current.isFile() || current.isSymbolicLink() ||
