@@ -41,7 +41,9 @@ Inspect retained PR/branch after an interrupted metadata update; merge/close it 
 if (flags.some(flag => !['--plan', '--dry-run', '--no-publish', '--rebuild'].includes(flag))) {
 	console.error('Unknown option. Run ./release.sh --help.'); process.exit(1);
 }
-if (flags.includes('--plan') && flags.includes('--dry-run')) { throw new Error('Choose --plan or --dry-run.'); }
+if (flags.includes('--plan') && flags.includes('--dry-run')) {
+	console.error('Choose --plan or --dry-run.'); process.exit(1);
+}
 const planning = flags.includes('--plan');
 const checking = flags.includes('--dry-run');
 const root = process.cwd();

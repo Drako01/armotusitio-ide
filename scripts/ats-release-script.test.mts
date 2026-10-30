@@ -8,7 +8,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { mkdtemp, mkdir, writeFile, readFile, readdir, rm } from 'node:fs/promises';
 import { generateKeyPairSync } from 'node:crypto';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 
 const root = path.resolve(import.meta.dirname, '..');
 const shell = (await readFile(path.join(root, 'release.sh'), 'utf8')).replaceAll('\r\n', '\n');
@@ -237,4 +237,9 @@ test('retry reuses validated source and signed outputs; rebuild forces both gate
 		const rebuild = await f.invoke(['--rebuild', '--no-publish']); assert.equal(rebuild.code, 0, rebuild.output);
 		assert.deepEqual((await f.calls()).slice(count).filter(call => call[0] === 'update'), [['update', 'validate'], ['update', 'build-all'], ['update', 'artifacts']]);
 	} finally { await f.close(); }
+});
+
+test('conflicting --plan and --dry-run exit with a clean message and no stack trace', () => {
+	const result = spawnSync(process.execPath, ['--input-type=module', '-', '--plan', '--dry-run'], { input: embedded, cwd: root, encoding: 'utf8' });
+	assert.deepEqual({ status: result.status, stderr: result.stderr.trim() }, { status: 1, stderr: 'Choose --plan or --dry-run.' });
 });
