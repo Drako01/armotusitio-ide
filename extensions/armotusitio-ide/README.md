@@ -27,8 +27,7 @@ proveedor y deniega herramientas no autorizadas. La ejecución nativa **no garan
 aislamiento de red, secretos, filesystem o procesos externos; para código no confiable usá
 un contenedor/VM aislado. Nunca concedas permisos de bypass.
 
-Este comando es una primera ruta agentic explícita; todavía no implementa handoffs ejecutables,
-orquestación multiagente universal, worktrees automáticos ni evaluación de calidad autónoma.
+Ahora también existe **ArmoTuSitio: Ejecutar workflow multiagente nativo** con handoffs ejecutables\n(plan → implementación → revisión), aprobación explícita, lock de ejecución, historial durable\ny recuperación conservadora mediante **Reconciliar workflows interrumpidos**. El reviewer debe\nemitir `HARNESS_REVIEW: PASS` para que el flujo continúe; de lo contrario falla cerrado.\nSi el proyecto tiene `.ats-harness.json`, la verificación final ejecuta todos los gates\nconfigurados; sin esa configuración, la ejecución queda registrada como `not-configured`\ny no debe interpretarse como calidad verificada.\n\nLos handoffs comparten solo un resumen acotado en memoria. No se persisten prompts ni salidas\nen el historial de workflow. Las tareas se ejecutan sobre el workspace actual: para aislar\nlos cambios del checkout principal, creá y abrí un Git worktree desde el IDE antes de ejecutar.\n**Todavía no hay sandbox de contenedor/VM, integración automática de worktrees, remediación\nautónoma del feedback ni verificación reproducible de tokens/costos.**
 El Harness especializado de cada proyecto conserva sus capacidades anteriores.
 
 ### Validación local
