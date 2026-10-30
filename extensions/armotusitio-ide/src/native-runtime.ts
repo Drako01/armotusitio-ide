@@ -11,6 +11,14 @@ export async function resolveNativeCommand(executable: string, args: string[]): 
 	if (executable === 'node') { return { executable: process.execPath, args, embeddedNode: true }; }
 	const directories = (process.env.PATH || process.env.Path || '').split(path.delimiter).filter(directory => path.isAbsolute(directory));
 	for (const directory of directories) {
+		if (process.platform === 'win32' && (executable === 'codex' || executable === 'claude')) {
+			// npm installs .cmd shims on Windows. Launch the package JS entry with Node, without cmd.exe.
+			const packageName = executable === 'codex' ? '@openai/codex/bin/codex.js' : '@anthropic-ai/claude-code/cli.js';
+			const cli = path.join(directory, 'node_modules', ...packageName.split('/'));
+			if (await fs.stat(cli).then(info => info.isFile()).catch(() => false)) {
+				return { executable: process.execPath, args: [cli, ...args], embeddedNode: true };
+			}
+		}
 		if (process.platform === 'win32' && executable === 'npm') {
 			const cli = path.join(directory, 'node_modules', 'npm', 'bin', 'npm-cli.js');
 			if (await fs.stat(cli).then(info => info.isFile()).catch(() => false)) { return { executable: process.execPath, args: [cli, ...args], embeddedNode: true }; }
