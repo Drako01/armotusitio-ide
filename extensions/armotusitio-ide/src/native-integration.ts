@@ -14,6 +14,7 @@ import { inspectHarnessAuthority } from './native-authority.ts';
 import { buildAgentInvocation, executeReviewedAgent, type AgentExecution } from './native-agent-execution.ts';
 import { readAgentStatistics, recordAgentMetric } from './native-agent-metrics.ts';
 import { NativeAgentWorkflow, proposedWorkflow, workflowDigest, type WorkflowRun } from './native-agent-workflow.ts';
+import { createAgentWorktree, removeCleanAgentWorktree, type ManagedWorktree } from './native-agent-worktree.ts';
 
 type Host = any; // vscode host is injected by the existing extension (avoid duplicating the UI layer).
 const sessions = new Map<string, NativeHarness>();
@@ -127,6 +128,8 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 
 	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.nativeAgentWorkflow', async (requested?: string) => {
 		let root: string | undefined;
+		let isolation: ManagedWorktree | undefined;
+		let launched = false;
 		try {
 			if (!ensureTrust()) { vscode.window.showWarningMessage('Se requiere un workspace confiable.'); return; }
 			const chosen = await choose(requested); if (!chosen) { return; }
@@ -138,12 +141,24 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			if (!provider) { return; }
 			const instruction = await vscode.window.showInputBox({ title: 'Objetivo del workflow (plan → implementación → revisión)', prompt: 'Describí el alcance específico; no ingreses secretos.' });
 			if (!instruction) { return; }
+			const mode = await vscode.window.showQuickPick([
+				{ label: 'Git worktree aislado (recomendado)', value: 'worktree' },
+				{ label: 'Workspace actual (sin aislamiento)', value: 'direct' }
+			], { title: 'Dónde permitir modificaciones del implementador' });
+			if (!mode) { return; }
+			let executionRoot = root;
+			if (mode.value === 'worktree') {
+				if (await vscode.window.showWarningMessage('Crear un Git worktree desacoplado de tu checkout? Puede necesitar instalar dependencias. No modifica main ni realiza commits.', { modal: true }, 'Crear worktree') !== 'Crear worktree') { return; }
+				if (!authorized(chosen.folder)) { return; }
+				isolation = await createAgentWorktree(root, path.join(metricsDirectory(root), 'isolated-worktrees'));
+				executionRoot = isolation.root;
+			}
 			const plan = proposedWorkflow(provider, instruction);
-			const digest = workflowDigest(root, plan);
+			const digest = workflowDigest(executionRoot, plan);
 			const verification = (await loadProjectConfig(root))?.plan;
 			const verificationSnapshot = JSON.stringify(verification || null);
 			await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({ language: 'json',
-				content: JSON.stringify({ project: root, handoffs: plan.handoffs, verification: verification || 'NOT_CONFIGURED', digest,
+				content: JSON.stringify({ project: root, executionRoot, isolationMode: mode.value, handoffs: plan.handoffs, verification: verification || 'NOT_CONFIGURED', digest,
 					notice: 'Ejecución secuencial en el workspace actual. No se crean worktrees ni commits. Se consumen tokens en cada etapa.' }, null, 2)
 			}), { preview: true });
 			const approved = await vscode.window.showWarningMessage('Autorizar los tres agentes y la escritura local del implementador? Revisá el plan antes de continuar.', { modal: true }, 'Autorizar workflow');
@@ -153,25 +168,32 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			}
 			if (JSON.stringify((await loadProjectConfig(root))?.plan || null) !== verificationSnapshot) { throw Error('HARNESS_WORKFLOW_VERIFICATION_CHANGED'); }
 			pendingWorkflows.add(root); controller.refresh();
-			const engine = new NativeAgentWorkflow(root, path.join(metricsDirectory(root), 'workflows'));
+			const engine = new NativeAgentWorkflow(executionRoot, path.join(metricsDirectory(root), 'workflows'));
+			const validationEngine = isolation ? new NativeHarness(executionRoot, path.join(metricsDirectory(root), 'isolated-verification', isolation.id)) : chosen.engine;
 			let run: WorkflowRun;
 			try { run = await engine.start(plan, digest, () => authorized(chosen.folder), verification ? async signal => {
-				const task = await chosen.engine.create('Workflow verification', verification);
-				const approval = await chosen.engine.reviewDigest(task.plan);
-				const result = await chosen.engine.execute(task.id, approval, () => authorized(chosen.folder), signal);
+				const task = await validationEngine.create('Workflow verification', verification);
+				const approval = await validationEngine.reviewDigest(task.plan);
+				const result = await validationEngine.execute(task.id, approval, () => authorized(chosen.folder), signal);
 				return result.attempts.at(-1)?.status === 'passed';
 			} : undefined); }
 			finally { pendingWorkflows.delete(root); }
+			launched = true;
 			runningWorkflows.set(root, run); controller.refresh();
 			try {
 				const outcome = await run.result;
 				if (authorized(chosen.folder)) {
 					await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({ language: 'json', content: JSON.stringify(outcome, null, 2) }), { preview: true });
-					vscode.window.showInformationMessage('Workflow multiagente finalizado: ' + outcome.status);
+					vscode.window.showInformationMessage('Workflow multiagente finalizado: ' + outcome.status + (isolation ? '. Worktree conservado: ' + isolation.root : ''));
 				}
 			} finally { runningWorkflows.delete(root); controller.refresh(); }
 		} catch (error) { showError(error); }
-		finally { if (root) { pendingWorkflows.delete(root); } controller.refresh(); }
+		finally { if (root) { pendingWorkflows.delete(root); }
+			if (isolation && !launched) {
+				try { await removeCleanAgentWorktree(isolation); }
+				catch { void vscode.window.showWarningMessage('El worktree no se pudo retirar automáticamente. Revisá git worktree list.'); }
+			}
+			controller.refresh(); }
 	}));
 	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.nativeWorkflowHistory', async (requested?: string) => {
 		try {
