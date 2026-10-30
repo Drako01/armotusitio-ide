@@ -30,8 +30,10 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 		const folder = requested ? roots.find((f: Host) => f.uri.fsPath === requested) : roots.length === 1 ? roots[0] : (await vscode.window.showQuickPick(roots.map((f: Host) => ({ label: f.name, description: f.uri.fsPath, folder: f })), { placeHolder: 'Eleg\u00ed el proyecto' }))?.folder;
 		if (!folder) { return; }
 		const root = await fs.realpath(folder.uri.fsPath);
-		// Existing native project Harness remains authoritative. Do not create competing task state.
-		if ((await inspectHarnessAuthority(root)).engine === 'project' && !allowProjectAgent) { vscode.window.showInformationMessage(vscode.l10n.t('El Harness del proyecto mantiene sus tareas. Los agentes del IDE requieren interoperabilidad expl\u00edcita.')); return; }
+		// Project tools own their task state; IDE agents may complement them read-only.
+		const authority = await inspectHarnessAuthority(root);
+		if (authority.reason === 'project-path-unsafe') { throw Error('HARNESS_PROJECT_AUTHORITY_UNSAFE'); }
+		if (authority.engine === 'project' && !allowProjectAgent) { vscode.window.showInformationMessage(vscode.l10n.t('El Harness del proyecto mantiene sus tareas. Los agentes del IDE requieren interoperabilidad expl\u00edcita.')); return; }
 		const hash = createHash('sha256').update(root).digest('hex');
 		const engine = sessions.get(root) || new NativeHarness(root, path.join(context.globalStorageUri.fsPath, 'native-harness', hash));
 		sessions.set(root, engine); return { folder, engine };
@@ -84,12 +86,16 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			const instruction = await vscode.window.showInputBox({ title: 'Agent instruction (not submitted to the provider)', prompt: 'Describe the proposed task. No AI execution will occur.' });
 			if (!instruction) { return; }
 			const readOnly = role !== 'implementer';
+			const projectHarness = (await inspectHarnessAuthority(root)).engine === 'project';
+			if (projectHarness && !readOnly) { throw Error('HARNESS_HYBRID_WRITER_UNAVAILABLE'); }
+			const skills = projectHarness ? await listProjectSkills(root) : [];
+			const preview = { skills: skills.map(skill => ({ name: skill.name, source: skill.source, digest: skill.digest })) };
 			const draft = { schemaVersion: 1 as const, provider, role, projectRoot: root, instruction, readOnly };
 			const reviewed = reviewAgentDraft(draft);
 			const inventory = await inspectAgentWorkspace(root);
 			if (!ensureTrust() || await fs.realpath(chosen.folder.uri.fsPath) !== root) { return; }
-			const preview = JSON.stringify({ review: reviewed, inventory, executionEnabled: false }, null, 2);
-			await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({ language: 'json', content: preview }), { preview: true });
+			const reviewPreview = JSON.stringify({ review: reviewed, inventory, ...preview, hybrid: projectHarness, executionEnabled: false }, null, 2);
+			await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({ language: 'json', content: reviewPreview }), { preview: true });
 			vscode.window.showInformationMessage(vscode.l10n.t('Agent proposal reviewed locally. No provider was invoked.'));
 		} catch (error) { showError(error); } finally { controller.refresh(); }
 	}));
