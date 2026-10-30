@@ -204,19 +204,49 @@ async function assertNoUncertainArtifacts(storage: string): Promise<void> {
 			throw Error('HARNESS_FENCE_RECOVERY_PENDING_WORKFLOW');
 		}
 	});
-	await checkDir('tasks', async name => {
-		if (name.endsWith('.tmp') || name.endsWith('.intent')) { throw Error('HARNESS_FENCE_RECOVERY_PENDING_TASK'); }
-		if (!/^[a-f0-9-]{36}\.json$/i.test(name)) { return; }
-		const file = path.join(storage, 'tasks', name);
-		const task = await readJsonRecovery(file, 2 * 1024 * 1024);
-		if (!task || typeof task !== 'object' || Array.isArray(task) ||
-			(task as { schemaVersion?: unknown }).schemaVersion !== 1 ||
-			(task as { id?: unknown }).id !== name.slice(0, -5) ||
-			!Array.isArray((task as { attempts?: unknown }).attempts) ||
-			(task as { attempts: Array<{ status?: string }> }).attempts.some(attempt =>
-				!attempt || !['passed', 'failed', 'cancelled', 'interrupted'].includes(attempt.status ?? ''))) {
-			throw Error('HARNESS_FENCE_RECOVERY_PENDING_TASK');
+	const checkTaskDirectory = async (relative: string): Promise<void> => {
+		await checkDir(relative, async name => {
+			if (name.endsWith('.tmp') || name.endsWith('.intent')) { throw Error('HARNESS_FENCE_RECOVERY_PENDING_TASK'); }
+			if (!/^[a-f0-9-]{36}\\.json$/i.test(name)) { throw Error('HARNESS_FENCE_RECOVERY_UNSAFE_STATE'); }
+			const file = path.join(storage, relative, name);
+			const task = await readJsonRecovery(file, 2 * 1024 * 1024);
+			if (!task || typeof task !== 'object' || Array.isArray(task) ||
+				(task as { schemaVersion?: unknown }).schemaVersion !== 1 ||
+				(task as { id?: unknown }).id !== name.slice(0, -5) ||
+				!Array.isArray((task as { attempts?: unknown }).attempts) ||
+				(task as { attempts: Array<{ status?: string }> }).attempts.some(attempt =>
+					!attempt || !['passed', 'failed', 'cancelled', 'interrupted'].includes(attempt.status ?? ''))) {
+				throw Error('HARNESS_FENCE_RECOVERY_PENDING_TASK');
+			}
+		});
+	};
+	await checkTaskDirectory('tasks');
+	// A workflow can delegate verification to a second NativeHarness within a
+	// managed worktree. Its lock and running attempts must be reconciled too,
+	// even after the parent workflow was marked interrupted.
+	await checkDir('isolated-verification', async id => {
+		if (!/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(id)) {
+			throw Error('HARNESS_FENCE_RECOVERY_UNSAFE_STATE');
 		}
+		await checkDir(path.join('isolated-verification', id), async name => {
+			if (name === 'execution.lock') { throw Error('HARNESS_FENCE_RECOVERY_ISOLATED_LOCK'); }
+			if (name === 'tasks') {
+				await checkTaskDirectory(path.join('isolated-verification', id, 'tasks'));
+				return;
+			}
+			if (name === 'evidence') {
+				// The evidence directory contains no writer lock. The checkDir
+				// itself rejects a linked/noncanonical parent.
+				const dir = path.join(storage, 'isolated-verification', id, 'evidence');
+				const evidence = await fs.lstat(dir);
+				if (!evidence.isDirectory() || evidence.isSymbolicLink() ||
+					await fs.realpath(dir) !== dir) {
+					throw Error('HARNESS_FENCE_RECOVERY_UNSAFE_STATE');
+				}
+				return;
+			}
+			throw Error('HARNESS_FENCE_RECOVERY_UNSAFE_STATE');
+		});
 	});
 	await checkDir('checkpoints', async name => {
 		if (name.endsWith('.rollback.intent')) { throw Error('HARNESS_FENCE_RECOVERY_PENDING_ROLLBACK'); }
