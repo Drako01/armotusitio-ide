@@ -43,7 +43,7 @@ test('executes three stages in order with fake provider; persists only metadata'
       'process.stdin.on("data", b => { input += b; });',
       'process.stdin.on("end", () => {',
       ' const role = input.includes("Read-only assessment") ? "plan" : input.includes("Implement only") ? "implement" : "review";',
-      ' require("fs").appendFileSync("trace.txt", role + "\n");',
+      ' require("fs").appendFileSync("trace.txt", role + "\\n");',
       ' console.log("fake provider passed");',
       '});'
     ].join('\n');
