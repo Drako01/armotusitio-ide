@@ -148,6 +148,12 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			}
 			const provider = await vscode.window.showQuickPick(['codex', 'claude'], { title: 'Proveedor para el workflow multiagente' }) as NativeProvider | undefined;
 			if (!provider) { return; }
+			const reviewerMode = await vscode.window.showQuickPick([
+				{ label: 'Mismo proveedor en todas las fases', value: 'same' },
+				{ label: 'Revisión cruzada con el otro proveedor', value: 'cross' }
+			], { title: 'Independencia del agente revisor' });
+			if (!reviewerMode) { return; }
+			const reviewerProvider: NativeProvider = reviewerMode.value === 'cross' ? (provider === 'codex' ? 'claude' : 'codex') : provider;
 			const instruction = await vscode.window.showInputBox({ title: 'Objetivo del workflow (plan → implementación → revisión)', prompt: 'Describí el alcance específico; no ingreses secretos.' });
 			if (!instruction) { return; }
 			const mode = await vscode.window.showQuickPick([
@@ -163,6 +169,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 				executionRoot = isolation.root;
 			}
 			const plan = proposedWorkflow(provider, instruction);
+			plan.handoffs.find(h => h.id === 'review')!.provider = reviewerProvider;
 			const digest = workflowDigest(executionRoot, plan);
 			const verification = (await loadProjectConfig(root))?.plan;
 			const verificationSnapshot = JSON.stringify(verification || null);
