@@ -334,3 +334,92 @@ test('IDE quota diagnostics are read-only and disabled by default', async () => 
 		assert.deepEqual(status.providers.claude, { used: 0, remaining: null });
 	} finally { await f.cleanup(); }
 });
+
+test('IDE integrates a reviewed worktree into the primary checkout and rolls it back on request', async () => {
+	const f = await fixture();
+	try {
+		const { execFileSync } = await import('node:child_process');
+		const { createAgentWorktree, removeCleanAgentWorktree } = await import('../src/native-agent-worktree.ts');
+		const { createWorktreeCheckpoint } = await import('../src/native-worktree-checkpoint.ts');
+		const root = await fs.realpath(f.roots[0]);
+		execFileSync('git', ['init', '-q', root]);
+		execFileSync('git', ['-C', root, 'config', 'core.autocrlf', 'false']);
+		await fs.writeFile(path.join(root, 'app.txt'), 'baseline\n');
+		execFileSync('git', ['-C', root, 'add', '.']);
+		execFileSync('git', ['-C', root, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-qm', 'seed']);
+		const digest = (await import('node:crypto')).createHash('sha256').update(root).digest('hex');
+		const storage = path.join(path.dirname(root), 'private', 'native-harness', digest);
+		const managed = await createAgentWorktree(root, path.join(storage, 'isolated-worktrees'));
+		const fence = await acquireSharedExecutionFence(root, storage, 'native-workflow');
+		try { await createWorktreeCheckpoint(managed, path.join(storage, 'checkpoints'), fence); }
+		finally { await fence.release(); }
+		await fs.writeFile(path.join(managed.root, 'app.txt'), 'reviewed\n');
+		await f.invoke('nativeWorktreeIntegrate', root);
+		const integrated = JSON.parse(f.documents.at(-1)!.content);
+		assert.deepEqual({ status: integrated.status, files: integrated.files, content: await fs.readFile(path.join(root, 'app.txt'), 'utf8') },
+			{ status: 'applied', files: ['app.txt'], content: 'reviewed\n' });
+		await f.invoke('nativeWorktreeIntegrationRollback', root);
+		assert.equal(await fs.readFile(path.join(root, 'app.txt'), 'utf8'), 'baseline\n');
+		assert.equal((await inspectSharedExecutionFence(root, storage)).held, false);
+		execFileSync('git', ['-C', managed.root, 'checkout', '-q', '--', '.']);
+		await removeCleanAgentWorktree(managed);
+	} finally { await f.cleanup(); }
+});
+
+test('IDE token budget refuses an agent before launching its provider and releases the fence', async () => {
+	const f = await fixture();
+	try {
+		const { recordProviderSpend } = await import('../src/native-provider-quota.ts');
+		const root = await fs.realpath(f.roots[0]);
+		const digest = (await import('node:crypto')).createHash('sha256').update(root).digest('hex');
+		const storage = path.join(path.dirname(root), 'private', 'native-harness', digest);
+		const lease = await acquireSharedExecutionFence(root, storage, 'native-agent');
+		try { await recordProviderSpend(storage, 'codex', lease, { usage: { inputTokens: 5, outputTokens: 5 } }); }
+		finally { await lease.release(); }
+		const settings: Record<string, number> = { providerTokensPer24h: 10 };
+		f.vscode.workspace.getConfiguration = () => ({ get: (key: string, fallback: unknown) => settings[key] ?? fallback });
+		await f.invoke('nativeAgentExecute', root);
+		assert.ok(f.notices.some(message => String(message).includes('HARNESS_PROVIDER_TOKEN_BUDGET_EXCEEDED')));
+		assert.equal((await inspectSharedExecutionFence(root, storage)).held, false);
+		await f.invoke('nativeProviderQuotaStatus', root);
+		assert.deepEqual(JSON.parse(f.documents.at(-1)!.content).budget.providers.codex,
+			{ tokens: 10, costUsd: 0, unmeteredCalls: 0, rateLimitedUntil: null });
+	} finally { await f.cleanup(); }
+});
+
+test('IDE delegates a cataloged project gate under its shared fence and releases it afterwards', async () => {
+	const f = await fixture();
+	try {
+		const root = await fs.realpath(f.roots[0]);
+		const harness = path.join(root, '.harness');
+		await fs.mkdir(path.join(harness, 'manifests'), { recursive: true });
+		await fs.writeFile(path.join(harness, 'manifests', 'ide-capabilities.json'), JSON.stringify({ schemaVersion: 2, engine: 'project', capabilities: ['verification-gates', 'bounded-processes'] }));
+		await fs.writeFile(path.join(harness, 'manifests', 'ide-gates.json'), JSON.stringify({ schemaVersion: 1, gates: [{ id: 'unit', dependsOn: [], resources: [] }] }));
+		await fs.writeFile(path.join(harness, 'core.mjs'), [
+			'const arg = name => process.argv[process.argv.indexOf(name) + 1];',
+			'const nonce = arg("--nonce");',
+			'if (process.argv[2] === "capabilities") { console.log(JSON.stringify({ schemaVersion: 2, nonce, capabilities: ["verification-gates", "bounded-processes"] })); }',
+			'else if (process.argv[2] === "ide-gate") { console.log(JSON.stringify({ schemaVersion: 2, nonce, gate: arg("--gate"), status: "passed", durationMs: 1, fenceEpoch: Number(arg("--fence-epoch")), evidenceDigest: "a".repeat(64) })); }'
+		].join('\n'));
+		await f.invoke('nativeProjectGateDelegate', root);
+		const result = JSON.parse(f.documents.at(-1)!.content);
+		const digest = (await import('node:crypto')).createHash('sha256').update(root).digest('hex');
+		const storage = path.join(path.dirname(root), 'private', 'native-harness', digest);
+		assert.deepEqual({ gate: result.gate, status: result.status, held: (await inspectSharedExecutionFence(root, storage)).held },
+			{ gate: 'unit', status: 'passed', held: false });
+	} finally { await f.cleanup(); }
+});
+
+test('IDE trace command exposes executed gate spans without task output', async () => {
+	const f = await fixture();
+	try {
+		await writeProjectConfig(f.roots[0], { schemaVersion: 1, runtime: 'ide-native', profile: 'custom', plan: { schemaVersion: 1, gates: [{ id: 'version', executable: 'node', args: ['--version'] }] } });
+		await f.invoke('nativeNewTask', f.roots[0]);
+		await f.invoke('nativeRunTask', f.roots[0]);
+		await f.invoke('nativeTrace', f.roots[0]);
+		const trace = JSON.parse(f.documents.at(-1)!.content);
+		assert.deepEqual({ kinds: trace.spans.map(span => span.kind), statuses: trace.spans.map(span => span.status), lines: trace.summary[0].length },
+			{ kinds: ['task', 'gate'], statuses: ['ok', 'ok'], lines: 2 });
+		assert.equal(f.documents.at(-1)!.content.includes(process.version), false);
+	} finally { await f.cleanup(); }
+});

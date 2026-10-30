@@ -15,7 +15,7 @@ import { listProjectSkills, readProjectSkill, type ProjectSkill } from './native
 import { listProjectGuides, validateProjectGuides } from './native-project-guidance.ts';
 import { readProjectGateCatalog, validateProjectGateCatalog, planProjectGateWaves } from './native-project-gates.ts';
 import { assessHybridGateReadiness } from './native-hybrid-readiness.ts';
-import { buildAgentInvocation, executeReviewedAgent, type AgentExecution } from './native-agent-execution.ts';
+import { buildAgentInvocation, executeReviewedAgent, type AgentExecution, type AgentOutcome } from './native-agent-execution.ts';
 import { readAgentStatistics, recordAgentMetric } from './native-agent-metrics.ts';
 import { NativeAgentWorkflow, proposedWorkflow, workflowDigest, type WorkflowRun } from './native-agent-workflow.ts';
 import { createAgentWorktree, removeCleanAgentWorktree, listAgentWorktrees, type ManagedWorktree } from './native-agent-worktree.ts';
@@ -23,12 +23,28 @@ import { describeEngine, probeProjectHandshake, compareHybridCapabilities, verif
 import { diagnoseProvider } from './native-provider-diagnostics.ts';
 import { summarizeGatePerformance } from './native-performance.ts';
 import { acquireSharedExecutionFence, inspectSharedExecutionFence, reconcileSharedExecutionFence, type SharedExecutionFence } from './native-shared-fence.ts';
-import { createWorktreeCheckpoint, rollbackWorktreeCheckpoint, type WorktreeCheckpoint } from './native-worktree-checkpoint.ts';
-import { queryProjectEngineStatus } from './native-engine-interop.ts';
-import { reserveProviderInvocation, readProviderInvocationQuota } from './native-provider-quota.ts';
+import { createWorktreeCheckpoint, readWorktreeCheckpoint, rollbackWorktreeCheckpoint, type WorktreeCheckpoint } from './native-worktree-checkpoint.ts';
+import { integrateWorktreeChanges, reconcileWorktreeIntegration, rollbackWorktreeIntegration } from './native-worktree-integration.ts';
+import { delegateProjectGate, queryProjectEngineStatus } from './native-engine-interop.ts';
+import { describeTrace, taskTrace, traceparent, workflowTrace } from './native-trace.ts';
+import {
+	reserveProviderInvocation, readProviderInvocationQuota, assertProviderBudget, recordProviderSpend, readProviderBudget,
+	validateProviderBudgetPolicy, budgetEnabled, type ProviderBudgetPolicy
+} from './native-provider-quota.ts';
 
 type Host = any; // vscode host is injected by the existing extension (avoid duplicating the UI layer).
 const sessions = new Map<string, NativeHarness>();
+
+/** IDs of `<uuid>.json` records in a private state directory, bounded to 500. */
+async function listRecordIds(directory: string, tooLarge: string): Promise<string[]> {
+	const entries = await fs.readdir(directory, { withFileTypes: true }).catch(error => {
+		if ((error as NodeJS.ErrnoException).code === 'ENOENT') { return []; }
+		throw error;
+	});
+	if (entries.length > 500) { throw Error(tooLarge); }
+	return entries.filter(entry => entry.isFile() && !entry.isSymbolicLink() &&
+		/^[a-f0-9-]{36}\.json$/i.test(entry.name)).map(entry => entry.name.slice(0, -5));
+}
 
 export function registerNativeHarness(context: Host, vscode: Host, controller: Host): void {
 	const choose = async (requested?: string, allowProjectAgent = false): Promise<{ folder: Host; engine: NativeHarness } | undefined> => {
@@ -56,6 +72,24 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 	const maxConcurrentProviders = 2;
 	const providerSlots = (): number => runningAgents.size + pendingAgents.size + runningWorkflows.size + pendingWorkflows.size;
 	const assertProviderCapacity = (): void => { if (providerSlots() >= maxConcurrentProviders) { throw Error('HARNESS_PROVIDER_CAPACITY_REACHED'); } };
+	/** Authorized workspace folder whose authority is a project Harness. */
+	const chooseProjectHarness = async (requested?: string): Promise<Host | undefined> => {
+		const folders = vscode.workspace.workspaceFolders || [];
+		const selected = requested ? folders.find((folder: Host) => folder.uri.fsPath === requested) :
+			folders.length === 1 ? folders[0] :
+				(await vscode.window.showQuickPick(folders.map((folder: Host) => ({
+					label: folder.name, description: folder.uri.fsPath, folder
+				})), { placeHolder: 'Eleg\u00ed el Harness externo' }))?.folder;
+		if (!selected || !authorized(selected)) { return undefined; }
+		if ((await inspectHarnessAuthority(await fs.realpath(selected.uri.fsPath))).engine !== 'project') { throw Error('HARNESS_PROJECT_STATUS_NOT_PROJECT'); }
+		return selected;
+	};
+	const assertIdle = (root: string, folder: Host): void => {
+		if (runningAgents.has(root) || pendingAgents.has(root) || runningWorkflows.has(root) ||
+			pendingWorkflows.has(root) || running.has(folder.uri.toString())) {
+			throw Error('HARNESS_ALREADY_RUNNING');
+		}
+	};
 	const metricsDirectory = (root: string): string => path.join(context.globalStorageUri.fsPath, 'native-harness', createHash('sha256').update(root).digest('hex'));
 	const providerCallsPer24h = (folder: Host): number => {
 		const limit: unknown = vscode.workspace.getConfiguration('atsHarness', folder.uri).get('providerCallsPer24h', 0);
@@ -63,6 +97,21 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			throw Error('HARNESS_PROVIDER_QUOTA_POLICY_INVALID');
 		}
 		return limit as number;
+	};
+	const providerBudget = (folder: Host): ProviderBudgetPolicy => {
+		const settings = vscode.workspace.getConfiguration('atsHarness', folder.uri);
+		return validateProviderBudgetPolicy({
+			maxTokensPer24h: settings.get('providerTokensPer24h', 0),
+			maxCostUsdPer24h: settings.get('providerCostUsdPer24h', 0)
+		});
+	};
+	/** Reported spend must be durable when a budget is enforced; otherwise it is best-effort telemetry. */
+	const recordSpend = async (folder: Host, root: string, provider: NativeProvider, fence: SharedExecutionFence, outcome: AgentOutcome): Promise<void> => {
+		try { await recordProviderSpend(metricsDirectory(root), provider, fence, outcome); }
+		catch (error) {
+			if (budgetEnabled(providerBudget(folder))) { throw error; }
+			void vscode.window.showWarningMessage('No se pudo registrar el consumo local reportado por el proveedor.');
+		}
 	};
 	controller.nativeRunning = () => running.size + runningAgents.size + pendingAgents.size + runningWorkflows.size + pendingWorkflows.size;
 	controller.nativeProjects = async () => {
@@ -190,6 +239,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 				fence = await acquireSharedExecutionFence(root, metricsDirectory(root), 'native-agent');
 				await fence.assertCurrent();
 				const cap = providerCallsPer24h(chosen.folder);
+				await assertProviderBudget(metricsDirectory(root), provider, providerBudget(chosen.folder), fence);
 				if (cap > 0) { await reserveProviderInvocation(metricsDirectory(root), provider, fence, cap); }
 				if (!authorized(chosen.folder)) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
 				await fence.assertCurrent();
@@ -201,6 +251,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			runningAgents.set(root, execution); controller.refresh();
 			try {
 				const result = await execution.outcome;
+				await recordSpend(chosen.folder, root, provider, fence, result);
 				try { await recordAgentMetric(metricsDirectory(root), provider, role, result); }
 				catch { void vscode.window.showWarningMessage('No se pudo registrar la m\u00e9trica local del agente.'); }
 				if (!authorized(chosen.folder)) { return; }
@@ -279,6 +330,8 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 					const result = await validationEngine.execute(task.id, approval, () => authorized(chosen.folder), signal, engine.activeFence());
 					return result.attempts.at(-1)?.status === 'passed';
 				} : undefined, async (stageProvider, stageRole, stageOutcome) => {
+					const stageFence = engine.activeFence();
+					if (stageFence) { await recordSpend(chosen.folder, root!, stageProvider, stageFence, stageOutcome); }
 					await recordAgentMetric(metricsDirectory(root!), stageProvider, stageRole, stageOutcome);
 				}, async fence => {
 					if (isolation) {
@@ -286,10 +339,12 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 					}
 				}, async stageProvider => {
 					const cap = providerCallsPer24h(chosen.folder);
-					if (cap > 0) {
+					const budget = providerBudget(chosen.folder);
+					if (cap > 0 || budgetEnabled(budget)) {
 						const fence = engine.activeFence();
 						if (!fence) { throw Error('HARNESS_PROVIDER_QUOTA_FENCE_REQUIRED'); }
-						await reserveProviderInvocation(metricsDirectory(root!), stageProvider, fence, cap);
+						await assertProviderBudget(metricsDirectory(root!), stageProvider, budget, fence);
+						if (cap > 0) { await reserveProviderInvocation(metricsDirectory(root!), stageProvider, fence, cap); }
 					}
 				});
 			}
@@ -333,6 +388,24 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 	}));
 
 
+	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.nativeTrace', async (requested?: string) => {
+		try {
+			if (!ensureTrust()) { return; }
+			const chosen = await choose(requested); if (!chosen) { return; }
+			const root = await fs.realpath(chosen.folder.uri.fsPath);
+			const workflows = (await new NativeAgentWorkflow(root, path.join(metricsDirectory(root), 'workflows')).history()).slice(0, 5);
+			const tasks = (await chosen.engine.list()).slice(0, 5);
+			const traces = [...workflows.map(workflowTrace), ...tasks.map(taskTrace).filter(spans => spans.length)];
+			if (!authorized(chosen.folder)) { return; }
+			await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({
+				language: 'json',
+				content: JSON.stringify({
+					schemaVersion: 1, project: chosen.folder.name,
+					summary: traces.map(describeTrace), traceparents: traces.map(spans => traceparent(spans[0])), spans: traces.flat()
+				}, null, 2)
+			}), { preview: true });
+		} catch (error) { showError(error); }
+	}));
 	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.nativeWorktreeCleanup', async (requested?: string) => {
 		try {
 			if (!ensureTrust()) { return; }
@@ -355,10 +428,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			if (!ensureTrust()) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
 			const chosen = await choose(requested); if (!chosen) { return; }
 			const root = await fs.realpath(chosen.folder.uri.fsPath);
-			if (runningAgents.has(root) || pendingAgents.has(root) || runningWorkflows.has(root) ||
-				pendingWorkflows.has(root) || running.has(chosen.folder.uri.toString())) {
-				throw Error('HARNESS_ALREADY_RUNNING');
-			}
+			assertIdle(root, chosen.folder);
 			const worktrees = await listAgentWorktrees(root, path.join(metricsDirectory(root), 'isolated-worktrees'));
 			if (!worktrees.length) { vscode.window.showInformationMessage('No hay worktrees administrados para recuperar.'); return; }
 			const chosenWorktree = await vscode.window.showQuickPick(
@@ -366,13 +436,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 				{ title: 'Worktree administrado para rollback expl\u00edcito' });
 			if (!chosenWorktree) { return; }
 			const checkpointDir = path.join(metricsDirectory(root), 'checkpoints');
-			const entries = await fs.readdir(checkpointDir, { withFileTypes: true }).catch(error => {
-				if ((error as NodeJS.ErrnoException).code === 'ENOENT') { return []; }
-				throw error;
-			});
-			if (entries.length > 500) { throw Error('HARNESS_CHECKPOINT_HISTORY_TOO_LARGE'); }
-			const ids = entries.filter(entry => entry.isFile() && !entry.isSymbolicLink() &&
-				/^[a-f0-9-]{36}\.json$/i.test(entry.name)).map(entry => entry.name.slice(0, -5));
+			const ids = await listRecordIds(checkpointDir, 'HARNESS_CHECKPOINT_HISTORY_TOO_LARGE');
 			if (!ids.length) { vscode.window.showInformationMessage('No hay checkpoints para recuperar.'); return; }
 			const id = await vscode.window.showQuickPick(ids, { title: 'Seleccion\u00e1 el checkpoint del worktree' });
 			if (!id) { return; }
@@ -385,6 +449,66 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			try {
 				const result = await rollbackWorktreeCheckpoint(chosenWorktree.worktree, checkpointDir, id, fence, true);
 				vscode.window.showInformationMessage('Rollback de worktree completado: ' + result.id);
+			} finally { await fence.release(); }
+		} catch (error) { showError(error); } finally { controller.refresh(); }
+	}));
+	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.nativeWorktreeIntegrate', async (requested?: string) => {
+		try {
+			if (!ensureTrust()) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
+			const chosen = await choose(requested); if (!chosen) { return; }
+			const root = await fs.realpath(chosen.folder.uri.fsPath);
+			// Hybrid projects keep exclusive writer authority over their checkout.
+			if ((await inspectHarnessAuthority(root)).engine === 'project') { throw Error('HARNESS_HYBRID_WRITER_UNAVAILABLE'); }
+			assertIdle(root, chosen.folder);
+			const worktrees = await listAgentWorktrees(root, path.join(metricsDirectory(root), 'isolated-worktrees'));
+			if (!worktrees.length) { vscode.window.showInformationMessage('No hay worktrees administrados para integrar.'); return; }
+			const chosenWorktree = await vscode.window.showQuickPick(
+				worktrees.map(worktree => ({ label: worktree.id, description: worktree.root, worktree })),
+				{ title: 'Worktree revisado a integrar en el checkout principal' });
+			if (!chosenWorktree) { return; }
+			const checkpointDir = path.join(metricsDirectory(root), 'checkpoints');
+			const ids = await listRecordIds(checkpointDir, 'HARNESS_CHECKPOINT_HISTORY_TOO_LARGE');
+			if (!ids.length) { vscode.window.showInformationMessage('No hay checkpoints base para integrar.'); return; }
+			const id = await vscode.window.showQuickPick(ids, { title: 'Checkpoint base del worktree' });
+			if (!id) { return; }
+			const checkpoint = await readWorktreeCheckpoint(chosenWorktree.worktree, checkpointDir, id);
+			const confirmation = await vscode.window.showWarningMessage(
+				'Aplicar TODOS los cambios de ' + chosenWorktree.worktree.root + ' sobre el checkout principal (todo o nada, sin commit ni staging). Se rechaza si hay conflictos o ediciones locales en los mismos archivos. \u00bfConfirmar?',
+				{ modal: true }, 'Integrar cambios');
+			if (confirmation !== 'Integrar cambios' || !authorized(chosen.folder)) { return; }
+			assertIdle(root, chosen.folder);
+			const fence = await acquireSharedExecutionFence(root, metricsDirectory(root), 'native-workflow');
+			try {
+				const result = await integrateWorktreeChanges(chosenWorktree.worktree, checkpoint.head,
+					path.join(metricsDirectory(root), 'integrations'), fence, true);
+				await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({ language: 'json', content: JSON.stringify(result, null, 2) }), { preview: true });
+				vscode.window.showInformationMessage('Integraci\u00f3n aplicada: ' + result.id);
+			} finally { await fence.release(); }
+		} catch (error) { showError(error); } finally { controller.refresh(); }
+	}));
+	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.nativeWorktreeIntegrationRollback', async (requested?: string) => {
+		try {
+			if (!ensureTrust()) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
+			const chosen = await choose(requested); if (!chosen) { return; }
+			const root = await fs.realpath(chosen.folder.uri.fsPath);
+			assertIdle(root, chosen.folder);
+			const storage = path.join(metricsDirectory(root), 'integrations');
+			const ids = await listRecordIds(storage, 'HARNESS_INTEGRATION_HISTORY_TOO_LARGE');
+			if (!ids.length) { vscode.window.showInformationMessage('No hay integraciones registradas.'); return; }
+			const id = await vscode.window.showQuickPick(ids, { title: 'Integraci\u00f3n a revertir o recuperar' });
+			if (!id) { return; }
+			const confirmation = await vscode.window.showWarningMessage(
+				'Revertir la integraci\u00f3n ' + id + ' en el checkout principal? Una integraci\u00f3n interrumpida se clasifica primero seg\u00fan el estado real de los archivos. Se rechaza si los archivos cambiaron despu\u00e9s.',
+				{ modal: true }, 'Revertir integraci\u00f3n');
+			if (confirmation !== 'Revertir integraci\u00f3n' || !authorized(chosen.folder)) { return; }
+			assertIdle(root, chosen.folder);
+			const fence = await acquireSharedExecutionFence(root, metricsDirectory(root), 'native-workflow');
+			try {
+				const recovered = await reconcileWorktreeIntegration(root, storage, id, fence);
+				const result = recovered.status === 'applied'
+					? await rollbackWorktreeIntegration(root, storage, id, fence, true)
+					: recovered;
+				vscode.window.showInformationMessage('Integraci\u00f3n ' + result.id + ': ' + result.status);
 			} finally { await fence.release(); }
 		} catch (error) { showError(error); } finally { controller.refresh(); }
 	}));
@@ -472,15 +596,9 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.nativeProjectStatus', async (requested?: string) => {
 		try {
 			if (!ensureTrust()) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
-			const folders = vscode.workspace.workspaceFolders || [];
-			const selected = requested ? folders.find((folder: Host) => folder.uri.fsPath === requested) :
-				folders.length === 1 ? folders[0] :
-					(await vscode.window.showQuickPick(folders.map((folder: Host) => ({
-						label: folder.name, description: folder.uri.fsPath, folder
-					})), { placeHolder: 'Eleg\u00ed el Harness externo' }))?.folder;
-			if (!selected || !authorized(selected)) { return; }
+			const selected = await chooseProjectHarness(requested);
+			if (!selected) { return; }
 			const root = await fs.realpath(selected.uri.fsPath);
-			if ((await inspectHarnessAuthority(root)).engine !== 'project') { throw Error('HARNESS_PROJECT_STATUS_NOT_PROJECT'); }
 			const confirmation = await vscode.window.showWarningMessage(
 				'Consultar estado ejecuta c\u00f3digo del Harness del proyecto bajo tu usuario. El protocolo limita la respuesta, pero NO impone aislamiento OS ni permite escrituras h\u00edbridas. \u00bfContinuar?',
 				{ modal: true }, 'Consultar estado externo');
@@ -495,6 +613,32 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 				}, null, 2)
 			}), { preview: true });
 		} catch (error) { showError(error); }
+	}));
+	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.nativeProjectGateDelegate', async (requested?: string) => {
+		try {
+			if (!ensureTrust()) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
+			const selected = await chooseProjectHarness(requested);
+			if (!selected) { return; }
+			const root = await fs.realpath(selected.uri.fsPath);
+			assertIdle(root, selected);
+			const catalog = await readProjectGateCatalog(root);
+			if (!catalog?.gates.length) { throw Error('HARNESS_PROJECT_GATE_UNKNOWN'); }
+			const gate = await vscode.window.showQuickPick(catalog.gates.map(item => item.id), { title: 'Gate declarado por el Harness del proyecto' });
+			if (!gate) { return; }
+			const confirmation = await vscode.window.showWarningMessage(
+				'Delegar el gate ' + gate + ' ejecuta c\u00f3digo del Harness del proyecto bajo tu usuario, mientras el IDE retiene el lock compartido de escritores. El motor debe confirmar el epoch del lock. NO hay aislamiento OS. \u00bfContinuar?',
+				{ modal: true }, 'Delegar gate');
+			if (confirmation !== 'Delegar gate' || !authorized(selected)) { return; }
+			assertIdle(root, selected);
+			const fence = await acquireSharedExecutionFence(root, metricsDirectory(root), 'project');
+			let result;
+			try { result = await delegateProjectGate(root, gate, true, () => authorized(selected), fence); }
+			finally { await fence.release(); }
+			if (!authorized(selected)) { return; }
+			await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({
+				language: 'json', content: JSON.stringify({ project: root, ...result }, null, 2)
+			}), { preview: true });
+		} catch (error) { showError(error); } finally { controller.refresh(); }
 	}));
 	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.nativeProviderDiagnostics', async (requested?: string) => {
 		try {
@@ -513,7 +657,10 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			if (!ensureTrust()) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
 			const chosen = await choose(requested); if (!chosen) { return; }
 			const root = await fs.realpath(chosen.folder.uri.fsPath);
-			const status = await readProviderInvocationQuota(metricsDirectory(root), providerCallsPer24h(chosen.folder));
+			const status = {
+				...await readProviderInvocationQuota(metricsDirectory(root), providerCallsPer24h(chosen.folder)),
+				budget: await readProviderBudget(metricsDirectory(root), providerBudget(chosen.folder))
+			};
 			if (!authorized(chosen.folder)) { return; }
 			await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({
 				language: 'json', content: JSON.stringify(status, null, 2)
@@ -621,13 +768,16 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			const task = await p.engine.get(selected.task.id);
 			const digest = await p.engine.reviewDigest(task.plan);
 			const exact = task.plan.gates.map(g => `${g.executable} ${JSON.stringify(g.args)}  (${g.cwd || '.'})`).join('\n');
-			if (await vscode.window.showWarningMessage(`Autorizar ejecuci\u00f3n local:\n${exact}`, { modal: true }, 'Ejecutar') !== 'Ejecutar') { return; }
+			const checkpoint = await p.engine.resumableGates(task.id);
+			const resumeLabel = checkpoint ? vscode.l10n.t('Reanudar (reutiliza {0} gates verificados)', String(checkpoint.gates.length)) : undefined;
+			const choice = await vscode.window.showWarningMessage(`Autorizar ejecuci\u00f3n local:\n${exact}`, { modal: true }, 'Ejecutar', ...(resumeLabel ? [resumeLabel] : []));
+			if (choice !== 'Ejecutar' && (!resumeLabel || choice !== resumeLabel)) { return; }
 			if (!ensureTrust()) { return; }
 			if (running.has(p.folder.uri.toString()) || runningAgents.has(p.folder.uri.fsPath) || runningWorkflows.has(p.folder.uri.fsPath)) { throw Error('HARNESS_ALREADY_RUNNING'); }
 			running.set(p.folder.uri.toString(), { engine: p.engine, taskId: task.id });
 			controller.refresh();
 			let result;
-			try { result = await p.engine.execute(task.id, digest, () => authorized(p.folder)); }
+			try { result = await p.engine.execute(task.id, digest, () => authorized(p.folder), undefined, undefined, { resume: choice === resumeLabel }); }
 			finally { running.delete(p.folder.uri.toString()); controller.refresh(); }
 			const last = result.attempts[result.attempts.length - 1];
 			const state = ({ passed: 'Verificaci\u00f3n completada', failed: 'La verificaci\u00f3n fall\u00f3. Revis\u00e1 el resultado.', cancelled: 'Verificaci\u00f3n cancelada', interrupted: 'La verificaci\u00f3n requiere revisi\u00f3n', running: 'Verificaci\u00f3n en curso' })[last.status];

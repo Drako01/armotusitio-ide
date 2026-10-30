@@ -109,6 +109,22 @@
           "scope": "resource",
           "description": "Limite opcional de invocaciones por proveedor y proyecto en una ventana movil de 24 horas. 0 deshabilita el limite. Se reserva antes de llamar al CLI y no equivale a presupuesto en USD."
         },
+        "atsHarness.providerTokensPer24h": {
+          "type": "integer",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 1000000000,
+          "scope": "resource",
+          "description": "Tope rigido de tokens (entrada + salida) REPORTADOS por el proveedor, por proyecto, en 24 horas. 0 lo deshabilita. Con el tope activo, una invocacion sin uso reportado bloquea las siguientes, y un rate limit detectado aplica 15 minutos de espera."
+        },
+        "atsHarness.providerCostUsdPer24h": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 100000,
+          "scope": "resource",
+          "description": "Tope rigido del costo estimado REPORTADO por el proveedor (USD), por proyecto, en 24 horas. 0 lo deshabilita. No es facturacion; un proveedor que no reporta costo queda bloqueado tras su primera invocacion."
+        },
         "atsHarness.notifications": {
           "type": "string",
           "enum": [
@@ -180,6 +196,10 @@
         "title": "ArmoTuSitio: Historial de workflows multiagente"
       },
       {
+        "command": "atsHarness.nativeTrace",
+        "title": "ArmoTuSitio: Trazas estructuradas de workflows y gates"
+      },
+      {
         "command": "atsHarness.nativeWorkflowReconcile",
         "title": "ArmoTuSitio: Reconciliar workflows interrumpidos"
       },
@@ -196,6 +216,14 @@
         "title": "ArmoTuSitio: Revertir worktree a checkpoint (confirmación requerida)"
       },
       {
+        "command": "atsHarness.nativeWorktreeIntegrate",
+        "title": "ArmoTuSitio: Integrar cambios del worktree en el checkout principal (confirmación requerida)"
+      },
+      {
+        "command": "atsHarness.nativeWorktreeIntegrationRollback",
+        "title": "ArmoTuSitio: Revertir o recuperar integración de worktree (confirmación requerida)"
+      },
+      {
         "command": "atsHarness.nativeAgentMetrics",
         "title": "ArmoTuSitio: Métricas locales de agentes IA"
       },
@@ -210,6 +238,10 @@
       {
         "command": "atsHarness.nativeProjectStatus",
         "title": "ArmoTuSitio: Consultar estado del Harness externo (consentimiento explícito)"
+      },
+      {
+        "command": "atsHarness.nativeProjectGateDelegate",
+        "title": "ArmoTuSitio: Delegar gate al Harness externo bajo lock compartido (consentimiento explícito)"
       },
       {
         "command": "atsHarness.nativeProviderDiagnostics",

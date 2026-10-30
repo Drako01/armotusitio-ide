@@ -17,10 +17,12 @@ test('project gates are discovered as bounded read-only metadata and pin a diges
 		const folder = path.join(root, '.harness', 'manifests');
 		await fs.mkdir(folder, { recursive: true });
 		const file = path.join(folder, 'ide-gates.json');
-		const plan = { schemaVersion: 1, gates: [
-			{ id: 'lint', dependsOn: [], resources: ['cpu'] },
-			{ id: 'tests', dependsOn: ['lint'], resources: ['db'] }
-		] };
+		const plan = {
+			schemaVersion: 1, gates: [
+				{ id: 'lint', dependsOn: [], resources: ['cpu'] },
+				{ id: 'tests', dependsOn: ['lint'], resources: ['db'] }
+			]
+		};
 		await fs.writeFile(file, JSON.stringify(plan));
 		const catalog = await readProjectGateCatalog(canonical);
 		assert.ok(catalog);
@@ -46,7 +48,7 @@ test('gate catalog rejects command injection, dangling dependencies and DAG cycl
 		await write([{ id: 'lint', dependsOn: ['missing'], resources: [] }]);
 		await assert.rejects(readProjectGateCatalog(canonical), /HARNESS_GATE_CATALOG_DEPENDENCY/);
 		await write([{ id: 'lint', dependsOn: ['tests'], resources: [] },
-			{ id: 'tests', dependsOn: ['lint'], resources: [] }]);
+		{ id: 'tests', dependsOn: ['lint'], resources: [] }]);
 		await assert.rejects(readProjectGateCatalog(canonical), /HARNESS_GATE_CATALOG_CYCLE/);
 	} finally { await fs.rm(root, { recursive: true, force: true }); }
 });
