@@ -34,14 +34,13 @@ El Harness especializado de cada proyecto conserva sus capacidades anteriores.
 Desde la raíz de este repositorio:
 
 ```bash
-npm run ats:harness:check
+node scripts/ats-harness-check.mts
 cd extensions/armotusitio-ide
 npm test
 npm run check
 ```
 
-Si el script raíz no existe en tu checkout, ejecutá `node scripts/ats-harness-check.mts`
-desde la raíz. Este check no llama a proveedores de IA.
+El check focalizado no llama a proveedores de IA.
 El test de integración real de Codex/Claude requiere CLI, autenticación y aprobación del usuario;
 no se simulan credenciales ni se ejecutan agentes en las pruebas automatizadas.
 
