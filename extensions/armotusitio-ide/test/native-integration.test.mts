@@ -134,3 +134,27 @@ test('new project harness during approval cannot enable an uncoordinated native 
 		assert.equal((await fs.readdir(path.join(root, '.harness'))).length, 0);
 	} finally { await f.cleanup(); }
 });
+
+test('hybrid skill selection refuses content changed during approval without launching provider', async () => {
+	const f = await fixture();
+	try {
+		const root = f.roots[0];
+		await fs.mkdir(path.join(root, '.harness'));
+		const dir = path.join(root, '.agents', 'skills', 'go-api');
+		await fs.mkdir(dir, { recursive: true });
+		const file = path.join(dir, 'SKILL.md');
+		await fs.writeFile(file, '# Approved conventions');
+		f.vscode.window.showQuickPick = async (items, options) => {
+			if (options?.title === 'Rol del agente') { return 'planner'; }
+			if (options?.canPickMany) { return [items[0]]; }
+			return items[0];
+		};
+		f.vscode.window.showWarningMessage = async (_, __, action) => {
+			await fs.writeFile(file, '# Mutated conventions');
+			return action;
+		};
+		await f.invoke('nativeAgentExecute', root);
+		assert.ok(f.notices.some(notice => notice.includes('HARNESS_PROJECT_SKILL_CHANGED')));
+		assert.ok(f.documents.length >= 1);
+	} finally { await f.cleanup(); }
+});
