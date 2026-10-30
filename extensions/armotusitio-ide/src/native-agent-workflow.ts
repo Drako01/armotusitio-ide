@@ -162,7 +162,7 @@ export class NativeAgentWorkflow {
     return recovered;
   }
 
-  async start(plan: HandoffPlan, approvedDigest: string, trusted: () => boolean, verify?: (signal: AbortSignal) => Promise<boolean>): Promise<WorkflowRun> {
+  async start(plan: HandoffPlan, approvedDigest: string, trusted: () => boolean, verify?: (signal: AbortSignal) => Promise<boolean>, onOutcome?: (provider: NativeProvider, role: AgentRole, outcome: AgentOutcome) => Promise<void>): Promise<WorkflowRun> {
     if (this.running) { throw Error('HARNESS_WORKFLOW_ALREADY_RUNNING'); }
     if (!trusted()) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
     const canonical = await fs.realpath(this.root);
@@ -208,6 +208,7 @@ export class NativeAgentWorkflow {
             this.active = await executeReviewedAgent(reviewAgentDraft(draft), draft);
             if (this.cancelled || !trusted()) { this.active.cancel(); }
             const outcome: AgentOutcome = await this.active.outcome;
+            try { await onOutcome?.(handoff.provider, handoff.role, outcome); } catch { /* Metrics never change execution outcomes. */ }
             step.status = outcome.status === 'timeout' ? 'failed' : outcome.status;
             // A review must explicitly approve the changes. Exit code 0 alone is not a quality signal.
             if (step.role === 'reviewer' && step.status === 'passed' && !/^HARNESS_REVIEW:\s*PASS\s*$/m.test(outcome.output)) { step.status = 'failed'; }
