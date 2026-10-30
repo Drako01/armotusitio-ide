@@ -106,10 +106,23 @@ export function planProjectGateWaves(catalog: ProjectGateCatalog, maxConcurrent 
 	}
 	const validated = new Map<string, ProjectGate>();
 	for (const gate of catalog.gates) {
-		if (!gate || typeof gate.id !== 'string' || !IDENTIFIER.test(gate.id) ||
+		if (!gate || typeof gate !== 'object' ||
+			Object.keys(gate).sort().join(',') !== 'dependsOn,id,resources' ||
+			typeof gate.id !== 'string' || !IDENTIFIER.test(gate.id) ||
 			validated.has(gate.id) || !Array.isArray(gate.dependsOn) ||
-			!Array.isArray(gate.resources)) { throw Error('HARNESS_GATE_CATALOG_INVALID'); }
+			gate.dependsOn.length > 32 || new Set(gate.dependsOn).size !== gate.dependsOn.length ||
+			!gate.dependsOn.every(dep => typeof dep === 'string' && IDENTIFIER.test(dep)) ||
+			!Array.isArray(gate.resources) || gate.resources.length > 8 ||
+			new Set(gate.resources).size !== gate.resources.length ||
+			!gate.resources.every(resource => typeof resource === 'string' && IDENTIFIER.test(resource))) {
+			throw Error('HARNESS_GATE_CATALOG_INVALID');
+		}
 		validated.set(gate.id, gate);
+	}
+	for (const gate of validated.values()) {
+		if (gate.dependsOn.some(dep => !validated.has(dep))) {
+			throw Error('HARNESS_GATE_CATALOG_DEPENDENCY');
+		}
 	}
 	const completed = new Set<string>();
 	const waves: string[][] = [];
