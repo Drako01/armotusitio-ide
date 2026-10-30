@@ -199,6 +199,20 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 
 **Interpretación:** los 9 SKIP son omisiones explícitas de tests según plataforma, no 9 fallos; sí constituyen cobertura pendiente en Windows. Los warnings de Node sobre TypeScript experimental y `MODULE_TYPELESS_PACKAGE_JSON` no bloquearon este cierre. La ejecución se hizo **antes** del commit final de formato: la prueba no demuestra por sí sola que GitHub CI pasó en ese SHA exacto.
 
+### Iteración siguiente: CI verificable, fixtures Windows y presupuesto de llamadas (pendiente de pruebas)
+
+**Implementación publicada después de la validación local de 173 PASS.** Los resultados históricos **NO** validan estos commits nuevos. No cambiar las casillas de certificación hasta aportar los nuevos logs.
+
+- **CI (Windows/Linux/macOS):** workflow de contratos ampliado con verificación del SHA real, `pipefail`, captura de logs por sistema operativo, artefactos de diagnóstico y resumen de resultados; el workflow continúa sin invocar modelos ni instaladores. La existencia del workflow **no** equivale a una ejecución exitosa en GitHub Actions.
+- **E2E sintéticos portables:** nueva fixture Node `test/native-fake-provider.mts`, compatible con el mecanismo de resolución de CLI de Windows sin shell. Se habilitaron pruebas antes omitidas en Windows: DAG de lectores concurrentes, workflow secuencial, ciclo correctivo, transporte CLI, detección de modificación en rol read-only, uso estructurado, progreso y diagnóstico local.
+- **Pruebas read-only más fieles:** trazas temporales de los ejecutables sintéticos fuera del árbol del proyecto para evitar que el propio instrumento de test altere el estado de solo lectura durante su ejecución. La fixture no constituye sandbox del SO.
+- **Límite de costo por invocaciones:** `MAX_WORKFLOW_PROVIDER_CALLS = 5`, igual al máximo autorizado actualmente por el diálogo de workflow del IDE; un plan de más de cinco llamadas se rechaza **antes** de crear locks o ejecutar proveedores. Un ciclo correctivo no puede superar ese límite. No confundir este máximo de llamadas con un presupuesto monetario rígido, todavía pendiente.
+- **Cobertura de higiene:** el script incluye la nueva fixture y las suites modificadas en el formateador y el lint enfocados.
+
+- [ ] **Nueva validación local sobre la presente iteración:** `node scripts/ats-harness-check.mts --fix`, verificador sin `--fix`, `npm test --prefix extensions/armotusitio-ide`, `npm run check --prefix extensions/armotusitio-ide`, `git diff --check`. Repetir después del commit local de formato si fuera necesario.
+- [ ] **Validación CI sobre SHA final:** confirmar tres jobs y revisar artifacts, incluidos tests que ya no se omiten en Windows.
+- [ ] **Conservar sin reclasificar:** sandbox OS, recuperación transaccional, protocolo común Python/Node, presupuestos monetarios, benchmark e instaladores siguen pendientes.
+
 ## Validación local obligatoria
 
 Desde la raíz del repositorio, con las dependencias instaladas:
