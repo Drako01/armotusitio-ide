@@ -11,7 +11,7 @@ import { proposeProjectConfig, loadProjectConfig, writeProjectConfig, generatedC
 import { reviewAgentDraft, inspectAgentWorkspace, type NativeProvider, type AgentRole } from './native-providers.ts';
 import { buildSupportReport, exportSupportReport } from './native-support.ts';
 import { inspectHarnessAuthority } from './native-authority.ts';
-import { listProjectSkills, readProjectSkill } from './native-project-skills.ts';
+import { listProjectSkills, readProjectSkill, type ProjectSkill } from './native-project-skills.ts';
 import { buildAgentInvocation, executeReviewedAgent, type AgentExecution } from './native-agent-execution.ts';
 import { readAgentStatistics, recordAgentMetric } from './native-agent-metrics.ts';
 import { NativeAgentWorkflow, proposedWorkflow, workflowDigest, type WorkflowRun } from './native-agent-workflow.ts';
@@ -117,6 +117,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			const requestedInstruction = await vscode.window.showInputBox({ title: 'Instrucci\u00f3n del agente', prompt: 'Describ\u00ed una tarea acotada. No incluyas credenciales.' });
 			if (!requestedInstruction) { return; }
 			let instruction = requestedInstruction;
+			let selectedProjectSkill: ProjectSkill | undefined;
 			if (projectHarness) {
 				const skills = await listProjectSkills(root);
 				if (skills.length) {
@@ -126,6 +127,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 					], { title: 'Skill del proyecto (opcional)' });
 					if (!selected) { return; }
 					if (selected.skill) {
+						selectedProjectSkill = selected.skill;
 						// Verify the selected bytes have not changed, but do not inline large
 						// skill bodies into a bounded provider prompt.
 						await readProjectSkill(root, selected.skill);
@@ -145,6 +147,10 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({ language: 'json', content: preview }), { preview: true });
 			const approved = await vscode.window.showWarningMessage('\u00bfEjecutar este agente local con los permisos indicados? Sin autorizaci\u00f3n no se inicia ning\u00fan proveedor.', { modal: true }, 'Ejecutar agente');
 			if (approved !== 'Ejecutar agente' || !authorized(chosen.folder) || await fs.realpath(root) !== root) { return; }
+			if (projectHarness && (await inspectHarnessAuthority(root)).reason === 'project-path-unsafe') {
+				throw Error('HARNESS_PROJECT_AUTHORITY_UNSAFE');
+			}
+			if (selectedProjectSkill) { await readProjectSkill(root, selectedProjectSkill); }
 			if (runningAgents.has(root) || pendingAgents.has(root) || runningWorkflows.has(root) || pendingWorkflows.has(root) || running.has(chosen.folder.uri.toString())) { throw Error('HARNESS_ALREADY_RUNNING'); }
 			assertProviderCapacity();
 			// Reserve the project before the async provider lookup to prevent parallel launches.
