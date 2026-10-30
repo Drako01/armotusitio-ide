@@ -90,6 +90,13 @@ window.addEventListener('message', event => {
 			return row;
 		};
 		if (current) { article.append(taskRow(current)); } else { article.append(element('p', nativeLabels.empty, 'muted')); }
+		if (project.workflows?.length) {
+			const workflow = project.workflows[0];
+			article.append(element('p', 'Último workflow multiagente: ' + workflow.status + (workflow.verification ? ' · verificación: ' + workflow.verification : ''), 'muted'));
+		}
+		if (project.agentMetrics?.count) {
+			article.append(element('p', 'Agentes IA: ' + project.agentMetrics.count + ' ejecuciones · éxito: ' + project.agentMetrics.successRate + '% · p95: ' + project.agentMetrics.p95DurationMs + ' ms', 'muted'));
+		}
 		const details = options(project.root);
 		for (const task of project.tasks.slice(1)) { details.append(taskRow(task)); }
 		details.append(element('p', project.root, 'muted path'));
