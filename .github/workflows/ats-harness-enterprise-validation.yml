@@ -1,0 +1,39 @@
+name: Native Harness Enterprise Validation
+on:
+  push:
+    branches:
+      - feat/native-harness-enterprise-upgrade
+    paths:
+      - 'extensions/armotusitio-ide/src/native-*.ts'
+      - 'extensions/armotusitio-ide/test/native-*.test.mts'
+      - '.github/workflows/ats-harness-enterprise-validation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-contracts:
+    name: Native agent runtime contracts
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            extensions/armotusitio-ide
+          sparse-checkout-cone-mode: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Native provider and workflow contracts
+        shell: bash
+        run: |
+          node --test extensions/armotusitio-ide/test/native-agent-execution.test.mts \
+            extensions/armotusitio-ide/test/native-agent-metrics.test.mts \
+            extensions/armotusitio-ide/test/native-agent-workflow.test.mts \
+            extensions/armotusitio-ide/test/native-providers.test.mts
