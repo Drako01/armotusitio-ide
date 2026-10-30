@@ -18,6 +18,7 @@ export interface SharedExecutionFence {
 }
 const LOCK = 'shared-execution.lock';
 const EPOCH = 'shared-execution.epoch';
+const RECOVERY_GUARD = 'shared-execution.reconcile.guard';
 const MAX_BYTES = 2048;
 const OWNERS: readonly FenceOwner[] = ['native-task', 'native-agent', 'native-workflow', 'project'];
 type FenceRecord = { schemaVersion: 1; projectKey: string; epoch: number; token: string; owner: FenceOwner; pid: number };
@@ -46,6 +47,14 @@ async function readJson(file: string): Promise<unknown> {
 	if (bytes.length > MAX_BYTES) { throw Error('HARNESS_FENCE_UNSAFE_FILE'); }
 	try { return JSON.parse(bytes.toString('utf8')); }
 	catch { throw Error('HARNESS_FENCE_UNSAFE_FILE'); }
+}
+async function assertNoRecoveryGuard(storage: string): Promise<void> {
+	try {
+		await fs.lstat(path.join(storage, RECOVERY_GUARD));
+		throw Error('HARNESS_FENCE_RECOVERY_ACTIVE');
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== 'ENOENT') { throw error; }
+	}
 }
 async function currentEpoch(storage: string, projectKey: string): Promise<number> {
 	let value: unknown;
@@ -83,6 +92,7 @@ export async function acquireSharedExecutionFence(root: string, storage: string,
 	if (!directory.isDirectory() || directory.isSymbolicLink() ||
 		await fs.realpath(storage) !== path.resolve(storage)) { throw Error('HARNESS_FENCE_STORAGE_UNSAFE'); }
 	const projectKey = createHash('sha256').update(canonical).digest('hex');
+	await assertNoRecoveryGuard(storage);
 	const lockPath = path.join(storage, LOCK);
 	const handle = await fs.open(lockPath, 'wx', 0o600).catch(error => {
 		if ((error as NodeJS.ErrnoException).code === 'EEXIST') { throw Error('HARNESS_FENCE_HELD_RECONCILIATION_REQUIRED'); }
@@ -102,6 +112,7 @@ export async function acquireSharedExecutionFence(root: string, storage: string,
 		await handle.sync();
 	} finally { await handle.close(); }
 	const expected = JSON.stringify(record!);
+	await assertNoRecoveryGuard(storage);
 	let released = false;
 	const assertCurrent = async (): Promise<void> => {
 		if (released) { throw Error('HARNESS_FENCE_ALREADY_RELEASED'); }
@@ -237,7 +248,7 @@ export async function reconcileSharedExecutionFence(
 		await fs.realpath(storage) !== path.resolve(storage)) {
 		throw Error('HARNESS_FENCE_STORAGE_UNSAFE');
 	}
-	const guardPath = path.join(storage, 'shared-execution.reconcile.guard');
+	const guardPath = path.join(storage, RECOVERY_GUARD);
 	const guard = await fs.open(guardPath, 'wx', 0o600).catch(error => {
 		if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
 			throw Error('HARNESS_FENCE_RECOVERY_ACTIVE');
