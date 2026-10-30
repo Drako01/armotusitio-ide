@@ -54,6 +54,7 @@ jobs:
           set -o pipefail
           node --test \
             extensions/armotusitio-ide/test/native-real-smoke.test.mts \
+            extensions/armotusitio-ide/test/native-runtime.test.mts \
             extensions/armotusitio-ide/test/native-agent-execution.test.mts \
             extensions/armotusitio-ide/test/native-agent-metrics.test.mts \
             extensions/armotusitio-ide/test/native-agent-workflow.test.mts \
