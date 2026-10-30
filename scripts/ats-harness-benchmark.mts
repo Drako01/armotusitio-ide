@@ -56,7 +56,7 @@ function run(args: string[]): Promise<BenchmarkSample> {
 
 async function main(args: string[]): Promise<void> {
 	if (args.length === 1 && args[0] === '--help') {
-		process.stdout.write('Usage: node scripts/ats-harness-benchmark.mts --command check --runs 3\\nCommands: check, test. Runs: 1-10. No providers, release or network.\\n');
+		process.stdout.write('Usage: node scripts/ats-harness-benchmark.mts --command check --runs 3\nCommands: check, test. Runs: 1-10. No providers, release or network.\n');
 		return;
 	}
 	if (args.length !== 4 || args[0] !== '--command' || !Object.hasOwn(commands, args[1]) ||
