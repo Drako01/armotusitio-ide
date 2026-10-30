@@ -25,6 +25,9 @@ test('isolated worktree preserves the primary checkout and refuses dirty disposa
 		const worktree = await createAgentWorktree(await fs.realpath(root), path.join(directory, 'isolated'));
 		assert.equal(await fs.readFile(path.join(worktree.root, 'file.txt'), 'utf8'), 'original');
 		assert.equal((await listAgentWorktrees(await fs.realpath(root), path.join(directory, 'isolated'))).length, 1);
+		await assert.rejects(removeCleanAgentWorktree({ ...worktree, id: '11111111-1111-4111-8111-111111111111' }),
+			/HARNESS_WORKTREE_IDENTITY_INVALID/);
+		assert.equal(await fs.readFile(path.join(worktree.root, 'file.txt'), 'utf8'), 'original');
 		await fs.writeFile(path.join(worktree.root, 'file.txt'), 'agent change');
 		assert.equal(await fs.readFile(path.join(root, 'file.txt'), 'utf8'), 'original');
 		await assert.rejects(removeCleanAgentWorktree(worktree), /HARNESS_WORKTREE_DIRTY/);
