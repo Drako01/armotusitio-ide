@@ -27,6 +27,8 @@ This ledger separates code shipped on the branch from work that has **not** been
 - [x] Local provider concurrency limited to two active/pending operations and workflow duration bounded to one hour.
 - [x] Conservative project capability declarations read from `.harness/manifests/ide-capabilities.json`, never trusted as verified runtime support.
 - [x] Provider CLI version diagnostics via bounded `--version` calls without invoking a model or claiming authentication.
+- [x] Structured Codex JSONL and Claude JSON output parsing; only actual provider-reported input/output tokens and optional estimated USD cost are recorded. Unknown usage remains unavailable.
+- [x] Codex ephemeral session policy and noninteractive approval denial, with read-only/workspace-write sandbox boundaries.
 
 
 ## Mandatory remaining work for an AAA release
@@ -35,7 +37,7 @@ This ledger separates code shipped on the branch from work that has **not** been
 - [ ] Extend the durable sequential chain with its single corrective cycle into a concurrent multi-agent DAG and adaptive planning/recovery.
 - [ ] Add OS-level sandboxing with explicit filesystem/network permissions on top of the new default Git worktree isolation.
 - [ ] Provide transactional integration, conflict resolution and granular retry of interrupted work (stale-state reconciliation is implemented).
-- [ ] Add verified provider flag negotiation and quota/token/cost accounting (CLI versions, concurrent-slot backpressure, and time budgets are present).
+- [ ] Add verified provider flag negotiation and hard per-provider monetary caps; CLI versions, concurrent-slot backpressure, wall time, and post-run measured tokens/partial cost are present.
 - [ ] Run cold/warm real-provider benchmarks with CPU, RAM, cost, tokens, latency, success rate and reference workloads.
 - [ ] Add fault injection, red-team prompt-injection, symlink/TOCTOU and secret-exfiltration exercises.
 - [ ] Implement full streamed agent lifecycle and traces; the dashboard now shows recent workflow status and measured summary metrics.
