@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { describeEngine } from '../src/native-engine-contract.ts';
+import { describeEngine, probeProjectHandshake } from '../src/native-engine-contract.ts';
 
 test('native engine declares implemented features only', async () => {
 	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-engine-contract-'));
@@ -34,5 +34,27 @@ test('native engine declares implemented features only', async () => {
 		assert.equal(advertised.executionEnabled, false);
 		await fs.writeFile(manifestPath, JSON.stringify({ schemaVersion: 2, engine: 'project', capabilities: ['unknown-capability'] }));
 		await assert.rejects(describeEngine(await fs.realpath(root)), /HARNESS_CAPABILITIES_INVALID/);
+	} finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
+test('project capability handshake is explicit, nonce-bound and never grants execution authority', async () => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-engine-handshake-'));
+	try {
+		const canonical = await fs.realpath(root);
+		await fs.mkdir(path.join(root, '.harness', 'manifests'), { recursive: true });
+		await fs.writeFile(path.join(root, '.harness', 'manifests', 'ide-capabilities.json'),
+			JSON.stringify({ schemaVersion: 2, engine: 'project', capabilities: ['parallel-gates'] }));
+		await fs.writeFile(path.join(root, '.harness', 'core.mjs'), [
+			'import { argv } from "node:process";',
+			'console.log(JSON.stringify({ schemaVersion: 2, nonce: argv[argv.indexOf("--nonce") + 1], capabilities: ["parallel-gates"] }));'
+		].join('\n'));
+		await assert.rejects(probeProjectHandshake(canonical, () => false), /HARNESS_UNTRUSTED_WORKSPACE/);
+		const response = await probeProjectHandshake(canonical, () => true);
+		assert.deepEqual(response, { protocol: 2, reported: ['parallel-gates'] });
+		const descriptor = await describeEngine(canonical);
+		assert.equal(descriptor.executionEnabled, false);
+		assert.deepEqual(descriptor.supported, []);
+		await fs.writeFile(path.join(root, '.harness', 'core.mjs'), 'console.log(JSON.stringify({schemaVersion:2,nonce:"forged",capabilities:["parallel-gates"]}));');
+		await assert.rejects(probeProjectHandshake(canonical, () => true), /HARNESS_HANDSHAKE_INVALID/);
 	} finally { await fs.rm(root, { recursive: true, force: true }); }
 });
