@@ -17,7 +17,7 @@ import { buildAgentInvocation, executeReviewedAgent, type AgentExecution } from 
 import { readAgentStatistics, recordAgentMetric } from './native-agent-metrics.ts';
 import { NativeAgentWorkflow, proposedWorkflow, workflowDigest, type WorkflowRun } from './native-agent-workflow.ts';
 import { createAgentWorktree, removeCleanAgentWorktree, listAgentWorktrees, type ManagedWorktree } from './native-agent-worktree.ts';
-import { describeEngine, probeProjectHandshake, compareHybridCapabilities } from './native-engine-contract.ts';
+import { describeEngine, probeProjectHandshake, compareHybridCapabilities, verifiedNativeCapabilities } from './native-engine-contract.ts';
 import { diagnoseProvider } from './native-provider-diagnostics.ts';
 import { summarizeGatePerformance } from './native-performance.ts';
 
@@ -340,7 +340,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 				language: 'json',
 				content: JSON.stringify({
 					project: root, declared: descriptor.projectDeclared, handshake,
-					comparison: compareHybridCapabilities((await describeEngine(root)).supported, handshake.reported), executionEnabled: false,
+					comparison: compareHybridCapabilities(verifiedNativeCapabilities(), handshake.reported), executionEnabled: false,
 					note: 'Capacidades reportadas por proceso externo, no demostradas por E2E ni autorizadas para ejecutar operaciones.'
 				}, null, 2)
 			}), { preview: true });
