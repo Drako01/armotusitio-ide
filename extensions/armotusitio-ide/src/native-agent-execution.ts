@@ -37,6 +37,11 @@ export interface AgentExecution {
 	outcome: Promise<AgentOutcome>;
 	cancel(): void;
 }
+/** Non-content progress: never contains tokens, credentials or provider output. */
+export interface AgentProgress {
+	observedBytes: number;
+	at: string;
+}
 
 export function buildAgentInvocation(draft: AgentDraft): AgentInvocation {
 	reviewAgentDraft(draft);
@@ -89,7 +94,7 @@ function stopProcess(child: ChildProcess): void {
 }
 
 /** Caller MUST verify Workspace Trust, project authority and consent immediately before invoking. */
-export async function executeReviewedAgent(review: AgentReview, current: AgentDraft, durationMs = MAX_DURATION_MS): Promise<AgentExecution> {
+export async function executeReviewedAgent(review: AgentReview, current: AgentDraft, durationMs = MAX_DURATION_MS, onProgress?: (progress: Readonly<AgentProgress>) => void): Promise<AgentExecution> {
 	validateReviewedAgent(review, current);
 	if (!Number.isSafeInteger(durationMs) || durationMs < 1000 || durationMs > MAX_DURATION_MS) { throw Error('HARNESS_AGENT_TIMEOUT_INVALID'); }
 	const canonical = await fs.realpath(current.projectRoot);
@@ -104,6 +109,7 @@ export async function executeReviewedAgent(review: AgentReview, current: AgentDr
 	const started = Date.now();
 	let cancelled = false, timedOut = false, truncated = false;
 	let stdout = '', stderr = '', size = 0;
+	let lastProgress = 0;
 	let stdoutOverflow = false;
 	const codexEvents = current.provider === 'codex' ? new CodexEventAccumulator() : undefined;
 	const stdoutDecoder = new StringDecoder('utf8');
@@ -115,6 +121,11 @@ export async function executeReviewedAgent(review: AgentReview, current: AgentDr
 	const collect = (chunk: Buffer, channel: 'stdout' | 'stderr'): void => {
 		size += chunk.length;
 		if (size > MAX_OUTPUT_BYTES) { truncated = true; cancel(); return; }
+		if (size - lastProgress >= 8192) {
+			lastProgress = size;
+			try { onProgress?.(Object.freeze({ observedBytes: size, at: new Date().toISOString() })); }
+			catch { /* Observers have no authority over process execution. */ }
+		}
 		if (channel === 'stdout') {
 			const piece = stdoutDecoder.write(chunk);
 			codexEvents?.push(piece);
