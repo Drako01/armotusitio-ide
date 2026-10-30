@@ -24,6 +24,7 @@ import { diagnoseProvider } from './native-provider-diagnostics.ts';
 import { summarizeGatePerformance } from './native-performance.ts';
 import { acquireSharedExecutionFence, type SharedExecutionFence } from './native-shared-fence.ts';
 import { createWorktreeCheckpoint, rollbackWorktreeCheckpoint, type WorktreeCheckpoint } from './native-worktree-checkpoint.ts';
+import { queryProjectEngineStatus } from './native-engine-interop.ts';
 
 type Host = any; // vscode host is injected by the existing extension (avoid duplicating the UI layer).
 const sessions = new Map<string, NativeHarness>();
@@ -409,6 +410,33 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 					gateCatalog: gates || null, simulatedGateWaves: gates ? planProjectGateWaves(gates) : [],
 					gateReadiness: assessHybridGateReadiness(handshake.reported, gates), executionEnabled: false,
 					note: 'Capacidades reportadas por proceso externo, no demostradas por E2E ni autorizadas para ejecutar operaciones.'
+				}, null, 2)
+			}), { preview: true });
+		} catch (error) { showError(error); }
+	}));
+	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.nativeProjectStatus', async (requested?: string) => {
+		try {
+			if (!ensureTrust()) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
+			const folders = vscode.workspace.workspaceFolders || [];
+			const selected = requested ? folders.find((folder: Host) => folder.uri.fsPath === requested) :
+				folders.length === 1 ? folders[0] :
+					(await vscode.window.showQuickPick(folders.map((folder: Host) => ({
+						label: folder.name, description: folder.uri.fsPath, folder
+					})), { placeHolder: 'Elegí el Harness externo' }))?.folder;
+			if (!selected || !authorized(selected)) { return; }
+			const root = await fs.realpath(selected.uri.fsPath);
+			if ((await inspectHarnessAuthority(root)).engine !== 'project') { throw Error('HARNESS_PROJECT_STATUS_NOT_PROJECT'); }
+			const confirmation = await vscode.window.showWarningMessage(
+				'Consultar estado ejecuta código del Harness del proyecto bajo tu usuario. El protocolo limita la respuesta, pero NO impone aislamiento OS ni permite escrituras híbridas. ¿Continuar?',
+				{ modal: true }, 'Consultar estado externo');
+			if (confirmation !== 'Consultar estado externo' || !authorized(selected)) { return; }
+			const status = await queryProjectEngineStatus(root, true, () => authorized(selected));
+			if (!authorized(selected)) { return; }
+			await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({
+				language: 'json',
+				content: JSON.stringify({
+					project: root, ...status,
+					note: 'Observación declarada por el motor del proyecto, sin autoridad para ejecutar tareas ni modificar archivos.'
 				}, null, 2)
 			}), { preview: true });
 		} catch (error) { showError(error); }
