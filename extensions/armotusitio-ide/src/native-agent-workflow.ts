@@ -63,7 +63,7 @@ export function executionOrder(plan: HandoffPlan): string[] {
 }
 
 export function proposedWorkflow(provider: NativeProvider, instruction: string): HandoffPlan {
-  if (!instruction.trim() || instruction.length > 12000) { throw Error('HARNESS_AGENT_INSTRUCTION_INVALID'); }
+  if (!instruction.trim() || Buffer.byteLength(instruction, 'utf8') > 8000) { throw Error('HARNESS_AGENT_INSTRUCTION_INVALID'); }
   return validateHandoffPlan({ schemaVersion: 1, handoffs: [
     { id: 'plan', role: 'planner', provider, dependsOn: [], instruction: 'Read-only assessment. Describe a safe implementation plan for the following task. No edits:\n' + instruction },
     { id: 'implement', role: 'implementer', provider, dependsOn: ['plan'], instruction: 'Implement only the following user-authorized task, then report the changed files:\n' + instruction },
@@ -214,7 +214,7 @@ export class NativeAgentWorkflow {
             step.durationMs = outcome.durationMs;
             step.exitCode = outcome.exitCode;
             if (step.status === 'passed' && !outcome.truncated) {
-              previousHandoffs.push(step.id + ': ' + outcome.output.slice(-4096));
+              previousHandoffs.push(step.id + ': ' + outcome.output.slice(-2048));
             }
           } catch {
             // Never persist exception details: provider messages may contain credentials.
