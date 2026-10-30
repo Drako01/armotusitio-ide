@@ -33,7 +33,8 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 	const authorized = (folder: Host): boolean => ensureTrust() && (vscode.workspace.workspaceFolders || []).some((current: Host) => current.uri.toString() === folder.uri.toString());
 	const running = new Map<string, { engine: NativeHarness; taskId: string }>();
 	const runningAgents = new Map<string, AgentExecution>();
-	controller.nativeRunning = () => running.size + runningAgents.size;
+	const pendingAgents = new Set<string>();
+	controller.nativeRunning = () => running.size + runningAgents.size + pendingAgents.size;
 	controller.nativeProjects = async () => {
 		const rows = [];
 		if (!vscode.workspace.getConfiguration('atsHarness').get('enabled', true)) { return rows; }
@@ -82,7 +83,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			if (!ensureTrust()) { vscode.window.showWarningMessage('Se requiere un workspace confiable.'); return; }
 			const chosen = await choose(requested); if (!chosen) { return; }
 			const root = await fs.realpath(chosen.folder.uri.fsPath);
-			if (runningAgents.has(root) || running.has(chosen.folder.uri.toString())) { throw Error('HARNESS_ALREADY_RUNNING'); }
+			if (runningAgents.has(root) || pendingAgents.has(root) || running.has(chosen.folder.uri.toString())) { throw Error('HARNESS_ALREADY_RUNNING'); }
 			const provider = await vscode.window.showQuickPick(['codex', 'claude'], { title: 'Proveedor de IA local' }) as NativeProvider | undefined;
 			if (!provider) { return; }
 			const role = await vscode.window.showQuickPick(['planner', 'implementer', 'reviewer'], { title: 'Rol del agente' }) as AgentRole | undefined;
@@ -98,8 +99,11 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			const approved = await vscode.window.showWarningMessage('¿Ejecutar este agente local con los permisos indicados? Sin autorización no se inicia ningún proveedor.', { modal: true }, 'Ejecutar agente');
 			if (approved !== 'Ejecutar agente' || !authorized(chosen.folder) || await fs.realpath(root) !== root) { return; }
 			if (runningAgents.has(root) || running.has(chosen.folder.uri.toString())) { throw Error('HARNESS_ALREADY_RUNNING'); }
-			// Agents run in a dedicated, bounded subprocess; never via an injected shell.
-			const execution = await executeReviewedAgent(review, draft);
+			// Reserve the project before the async provider lookup to prevent parallel launches.
+			pendingAgents.add(root); controller.refresh();
+			let execution: AgentExecution;
+			try { execution = await executeReviewedAgent(review, draft); }
+			finally { pendingAgents.delete(root); }
 			runningAgents.set(root, execution); controller.refresh();
 			try {
 				const result = await execution.outcome;
