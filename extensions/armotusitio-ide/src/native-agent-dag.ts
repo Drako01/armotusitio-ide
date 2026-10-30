@@ -5,7 +5,10 @@
 /** Deterministic bounded DAG scheduling. Writers never run beside another agent in one wave. */
 import { validateHandoffPlan, type Handoff, type HandoffPlan } from './native-providers.ts';
 
-export interface AgentWave { readonly ids: readonly string[]; readonly readOnly: boolean }
+export interface AgentWave {
+	readonly ids: readonly string[];
+	readonly readOnly: boolean;
+}
 
 /** Topological waves for up to sixteen agents. Read-only nodes may share a wave, writers never do. */
 export function planAgentWaves(input: HandoffPlan, maxReaders = 2): AgentWave[] {
