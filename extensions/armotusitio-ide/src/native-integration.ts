@@ -13,6 +13,7 @@ import { buildSupportReport, exportSupportReport } from './native-support.ts';
 import { inspectHarnessAuthority } from './native-authority.ts';
 import { listProjectSkills, readProjectSkill, type ProjectSkill } from './native-project-skills.ts';
 import { listProjectGuides, validateProjectGuides } from './native-project-guidance.ts';
+import { readProjectGateCatalog, validateProjectGateCatalog } from './native-project-gates.ts';
 import { buildAgentInvocation, executeReviewedAgent, type AgentExecution } from './native-agent-execution.ts';
 import { readAgentStatistics, recordAgentMetric } from './native-agent-metrics.ts';
 import { NativeAgentWorkflow, proposedWorkflow, workflowDigest, type WorkflowRun } from './native-agent-workflow.ts';
@@ -335,12 +336,16 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 				'Esta prueba ejecutar\u00e1 expl\u00edcitamente la entrada Node del Harness del proyecto para negociar capacidades. No concede permisos de escritura ni valida el sandbox. \u00bfContinuar?',
 				{ modal: true }, 'Ejecutar handshake');
 			if (confirmed !== 'Ejecutar handshake' || !authorized(selected)) { return; }
+			const gates = await readProjectGateCatalog(root);
 			const handshake = await probeProjectHandshake(root, () => authorized(selected));
+			if (gates) { await validateProjectGateCatalog(root, gates.digest); }
+			if (!authorized(selected)) { return; }
 			await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({
 				language: 'json',
 				content: JSON.stringify({
 					project: root, declared: descriptor.projectDeclared, handshake,
-					comparison: compareHybridCapabilities(verifiedNativeCapabilities(), handshake.reported), executionEnabled: false,
+					comparison: compareHybridCapabilities(verifiedNativeCapabilities(), handshake.reported),
+					gateCatalog: gates || null, executionEnabled: false,
 					note: 'Capacidades reportadas por proceso externo, no demostradas por E2E ni autorizadas para ejecutar operaciones.'
 				}, null, 2)
 			}), { preview: true });
