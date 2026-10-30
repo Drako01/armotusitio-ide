@@ -7,10 +7,13 @@ import * as path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { resolveNativeCommand } from './native-runtime.ts';
 import { captureAgentScope, scopeChanged } from './native-agent-scope.ts';
-import { parseProviderOutput, type ProviderUsage } from './native-provider-output.ts';
+import { parseProviderOutput, CodexEventAccumulator, type ProviderUsage } from './native-provider-output.ts';
+import { StringDecoder } from 'node:string_decoder';
 import { reviewAgentDraft, validateReviewedAgent, type AgentDraft, type AgentReview } from './native-providers.ts';
 
-const MAX_OUTPUT_BYTES = 256 * 1024;
+const MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
+const MAX_STDOUT_RETAINED = 512 * 1024;
+const MAX_STDERR_RETAINED = 64 * 1024;
 const MAX_DURATION_MS = 30 * 60 * 1000;
 const AUTH_ENV = ['PATH', 'Path', 'PATHEXT', 'SystemRoot', 'WINDIR', 'HOME', 'USERPROFILE', 'TEMP', 'TMP', 'TMPDIR', 'LANG', 'LC_ALL', 'CODEX_HOME', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY'];
 export interface AgentInvocation { executable: 'codex' | 'claude'; args: string[]; stdin: string; }
@@ -82,6 +85,9 @@ export async function executeReviewedAgent(review: AgentReview, current: AgentDr
   const started = Date.now();
   let cancelled = false, timedOut = false, truncated = false;
   let stdout = '', stderr = '', size = 0;
+  let stdoutOverflow = false;
+  const codexEvents = current.provider === 'codex' ? new CodexEventAccumulator() : undefined;
+  const stdoutDecoder = new StringDecoder('utf8');
   const child = spawn(command.executable, command.args, {
     cwd: canonical, env, shell: false, windowsHide: true, detached: process.platform !== 'win32',
     stdio: ['pipe', 'pipe', 'pipe']
@@ -90,8 +96,14 @@ export async function executeReviewedAgent(review: AgentReview, current: AgentDr
   const collect = (chunk: Buffer, channel: 'stdout' | 'stderr'): void => {
     size += chunk.length;
     if (size > MAX_OUTPUT_BYTES) { truncated = true; cancel(); return; }
-    if (channel === 'stdout') { stdout += chunk.toString('utf8'); }
-    else { stderr += chunk.toString('utf8'); }
+    if (channel === 'stdout') {
+      const piece = stdoutDecoder.write(chunk);
+      codexEvents?.push(piece);
+      if (stdout.length + piece.length <= MAX_STDOUT_RETAINED) { stdout += piece; }
+      else { stdoutOverflow = true; }
+    } else if (stderr.length < MAX_STDERR_RETAINED) {
+      stderr += chunk.toString('utf8').slice(0, MAX_STDERR_RETAINED - stderr.length);
+    }
   };
   child.stdout?.on('data', chunk => collect(chunk, 'stdout'));
   child.stderr?.on('data', chunk => collect(chunk, 'stderr'));
@@ -103,8 +115,11 @@ export async function executeReviewedAgent(review: AgentReview, current: AgentDr
       if (ended) { return; }
       ended = true; clearTimeout(timer);
       void (async () => {
-        const parsed = parseProviderOutput(current.provider, stdout);
-        let status: AgentOutcome['status'] = timedOut ? 'timeout' : cancelled ? 'cancelled' : exitCode === 0 && !parsed.providerError ? 'passed' : 'failed';
+        const tail = stdoutDecoder.end();
+        if (tail) { codexEvents?.push(tail); if (!stdoutOverflow && stdout.length + tail.length <= MAX_STDOUT_RETAINED) { stdout += tail; } }
+        const parsed = codexEvents?.finish() || parseProviderOutput(current.provider, stdout);
+        if (stdoutOverflow && !parsed.structured) { truncated = true; }
+        let status: AgentOutcome['status'] = timedOut ? 'timeout' : cancelled ? 'cancelled' : exitCode === 0 && !parsed.providerError && !truncated ? 'passed' : 'failed';
         let scopeViolation = false;
         let scopeVerified = false;
         if (initialScope) {
