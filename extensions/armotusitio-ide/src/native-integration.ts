@@ -11,6 +11,7 @@ import { proposeProjectConfig, loadProjectConfig, writeProjectConfig, generatedC
 import { reviewAgentDraft, inspectAgentWorkspace, type NativeProvider, type AgentRole } from './native-providers.ts';
 import { buildSupportReport, exportSupportReport } from './native-support.ts';
 import { inspectHarnessAuthority } from './native-authority.ts';
+import { buildAgentInvocation, executeReviewedAgent, type AgentExecution } from './native-agent-execution.ts';
 
 type Host = any; // vscode host is injected by the existing extension (avoid duplicating the UI layer).
 const sessions = new Map<string, NativeHarness>();
@@ -31,6 +32,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 	const ensureTrust = (): boolean => vscode.workspace.isTrusted === true && vscode.workspace.getConfiguration('atsHarness').get('enabled', true);
 	const authorized = (folder: Host): boolean => ensureTrust() && (vscode.workspace.workspaceFolders || []).some((current: Host) => current.uri.toString() === folder.uri.toString());
 	const running = new Map<string, { engine: NativeHarness; taskId: string }>();
+	const runningAgents = new Map<string, AgentExecution>();
 	controller.nativeRunning = () => running.size;
 	controller.nativeProjects = async () => {
 		const rows = [];
@@ -74,6 +76,40 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 		} catch (error) { showError(error); } finally { controller.refresh(); }
 	}));
 
+
+	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.nativeAgentExecute', async (requested?: string) => {
+		try {
+			if (!ensureTrust()) { vscode.window.showWarningMessage('Se requiere un workspace confiable.'); return; }
+			const chosen = await choose(requested); if (!chosen) { return; }
+			const root = await fs.realpath(chosen.folder.uri.fsPath);
+			if (runningAgents.has(root) || running.has(chosen.folder.uri.toString())) { throw Error('HARNESS_ALREADY_RUNNING'); }
+			const provider = await vscode.window.showQuickPick(['codex', 'claude'], { title: 'Proveedor de IA local' }) as NativeProvider | undefined;
+			if (!provider) { return; }
+			const role = await vscode.window.showQuickPick(['planner', 'implementer', 'reviewer'], { title: 'Rol del agente' }) as AgentRole | undefined;
+			if (!role) { return; }
+			const instruction = await vscode.window.showInputBox({ title: 'Instrucción del agente', prompt: 'Describí una tarea acotada. No incluyas credenciales.' });
+			if (!instruction) { return; }
+			const draft = { schemaVersion: 1 as const, provider, role, projectRoot: root, instruction, readOnly: role !== 'implementer' };
+			const review = reviewAgentDraft(draft);
+			const invocation = buildAgentInvocation(draft);
+			const preview = JSON.stringify({ project: root, role, provider, permissionMode: draft.readOnly ? 'read-only' : 'workspace-write (Codex) / dontAsk (Claude)',
+				command: invocation.executable, args: invocation.args, instruction, warning: 'Este proceso puede consumir tokens e interactuar con el workspace. Los límites de aislamiento dependen del proveedor.' }, null, 2);
+			await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({ language: 'json', content: preview }), { preview: true });
+			const approved = await vscode.window.showWarningMessage('¿Ejecutar este agente local con los permisos indicados? Sin autorización no se inicia ningún proveedor.', { modal: true }, 'Ejecutar agente');
+			if (approved !== 'Ejecutar agente' || !authorized(chosen.folder) || await fs.realpath(root) !== root) { return; }
+			if (runningAgents.has(root) || running.has(chosen.folder.uri.toString())) { throw Error('HARNESS_ALREADY_RUNNING'); }
+			// Agents run in a dedicated, bounded subprocess; never via an injected shell.
+			const execution = await executeReviewedAgent(review, draft);
+			runningAgents.set(root, execution); controller.refresh();
+			try {
+				const result = await execution.outcome;
+				if (!authorized(chosen.folder)) { return; }
+				await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({ language: 'json',
+					content: JSON.stringify({ role, provider, ...result }, null, 2) }), { preview: true });
+				vscode.window.showInformationMessage('Agente finalizado: ' + result.status);
+			} finally { runningAgents.delete(root); controller.refresh(); }
+		} catch (error) { showError(error); } finally { controller.refresh(); }
+	}));
 	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.nativeSupport', async (requested?: string) => {
 		try {
 			if (!ensureTrust()) { vscode.window.showWarningMessage(vscode.l10n.t('Workspace trust is required for support evidence.')); return; }
@@ -184,10 +220,11 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			if (!ensureTrust()) { return; }
 			const p = await choose(requested); if (!p) { return; }
 			const current = running.get(p.folder.uri.toString());
-			if (!current) { vscode.window.showInformationMessage(vscode.l10n.t('No hay una tarea nativa activa en este proyecto.')); return; }
-			const answer = await vscode.window.showWarningMessage(`Cancelar la tarea activa ${current.taskId}?`, { modal: true }, 'Cancelar tarea');
+			const agent = runningAgents.get(p.folder.uri.fsPath);
+			if (!current && !agent) { vscode.window.showInformationMessage(vscode.l10n.t('No hay una tarea nativa activa en este proyecto.')); return; }
+			const answer = await vscode.window.showWarningMessage(`Cancelar la tarea activa ${current?.taskId || 'agente IA'}?`, { modal: true }, 'Cancelar tarea');
 			if (answer !== 'Cancelar tarea' || !ensureTrust()) { return; }
-			current.engine.cancel();
+			if (current) { current.engine.cancel(); } else { agent?.cancel(); }
 		} catch (e) { showError(e); } finally { controller.refresh(); }
 	}));
 	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.nativeStatus', async (requested?: string, taskId?: string) => {
@@ -210,5 +247,5 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			await p.engine.reconcile(); vscode.window.showInformationMessage(vscode.l10n.t('Estado reconciliado sin reintentar tareas.'));
 		} catch (e) { showError(e); } finally { controller.refresh(); }
 	}));
-	context.subscriptions.push({ dispose() { for (const engine of sessions.values()) { engine.cancel(); } sessions.clear(); } });
+	context.subscriptions.push({ dispose() { for (const engine of sessions.values()) { engine.cancel(); } for (const agent of runningAgents.values()) { agent.cancel(); } runningAgents.clear(); sessions.clear(); } });
 }
