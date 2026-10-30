@@ -36,14 +36,20 @@ const VERIFIED_NATIVE: Capability[] = [
 
 /** Read-only disclosure; a declaration never grants execution authority or counts as verified support. */
 export async function readProjectCapabilities(root: string): Promise<Capability[]> {
-  const target = path.join(root, '.harness', 'manifests', 'ide-capabilities.json');
+  const canonical = await fs.realpath(root);
+  if (canonical !== root) { throw Error('HARNESS_CAPABILITIES_ROOT_CHANGED'); }
+  const directory = path.join(canonical, '.harness', 'manifests');
+  const target = path.join(directory, 'ide-capabilities.json');
   let info;
   try { info = await fs.lstat(target); }
   catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') { return []; }
     throw error;
   }
-  if (!info.isFile() || info.isSymbolicLink() || info.size > 16 * 1024) { throw Error('HARNESS_CAPABILITIES_UNSAFE'); }
+  if (!info.isFile() || info.isSymbolicLink() || info.size > 16 * 1024 ||
+    (await fs.realpath(directory)) !== directory || (await fs.realpath(target)) !== target) {
+    throw Error('HARNESS_CAPABILITIES_UNSAFE');
+  }
   const value: unknown = JSON.parse(await fs.readFile(target, 'utf8'));
   if (!value || typeof value !== 'object' || Array.isArray(value)) { throw Error('HARNESS_CAPABILITIES_INVALID'); }
   const manifest = value as { schemaVersion?: number; engine?: string; capabilities?: unknown };
