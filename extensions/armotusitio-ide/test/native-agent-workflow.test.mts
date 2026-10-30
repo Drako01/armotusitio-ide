@@ -281,3 +281,28 @@ test('failed final state persistence keeps the execution lock for explicit repai
 		} finally { unsubscribe(); }
 	} finally { await fs.rm(root, { recursive: true, force: true }); }
 });
+
+test('history rejects mismatched file identity without overwriting another workflow', async () => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-workflow-file-identity-'));
+	try {
+		const canonical = await fs.realpath(root);
+		const state = path.join(root, 'private');
+		await fs.mkdir(state);
+		const id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+		const filenameId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+		const plan = proposedWorkflow('codex', 'Inspect file identity');
+		const record = {
+			schemaVersion: 1, id, createdAt: new Date().toISOString(),
+			projectKey: (await import('node:crypto')).createHash('sha256').update(canonical).digest('hex'),
+			planDigest: workflowDigest(canonical, plan), status: 'running', steps: []
+		};
+		const file = path.join(state, filenameId + '.json');
+		const raw = JSON.stringify(record);
+		await fs.writeFile(file, raw);
+		const workflow = new NativeAgentWorkflow(canonical, state);
+		await assert.rejects(workflow.history(), /HARNESS_WORKFLOW_INVALID_STATE/);
+		await assert.rejects(workflow.reconcile(), /HARNESS_WORKFLOW_INVALID_STATE/);
+		assert.equal(await fs.readFile(file, 'utf8'), raw);
+		await assert.rejects(fs.stat(path.join(state, id + '.json')), { code: 'ENOENT' });
+	} finally { await fs.rm(root, { recursive: true, force: true }); }
+});
