@@ -327,6 +327,15 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 - [ ] **Nueva ejecución de tests:** la batería previa de 188 PASS no contiene esta nueva prueba. Repetir `ats-harness-check.mts --fix` / sin `--fix`, suite npm, `npm run check` y `git diff --check`.
 - [ ] **No certificado aún:** CI Windows/Linux/macOS y protección transaccional del filesystem; la allowlist endurece la persistencia, **no constituye rollback ni sandbox OS**.
 
+### Corrección de prueba intermitente DAG en Windows (2026-10-30, 17:59 ART)
+
+**Evidencia:** log `Texto pegado(20261030-205933).txt`, Node 24.22.1 / win32. En la primera ejecución de `ats-harness-check.mts --fix`, el test `workflow launches two independent read-only providers before exclusive implementer` falló al no observar solapamiento bajo temporización fija de 80 ms. En la ejecución posterior sin `--fix` el mismo test aprobó, y `npm test` informó **189 PASS, 0 FAIL y 1 SKIP** de 190; todos los demás gates (TypeScript, bundle, higiene y recursos) pasaron.
+
+- [x] **Causa del falso negativo en el fixture identificada:** el test exigía orden de arranque/fin entre procesos mediante `setTimeout(80)`, aunque el arranque de subprocesos puede retrasarse bajo carga del runner. Ese orden no era un contrato fiable.
+- [x] **Corrección del test implementada:** ambos lectores registran su inicio y esperan mediante una barrera explícita (máximo cinco segundos) hasta que ambos estén ejecutándose, antes de finalizar. El escritor sigue debiendo comenzar **después** del final de los dos lectores. Si los lectores no se solapan realmente, el test falla cerrado por timeout.
+- [ ] **Retest del cambio:** el último commit del fixture todavía debe validarse localmente y en CI; no interpretar el PASS previo como evidencia de la barrera nueva.
+- [ ] **Certificación CI multiplataforma:** la consulta de ejecuciones de la rama no mostró runs; la ausencia de runs requiere investigar registro/activación del workflow, no implica éxito.
+
 ## Validación local obligatoria
 
 Desde la raíz del repositorio, con las dependencias instaladas:
