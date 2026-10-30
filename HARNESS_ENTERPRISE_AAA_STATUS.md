@@ -9,7 +9,7 @@
 
 Esta guía documenta el alcance acordado y diferencia **código agregado a la rama** de funcionalidad realmente certificada. Una casilla marcada no significa que el comportamiento haya pasado pruebas reales de extremo a extremo.
 
-**Inventario funcional:** 34 ítems implementados en código, 5 parciales y 15 pendientes (54 ítems de distinto tamaño y riesgo; no representan un porcentaje técnico de certificación). **Última validación automatizada local Windows aportada:** 194 tests aprobados, 0 fallidos, 1 omitido (195 total), con TypeScript, bundle, recursos e higiene en PASS, sobre el commit `2c942d1f829` anterior al lote actual. Esto no equivale a CI multiplataforma ni a E2E completo.
+**Inventario funcional:** 34 ítems implementados en código, 5 parciales y 15 pendientes (54 ítems de distinto tamaño y riesgo; no representan un porcentaje técnico de certificación). **Última validación automatizada local Windows aportada:** 196 tests aprobados, 0 fallidos, 1 omitido (197 total), con TypeScript, bundle, recursos e higiene en PASS, según el último log local del operador sobre el commit `ea76d52efcc`. Esto no equivale a CI multiplataforma ni a E2E completo.
 
 **Calificación:** no asignar una nueva nota 1–10 ni declarar nivel AAA hasta disponer de pruebas reproducibles y resultados E2E. El 70% mencionado en el seguimiento conversacional fue una apreciación de cobertura, **no** una medición auditada.
 
@@ -376,14 +376,22 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 - [x] **Retest Windows:** workflow 12/12, worktree 1/1, suite 194 PASS / 0 FAIL / 1 SKIP, TypeScript, recursos, bundle, higiene y diff PASS (log 2026-10-30 21:23 ART).
 - [ ] **Aún no implementado:** journal transaccional, merge/rollback reversible, aislamiento filesystem/proceso/red a nivel OS, pruebas adversariales E2E; los controles aquí agregados no justifican declararlos completos.
 
-### Lote P0 siguiente: estados de proyectos y persistencia reforzada (2026-10-30; retest pendiente)
+### Lote P0 siguiente: estados de proyectos y persistencia reforzada (2026-10-30; validado Windows)
 
 - [x] `restartInterrupted()` busca en los hasta 500 registros válidos almacenados, no solo en los 40 visibles en la UI; conserva aprobación renovada y prohibición de repetir escritores inciertos.
 - [x] `reconcile()` rechaza registros cuyo `projectKey` no coincide con el proyecto local antes de alterar locks o estados.
 - [x] `atomicWrite()` ejecuta `FileHandle.sync()` sobre el estado temporal antes del rename atómico; reduce pérdidas por buffer pendiente pero no garantiza atomicidad entre varios registros ni durabilidad del directorio en todos los sistemas operativos.
 - [x] Dos nuevas pruebas offline verifican rechazo de registros ajenos y búsqueda de ejecuciones antiguas.
-- [ ] **Ronda de pruebas actual:** ejecutar tests focalizados, check local, suite completa, typecheck e higiene; los **194 PASS** corresponden al commit anterior a este lote.
+- [x] **Ronda de pruebas Windows:** suite **196 PASS / 0 FAIL / 1 SKIP**, check local TypeScript, UI, bundle, recursos, higiene y diff PASS (2026-10-30, 21:26 UTC).
 - [ ] **P0 pendiente:** journal multioperación, fencing efectivo de locks ante concurrencia entre procesos, sandbox OS, integración/reversión de cambios y pruebas adversariales.
+
+### Lote P0: seguridad del directorio de estado y propiedad de locks (2026-10-30; retest pendiente)
+
+- [x] **Almacenamiento seguro:** `NativeAgentWorkflow` comprueba que el directorio de estado es un directorio real, no un enlace simbólico/junction ni una ruta no canónica, antes de leer historial o crear locks. Dos pruebas offline cubren symlink/junction y archivo ordinario.
+- [x] **Protección de lock durante reconciliación:** conserva el contenido e identidad `dev/ino` del lock examinado y vuelve a contrastarlos antes de retirarlo. Si cambia, falla cerrado con `HARNESS_WORKFLOW_LOCK_CHANGED`. Esto **no es un fencing atómico** y no elimina completamente una carrera TOCTOU.
+- [x] **Propiedad del lock terminal:** al finalizar un workflow, solo elimina `execution.lock` si pertenece al `record.id` y PID actuales, sin ser un symlink. Una prueba simula que otro proceso reemplaza su contenido y verifica que el lock queda intacto.
+- [ ] **Retest de esta iteración:** ejecutar pruebas locales enfocadas, suite completa, TypeScript, recursos, higiene y revisar `git diff --check`. El último **196 PASS / 0 FAIL / 1 SKIP** es anterior a estas modificaciones.
+- [ ] **P0 pendiente:** fencing OS/IPC con exclusión efectiva durante toda la reconciliación, journal transaccional multioperación, sandbox OS y rollback seguro. No declarar AAA antes de cubrirlos.
 
 ## Validación local obligatoria
 
