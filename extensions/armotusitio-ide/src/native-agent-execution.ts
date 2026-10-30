@@ -39,7 +39,7 @@ export function buildAgentInvocation(draft: AgentDraft): AgentInvocation {
   // plan mode is strictly read-only; don'tAsk is fail-closed if required tools lack an allow rule.
   return {
     executable: 'claude',
-    args: ['--print', '--permission-mode', draft.readOnly ? 'plan' : 'dontAsk', '--max-turns', '12', '--output-format', 'text'],
+    args: ['--print', '--permission-mode', draft.readOnly ? 'plan' : 'dontAsk', '--allowedTools', draft.readOnly ? 'Read,Glob,Grep' : 'Read,Glob,Grep,Edit,Write', '--disallowedTools', 'Bash,WebFetch,WebSearch', '--max-turns', '12', '--output-format', 'text'],
     stdin: instruction
   };
 }
