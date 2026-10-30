@@ -14,6 +14,7 @@ import { inspectHarnessAuthority } from './native-authority.ts';
 import { listProjectSkills, readProjectSkill, type ProjectSkill } from './native-project-skills.ts';
 import { listProjectGuides, validateProjectGuides } from './native-project-guidance.ts';
 import { readProjectGateCatalog, validateProjectGateCatalog, planProjectGateWaves } from './native-project-gates.ts';
+import { assessHybridGateReadiness } from './native-hybrid-readiness.ts';
 import { buildAgentInvocation, executeReviewedAgent, type AgentExecution } from './native-agent-execution.ts';
 import { readAgentStatistics, recordAgentMetric } from './native-agent-metrics.ts';
 import { NativeAgentWorkflow, proposedWorkflow, workflowDigest, type WorkflowRun } from './native-agent-workflow.ts';
@@ -346,7 +347,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 					project: root, declared: descriptor.projectDeclared, handshake,
 					comparison: compareHybridCapabilities(verifiedNativeCapabilities(), handshake.reported),
 					gateCatalog: gates || null, simulatedGateWaves: gates ? planProjectGateWaves(gates) : [],
-					executionEnabled: false,
+					gateReadiness: assessHybridGateReadiness(handshake.reported, gates), executionEnabled: false,
 					note: 'Capacidades reportadas por proceso externo, no demostradas por E2E ni autorizadas para ejecutar operaciones.'
 				}, null, 2)
 			}), { preview: true });
