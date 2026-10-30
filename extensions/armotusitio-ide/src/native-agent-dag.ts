@@ -24,6 +24,25 @@ export function planAgentWaves(input: HandoffPlan, maxReaders = 2): AgentWave[] 
 	return result;
 }
 
+/** Reject writer plans that have no downstream independent reviewer approval. */
+export function validateDAGReviewCoverage(plan: HandoffPlan): void {
+	validateHandoffPlan(plan);
+	const byId = new Map(plan.handoffs.map(handoff => [handoff.id, handoff]));
+	const reviewers = plan.handoffs.filter(handoff => handoff.role === 'reviewer');
+	const dependsOn = (id: string, target: string, visited = new Set<string>()): boolean => {
+		if (id === target) { return true; }
+		if (visited.has(id)) { return false; }
+		visited.add(id);
+		const node = byId.get(id);
+		return !!node?.dependsOn.some(dep => dependsOn(dep, target, visited));
+	};
+	for (const writer of plan.handoffs.filter(handoff => handoff.role === 'implementer')) {
+		if (!reviewers.some(reviewer => dependsOn(reviewer.id, writer.id))) {
+			throw Error('HARNESS_DAG_REVIEW_REQUIRED');
+		}
+	}
+}
+
 export interface AgentDAGOutcome {
 	id: string;
 	status: 'passed' | 'failed' | 'cancelled';
