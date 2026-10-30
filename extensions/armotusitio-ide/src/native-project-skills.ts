@@ -15,7 +15,7 @@ export interface ProjectSkill {
 const SOURCES = ['.agents/skills', '.claude/skills'] as const;
 const SAFE_NAME = /^[a-z0-9][a-z0-9_-]{0,63}$/i;
 const MAX_SKILLS = 64;
-const MAX_SKILL_BYTES = 4096;
+const MAX_SKILL_BYTES = 64 * 1024;
 
 async function canonicalDirectory(root: string, location: string): Promise<boolean> {
 	let stat;
