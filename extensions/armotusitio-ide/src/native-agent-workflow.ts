@@ -67,7 +67,7 @@ export function proposedWorkflow(provider: NativeProvider, instruction: string):
   return validateHandoffPlan({ schemaVersion: 1, handoffs: [
     { id: 'plan', role: 'planner', provider, dependsOn: [], instruction: 'Read-only assessment. Describe a safe implementation plan for the following task. No edits:\n' + instruction },
     { id: 'implement', role: 'implementer', provider, dependsOn: ['plan'], instruction: 'Implement only the following user-authorized task, then report the changed files:\n' + instruction },
-    { id: 'review', role: 'reviewer', provider, dependsOn: ['implement'], instruction: 'Read-only audit of the current uncommitted changes against the task below. Report defects and missing checks without modifying files:\n' + instruction }
+    { id: 'review', role: 'reviewer', provider, dependsOn: ['implement'], instruction: 'Read-only audit of the current uncommitted changes against the task below. Report defects and missing checks without modifying files. End the response with exactly HARNESS_REVIEW: PASS only when there are no blocking defects; otherwise HARNESS_REVIEW: FAIL. Do not treat a CLI exit code as proof of quality:\n' + instruction }
   ] });
 }
 
@@ -209,6 +209,8 @@ export class NativeAgentWorkflow {
             if (this.cancelled || !trusted()) { this.active.cancel(); }
             const outcome: AgentOutcome = await this.active.outcome;
             step.status = outcome.status === 'timeout' ? 'failed' : outcome.status;
+            // A review must explicitly approve the changes. Exit code 0 alone is not a quality signal.
+            if (step.role === 'reviewer' && step.status === 'passed' && !/^HARNESS_REVIEW:\s*PASS\s*$/m.test(outcome.output)) { step.status = 'failed'; }
             step.durationMs = outcome.durationMs;
             step.exitCode = outcome.exitCode;
             if (step.status === 'passed' && !outcome.truncated) {
