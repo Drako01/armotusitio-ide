@@ -97,3 +97,26 @@ test('read-only gate scheduler honors dependencies, resource conflicts and capac
 		assert.throws(() => planProjectGateWaves(catalog, 0), /HARNESS_GATE_CAPACITY_INVALID/);
 	} finally { await fs.rm(root, { recursive: true, force: true }); }
 });
+
+test('gate planner refuses forged in-memory resources and undeclared dependencies', async () => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-gate-forgery-'));
+	try {
+		const canonical = await fs.realpath(root);
+		const folder = path.join(root, '.harness', 'manifests');
+		await fs.mkdir(folder, { recursive: true });
+		await fs.writeFile(path.join(folder, 'ide-gates.json'), JSON.stringify({
+			schemaVersion: 1, gates: [{ id: 'lint', dependsOn: [], resources: [] }]
+		}));
+		const valid = await readProjectGateCatalog(canonical);
+		assert.ok(valid);
+		assert.throws(() => planProjectGateWaves({
+			...valid, gates: [{ id: 'lint', dependsOn: ['ghost'], resources: [] }]
+		}), /HARNESS_GATE_CATALOG_DEPENDENCY/);
+		assert.throws(() => planProjectGateWaves({
+			...valid, gates: [{ id: 'lint', dependsOn: [], resources: ['cpu; rm -rf'] }]
+		}), /HARNESS_GATE_CATALOG_INVALID/);
+		assert.throws(() => planProjectGateWaves({
+			...valid, gates: [{ id: 'lint', dependsOn: [], resources: [], command: 'node evil.js' }] as never
+		}), /HARNESS_GATE_CATALOG_INVALID/);
+	} finally { await fs.rm(root, { recursive: true, force: true }); }
+});
