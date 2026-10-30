@@ -102,17 +102,38 @@ test('corrupted persisted attempts fail closed before execution', async () => {
 	} finally { await f.cleanup(); }
 });
 test('concurrent attempts cannot both obtain execution lock', async () => {
-	const f = await fixture(); try {
-		const plan = { schemaVersion: 1 as const, gates: [{ id: 'slow', executable: 'node', args: ['-e', 'setTimeout(()=>{},2000)'] }] };
+	const f = await fixture();
+	try {
+		// Keep the first gate alive until cancellation. A fixed 2s timer can finish
+		// before the second attempt is rejected on busy Windows CI workers.
+		const plan = {
+			schemaVersion: 1 as const,
+			gates: [{
+				id: 'slow', executable: 'node',
+				args: ['-e', 'require("node:fs").writeFileSync("gate-started.flag","ready"); setInterval(()=>{},1000)'],
+				timeoutMs: 30000
+			}]
+		};
 		const t = await f.engine.create('locking', plan);
 		const digest = approvalDigest(plan, await fs.realpath(f.project));
 		const first = f.engine.execute(t.id, digest, () => true);
-		const lockfile = path.join(path.dirname(f.project), 'state', 'execution.lock');
-		for (let i = 0; i < 50; i++) { if (await fs.stat(lockfile).catch(() => null)) { break; } await new Promise(r => setTimeout(r, 10)); }
-		await assert.rejects(f.engine.execute(t.id, digest, () => true), /HARNESS_ALREADY_RUNNING|HARNESS_LOCKED_REQUIRES_RECONCILIATION|HARNESS_RECONCILIATION_REQUIRED/);
-		f.engine.cancel();
+		const started = path.join(f.project, 'gate-started.flag');
+		try {
+			// Do not assert contention until the subprocess really holds the lock.
+			let ready = false;
+			for (let i = 0; i < 500; i++) {
+				if (await fs.stat(started).catch(() => undefined)) { ready = true; break; }
+				await new Promise(resolve => setTimeout(resolve, 20));
+			}
+			assert.equal(ready, true, 'The first gate must start before contention is tested');
+			await assert.rejects(f.engine.execute(t.id, digest, () => true),
+				/HARNESS_ALREADY_RUNNING|HARNESS_LOCKED_REQUIRES_RECONCILIATION|HARNESS_RECONCILIATION_REQUIRED/);
+		} finally {
+			// Always stop the child even when an assertion fails.
+			f.engine.cancel();
+		}
 		const result = await first;
-		assert.notEqual(result.attempts.at(-1)?.status, 'passed');
+		assert.equal(result.attempts.at(-1)?.status, 'cancelled');
 	} finally { await f.cleanup(); }
 });
 test('already-aborted signal does not start a task or persist an attempt', async () => {
