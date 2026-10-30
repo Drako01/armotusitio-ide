@@ -519,8 +519,10 @@ test('normal workflow journal lifecycle leaves no pending intent after fake prov
 		const state = path.join(root, 'private');
 		const plan = proposedWorkflow('codex', 'Inspect fake provider transitions');
 		const workflow = new NativeAgentWorkflow(canonical, state);
-		const fake = await workflow.start(plan, workflowDigest(canonical, plan), () => false);
-		await fake.result;
+		let approvals = 0;
+		const run = await workflow.start(plan, workflowDigest(canonical, plan), () => ++approvals === 1);
+		const outcome = await run.result;
+		assert.equal(outcome.status, 'cancelled');
 		assert.deepEqual((await fs.readdir(state)).filter(name => name.endsWith('.json.intent')), []);
 	} finally { await fs.rm(root, { recursive: true, force: true }); }
 });
