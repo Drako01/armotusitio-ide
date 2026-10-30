@@ -173,7 +173,23 @@ export class NativeAgentWorkflow {
 	private readonly storage: string;
 	constructor(root: string, storage: string) { this.root = root; this.storage = storage; }
 
+	private async assertSafeStorage(create: boolean): Promise<boolean> {
+		if (create) { await fs.mkdir(this.storage, { recursive: true, mode: 0o700 }); }
+		let stat;
+		try { stat = await fs.lstat(this.storage); }
+		catch (error) {
+			if (!create && (error as NodeJS.ErrnoException).code === 'ENOENT') { return false; }
+			throw error;
+		}
+		if (!stat.isDirectory() || stat.isSymbolicLink() ||
+			await fs.realpath(this.storage) !== path.resolve(this.storage)) {
+			throw Error('HARNESS_WORKFLOW_UNSAFE_STORAGE');
+		}
+		return true;
+	}
+
 	private async readHistory(limit: number): Promise<WorkflowRecord[]> {
+		if (!await this.assertSafeStorage(false)) { return []; }
 		let files: string[];
 		try { files = await fs.readdir(this.storage); }
 		catch (error) {
@@ -362,7 +378,7 @@ export class NativeAgentWorkflow {
 		const ordered = executionOrder(plan);
 		if (ordered.length > MAX_WORKFLOW_PROVIDER_CALLS) { throw Error('HARNESS_WORKFLOW_CALL_BUDGET_EXCEEDED'); }
 		if (planAgentWaves(plan).some(wave => wave.ids.length > 1)) { validateDAGReviewCoverage(plan); }
-		await fs.mkdir(this.storage, { recursive: true, mode: 0o700 });
+		await this.assertSafeStorage(true);
 		const lockFile = path.join(this.storage, 'execution.lock');
 		const lock = await fs.open(lockFile, 'wx', 0o600).catch(error => {
 			if ((error as NodeJS.ErrnoException).code === 'EEXIST') { throw Error('HARNESS_WORKFLOW_RECONCILIATION_REQUIRED'); }
