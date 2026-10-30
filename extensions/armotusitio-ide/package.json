@@ -184,6 +184,10 @@
         "title": "ArmoTuSitio: Métricas locales de agentes IA"
       },
       {
+        "command": "atsHarness.nativeProviderDiagnostics",
+        "title": "ArmoTuSitio: Diagnosticar Codex y Claude locales"
+      },
+      {
         "command": "atsHarness.nativeConfigure",
         "title": "ArmoTuSitio: Configurar Harness nativo del proyecto"
       },
