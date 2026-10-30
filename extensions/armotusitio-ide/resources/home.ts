@@ -112,6 +112,7 @@ window.addEventListener('message', event => {
 		tools.append(action('Métricas IA', project.root, 'native', 'nativeAgentMetrics'));
 		tools.append(action('Historial multiagente', project.root, 'native', 'nativeWorkflowHistory'));
 		tools.append(action('Reconciliar workflows', project.root, 'native', 'nativeWorkflowReconcile'));
+		tools.append(action('Limpiar worktree inactivo', project.root, 'native', 'nativeWorktreeCleanup'));
 		if (project.agentActive) { tools.append(action('Cancelar agente o workflow', project.root, 'native', 'nativeCancel')); }
 		if (current?.status === 'running' && !current.reconciliationRequired) { tools.append(action(nativeLabels.cancel, project.root, 'native', 'nativeCancel')); }
 		if (project.lock === 'stale' && command !== 'nativeReconcile') { tools.append(action(nativeLabels.reconcile, project.root, 'native', 'nativeReconcile')); }
