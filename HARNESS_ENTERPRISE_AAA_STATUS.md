@@ -566,6 +566,14 @@ Ejemplo local voluntario: `node scripts/ats-harness-benchmark.mts --command chec
 
 **Advertencia operacional:** ninguna implementación de este lote habilita automáticamente escritura híbrida, ejecución de comandos externos de terceros, deployments, releases o merge a `main`. El acceso a estado externo siempre ejecuta código del proyecto y no está aislado a nivel OS; requiere consentimiento informado del operador.
 
+### Validación Windows de lote P0/P1 y reparación de higiene (2026-10-30; retest pendiente)
+
+- [x] **Suite completa en `f369b0f384f`:** 253 tests (252 PASS, 0 FAIL, 1 SKIP). TypeScript, webview, bridge/renderer, bundle, recursos y diff whitespace en PASS. El verificador focalizado ejecutó 156 pruebas (155 PASS, 0 FAIL, 1 SKIP).
+- [x] **Único gate fallido en el log recibido:** `Focused hygiene` por formato de `extensions/armotusitio-ide/src/native-harness.ts`. El contenido funcional y los tests no fallaron. Se corrigió exclusivamente la disposición del objeto de respuesta de error del sandbox con el formato TypeScript esperado en commit `7800707625224aaaf8154449349d83c3ba68544c`.
+- [x] **MCP ArmoTuSitio preservado:** `extensions/armotusitio-ide/src/mcp.ts` y `extensions/armotusitio-ide/extension.ts` conservan exactamente los mismos blobs en `main` y la rama experimental. `package.json` conserva la definición del proveedor `atsIde.armotusitioMcp` y la preferencia `atsHarness.mcp.enabled`. Las pruebas existentes de handshake, autenticación, permisos y cancelación del MCP están en PASS.
+- [ ] **Retest del commit corregido y este documento:** repetir `node scripts/ats-harness-check.mts`, `npm test --prefix extensions/armotusitio-ide`, `npm run check --prefix extensions/armotusitio-ide` y `git diff --check` en Windows. No atribuir resultados verdes a commits posteriores a `f369b0f384f` hasta contar con un nuevo log.
+- [ ] **Warnings informativos del runtime:** los avisos `MODULE_TYPELESS_PACKAGE_JSON` y `ExperimentalWarning: stripTypeScriptTypes` no constituyeron fallos. No se cambió `package.json` a ESM porque el entrypoint de la extensión utiliza CommonJS y una migración aislada podría romper la activación y el MCP.
+
 ## Validación local obligatoria
 
 Desde la raíz del repositorio, con las dependencias instaladas:
