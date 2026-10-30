@@ -198,3 +198,33 @@ test('reconciliation preserves stale lock when persisted history is corrupt', as
 		await assert.rejects(workflow.history(), /HARNESS_WORKFLOW_INVALID_STATE/);
 	} finally { await fs.rm(root, { recursive: true, force: true }); }
 });
+
+test('reconciliation scans older running workflows beyond the 40-record UI window', async () => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-reconcile-full-history-'));
+	try {
+		const canonical = await fs.realpath(root);
+		const state = path.join(root, 'private');
+		await fs.mkdir(state);
+		const plan = proposedWorkflow('codex', 'Inspect recovery fixture');
+		const digest = workflowDigest(canonical, plan);
+		const projectKey = (await import('node:crypto')).createHash('sha256').update(canonical).digest('hex');
+		const olderId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+		const base = Date.now() - 100_000;
+		for (let index = 0; index < 41; index++) {
+			const id = index === 0 ? olderId : 'ffffffff-ffff-4fff-8fff-' + index.toString(16).padStart(12, '0');
+			await fs.writeFile(path.join(state, id + '.json'), JSON.stringify({
+				schemaVersion: 1, id, createdAt: new Date(base + index * 1000).toISOString(),
+				projectKey, planDigest: digest, status: index === 0 ? 'running' : 'passed',
+				steps: [{ id: 'plan', role: 'planner', provider: 'codex', status: index === 0 ? 'running' : 'passed' }]
+			}));
+		}
+		const workflow = new NativeAgentWorkflow(canonical, state);
+		assert.equal((await workflow.history()).length, 40);
+		assert.equal((await workflow.history()).some(record => record.id === olderId), false);
+		assert.equal(await workflow.reconcile(), 1);
+		const recovered = JSON.parse(await fs.readFile(path.join(state, olderId + '.json'), 'utf8'));
+		assert.equal(recovered.status, 'interrupted');
+		assert.equal(recovered.steps[0].status, 'interrupted');
+		assert.equal((await workflow.history()).length, 40);
+	} finally { await fs.rm(root, { recursive: true, force: true }); }
+});
