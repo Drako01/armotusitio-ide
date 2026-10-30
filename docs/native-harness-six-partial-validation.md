@@ -54,3 +54,17 @@ Revisar los archivos cambiados por `--fix` antes de crear commits. No utilizar `
 - [ ] Trazas y progreso comparados con ejecución real sin filtrado de secretos insuficiente.
 
 La implementación de nuevas superficies no sustituye estos gates; el criterio es evidencia reproducible, no solo existencia de código.
+
+## Smoke test real, explícito y manual
+
+**No forma parte de `npm test`, `ats-harness-check` ni GitHub Actions.** El comando hace una única llamada autenticada al proveedor elegido y puede consumir cuota. Ejecutarlo únicamente en una terminal interactiva desde la raíz del repositorio. El runner crea y elimina un repositorio Git temporal; nunca envía el código del IDE ni el repositorio de trabajo al modelo.
+
+```bash
+node scripts/ats-harness-real-provider-smoke.mts --help
+node scripts/ats-harness-real-provider-smoke.mts --provider codex --acknowledge-real-model-call
+# Alternativa: cambiar codex por claude para una segunda prueba deliberada
+```
+
+Tras el comando autorizado, escribir `RUN` en la terminal. La salida solo contiene el estado, si el árbol Git fue verificado, si hubo una modificación no autorizada, duración y si el proveedor informó tokens. No se guardan prompts, respuestas ni credenciales en logs. Ante una violación del modo de solo lectura, el directorio temporal se conserva para inspección y se informa su ruta.
+
+**Limitación:** el modo de solo lectura y la comprobación Git son controles del ejecutor/proveedor, NO equivalen a una política OS de red, filesystem y procesos. La prueba no certifica sandbox, acceso a cuentas reales en CI ni éxito del plan empresarial.
