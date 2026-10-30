@@ -53,11 +53,13 @@ test('executes three stages in order with fake provider; persists only metadata'
     const plan = proposedWorkflow('codex', 'PRIVATETASK-DO-NOT-PERSIST');
     const flow = new NativeAgentWorkflow(canonical, path.join(root, 'private'));
     let verified = 0;
-    const run = await flow.start(plan, workflowDigest(canonical, plan), () => true, async () => { verified++; return true; });
+    let metrics = 0;
+    const run = await flow.start(plan, workflowDigest(canonical, plan), () => true, async () => { verified++; return true; }, async () => { metrics++; });
     const outcome = await run.result;
     assert.equal(outcome.status, 'passed');
     assert.equal(outcome.verification, 'passed');
     assert.equal(verified, 1);
+    assert.equal(metrics, 3);
     assert.deepEqual(outcome.steps.map(s => s.status), ['passed', 'passed', 'passed']);
     assert.equal(await fs.readFile(path.join(root, 'trace.txt'), 'utf8'), 'plan\nimplement\nreview\n');
     const history = await flow.history();
