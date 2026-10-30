@@ -22,6 +22,7 @@ import { createAgentWorktree, removeCleanAgentWorktree, listAgentWorktrees, type
 import { describeEngine, probeProjectHandshake, compareHybridCapabilities, verifiedNativeCapabilities } from './native-engine-contract.ts';
 import { diagnoseProvider } from './native-provider-diagnostics.ts';
 import { summarizeGatePerformance } from './native-performance.ts';
+import { acquireSharedExecutionFence, type SharedExecutionFence } from './native-shared-fence.ts';
 
 type Host = any; // vscode host is injected by the existing extension (avoid duplicating the UI layer).
 const sessions = new Map<string, NativeHarness>();
@@ -174,8 +175,15 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			// Reserve the project before the async provider lookup to prevent parallel launches.
 			pendingAgents.add(root); controller.refresh();
 			let execution: AgentExecution;
-			try { execution = await executeReviewedAgent(review, draft); }
-			finally { pendingAgents.delete(root); }
+			let fence: SharedExecutionFence | undefined;
+			try {
+				fence = await acquireSharedExecutionFence(root, metricsDirectory(root), 'native-agent');
+				await fence.assertCurrent();
+				execution = await executeReviewedAgent(review, draft);
+			} catch (error) {
+				if (fence) { await fence.release(); }
+				throw error;
+			} finally { pendingAgents.delete(root); }
 			runningAgents.set(root, execution); controller.refresh();
 			try {
 				const result = await execution.outcome;
@@ -187,7 +195,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 					content: JSON.stringify({ role, provider, ...result }, null, 2)
 				}), { preview: true });
 				vscode.window.showInformationMessage('Agente finalizado: ' + result.status);
-			} finally { runningAgents.delete(root); controller.refresh(); }
+			} finally { runningAgents.delete(root); await fence.release(); controller.refresh(); }
 		} catch (error) { showError(error); } finally { controller.refresh(); }
 	}));
 
@@ -245,7 +253,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			if (JSON.stringify((await loadProjectConfig(root))?.plan || null) !== verificationSnapshot) { throw Error('HARNESS_WORKFLOW_VERIFICATION_CHANGED'); }
 			assertProviderCapacity();
 			pendingWorkflows.add(root); controller.refresh();
-			const engine = new NativeAgentWorkflow(executionRoot, path.join(metricsDirectory(root), 'workflows'));
+			const engine = new NativeAgentWorkflow(executionRoot, path.join(metricsDirectory(root), 'workflows'), root);
 			const unsubscribeEvents = engine.onEvent(() => { controller.refresh(); });
 			const validationEngine = isolation ? new NativeHarness(executionRoot, path.join(metricsDirectory(root), 'isolated-verification', isolation.id)) : chosen.engine;
 			let run: WorkflowRun;
@@ -253,7 +261,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 				run = await engine.start(plan, digest, () => authorized(chosen.folder), verification ? async signal => {
 					const task = await validationEngine.create('Workflow verification', verification);
 					const approval = await validationEngine.reviewDigest(task.plan);
-					const result = await validationEngine.execute(task.id, approval, () => authorized(chosen.folder), signal);
+					const result = await validationEngine.execute(task.id, approval, () => authorized(chosen.folder), signal, engine.activeFence());
 					return result.attempts.at(-1)?.status === 'passed';
 				} : undefined, async (stageProvider, stageRole, stageOutcome) => {
 					await recordAgentMetric(metricsDirectory(root!), stageProvider, stageRole, stageOutcome);
