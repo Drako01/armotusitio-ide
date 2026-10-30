@@ -405,7 +405,17 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 - [x] **Pruebas incorporadas:** descubrimiento de skills, cambio de digest, alias Claude, límite de tamaño, revisión híbrida sin creación de tareas nativas y rechazo de implementadores híbridos antes de invocar proveedores.
 - [x] **Retest Windows primer lote:** 204 PASS/0 FAIL/1 SKIP; TypeScript, webview, bundle, recursos, higiene y diff PASS. El registro corresponde al SHA `80d7a7bb867`.
 - [ ] **Fase híbrida de escritura:** protocolo ejecutable bidireccional con gates delegados, locks compartidos, control de concurrencia y E2E sobre RedEvent. El soporte actual **no certifica** prioridad completa del IDE ni integración de ejecutores de proyectos.
-- [~] **Skills más extensas:** catálogo admite hasta 64 KiB por skill y evita truncar el prompt; queda pendiente la carga supervisada/selección de instrucciones muy extensas, incluyendo más de una skill por tarea.
+- [~] **Skills más extensas:** catálogo admite hasta 64 KiB por skill, referencias por digest y selección múltiple de hasta ocho skills. Pendiente la carga supervisada de archivos superiores a 64 KiB y pruebas E2E de aplicación de convenciones.
+
+### Iteración P0/P1: skills híbridas y autorización consistente (2026-10-30; retest consolidado pendiente)
+
+- [x] El log local de Windows sobre `80d7a7bb867` certifica **204 PASS / 0 FAIL / 1 SKIP**, con TypeScript, bundle, recursos, higiene y `diff --check` en PASS. Esa es la última base realmente validada.
+- [x] Se verifica el directorio padre `.agents`/`.claude` al descubrir skills, impidiendo que un symlink padre esconda contenido externo. Nueva regresión con carpeta fuera del workspace.
+- [x] El inicio de un agente vuelve a comprobar la autoridad del proyecto *después* de solicitar consentimiento: si aparece un Harness propio, no se inicia un implementador nativo; si cambia el tipo de autoridad o aparecen rutas inseguras, falla cerrado. Nueva regresión de cambio durante confirmación.
+- [x] Selector múltiple para **hasta ocho skills** del proyecto por agente nativo de lectura, con referencias relativas, digest SHA-256 y revalidación de todos los archivos antes de iniciar el proveedor. No copia el contenido al prompt ni lo ejecuta como instrucciones privilegiadas.
+- [x] Regresiones offline para alteración de skill durante la confirmación y rechazo de más de ocho skills. No se hace ninguna llamada real a Codex ni Claude.
+- [ ] **Retest del lote:** pruebas de skills, integración, workflow, verificador local, suite global, TypeScript e higiene. Hasta disponer de un nuevo log, no contar los tests nuevos como PASS.
+- [ ] **Interoperabilidad completa aún pendiente:** adaptar la ejecución de gates del proyecto, handshake con permisos, fencing interproceso y exclusividad de escritores, sandbox OS y E2E mixto sobre RedEvent. Los implementadores del IDE siguen bloqueados en proyectos con Harness propio.
 
 ## Validación local obligatoria
 
