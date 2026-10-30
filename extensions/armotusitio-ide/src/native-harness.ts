@@ -316,9 +316,11 @@ export class NativeHarness {
 				command = { executable: sandbox.executable, args: sandbox.args, embeddedNode: false };
 			}
 		} catch {
-			return { id: gate.id, startedAt, endedAt: new Date().toISOString(),
+			return {
+				id: gate.id, startedAt, endedAt: new Date().toISOString(),
 				status: 'failed', exitCode: null,
-				output: gate.sandbox ? 'HARNESS_OS_SANDBOX_UNAVAILABLE' : 'HARNESS_EXECUTABLE_UNAVAILABLE' };
+				output: gate.sandbox ? 'HARNESS_OS_SANDBOX_UNAVAILABLE' : 'HARNESS_EXECUTABLE_UNAVAILABLE'
+			};
 		}
 		if (signal.aborted) { return { id: gate.id, startedAt, endedAt: new Date().toISOString(), status: 'cancelled', exitCode: null, output: '' }; }
 		if (command.embeddedNode) { env.ELECTRON_RUN_AS_NODE = '1'; }
