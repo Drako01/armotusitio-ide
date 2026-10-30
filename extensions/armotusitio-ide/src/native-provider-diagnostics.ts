@@ -28,7 +28,7 @@ const REQUIRED_FLAGS: Record<NativeProvider, readonly string[]> = {
 export function inspectProviderHelp(provider: NativeProvider, help: string): { compatibility: 'verified' | 'unsupported' | 'unknown'; missingFlags: string[] } {
 	if (provider !== 'codex' && provider !== 'claude') { throw Error('HARNESS_PROVIDER_UNSUPPORTED'); }
 	if (typeof help !== 'string' || help.length > 32 * 1024 || help.trim().length < 20) { return { compatibility: 'unknown', missingFlags: [] }; }
-	const flags = new Set(help.match(/--[a-z][a-z-]*/g) || []);
+	const flags = new Set(help.match(/--[A-Za-z][A-Za-z-]*/g) || []);
 	const missingFlags = REQUIRED_FLAGS[provider].filter(flag => !flags.has(flag));
 	return { compatibility: missingFlags.length ? 'unsupported' : 'verified', missingFlags };
 }
