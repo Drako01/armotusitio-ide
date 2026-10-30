@@ -420,3 +420,33 @@ test('completed workflow does not unlink a lock replaced by another execution', 
 		} finally { unsubscribe(); }
 	} finally { await fs.rm(root, { recursive: true, force: true }); }
 });
+
+test('exclusive recovery guard blocks a second reconciler and new provider execution', async () => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-reconcile-guard-'));
+	try {
+		const canonical = await fs.realpath(root);
+		const state = path.join(root, 'private');
+		await fs.mkdir(state);
+		const guard = path.join(state, 'reconcile.guard');
+		const evidence = '{"pid":99999999,"owner":"external"}';
+		await fs.writeFile(guard, evidence);
+		const workflow = new NativeAgentWorkflow(canonical, state);
+		await assert.rejects(workflow.reconcile(), /HARNESS_WORKFLOW_RECONCILIATION_ACTIVE/);
+		const plan = proposedWorkflow('codex', 'Inspect without running providers');
+		await assert.rejects(workflow.start(plan, workflowDigest(canonical, plan), () => true),
+			/HARNESS_WORKFLOW_RECONCILIATION_ACTIVE/);
+		assert.equal(await fs.readFile(guard, 'utf8'), evidence);
+		await assert.rejects(fs.stat(path.join(state, 'execution.lock')), { code: 'ENOENT' });
+	} finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
+test('successful explicit reconciliation releases its own guard without touching foreign state', async () => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-reconcile-guard-release-'));
+	try {
+		const canonical = await fs.realpath(root);
+		const state = path.join(root, 'private');
+		const workflow = new NativeAgentWorkflow(canonical, state);
+		assert.equal(await workflow.reconcile(), 0);
+		await assert.rejects(fs.stat(path.join(state, 'reconcile.guard')), { code: 'ENOENT' });
+	} finally { await fs.rm(root, { recursive: true, force: true }); }
+});
