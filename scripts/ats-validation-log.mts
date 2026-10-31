@@ -33,6 +33,10 @@ const counts = (text: string): string => ['tests', 'pass', 'fail', 'skipped'].ma
 
 const status = git('status', '--porcelain');
 const lines: string[] = [
+	'/*---------------------------------------------------------------------------------------------',
+	' *  Copyright (c) Microsoft Corporation. All rights reserved.',
+	' *  Licensed under the MIT License. See License.txt in the project root for license information.',
+	' *--------------------------------------------------------------------------------------------*/',
 	'ArmoTuSitio IDE Harness validation record',
 	'date: ' + new Date().toISOString(),
 	'system: ' + os.type() + ' ' + os.release() + ' ' + process.arch + ', ' + os.cpus().length + ' logical CPUs',
@@ -57,8 +61,9 @@ for (const gate of gates) {
 		...(/\u2139 tests \d+/.test(text) ? ['tests: ' + counts(text)] : []),
 		...[...text.matchAll(/^(PASS|FAIL[^|]*) \| (.+)$/gm)].map(match => 'stage: ' + match[1] + ' | ' + match[2]),
 		...(/Hygiene checked \d+ files/.test(text) ? ['hygiene: ' + text.match(/Hygiene checked \d+ files/)![0]] : []),
-		'warnings: ' + warnings.length + (warnings.length ? '\n  ' + warnings.slice(0, 10).join('\n  ') : ''),
-		...(exit === 0 ? [] : ['failure excerpt:', ...text.split(/\r?\n/).filter(line => /\u2716|not ok|error|FAIL/i.test(line)).slice(0, 25).map(line => '  ' + line.slice(0, 220))]),
+		'warnings: ' + warnings.length,
+		...warnings.slice(0, 10).map(line => 'warning> ' + line),
+		...(exit === 0 ? [] : ['failure excerpt:', ...text.split(/\r?\n/).filter(line => /\u2716|not ok|error|FAIL/i.test(line)).slice(0, 25).map(line => 'excerpt> ' + line.trim().slice(0, 220))]),
 		''
 	);
 }

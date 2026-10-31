@@ -268,3 +268,33 @@ Este incremento incorpora opciones de versión explícita de Claude Code (por ej
 - **C7, contexto largo.** El prompt incluye unos 13 KB del historial más reciente; las conversaciones largas pierden contexto antiguo (no hay resumen automático).
 
 **C3 (streaming de Claude): RESUELTA en código y tests** mediante `89fbc7df95`. Su ejecución autenticada en la interfaz se validará como parte de C1. Las condiciones C4 a C7 son riesgos y decisiones de producto expresamente documentados; no se declaran resueltas. Solo con **C1 y C2 verificadas**, sin hallazgos nuevos y aceptando formalmente los riesgos residuales, podrá reconsiderarse **APPROVED para uso interno**.
+
+## 11. Addendum de finalización (2026-10-31, rama `feat/harness-enterprise-aaa-finalization`)
+
+Este addendum actualiza las condiciones de la sección 10 con lo implementado y medido después del PR #37. Detalle por capacidad en `HARNESS_ENTERPRISE_AAA_STATUS.md`; registro de ejecución en `script_test.log`.
+
+### Hallazgos nuevos del ciclo
+
+| ID | Sev. | Hallazgo | Corrección |
+| --- | --- | --- | --- |
+| F27 | P2 | El test del sandbox de kernel nunca se había ejecutado en Linux y usaba ejecutables absolutos (los gates exigen nombres) y `sh`/coreutils que en Ubuntu son enlaces simbólicos, que el sandbox rechaza por diseño; el archivo de entrada no tenía salto de línea final y el `read` del shell fallaba. | Corregido; el test de aplicación real por bubblewrap pasa en Linux. |
+| F28 | P2 | Selectores de modelo y esfuerzo (23 px) y botones «Copiar» (19 px) por debajo del objetivo táctil mínimo de WCAG 2.2 (2.5.8). | `min-height`/`min-width` de 24 px; protegido por una sonda automática. |
+| F29 | P2 | Si el agente fallaba o se detenía, los gates de verificación quedaban en «Pendiente», como si fueran a correr. | Se informan como cancelados. |
+| F30 | P2 | Un plan podía nombrar rutas absolutas, con unidad, `~` o `..` en sus archivos y se las pasaba al implementador. | El plan completo se descarta; no se recorta. |
+| F31 | Info | La medición real del sandbox propio de Codex en Windows 11 (sin llamar a ningún modelo): escrituras fuera del proyecto denegadas, **lecturas fuera del proyecto permitidas**. | Se documenta y se muestra junto a la aprobación; `writerIsolation` permite exigir el sandbox del proveedor. |
+
+### Estado de las condiciones
+
+| Condición | Estado | Detalle |
+| --- | --- | --- |
+| C1, E2E real del chat | **ABIERTA** | La infraestructura de tres niveles está implementada y probada con un proveedor simulado real (proceso aparte). La ejecución autenticada no se corrió: requiere autorización de consumo y Codex tiene el cupo agotado hasta el 4-nov-2026. |
+| C2, Linux y macOS | **PARCIAL** | Linux x64 (Ubuntu 25.x en WSL2, bubblewrap 0.11.1, Node 24.22.1): suite completa: 363 tests, 355 PASS, 0 FAIL, 8 SKIP. macOS y Linux ARM64: sin ejecutar. |
+| C3, streaming de Claude | **RESUELTA** | Sin cambios respecto de la sección 10. |
+| C4, coordinación con Harnesses externos | **IMPLEMENTADA del lado IDE, bloqueada para un motor real** | Lease exclusivo verificable con opt-in; probado contra un motor de referencia real, con cinco comportamientos hostiles del motor. RedEvent debe implementar el protocolo. |
+| C5, aislamiento del escritor | **PARCIAL** | Se puede exigir un aislamiento mínimo y se muestra el real; no hay sandbox de sistema operativo para el proceso del proveedor en Windows. |
+| C6, accesibilidad manual | **PARCIAL** | Sondas automáticas aprobadas en tres conjuntos de tokens; matriz manual NVDA/VoiceOver preparada y sin completar. |
+| C7, contexto largo | **RESUELTA** | Memoria determinista, acotada y persistente; sin resúmenes generados por IA. |
+
+### Decisión
+
+Se mantiene **APPROVED WITH CONDITIONS**. No se eleva a APPROVED porque C1 sigue sin evidencia autenticada y C2 no incluye macOS. No hay defectos P0 ni P1 abiertos conocidos en el SHA validado. Para pasar a APPROVED se necesitan: la ejecución autenticada de C1 en un proyecto descartable, una ejecución en macOS y la matriz manual de accesibilidad sin hallazgos abiertos; la habilitación de escritores en proyectos con RedEvent requiere además el cambio del lado de ese motor.
