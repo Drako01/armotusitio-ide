@@ -10,7 +10,7 @@ import * as os from 'node:os';
 import { installFakeCodex } from './native-fake-provider.mts';
 import { execFileSync } from 'node:child_process';
 import { buildAgentInvocation, executeReviewedAgent } from '../src/native-agent-execution.ts';
-import { reviewAgentDraft, type NativeEffort } from '../src/native-providers.ts';
+import { reviewAgentDraft, validateReviewedAgent, type NativeEffort } from '../src/native-providers.ts';
 
 const base = {
 	schemaVersion: 1 as const, provider: 'codex' as const, role: 'reviewer' as const,
@@ -75,6 +75,24 @@ test('review digest binds effort so changes require fresh authorization', () => 
 	const review = reviewAgentDraft(selected);
 	assert.equal(buildAgentInvocation({ ...selected, effort: 'low' }).args.includes('model_reasoning_effort="low"'), true);
 	assert.equal(review.fingerprint === reviewAgentDraft({ ...selected, effort: 'low' }).fingerprint, false);
+	assert.throws(() => validateReviewedAgent(review, { ...selected, effort: 'low' }), /HARNESS_AGENT_REVIEW_CHANGED/);
+});
+
+test('local Codex subprocess receives per-run effort while preserving shell-free invocation', async () => {
+	const folder = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-agent-effort-'));
+	const oldPath = process.env.PATH;
+	try {
+		await installFakeCodex(folder, '#!/usr/bin/env node\nprocess.stdin.resume(); process.stdin.on("end", () => console.log("EFFECTIVE_ARGS", JSON.stringify(process.argv.slice(2))));\n');
+		process.env.PATH = folder + path.delimiter + (oldPath || '');
+		const draft = { ...base, projectRoot: await fs.realpath(folder), effort: 'low' as const };
+		const run = await executeReviewedAgent(reviewAgentDraft(draft), draft, 10000);
+		const result = await run.outcome;
+		assert.equal(result.status, 'passed');
+		assert.match(result.output, /model_reasoning_effort=\\"low\\"/);
+	} finally {
+		if (oldPath === undefined) { delete process.env.PATH; } else { process.env.PATH = oldPath; }
+		await fs.rm(folder, { recursive: true, force: true });
+	}
 });
 
 test('a changed review or invalid duration never starts an agent', async () => {
