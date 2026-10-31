@@ -3,9 +3,15 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 'use strict';
-const { randomBytes } = require('node:crypto');
+const path = require('node:path');
+const fs = require('node:fs/promises');
+const { randomBytes, createHash } = require('node:crypto');
+const { ChatStore, harnessErrorCode } = require('./native-chat.ts');
+const { HarnessChatSession } = require('./native-chat-session.ts');
+const { diagnoseProvider } = require('./native-provider-diagnostics.ts');
+const { endpoint } = require('./mcp.ts');
 
-/** Dispatch explicit commands without an LLM, shell interpolation or arbitrary MCP tool names. */
+/** Dispatch explicit slash commands without an LLM, shell interpolation or arbitrary MCP tool names. */
 function createHandler(vscode, controller, projects, mcp) {
 	const t = (message, ...args) => vscode.l10n.t(message, ...args);
 	const help = () => t('Comandos: estado, comandos, check [proyecto], verify [proyecto], test [proyecto], mcp, proyectos, proyecto CLAVE, tareas CLAVE, tarea CLAVE-123, tablero CLAVE, buscar texto, crear CLAVE t\u00edtulo, mover CLAVE-123 columnaId, comentar CLAVE-123 texto. Pod\u00e9s anteponer @harness o usar /comando.');
@@ -21,7 +27,7 @@ function createHandler(vscode, controller, projects, mcp) {
 			if (action === 'comandos' && !words.length) {
 				const all = await projects();
 				const local = await controller.nativeProjects?.() || [];
-				return [...all.map(({ profile }) => profile.name + ': ' + (profile.actions.join(', ') || t('Preparar una tarea con el Harness del proyecto'))), ...local.map(project => project.name + ': ' + t('Configurar, preparar y revisar verificaciones locales desde el panel del Harness'))].join('\n') || t('Abr\u00ed una carpeta para detectar su Harness o configurar el incluido en el IDE.');
+				return [...all.map(({ profile }) => profile.name + ': ' + (profile.actions.join(', ') || t('Preparar una tarea con el Harness del proyecto'))), ...local.map(project => project.name + ': ' + t('Conversar, planificar y ejecutar con aprobaci\u00f3n desde Chat Harness'))].join('\n') || t('Abr\u00ed una carpeta para detectar su Harness o configurar el incluido en el IDE.');
 			}
 			if (action === 'estado' && !words.length) {
 				await controller.refreshActivity();
@@ -41,11 +47,9 @@ function createHandler(vscode, controller, projects, mcp) {
 				return id ? t('Tarea iniciada. Pod\u00e9s seguir el resultado en la barra de estado y en el historial.') : t('No se inici\u00f3 una tarea nueva. Revis\u00e1 la confirmaci\u00f3n o si ya est\u00e1 activa.');
 			}
 			const localCommands = ['check', 'verify', 'test', 'mcp', 'proyectos', 'proyecto', 'tareas', 'tarea', 'tablero', 'buscar', 'crear', 'mover', 'comentar', 'estado', 'comandos'];
-			if (controller.openTask && !localCommands.includes(action)) {
-				await controller.openTask(text);
-				return t('Abr\u00ed tu tarea en el panel del Harness. Revis\u00e1 el texto y eleg\u00ed \u00abPreparar tarea\u00bb para ver el plan antes de ejecutarlo.');
-			}
-			if (!mcp.enabled()) { return t('Work Management es opcional y est\u00e1 desactivado en este workspace. Pod\u00e9s preparar tareas y consultar su estado sin conectarlo. Para usar tarjetas y tableros, habilit\u00e1 ArmotuSitio Work Management en las opciones de este chat.'); }
+			// Free text is a conversation with the selected AI; only Chat Harness hosts that flow.
+			if (!localCommands.includes(action)) { return t('Para conversar con la IA, planificar y ejecutar cambios abr\u00ed Chat Harness (ArmoTuSitio: Chat Harness). Ac\u00e1 solo se aceptan comandos.') + '\n' + help(); }
+			if (!mcp.enabled()) { return t('Work Management es opcional y est\u00e1 desactivado en este workspace. Pod\u00e9s conversar y ejecutar tareas sin conectarlo. Para usar tarjetas y tableros, habilit\u00e1 ArmotuSitio MCP desde el indicador del chat.'); }
 			if (action === 'mcp' && !words.length) {
 				const tools = await mcp.client.tools(token);
 				return t('Conectado a ArmotuSitio Work Management. Herramientas disponibles para tu clave: {0}.', tools.map(tool => tool.name).join(', '));
@@ -87,17 +91,80 @@ function createHandler(vscode, controller, projects, mcp) {
 	};
 }
 
-/** Expose the same command handler in native chat and a standalone panel without an AI dependency. */
-function registerChat(context, controller, projects, mcp, vscode) {
+/**
+ * Real MCP handshake: `initialize` plus `tools/list` against the existing endpoint. A stored key alone is
+ * never reported as connected. The result carries no secret, only state, reason and tool count.
+ */
+async function probeMcpConnection(vscode, mcp, token = undefined) {
+	const checkedAt = new Date().toISOString();
+	if (!vscode.workspace.isTrusted) { return { state: 'disconnected', reason: 'untrusted', checkedAt }; }
+	if (!mcp.enabled()) { return { state: 'disconnected', reason: 'disabled', checkedAt }; }
+	const credential = await mcp.credentialState?.();
+	if (credential && !credential.configured) { return { state: 'disconnected', reason: 'missing-key', checkedAt }; }
+	try {
+		const tools = await mcp.client.tools(token);
+		return { state: 'connected', tools: tools.length, checkedAt };
+	} catch (error) {
+		// Force a full initialize on the next check instead of trusting a cached session.
+		mcp.client.reset?.();
+		const reason = { MCP_AUTH: 'auth', MCP_HTTP: 'http', MCP_RESPONSE: 'protocol', MCP_SIZE: 'protocol', MCP_CANCELLED: 'cancelled' }[error?.message] || 'network';
+		return { state: 'error', reason, checkedAt };
+	}
+}
+
+/** Local CLI evidence only: installed, version and local login. No prompt is sent to a model. */
+async function probeProvider(provider, diagnose = diagnoseProvider) {
+	try {
+		const result = await diagnose(provider);
+		if (!result.installed || !result.version) { return { status: 'unavailable' }; }
+		if (result.commandCompatibility === 'unsupported') { return { status: 'incompatible', version: result.version }; }
+		return { status: result.localSession === 'authenticated' ? 'ready' : result.localSession === 'unauthenticated' ? 'unauthenticated' : 'unknown', version: result.version };
+	} catch { return { status: 'unknown' }; }
+}
+
+/** Webview copy. Templates pass their own placeholders so the webview fills them with live values. */
+function labels(t) {
+	return {
+		title: t('Chat Harness'), project: t('Proyecto'), provider: t('IA'), codex: 'Codex', claude: 'Claude Code',
+		providerStatus: { ready: t('Autenticado'), unauthenticated: t('Sin sesi\u00f3n iniciada'), unavailable: t('No instalado'), incompatible: t('Versi\u00f3n incompatible'), unknown: t('Estado desconocido'), checking: t('Verificando\u2026') },
+		mcp: t('ArmotuSitio MCP'), mcpState: { connected: t('Conectado'), disconnected: t('Desconectado'), checking: t('Verificando'), error: t('Error') },
+		mcpReason: { untrusted: t('El workspace no es confiable.'), disabled: t('La integraci\u00f3n est\u00e1 desactivada en este workspace.'), 'missing-key': t('No hay una clave configurada.'), auth: t('La clave fue rechazada o no tiene permisos.'), http: t('El servidor respondi\u00f3 con un error.'), protocol: t('La respuesta no cumple el protocolo MCP.'), network: t('No se pudo establecer la conexi\u00f3n.'), cancelled: t('Verificaci\u00f3n cancelada.') },
+		mcpTools: t('{0} disponibles para tu clave', '{0}'), toolsTerm: t('Herramientas'), mcpEndpoint: t('Servidor'), mcpChecked: t('\u00daltima verificaci\u00f3n'), mcpOptional: t('Opcional: la conversaci\u00f3n y la ejecuci\u00f3n funcionan sin MCP.'),
+		mcpCheck: t('Verificar ahora'), mcpConfigure: t('Configurar clave'), mcpEnable: t('Habilitar en este workspace'), mcpChangeKey: t('Cambiar clave'), mcpSettings: t('Abrir configuraci\u00f3n'),
+		emptyTitle: t('\u00bfEn qu\u00e9 trabajamos hoy?'), emptyBody: t('Convers\u00e1 con la IA sobre tu proyecto. Cuando haya un plan concreto, vas a poder revisarlo y aprobarlo ac\u00e1 mismo. Enviar nunca modifica c\u00f3digo.'),
+		suggestions: [t('Quiero agregar un CRUD de clientes'), t('Explicame la arquitectura de este proyecto'), t('\u00bfQu\u00e9 pruebas faltan?')],
+		placeholder: t('Escrib\u00ed tu mensaje\u2026 (/ para comandos)'), keyboard: t('Enter env\u00eda \u00b7 Shift+Enter nueva l\u00ednea \u00b7 Enviar solo conversa'), send: t('Enviar'), cancel: t('Detener'),
+		you: t('Vos'), notice: t('Harness'), thinking: t('{0} est\u00e1 pensando\u2026', '{0}'), executing: t('Ejecutando plan v{0} con {1}', '{0}', '{1}'),
+		stage: { preparing: t('Preparando ejecuci\u00f3n segura'), agent: t('Agente implementador trabajando'), verifying: t('Ejecutando verificaciones') },
+		observed: t('{0} KB de actividad', '{0}'), elapsed: t('Tiempo'),
+		plan: t('Plan v{0}', '{0}'), planSteps: t('Pasos'), planFiles: t('Archivos'), planRisks: t('Riesgos'), planSkills: t('Skills del proyecto'), planVerification: t('Verificaciones autom\u00e1ticas'), planNoVerification: t('Sin verificaciones configuradas. Pod\u00e9s configurarlas con \u00abConfigurar Harness nativo del proyecto\u00bb.'),
+		approve: t('Aprobar y ejecutar'), requestChanges: t('Pedir cambios'), requestPrefix: t('Cambios al plan: '), superseded: t('Reemplazado por una versi\u00f3n m\u00e1s nueva'), approveHint: t('Al aprobar, el agente modifica archivos del proyecto con permisos de escritura acotados y luego corren las verificaciones.'),
+		run: { passed: t('Ejecuci\u00f3n completada'), failed: t('La ejecuci\u00f3n fall\u00f3'), cancelled: t('Ejecuci\u00f3n cancelada'), timeout: t('Tiempo agotado') },
+		gate: { pending: t('Pendiente'), running: t('En curso'), passed: t('Pas\u00f3'), failed: t('Fall\u00f3'), cancelled: t('Cancelada') },
+		verification: t('Verificaciones'), verificationSkipped: t('Sin verificaciones configuradas'), duration: t('Duraci\u00f3n'), copy: t('Copiar'), copied: t('Copiado'),
+		menu: t('M\u00e1s opciones'), newChat: t('Nueva conversaci\u00f3n'), openTasks: t('Abrir panel de tareas'), refreshProviders: t('Verificar proveedores'), commands: t('Ver comandos'),
+		noProject: t('Abr\u00ed una carpeta para empezar a conversar sobre su c\u00f3digo.'), untrusted: t('Este workspace no es confiable. Marcalo como confiable para conversar y ejecutar.'), hybrid: t('Este proyecto tiene su propio Harness: pod\u00e9s conversar y planificar, pero la ejecuci\u00f3n con escritura est\u00e1 deshabilitada.'),
+		log: t('Conversaci\u00f3n')
+	};
+}
+
+/**
+ * Standalone conversational panel plus the native chat participant for explicit commands.
+ * `options.diagnose` is a test seam for local CLI diagnostics.
+ */
+function registerChat(context, controller, projects, mcp, vscode, options: { diagnose?: typeof diagnoseProvider } = {}) {
 	const handle = createHandler(vscode, controller, projects, mcp);
-	const updateCredential = async () => { if (panel && mcp.credentialState) { const status = await mcp.credentialState(); await panel?.webview.postMessage({ type: 'credential', ...status }); } };
-	const t = message => vscode.l10n.t(message);
-	let panel, active;
+	const t = (message, ...args) => vscode.l10n.t(message, ...args);
+	const diagnose = options.diagnose || diagnoseProvider;
+	const sessions = new Map();
+	const providers = { codex: { status: 'checking' }, claude: { status: 'checking' } };
+	let mcpStatus = { state: 'checking' };
+	let panel, mcpCheck;
 	if (vscode.window?.createStatusBarItem) {
 		const shortcut = vscode.window.createStatusBarItem('atsHarness.chat', vscode.StatusBarAlignment.Left, 19);
 		context.subscriptions.push(shortcut);
 		shortcut.name = t('Chat del Harness'); shortcut.text = '$(comment-discussion) Chat Harness';
-		shortcut.tooltip = t('Abrir el chat del Harness para preparar tareas y consultar su avance.'); shortcut.command = 'atsIde.chat';
+		shortcut.tooltip = t('Conversar con la IA, planificar y ejecutar cambios con aprobaci\u00f3n.'); shortcut.command = 'atsIde.chat';
 		const update = () => vscode.workspace.getConfiguration('atsHarness').get('enabled', true) ? shortcut.show() : shortcut.hide();
 		update();
 		context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => { if (event.affectsConfiguration('atsHarness.enabled')) { update(); } }));
@@ -110,38 +177,133 @@ function registerChat(context, controller, projects, mcp, vscode) {
 		participant.iconPath = vscode.Uri.joinPath(context.extensionUri, 'resources', 'logo.png');
 		context.subscriptions.push(participant);
 	}
+	const folders = () => vscode.workspace.workspaceFolders || [];
+	const selectedFolder = () => {
+		const saved = context.workspaceState?.get('atsChat.folder');
+		return folders().find(folder => folder.uri.toString() === saved) || folders()[0];
+	};
+	const post = message => { void panel?.webview.postMessage(message); };
+	const publish = (folder = selectedFolder()) => {
+		const session = folder && sessions.get(folder.uri.toString());
+		post({
+			type: 'state', trusted: !!vscode.workspace.isTrusted, providers, mcp: { ...mcpStatus, endpoint: new URL(endpoint).host, enabled: !!mcp.enabled?.() },
+			project: folder ? { name: folder.name, id: folder.uri.toString() } : null,
+			projects: folders().map(item => ({ name: item.name, id: item.uri.toString() })),
+			chat: session?.loaded ? session.snapshot() : null
+		});
+	};
+	/** One session per folder survives panel close, so a running execution keeps reporting when reopened. */
+	const sessionFor = folder => {
+		const key = folder.uri.toString();
+		let entry = sessions.get(key);
+		if (!entry) {
+			entry = { loaded: false, session: undefined, snapshot: () => entry.session.snapshot() };
+			entry.ready = (async () => {
+				const root = await fs.realpath(folder.uri.fsPath);
+				const directory = path.join(context.globalStorageUri.fsPath, 'native-harness', createHash('sha256').update(root).digest('hex'), 'chat');
+				const runtime = controller.nativeChatRuntime?.(folder);
+				if (!runtime) { throw Error('HARNESS_CHAT_UNAVAILABLE'); }
+				const preferred = providers.claude.status === 'ready' || providers.codex.status !== 'ready' ? 'claude' : 'codex';
+				entry.session = new HarnessChatSession(new ChatStore(directory), runtime, () => { if (selectedFolder()?.uri.toString() === key) { publish(folder); } }, t, preferred);
+				await entry.session.open();
+				entry.loaded = true;
+				return entry;
+			})();
+			sessions.set(key, entry);
+			// A failed load is retried on the next interaction instead of caching the failure.
+			entry.ready.catch(() => { if (sessions.get(key) === entry) { sessions.delete(key); } });
+		}
+		return entry.ready;
+	};
+	const refreshProviders = async () => {
+		providers.codex = { status: 'checking' }; providers.claude = { status: 'checking' }; publish();
+		const [codex, claude] = await Promise.all([probeProvider('codex', diagnose), probeProvider('claude', diagnose)]);
+		providers.codex = codex; providers.claude = claude; publish();
+	};
+	const refreshMcp = async () => {
+		mcpCheck?.cancel();
+		const source = new vscode.CancellationTokenSource(); mcpCheck = source;
+		mcpStatus = { state: 'checking' }; publish();
+		try {
+			const result = await probeMcpConnection(vscode, mcp, source.token);
+			if (mcpCheck === source) { mcpStatus = result; publish(); }
+		} finally { if (mcpCheck === source) { mcpCheck = undefined; } source.dispose(); }
+	};
+	const report = (folder, error) => {
+		const code = harnessErrorCode(error);
+		const entry = folder && sessions.get(folder.uri.toString());
+		if (entry?.loaded) { void entry.session.note(t('No se pudo completar la operaci\u00f3n ({0}).', code), 'error').catch(() => undefined); }
+		else { void vscode.window.showErrorMessage(t('Chat Harness: {0}', code)); }
+	};
+	const receive = async message => {
+		const folder = selectedFolder();
+		const action = message?.action;
+		if (action === 'ready') {
+			post({ type: 'init', labels: labels(t) });
+			publish();
+			if (folder && vscode.workspace.isTrusted) { await sessionFor(folder).then(() => publish(folder), error => report(folder, error)); }
+			return;
+		}
+		if (action === 'project' && typeof message.id === 'string') {
+			const target = folders().find(item => item.uri.toString() === message.id);
+			if (!target) { return; }
+			await context.workspaceState?.update('atsChat.folder', target.uri.toString());
+			publish(target);
+			if (vscode.workspace.isTrusted) { await sessionFor(target).then(() => publish(target), error => report(target, error)); }
+			return;
+		}
+		if (action === 'mcpCheck') { await refreshMcp(); return; }
+		if (action === 'providerCheck') { await refreshProviders(); return; }
+		if (['mcpConfigure', 'mcpChangeKey', 'mcpEnable'].includes(action)) {
+			await vscode.commands.executeCommand({ mcpConfigure: 'atsIde.mcpConfigure', mcpChangeKey: 'atsIde.mcpChangeKey', mcpEnable: 'atsIde.mcpEnable' }[action]);
+			await refreshMcp(); return;
+		}
+		if (action === 'mcpSettings') { await vscode.commands.executeCommand('workbench.action.openSettings', 'atsHarness.mcp'); return; }
+		if (action === 'openTasks') { await vscode.commands.executeCommand('atsIde.home'); return; }
+		if (!folder) { return; }
+		if (!vscode.workspace.isTrusted) { publish(folder); return; }
+		const entry = await sessionFor(folder).catch(error => { report(folder, error); return undefined; });
+		if (!entry) { return; }
+		const { session } = entry;
+		try {
+			if (action === 'send' && typeof message.text === 'string') {
+				const text = message.text.trim();
+				if (!text || text.length > 10000) { return; }
+				if (text.startsWith('/')) {
+					const source = new vscode.CancellationTokenSource();
+					// A four-backtick fence keeps triple backticks inside command output inert.
+					try { await session.note('`' + text.slice(0, 200).replace(/`/g, '') + '`\n\n````text\n' + await handle(text, source.token) + '\n````'); }
+					finally { source.dispose(); }
+					return;
+				}
+				await session.send(text);
+			}
+			if (action === 'approve' && typeof message.digest === 'string' && /^[a-f0-9]{64}$/.test(message.digest)) { await session.approve(message.digest); }
+			if (action === 'cancel') { session.cancel(); }
+			if (action === 'provider' && ['codex', 'claude'].includes(message.provider)) { await session.selectProvider(message.provider); }
+			if (action === 'reset' && !session.busy) {
+				const confirm = t('Empezar de nuevo');
+				if (await vscode.window.showWarningMessage(t('\u00bfEmpezar una conversaci\u00f3n nueva? El historial actual de este proyecto se borra.'), { modal: true }, confirm) === confirm) { await session.reset(); }
+			}
+		} catch (error) { report(folder, error); }
+	};
 	context.subscriptions.push(vscode.commands.registerCommand('atsIde.chat', () => {
 		if (panel) { panel.reveal(); return; }
 		const resources = vscode.Uri.joinPath(context.extensionUri, 'resources');
-		panel = vscode.window.createWebviewPanel('atsIde.chat', t('Chat Harness'), vscode.ViewColumn.One, { enableScripts: true, localResourceRoots: [resources, vscode.Uri.joinPath(context.extensionUri, 'dist')] });
+		panel = vscode.window.createWebviewPanel('atsIde.chat', t('Chat Harness'), vscode.ViewColumn.One, { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [resources, vscode.Uri.joinPath(context.extensionUri, 'dist')] });
 		const current = panel;
 		const nonce = randomBytes(24).toString('base64');
 		const uri = name => current.webview.asWebviewUri(vscode.Uri.joinPath(resources, name)).toString();
-		current.webview.html = `<!doctype html><html lang="es-AR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${current.webview.cspSource}; style-src ${current.webview.cspSource}; script-src 'nonce-${nonce}';"><link rel="stylesheet" href="${uri('home.css')}"><link rel="stylesheet" href="${uri('chat.css')}"><title>Chat Harness</title></head><body><main class="chat-workspace"><header class="workspace-header"><img src="${uri('logo.png')}" width="32" height="32" alt=""><div><h1>${t('Chat Harness')}</h1><p class="subtitle">${t('Prepar\u00e1 tareas y consult\u00e1 su avance desde el IDE.')}</p></div></header>
-<p id="chat-help" class="muted">${t('Describ\u00ed una tarea para revisar su plan. La ejecuci\u00f3n usa las capacidades del Harness elegido y requiere tu aprobaci\u00f3n.')}</p>
-<div class="actions chat-shortcuts" aria-label="${t('Accesos r\u00e1pidos')}"><button class="secondary" type="button" data-prompt="estado">${t('Ver estado')}</button><button class="secondary" type="button" data-prompt="comandos">${t('Qu\u00e9 puedo hacer')}</button><button class="secondary" type="button" id="home">${t('Abrir panel de tareas')}</button></div>
-<div id="messages" role="log" aria-live="polite" aria-label="${t('Conversaci\u00f3n del Harness')}"></div>
-<p id="chat-status" class="muted" role="status" aria-live="polite" data-pending="${t('Consultando\u2026')}"></p>
-<form id="chat"><label for="prompt">${t('\u00bfQu\u00e9 necesit\u00e1s hacer?')}</label><textarea id="prompt" maxlength="10000" rows="3" required aria-describedby="chat-help chat-keyboard" placeholder="${t('Ejemplo: corregir la validaci\u00f3n del formulario de contacto')}"></textarea><p id="chat-keyboard" class="muted">${t('Enter para enviar \u00b7 Shift+Enter para una nueva l\u00ednea')}</p><div class="actions"><button id="send" type="submit">${t('Enviar')}</button><button id="cancel" class="secondary" type="button" disabled>${t('Cancelar consulta')}</button></div></form>
-<details class="advanced"><summary>${t('ArmotuSitio Work Management \u00b7 opcional')}</summary><p class="muted">${t('Conectalo si este proyecto usa tarjetas o tableros de ArmotuSitio. Las tareas locales funcionan sin esta integraci\u00f3n.')}</p><p id="credential-status" class="muted" role="status" data-configured="${t('Clave configurada')}" data-missing="${t('No hay una clave configurada')}" data-disabled="${t('Integraci\u00f3n desactivada en este workspace')}"></p><div class="actions"><button id="configure" class="secondary" type="button" disabled>${t('Configurar clave')}</button><button id="enable-mcp" class="secondary" type="button" hidden>${t('Habilitar en este workspace')}</button><button id="change-key" class="secondary" type="button" hidden>${t('Cambiar clave')}</button></div><p class="muted">${t('Consultas disponibles: proyectos, tareas CLAVE, tarea CLAVE-123 o tablero CLAVE.')}</p></details>
-</main><script nonce="${nonce}" src="${current.webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'dist', 'chat.js'))}"></script></body></html>`;
-		const subscriptions = [];
-		subscriptions.push(current.webview.onDidReceiveMessage(async message => {
-			if (message?.action === 'ready') { await updateCredential(); return; }
-			if (message?.action === 'cancel') { active?.cancel(); return; }
-			if (message?.action === 'home' && !active) { await vscode.commands.executeCommand('atsIde.home'); return; }
-			if (['configure', 'changeKey', 'enableMcp'].includes(message?.action) && !active) { await vscode.commands.executeCommand(({ configure: 'atsIde.mcpConfigure', changeKey: 'atsIde.mcpChangeKey', enableMcp: 'atsIde.mcpEnable' })[message.action]); await updateCredential(); return; }
-			if (message?.action !== 'send' || typeof message.text !== 'string' || !message.text.trim() || message.text.length > 10000 || active) { return; }
-			const source = new vscode.CancellationTokenSource(); active = source;
-			try {
-				const text = await handle(message.text, source.token);
-				if (panel === current) { await current.webview.postMessage({ type: 'response', text }); }
-			} finally { if (active === source) { active = undefined; } source.dispose(); }
-		}));
-		subscriptions.push(current.onDidDispose(() => { active?.cancel(); active = undefined; panel = undefined; subscriptions.forEach(item => item.dispose()); }));
+		current.webview.html = `<!doctype html><html lang="es-AR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${current.webview.cspSource}; style-src ${current.webview.cspSource}; script-src 'nonce-${nonce}';"><link rel="stylesheet" href="${uri('chat.css')}"><title>Chat Harness</title></head><body><div id="app" class="chat-app" data-logo="${uri('logo.png')}"></div><script nonce="${nonce}" src="${current.webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'dist', 'chat.js'))}"></script></body></html>`;
+		const subscriptions = [current.webview.onDidReceiveMessage(message => receive(message).catch(error => report(selectedFolder(), error)))];
+		subscriptions.push(current.onDidDispose(() => { mcpCheck?.cancel(); panel = undefined; subscriptions.forEach(item => item.dispose()); }));
+		void refreshProviders();
+		void refreshMcp();
 	}));
-	if (mcp.onDidChange) { context.subscriptions.push(mcp.onDidChange(() => { void updateCredential(); })); }
-	context.subscriptions.push({ dispose() { active?.cancel(); panel?.dispose(); } });
+	if (mcp.onDidChange) { context.subscriptions.push(mcp.onDidChange(() => { if (panel) { void refreshMcp(); } })); }
+	if (vscode.workspace.onDidGrantWorkspaceTrust) { context.subscriptions.push(vscode.workspace.onDidGrantWorkspaceTrust(() => { publish(); void receive({ action: 'ready' }); })); }
+	context.subscriptions.push({ dispose() { for (const entry of sessions.values()) { entry.session?.cancel(); } mcpCheck?.cancel(); panel?.dispose(); } });
+	return { receive };
 }
 
-module.exports = { createHandler, registerChat };
+module.exports = { createHandler, registerChat, probeMcpConnection, probeProvider };

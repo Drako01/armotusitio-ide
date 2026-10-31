@@ -11,6 +11,7 @@ import { registerNativeHarness } from '../src/native-integration.ts';
 import { writeProjectConfig } from '../src/native-project.ts';
 import { inspectHarnessAuthority } from '../src/native-authority.ts';
 import { acquireSharedExecutionFence, inspectSharedExecutionFence } from '../src/native-shared-fence.ts';
+import { installFakeCodex } from './native-fake-provider.mts';
 
 async function fixture() {
 	const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-native-ui-'));
@@ -422,4 +423,52 @@ test('IDE trace command exposes executed gate spans without task output', async 
 			{ kinds: ['task', 'gate'], statuses: ['ok', 'ok'], lines: 2 });
 		assert.equal(f.documents.at(-1)!.content.includes(process.version), false);
 	} finally { await f.cleanup(); }
+});
+
+test('chat runtime converses read-only, then implements an approved plan and runs configured gates under one fence', async () => {
+	const f = await fixture();
+	const originalPath = process.env.PATH;
+	try {
+		const root = await fs.realpath(f.roots[0]);
+		await writeProjectConfig(root, { schemaVersion: 1, runtime: 'ide-native', profile: 'custom', plan: { schemaVersion: 1, gates: [{ id: 'exists', executable: 'node', args: ['-e', 'require("fs").accessSync("clients.txt")'] }] } });
+		const bin = path.join(path.dirname(root), 'fake-bin');
+		// Test-only provider: writes only when it receives the approved implementation instruction.
+		await installFakeCodex(bin, [
+			'#!/usr/bin/env node',
+			'let input = ""; process.stdin.on("data", c => input += c);',
+			'process.stdin.on("end", () => {',
+			'  if (input.includes("Implement the approved plan")) { require("fs").writeFileSync("clients.txt", "crud"); console.log("Created clients.txt"); return; }',
+			'  console.log(["Propuesta", "```harness-plan", JSON.stringify({ title: "CRUD", steps: ["Crear clients.txt"] }), "```"].join(String.fromCharCode(10)));',
+			'});'
+		].join('\n'));
+		process.env.PATH = bin + path.delimiter + (originalPath || '');
+		const folder = f.vscode.workspace.workspaceFolders[0];
+		const runtime = f.controller.nativeChatRuntime(folder);
+		const context = await runtime.context();
+		assert.deepEqual({ writer: context.writer, gates: context.verification.gates.map(gate => gate.id) }, { writer: true, gates: ['exists'] });
+		const hooks = { started() { }, progress() { }, stage() { }, gates() { } };
+		const turn = await runtime.converse('codex', 'Quiero agregar un CRUD de clientes', hooks);
+		assert.equal(turn.status, 'passed');
+		assert.match(turn.output, /harness-plan/);
+		await assert.rejects(fs.access(path.join(root, 'clients.txt')));
+		const { extractChatPlan } = await import('../src/native-chat.ts');
+		const plan = extractChatPlan(turn.output, 1).plan!;
+		const stages: string[] = [];
+		const result = await runtime.implement({ provider: 'codex', instruction: 'Implement the approved plan v1', plan, verificationRevision: context.verification.revision }, { ...hooks, stage: stage => stages.push(stage) }, new AbortController().signal);
+		const digest = (await import('node:crypto')).createHash('sha256').update(root).digest('hex');
+		const storage = path.join(path.dirname(root), 'private', 'native-harness', digest);
+		assert.deepEqual({ agent: result.agent.status, verification: result.verification, stages, held: (await inspectSharedExecutionFence(root, storage)).held, file: await fs.readFile(path.join(root, 'clients.txt'), 'utf8') },
+			{ agent: 'passed', verification: { status: 'passed', gates: [{ id: 'exists', status: 'passed' }] }, stages: ['agent', 'verifying'], held: false, file: 'crud' });
+		// A changed verification plan invalidates the approval before any provider starts.
+		await assert.rejects(runtime.implement({ provider: 'codex', instruction: 'Implement the approved plan v1', plan, verificationRevision: 'f'.repeat(64) }, hooks, new AbortController().signal), /HARNESS_CHAT_VERIFICATION_CHANGED/);
+		// Project-owned Harness: conversation remains possible, writers are refused before launching the provider.
+		await fs.rm(path.join(root, 'clients.txt'));
+		await fs.mkdir(path.join(root, '.harness'));
+		assert.equal((await runtime.context()).writer, false);
+		await assert.rejects(runtime.implement({ provider: 'codex', instruction: 'Implement the approved plan v1', plan }, hooks, new AbortController().signal), /HARNESS_HYBRID_WRITER_UNAVAILABLE/);
+		await assert.rejects(fs.access(path.join(root, 'clients.txt')));
+	} finally {
+		if (originalPath === undefined) { delete process.env.PATH; } else { process.env.PATH = originalPath; }
+		await f.cleanup();
+	}
 });
