@@ -134,8 +134,11 @@ test('Markdown renderer input is parsed into inert blocks', () => {
 	assert.equal(blocks[2].items.length, 2);
 });
 
-/** End-to-end panel flow with a scripted runtime: the only fake is the AI provider behind the engine boundary. */
-test('Chat Harness panel: converse, revise, approve and follow execution without leaving the chat', async () => {
+/**
+ * Real `registerChat` host and session with a scripted runtime: the only fake is the AI provider behind
+ * the engine boundary. `state()` rebuilds what the webview sees, reusing the history when it is omitted.
+ */
+async function panelFixture(replies, providerStatus = { claude: 'authenticated', codex: 'unauthenticated' }) {
 	const os = require('node:os'); const fsp = require('node:fs/promises'); const path = require('node:path');
 	const storage = await fsp.mkdtemp(path.join(os.tmpdir(), 'ats-chat-panel-'));
 	const root = await fsp.realpath(storage);
@@ -154,15 +157,10 @@ test('Chat Harness panel: converse, revise, approve and follow execution without
 		CancellationTokenSource: class { token = { isCancellationRequested: false, onCancellationRequested: noop }; cancel() { this.token.isCancellationRequested = true; } dispose() { } }
 	};
 	const answer = text => ({ status: 'passed', exitCode: 0, durationMs: 1, output: text, truncated: false });
-	const replies = [
-		'\u00bfQu\u00e9 datos guard\u00e1s de cada cliente?',
-		'Listo.\n```harness-plan\n{"title":"CRUD de clientes","summary":"API REST","steps":["Modelo","Endpoints"],"files":["src/clients.ts"]}\n```',
-		'Sumo paginaci\u00f3n.\n```harness-plan\n{"title":"CRUD de clientes","summary":"API REST","steps":["Modelo","Endpoints","Paginaci\u00f3n"]}\n```'
-	];
 	const controller = {
 		nativeChatRuntime: () => ({
 			async context() { return { root, writer: true, skills: [], guides: [], verification: { revision: 'c'.repeat(64), gates: [{ id: 'unit', command: 'npm test' }] } }; },
-			async converse(provider, instruction, hooks) { calls.push(['converse', provider]); hooks.started(() => undefined); return answer(replies.shift()); },
+			async converse(provider, instruction, hooks) { calls.push(['converse', provider]); hooks.started(() => undefined); hooks.progress(8192); hooks.progress(16384); return answer(replies.shift()); },
 			async implement(request, hooks) {
 				calls.push(['implement', request.provider, request.plan.version]);
 				hooks.started(() => undefined); hooks.stage('verifying'); hooks.gates([{ id: 'unit', status: 'running' }]);
@@ -172,13 +170,30 @@ test('Chat Harness panel: converse, revise, approve and follow execution without
 	};
 	const mcp = { enabled: () => true, credentialState: async () => ({ configured: true }), client: { tools: async () => [{ name: 'list_projects' }], reset() { } } };
 	const context = { extensionUri: 'ext', subscriptions: [], globalStorageUri: { fsPath: process.platform === 'win32' ? path.join(storage, 'private').replace(/^[A-Z]:/, drive => drive.toLowerCase()) : path.join(storage, 'private') }, workspaceState: { get: () => undefined, update: async () => undefined } };
-	const diagnose = async provider => ({ installed: true, version: '1.0.0', localSession: provider === 'claude' ? 'authenticated' : 'unauthenticated', commandCompatibility: 'verified' });
+	const diagnose = async provider => providerStatus[provider] === 'missing' ? { installed: false, version: null } : ({ installed: true, version: '1.0.0', localSession: providerStatus[provider], commandCompatibility: 'verified' });
+	registerChat(context, controller, async () => [], mcp, vscode, { diagnose });
+	await commands.get('atsIde.chat')();
+	await receive({ action: 'ready' });
+	await new Promise(resolve => setTimeout(resolve, 50));
+	const state = () => {
+		let messages = [];
+		const states = posted.filter(item => item.type === 'state');
+		for (const item of states) { if (item.chat?.messages) { messages = item.chat.messages; } }
+		const last = states.at(-1);
+		return { ...last, chat: last.chat && { ...last.chat, messages: last.chat.messages ?? messages } };
+	};
+	const cleanup = async () => { context.subscriptions.forEach(item => item.dispose()); await fsp.rm(storage, { recursive: true, force: true }); };
+	return { receive, state, posted, calls, executed, cleanup };
+}
+
+test('Chat Harness panel: converse, revise, approve and follow execution without leaving the chat', async () => {
+	const f = await panelFixture([
+		'\u00bfQu\u00e9 datos guard\u00e1s de cada cliente?',
+		'Listo.\n```harness-plan\n{"title":"CRUD de clientes","summary":"API REST","steps":["Modelo","Endpoints"],"files":["src/clients.ts"]}\n```',
+		'Sumo paginaci\u00f3n.\n```harness-plan\n{"title":"CRUD de clientes","summary":"API REST","steps":["Modelo","Endpoints","Paginaci\u00f3n"]}\n```'
+	]);
 	try {
-		registerChat(context, controller, async () => [], mcp, vscode, { diagnose });
-		await commands.get('atsIde.chat')();
-		await receive({ action: 'ready' });
-		await new Promise(resolve => setTimeout(resolve, 50));
-		const state = () => posted.filter(item => item.type === 'state').at(-1);
+		const { receive, state, posted, calls, executed } = f;
 		assert.ok(posted.some(item => item.type === 'init' && item.labels.approve === 'Aprobar y ejecutar' && item.labels.plan === 'Plan v{0}' && item.labels.executing === 'Ejecutando plan v{0} con {1}'));
 		assert.deepEqual({ claude: state().providers.claude.status, codex: state().providers.codex.status, mcp: state().mcp.state, tools: state().mcp.tools, host: state().mcp.endpoint },
 			{ claude: 'ready', codex: 'unauthenticated', mcp: 'connected', tools: 1, host: 'armotusitio.com.ar' });
@@ -202,8 +217,28 @@ test('Chat Harness panel: converse, revise, approve and follow execution without
 		assert.match(state().chat.messages.at(-1).text, /Comandos:/);
 		// Nothing in the flow navigates to Home.
 		assert.deepEqual(executed.filter(args => args[0] === 'atsIde.home'), []);
-	} finally {
-		context.subscriptions.forEach(item => item.dispose());
-		await fsp.rm(storage, { recursive: true, force: true });
-	}
+	} finally { await f.cleanup(); }
+});
+
+test('progress updates omit the unchanged history, and a webview reload gets it again', async () => {
+	const f = await panelFixture(['respuesta']);
+	try {
+		await f.receive({ action: 'send', text: 'hola' });
+		const progress = f.posted.filter(item => item.type === 'state' && item.chat?.activity?.observedBytes === 16384);
+		assert.ok(progress.length > 0 && progress.every(item => item.chat.messages === undefined));
+		const before = f.posted.length;
+		await f.receive({ action: 'ready' });
+		const reloaded = f.posted.slice(before).find(item => item.type === 'state' && item.chat);
+		assert.deepEqual(reloaded.chat.messages.map(message => message.role), ['user', 'assistant']);
+	} finally { await f.cleanup(); }
+});
+
+test('a provider that is not installed is reported before spending a turn, keeping the user text', async () => {
+	const f = await panelFixture(['nunca'], { claude: 'missing', codex: 'authenticated' });
+	try {
+		await f.receive({ action: 'provider', provider: 'claude' });
+		await f.receive({ action: 'send', text: 'Explicame el proyecto' });
+		const last = f.state().chat.messages.at(-1);
+		assert.deepEqual({ calls: f.calls.length, role: last.role, kept: last.text.includes('Explicame el proyecto'), named: last.text.includes('Claude Code') }, { calls: 0, role: 'notice', kept: true, named: true });
+	} finally { await f.cleanup(); }
 });

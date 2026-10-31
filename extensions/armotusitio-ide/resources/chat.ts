@@ -28,8 +28,8 @@ function elapsed(from: string): string {
 function duration(ms: number): string { return ms < 60000 ? Math.round(ms / 1000) + ' s' : Math.floor(ms / 60000) + ' min ' + Math.round((ms % 60000) / 1000) + ' s'; }
 
 const COPIED_FEEDBACK_MS = 1500;
-function copyButton(text: string, className: string): HTMLButtonElement {
-	const button = el('button', className, L.copy) as HTMLButtonElement; button.type = 'button';
+function copyButton(text: string, className: string, label: string): HTMLButtonElement {
+	const button = el('button', className, L.copy) as HTMLButtonElement; button.type = 'button'; button.setAttribute('aria-label', label);
 	button.addEventListener('click', () => { void navigator.clipboard?.writeText(text).then(() => { button.textContent = L.copied; setTimeout(() => { button.textContent = L.copy; }, COPIED_FEEDBACK_MS); }); });
 	return button;
 }
@@ -62,7 +62,7 @@ function markdown(source: string): HTMLElement {
 		} else if (block.type === 'code') {
 			const figure = el('div', 'code-block');
 			const bar = el('div', 'code-bar'); bar.append(el('span', 'code-lang', block.language || 'text'));
-			bar.append(copyButton(block.text, 'link-button'));
+			bar.append(copyButton(block.text, 'link-button', L.copyCode));
 			const pre = el('pre'); pre.append(el('code', undefined, block.text));
 			figure.append(bar, pre); root.append(figure);
 		}
@@ -111,9 +111,9 @@ function shell(): void {
 	header.append(brand, controls);
 
 	const details = el('section', 'popover mcp-details'); details.id = 'mcp-details'; details.hidden = true; details.setAttribute('aria-label', L.mcp);
-	const menu = el('div', 'popover menu'); menu.id = 'menu'; menu.hidden = true; menu.setAttribute('role', 'menu');
+	const menu = el('div', 'popover menu'); menu.id = 'menu'; menu.hidden = true; menu.setAttribute('role', 'group'); menu.setAttribute('aria-label', L.menu);
 	for (const [action, label] of [['reset', L.newChat], ['commands', L.commands], ['providerCheck', L.refreshProviders], ['openTasks', L.openTasks]]) {
-		const item = el('button', 'menu-item', label) as HTMLButtonElement; item.type = 'button'; item.setAttribute('role', 'menuitem');
+		const item = el('button', 'menu-item', label) as HTMLButtonElement; item.type = 'button';
 		item.addEventListener('click', () => {
 			closePopovers();
 			if (action === 'commands') { submit('/comandos'); return; }
@@ -124,9 +124,12 @@ function shell(): void {
 	const banner = el('div', 'banner'); banner.id = 'banner'; banner.setAttribute('role', 'status');
 	const log = el('main', 'log'); log.id = 'log'; log.setAttribute('role', 'log'); log.setAttribute('aria-live', 'polite'); log.setAttribute('aria-label', L.log); log.tabIndex = 0;
 	const thread = el('div', 'thread'); thread.id = 'thread';
-	const activity = el('div', 'activity'); activity.id = 'activity';
+	// Live activity sits outside the log region: its clock would otherwise be announced every second.
+	const activity = el('section', 'activity'); activity.id = 'activity'; activity.setAttribute('aria-label', L.activity);
 	const empty = el('section', 'empty'); empty.id = 'empty';
-	log.append(empty, thread, activity);
+	const announcer = el('div', 'visually-hidden'); announcer.id = 'announcer'; announcer.setAttribute('role', 'status');
+	const conversation = el('div', 'conversation'); conversation.append(thread);
+	log.append(empty, conversation, activity, announcer);
 
 	const form = el('form', 'composer') as HTMLFormElement; form.id = 'composer';
 	const box = el('div', 'composer-box');
@@ -142,12 +145,19 @@ function shell(): void {
 	input.addEventListener('keydown', event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); form.requestSubmit(); } });
 	input.addEventListener('input', autosize);
 	app.append(header, details, menu, banner, log, form);
-	document.addEventListener('keydown', event => { if (event.key === 'Escape') { closePopovers(); } });
-	document.addEventListener('click', event => {
-		const target = event.target as HTMLElement;
-		if (!target.closest('.popover') && !target.closest('#mcp-pill') && !target.closest('#menu-button')) { closePopovers(); }
-	});
 }
+// Registered once: `shell()` runs again whenever the host re-sends labels.
+document.addEventListener('keydown', event => {
+	if (event.key !== 'Escape') { return; }
+	const open = ['mcp-details', 'menu'].find(id => document.getElementById(id)?.hidden === false);
+	closePopovers();
+	// Return focus to the control that opened the popover (WCAG 2.4.3).
+	if (open) { document.getElementById(open === 'menu' ? 'menu-button' : 'mcp-pill')?.focus(); }
+});
+document.addEventListener('click', event => {
+	const target = event.target as HTMLElement;
+	if (L && !target.closest('.popover') && !target.closest('#mcp-pill') && !target.closest('#menu-button')) { closePopovers(); }
+});
 function autosize(): void { const input = document.getElementById('prompt') as HTMLTextAreaElement; input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 240) + 'px'; }
 function toggle(id: string, trigger: HTMLElement): void {
 	const panel = document.getElementById(id); const open = panel.hidden;
@@ -156,9 +166,9 @@ function toggle(id: string, trigger: HTMLElement): void {
 	if (open) { (panel.querySelector('button') as HTMLElement)?.focus(); }
 }
 function closePopovers(): void {
-	for (const id of ['mcp-details', 'menu']) { document.getElementById(id).hidden = true; }
-	document.getElementById('mcp-pill').setAttribute('aria-expanded', 'false');
-	document.getElementById('menu-button').setAttribute('aria-expanded', 'false');
+	for (const id of ['mcp-details', 'menu']) { const panel = document.getElementById(id); if (panel) { panel.hidden = true; } }
+	document.getElementById('mcp-pill')?.setAttribute('aria-expanded', 'false');
+	document.getElementById('menu-button')?.setAttribute('aria-expanded', 'false');
 }
 function busy(): boolean { return !!state?.chat?.activity; }
 function submit(value: string): void {
@@ -215,7 +225,7 @@ function renderHeader(): void {
 // ---------------------------------------------------------------- messages
 function planCard(message: any): HTMLElement {
 	const plan = message.plan;
-	const card = el('section', 'plan-card'); card.dataset.digest = plan.digest; card.setAttribute('aria-label', format(L.plan, String(plan.version)) + ': ' + plan.title);
+	const card = el('section', 'plan-card'); card.dataset.messageId = message.id; card.setAttribute('aria-label', format(L.plan, String(plan.version)) + ': ' + plan.title);
 	const head = el('div', 'plan-head');
 	head.append(el('span', 'badge', format(L.plan, String(plan.version))), el('h3', undefined, plan.title));
 	card.append(head);
@@ -238,7 +248,7 @@ function planCard(message: any): HTMLElement {
 function updatePlanCards(): void {
 	const current = state.chat?.plan;
 	for (const card of document.querySelectorAll<HTMLElement>('.plan-card')) {
-		const latest = current && card.dataset.digest === current.digest;
+		const latest = current && card.dataset.messageId === current.messageId;
 		card.classList.toggle('superseded', !latest);
 		const verification = card.querySelector('.plan-verification'); verification.textContent = '';
 		const footer = card.querySelector('.plan-footer'); footer.textContent = '';
@@ -252,12 +262,14 @@ function updatePlanCards(): void {
 		const actions = el('div', 'actions');
 		const approve = el('button', 'approve', L.approve) as HTMLButtonElement; approve.type = 'button';
 		approve.disabled = !current.approvable;
+		const hint = el('p', 'muted', current.blockedReason || L.approveHint); hint.id = 'plan-hint-' + current.messageId;
+		approve.setAttribute('aria-describedby', hint.id);
 		approve.addEventListener('click', () => { if (!approve.disabled) { approve.disabled = true; api.postMessage({ action: 'approve', digest: current.digest }); } });
 		const change = el('button', 'secondary', L.requestChanges) as HTMLButtonElement; change.type = 'button';
 		change.disabled = busy();
 		change.addEventListener('click', () => { const input = document.getElementById('prompt') as HTMLTextAreaElement; input.value = L.requestPrefix; input.focus(); autosize(); });
 		actions.append(approve, change);
-		footer.append(actions, el('p', 'muted', current.blockedReason || L.approveHint));
+		footer.append(actions, hint);
 	}
 }
 function runSummary(run: any): HTMLElement {
@@ -295,7 +307,7 @@ function messageNode(message: any): HTMLElement {
 	if (message.text) { node.append(markdown(message.text)); }
 	if (message.plan) { node.append(planCard(message)); }
 	if (message.role === 'assistant' || message.run) {
-		node.append(copyButton(message.text, 'link-button copy'));
+		node.append(copyButton(message.text, 'link-button copy', L.copyMessage));
 	}
 	return node;
 }
@@ -323,16 +335,26 @@ function renderEmpty(): void {
 	}
 	empty.append(chips);
 }
+let announced = '';
+/** Speak only phase changes (start, stage, gate results, end), never timers or byte counters. */
+function announce(activity: any): void {
+	const phase = !activity ? '' : activity.kind === 'thinking' ? format(L.thinking, providerName(activity.provider))
+		: [L.stage[activity.stage], ...(activity.gates || []).filter(gate => gate.status !== 'pending').map(gate => gate.id + ': ' + (L.gate[gate.status] || gate.status))].join('. ');
+	if (phase === announced) { return; }
+	announced = phase;
+	document.getElementById('announcer').textContent = phase || L.idle;
+}
 function renderActivity(): void {
 	const box = document.getElementById('activity'); box.textContent = '';
 	const activity = state.chat?.activity;
+	announce(activity);
 	window.clearInterval(ticker); ticker = undefined;
 	if (!activity) { box.hidden = true; return; }
 	box.hidden = false;
 	const head = el('div', 'activity-head');
 	const spinner = el('span', 'spinner'); spinner.setAttribute('aria-hidden', 'true');
 	const title = activity.kind === 'thinking' ? format(L.thinking, providerName(activity.provider)) : format(L.executing, String(activity.planVersion), providerName(activity.provider));
-	const clock = el('span', 'muted clock', elapsed(activity.startedAt));
+	const clock = el('span', 'muted clock', elapsed(activity.startedAt)); clock.setAttribute('aria-hidden', 'true');
 	head.append(spinner, el('strong', undefined, title), clock);
 	box.append(head);
 	if (activity.kind === 'executing') {
@@ -347,14 +369,16 @@ function renderActivity(): void {
 		box.append(stages);
 		if (activity.gates?.length) { box.append(gateList(activity.gates)); }
 	}
-	if (activity.observedBytes) { box.append(el('p', 'muted', format(L.observed, String(Math.round(activity.observedBytes / 1024))))); }
+	if (activity.observedBytes) { const bytes = el('p', 'muted', format(L.observed, String(Math.round(activity.observedBytes / 1024)))); bytes.setAttribute('aria-hidden', 'true'); box.append(bytes); }
 	ticker = window.setInterval(() => { clock.textContent = elapsed(activity.startedAt); }, 1000);
 }
 function renderComposer(): void {
 	const running = busy();
 	(document.getElementById('send') as HTMLButtonElement).hidden = running;
 	(document.getElementById('send') as HTMLButtonElement).disabled = !state.chat;
-	(document.getElementById('stop') as HTMLButtonElement).hidden = !running;
+	const stop = document.getElementById('stop') as HTMLButtonElement;
+	stop.hidden = !running; stop.disabled = !!state.chat?.activity?.cancelling;
+	stop.textContent = state.chat?.activity?.cancelling ? L.cancelling : L.cancel;
 	(document.getElementById('prompt') as HTMLTextAreaElement).disabled = !state.chat;
 	document.getElementById('composer').setAttribute('aria-busy', String(running));
 	const banner = document.getElementById('banner');
@@ -371,6 +395,10 @@ function render(): void {
 window.addEventListener('message', event => {
 	const data = event.data;
 	if (data?.type === 'init') { L = data.labels; shell(); if (state) { render(); } return; }
-	if (data?.type === 'state') { state = data; if (L) { render(); } }
+	if (data?.type === 'state') {
+		if (data.chat && data.chat.messages === undefined) { data.chat.messages = state?.chat?.messages ?? []; }
+		state = data;
+		if (L) { render(); }
+	}
 });
 api.postMessage({ action: 'ready' });

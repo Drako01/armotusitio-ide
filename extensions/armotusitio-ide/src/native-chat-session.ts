@@ -5,8 +5,9 @@
 /* One conversation per project. Sending only converses; code changes require approving the latest plan. */
 import type { AgentOutcome } from './native-agent-execution.ts';
 import type { NativeProvider } from './native-providers.ts';
+import { redactSecrets } from './native-redact.ts';
 import {
-	buildConversationInstruction, buildImplementationInstruction, chatMessage, extractChatPlan, harnessErrorCode, latestPlan,
+	buildConversationInstruction, buildImplementationInstruction, chatMessage, extractChatPlan, harnessErrorCode, latestPlanMessage, samePlanContent,
 	type ChatConversation, type ChatMessage, type ChatPlan, type ChatProjectContext, type ChatRunSummary, type ChatStore, type GateSummary, type RunStatus
 } from './native-chat.ts';
 
@@ -35,15 +36,19 @@ export interface ChatActivity {
 	provider: NativeProvider;
 	startedAt: string;
 	observedBytes: number;
+	/** Cancellation was requested; the UI stops offering it while the process winds down. */
+	cancelling?: boolean;
 	stage?: ImplementStage;
 	planVersion?: number;
 	gates?: GateSummary[];
 }
 export interface ChatSnapshot {
 	provider: NativeProvider;
+	/** Increments whenever `messages` changes, so hosts can skip resending an unchanged history. */
+	revision: number;
 	messages: ChatMessage[];
 	activity?: ChatActivity;
-	plan?: { version: number; digest: string; approvable: boolean; blockedReason?: string };
+	plan?: { messageId: string; version: number; digest: string; approvable: boolean; blockedReason?: string };
 	writer: boolean;
 	/** Commands that run automatically after an approved implementation. */
 	verification: Array<{ id: string; command: string }>;
@@ -59,12 +64,30 @@ function failureNotice(t: Translate, outcome: AgentOutcome): string {
 	return t('La IA no pudo completar la respuesta (c\u00f3digo {0}). Revis\u00e1 que el proveedor est\u00e9 instalado y autenticado.', String(outcome.exitCode ?? 'n/a'));
 }
 
+/** What the user can do about a known failure; unknown codes fall back to a generic retry hint. */
+function recoveryHint(t: Translate, code: string): string {
+	if (code === 'HARNESS_FENCE_HELD_RECONCILIATION_REQUIRED') { return t('Otra ejecuci\u00f3n tiene el lock del proyecto o qued\u00f3 colgada. Si no hay nada corriendo, us\u00e1 \u00abArmoTuSitio: Reconciliar lock compartido obsoleto\u00bb y reintent\u00e1.'); }
+	if (code === 'HARNESS_ALREADY_RUNNING' || code === 'HARNESS_PROVIDER_CAPACITY_REACHED') { return t('Hay otra tarea de IA en curso. Esper\u00e1 a que termine o cancelala.'); }
+	if (code === 'HARNESS_UNTRUSTED_WORKSPACE') { return t('Marc\u00e1 el workspace como confiable para continuar.'); }
+	if (code === 'HARNESS_CANCELLED_BEFORE_START') { return t('La ejecuci\u00f3n se cancel\u00f3 antes de iniciar; no se modific\u00f3 ning\u00fan archivo.'); }
+	if (code.startsWith('HARNESS_PROVIDER_') && /BUDGET|QUOTA|RATE_LIMITED/.test(code)) { return t('Se alcanz\u00f3 un l\u00edmite local de uso del proveedor. Revis\u00e1 \u00abArmoTuSitio: Consultar cupo local de llamadas de IA\u00bb o eleg\u00ed el otro proveedor.'); }
+	if (code === 'HARNESS_CHAT_VERIFICATION_CHANGED' || code === 'HARNESS_PROJECT_SKILL_CHANGED' || code === 'HARNESS_PROJECT_GUIDANCE_CHANGED') { return t('La configuraci\u00f3n del proyecto cambi\u00f3 despu\u00e9s de revisar el plan. Pedile a la IA que lo confirme de nuevo.'); }
+	return t('La conversaci\u00f3n se conserva; pod\u00e9s reintentar.');
+}
+
+/** User-facing failure: a safe error code plus what to do next. Shared by the session and its host. */
+export function describeFailure(t: Translate, error: unknown): string {
+	const code = harnessErrorCode(error);
+	return t('No se pudo completar la operaci\u00f3n ({0}). {1}', code, recoveryHint(t, code));
+}
+
 export class HarnessChatSession {
 	private conversation!: ChatConversation;
 	private activity?: ChatActivity;
 	private cancelActive?: () => void;
 	private context?: ChatProjectContext;
 	private loaded?: Promise<void>;
+	private revision = 0;
 
 	private readonly store: ChatStore;
 	private readonly runtime: ChatRuntime;
@@ -81,6 +104,15 @@ export class HarnessChatSession {
 			const { conversation, recovered } = await this.store.load(this.defaultProvider);
 			this.conversation = conversation;
 			if (recovered) { this.conversation.messages.push(chatMessage('notice', this.t('El historial anterior estaba da\u00f1ado y se archiv\u00f3. Empez\u00e1s una conversaci\u00f3n nueva.'), { tone: 'error' })); }
+			const interrupted = this.conversation.pending;
+			if (interrupted) {
+				// The process that owned this operation is gone: say exactly what may be incomplete.
+				this.conversation.pending = undefined;
+				this.conversation.messages.push(chatMessage('notice', interrupted.kind === 'executing'
+					? this.t('La ejecuci\u00f3n del plan v{0} se interrumpi\u00f3 porque el IDE se cerr\u00f3. Revis\u00e1 los cambios del workspace (por ejemplo con git status) y, si el lock qued\u00f3 tomado, us\u00e1 \u00abArmoTuSitio: Reconciliar lock compartido obsoleto\u00bb antes de reintentar.', String(interrupted.planVersion ?? '?'))
+					: this.t('La respuesta anterior se interrumpi\u00f3 porque el IDE se cerr\u00f3. Volv\u00e9 a enviar el mensaje.'), { tone: 'error' }));
+			}
+			if (recovered || interrupted) { await this.persist(); }
 			await this.refreshContext();
 		})();
 		return this.loaded;
@@ -96,25 +128,29 @@ export class HarnessChatSession {
 	}
 
 	snapshot(): ChatSnapshot {
-		const plan = latestPlan(this.conversation.messages);
+		const current = latestPlanMessage(this.conversation.messages);
 		const writer = !!this.context?.writer;
-		const blockedReason = plan && this.blockedReason(plan, writer);
+		const blockedReason = current && this.blockedReason(current, writer);
 		return {
 			provider: this.conversation.provider,
+			revision: this.revision,
 			messages: this.conversation.messages,
 			activity: this.activity ? { ...this.activity } : undefined,
-			plan: plan ? { version: plan.version, digest: plan.digest, approvable: !this.activity && !blockedReason, blockedReason } : undefined,
+			plan: current ? { messageId: current.id, version: current.plan.version, digest: current.plan.digest, approvable: !this.activity && !blockedReason, blockedReason } : undefined,
 			writer,
 			verification: this.context?.verification?.gates ?? []
 		};
 	}
 
 	/** Why the latest plan cannot be approved right now, if anything blocks it. */
-	private blockedReason(plan: ChatPlan, writer: boolean): string | undefined {
+	private blockedReason(current: ChatMessage & { plan: ChatPlan }, writer: boolean): string | undefined {
 		if (!this.context) { return this.t('No se pudo leer el estado del proyecto. Reintent\u00e1 en unos segundos.'); }
 		if (!writer) { return this.t('Este proyecto tiene su propio Harness. El IDE no aplica cambios sin coordinaci\u00f3n verificable con ese motor.'); }
+		const position = this.conversation.messages.indexOf(current);
+		// New requirements suspend the plan until the assistant confirms or revises it.
+		if (this.conversation.messages.slice(position + 1).some(message => message.role === 'user')) { return this.t('Escribiste despu\u00e9s de este plan. Esper\u00e1 a que la IA lo confirme o lo actualice antes de aprobarlo.'); }
 		// A plan that already ran successfully is never applied twice; failed or cancelled runs can be retried.
-		const applied = this.conversation.messages.some(message => message.run?.planVersion === plan.version && message.run.status === 'passed');
+		const applied = this.conversation.messages.some(message => message.run?.planVersion === current.plan.version && message.run.status === 'passed');
 		return applied ? this.t('Este plan ya se ejecut\u00f3. Ped\u00ed cambios para generar una nueva versi\u00f3n.') : undefined;
 	}
 
@@ -145,26 +181,30 @@ export class HarnessChatSession {
 		if (!body || body.length > 10000) { throw Error('HARNESS_CHAT_MESSAGE_INVALID'); }
 		if (this.activity) { throw Error('HARNESS_ALREADY_RUNNING'); }
 		const provider = this.conversation.provider;
-		this.conversation.messages.push(chatMessage('user', body));
+		// Credentials pasted by mistake are neither stored nor sent to the provider.
+		this.conversation.messages.push(chatMessage('user', redactSecrets(body)));
 		this.activity = { kind: 'thinking', provider, startedAt: new Date().toISOString(), observedBytes: 0 };
+		this.conversation.pending = { kind: 'thinking', startedAt: this.activity.startedAt };
 		// Every failure after the activity starts, including storage, must end in `finally` and clear it.
 		try {
 			await this.persist();
 			await this.refreshContext();
 			if (!this.context) { throw Error('HARNESS_CHAT_CONTEXT_UNAVAILABLE'); }
-			const current = latestPlan(this.conversation.messages);
+			const current = latestPlanMessage(this.conversation.messages)?.plan;
 			const instruction = buildConversationInstruction(this.conversation.messages, this.context, current);
 			const outcome = await this.runtime.converse(provider, instruction, this.hooks());
 			if (outcome.status !== 'passed' || !outcome.output.trim()) {
 				this.conversation.messages.push(chatMessage('notice', failureNotice(this.t, outcome), { tone: outcome.status === 'cancelled' ? 'info' : 'error', provider }));
 				return;
 			}
-			const { text, plan } = extractChatPlan(outcome.output, (current?.version ?? 0) + 1);
-			this.conversation.messages.push(chatMessage('assistant', text || this.t('Plan actualizado.'), { provider, plan }));
+			const extracted = extractChatPlan(outcome.output, (current?.version ?? 0) + 1);
+			// A confirmed, unchanged plan keeps its version so the approval refers to what the user already reviewed.
+			const plan = extracted.plan && current && samePlanContent(extracted.plan, current) ? current : extracted.plan;
+			this.conversation.messages.push(chatMessage('assistant', extracted.text || this.t('Plan actualizado.'), { provider, plan }));
 		} catch (error) {
 			this.conversation.messages.push(chatMessage('notice', this.errorNotice(error), { tone: 'error', provider }));
 		} finally {
-			this.activity = undefined; this.cancelActive = undefined;
+			this.finish();
 			await this.persist();
 		}
 	}
@@ -173,14 +213,15 @@ export class HarnessChatSession {
 	async approve(digest: string): Promise<void> {
 		if (this.activity) { throw Error('HARNESS_ALREADY_RUNNING'); }
 		await this.refreshContext();
-		const plan = latestPlan(this.conversation.messages);
+		const plan = latestPlanMessage(this.conversation.messages)?.plan;
 		if (!plan || plan.digest !== digest) { throw Error('HARNESS_CHAT_PLAN_CHANGED'); }
 		const state = this.snapshot().plan;
-		if (!state?.approvable || !this.context) { throw Error(this.context?.writer ? 'HARNESS_CHAT_PLAN_ALREADY_APPLIED' : 'HARNESS_HYBRID_WRITER_UNAVAILABLE'); }
+		if (!state?.approvable || !this.context) { throw Error(this.context?.writer ? 'HARNESS_CHAT_PLAN_NOT_APPROVABLE' : 'HARNESS_HYBRID_WRITER_UNAVAILABLE'); }
 		const provider = this.conversation.provider;
 		const controller = new AbortController();
 		this.conversation.messages.push(chatMessage('notice', this.t('Plan v{0} aprobado. Ejecutando con {1}.', String(plan.version), provider === 'claude' ? 'Claude Code' : 'Codex'), { tone: 'info', provider }));
 		this.activity = { kind: 'executing', provider, startedAt: new Date().toISOString(), observedBytes: 0, stage: 'preparing', planVersion: plan.version, gates: this.context.verification?.gates.map(gate => ({ id: gate.id, status: 'pending' as const })) ?? [] };
+		this.conversation.pending = { kind: 'executing', startedAt: this.activity.startedAt, planVersion: plan.version };
 		const started = Date.now();
 		try {
 			await this.persist();
@@ -199,29 +240,42 @@ export class HarnessChatSession {
 				run: { planVersion: plan.version, provider, status, durationMs: Date.now() - started, verification: result.verification }
 			}));
 		} catch (error) {
-			this.conversation.messages.push(chatMessage('notice', this.errorNotice(error), { tone: 'error', provider }));
+			this.conversation.messages.push(chatMessage('notice', this.errorNotice(error), { tone: harnessErrorCode(error) === 'HARNESS_CANCELLED_BEFORE_START' ? 'info' : 'error', provider }));
 		} finally {
-			this.activity = undefined; this.cancelActive = undefined;
+			this.finish();
 			await this.persist();
 		}
 	}
 
+	/** Cancellation requested before the provider process exists is applied as soon as it starts. */
 	private hooks(onCancel?: () => void): ChatRunHooks {
 		let cancelProcess: (() => void) | undefined;
-		this.cancelActive = () => { onCancel?.(); cancelProcess?.(); };
+		let requested = false;
+		this.cancelActive = () => {
+			requested = true;
+			if (this.activity) { this.activity.cancelling = true; this.emit(); }
+			onCancel?.(); cancelProcess?.();
+		};
 		return {
-			started: cancel => { cancelProcess = cancel; if (this.activity?.stage === 'preparing') { this.activity.stage = 'agent'; } this.emit(); },
+			started: cancel => {
+				cancelProcess = cancel;
+				if (requested) { cancel(); }
+				if (this.activity?.stage === 'preparing') { this.activity.stage = 'agent'; }
+				this.emit();
+			},
 			progress: observedBytes => { if (this.activity) { this.activity.observedBytes = observedBytes; this.emit(); } }
 		};
 	}
 
-	private errorNotice(error: unknown): string {
-		const code = harnessErrorCode(error);
-		return this.t('No se pudo completar la operaci\u00f3n ({0}). La conversaci\u00f3n se conserva; pod\u00e9s reintentar.', code);
+	private finish(): void {
+		this.activity = undefined; this.cancelActive = undefined; this.conversation.pending = undefined;
 	}
+
+	private errorNotice(error: unknown): string { return describeFailure(this.t, error); }
 
 	private async persist(): Promise<void> {
 		if (this.conversation.messages.length > 200) { this.conversation.messages.splice(0, this.conversation.messages.length - 200); }
+		this.revision++;
 		this.emit();
 		await this.store.save(this.conversation);
 	}

@@ -7,7 +7,7 @@ const path = require('node:path');
 const fs = require('node:fs/promises');
 const { randomBytes, createHash } = require('node:crypto');
 const { ChatStore, harnessErrorCode } = require('./native-chat.ts');
-const { HarnessChatSession } = require('./native-chat-session.ts');
+const { HarnessChatSession, describeFailure } = require('./native-chat-session.ts');
 const { diagnoseProvider } = require('./native-provider-diagnostics.ts');
 const { endpoint } = require('./mcp.ts');
 
@@ -142,6 +142,7 @@ function labels(t) {
 		run: { passed: t('Ejecuci\u00f3n completada'), failed: t('La ejecuci\u00f3n fall\u00f3'), cancelled: t('Ejecuci\u00f3n cancelada'), timeout: t('Tiempo agotado') },
 		gate: { pending: t('Pendiente'), running: t('En curso'), passed: t('Pas\u00f3'), failed: t('Fall\u00f3'), cancelled: t('Cancelada') },
 		verification: t('Verificaciones'), verificationSkipped: t('Sin verificaciones configuradas'), duration: t('Duraci\u00f3n'), copy: t('Copiar'), copied: t('Copiado'),
+		copyMessage: t('Copiar respuesta'), copyCode: t('Copiar c\u00f3digo'), activity: t('Actividad en curso'), idle: t('Sin actividad en curso'), cancelling: t('Deteniendo\u2026'),
 		menu: t('M\u00e1s opciones'), newChat: t('Nueva conversaci\u00f3n'), openTasks: t('Abrir panel de tareas'), refreshProviders: t('Verificar proveedores'), commands: t('Ver comandos'),
 		noProject: t('Abr\u00ed una carpeta para empezar a conversar sobre su c\u00f3digo.'), untrusted: t('Este workspace no es confiable. Marcalo como confiable para conversar y ejecutar.'), hybrid: t('Este proyecto tiene su propio Harness: pod\u00e9s conversar y planificar, pero la ejecuci\u00f3n con escritura est\u00e1 deshabilitada.'),
 		log: t('Conversaci\u00f3n')
@@ -158,7 +159,7 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 	const diagnose = options.diagnose || diagnoseProvider;
 	const sessions = new Map();
 	const providers = { codex: { status: 'checking' }, claude: { status: 'checking' } };
-	let mcpStatus = { state: 'checking' };
+	let mcpStatus: { state: string; reason?: string; tools?: number; checkedAt?: string } = { state: 'checking' };
 	let panel, mcpCheck;
 	if (vscode.window?.createStatusBarItem) {
 		const shortcut = vscode.window.createStatusBarItem('atsHarness.chat', vscode.StatusBarAlignment.Left, 19);
@@ -183,13 +184,19 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 		return folders().find(folder => folder.uri.toString() === saved) || folders()[0];
 	};
 	const post = message => { void panel?.webview.postMessage(message); };
+	// Progress events are frequent; the history is resent only when it changed or the webview lost it.
+	let posted = { key: undefined, revision: -1 };
 	const publish = (folder = selectedFolder()) => {
-		const session = folder && sessions.get(folder.uri.toString());
+		const key = folder?.uri.toString();
+		const session = key && sessions.get(key);
+		let chat = session?.loaded ? session.snapshot() : null;
+		if (chat && posted.key === key && posted.revision === chat.revision) { chat = { ...chat, messages: undefined }; }
+		else if (chat) { posted = { key, revision: chat.revision }; }
 		post({
 			type: 'state', trusted: !!vscode.workspace.isTrusted, providers, mcp: { ...mcpStatus, endpoint: new URL(endpoint).host, enabled: !!mcp.enabled?.() },
-			project: folder ? { name: folder.name, id: folder.uri.toString() } : null,
+			project: folder ? { name: folder.name, id: key } : null,
 			projects: folders().map(item => ({ name: item.name, id: item.uri.toString() })),
-			chat: session?.loaded ? session.snapshot() : null
+			chat
 		});
 	};
 	/** One session per folder survives panel close, so a running execution keeps reporting when reopened. */
@@ -230,15 +237,15 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 		} finally { if (mcpCheck === source) { mcpCheck = undefined; } source.dispose(); }
 	};
 	const report = (folder, error) => {
-		const code = harnessErrorCode(error);
 		const entry = folder && sessions.get(folder.uri.toString());
-		if (entry?.loaded) { void entry.session.note(t('No se pudo completar la operaci\u00f3n ({0}).', code), 'error').catch(() => undefined); }
-		else { void vscode.window.showErrorMessage(t('Chat Harness: {0}', code)); }
+		if (entry?.loaded) { void entry.session.note(describeFailure(t, error), 'error').catch(() => undefined); }
+		else { void vscode.window.showErrorMessage(t('Chat Harness: {0}', harnessErrorCode(error))); }
 	};
 	const receive = async message => {
 		const folder = selectedFolder();
 		const action = message?.action;
 		if (action === 'ready') {
+			posted = { key: undefined, revision: -1 };
 			post({ type: 'init', labels: labels(t) });
 			publish();
 			if (folder && vscode.workspace.isTrusted) { await sessionFor(folder).then(() => publish(folder), error => report(folder, error)); }
@@ -276,6 +283,12 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 					finally { source.dispose(); }
 					return;
 				}
+				const selected = session.snapshot().provider;
+				if (providers[selected].status === 'unavailable') {
+					// Fail before spending a turn: the message stays visible so the user can resend it.
+					await session.note(t('{0} no est\u00e1 instalado en este equipo. Eleg\u00ed el otro proveedor y reenvi\u00e1 tu mensaje: {1}', selected === 'claude' ? 'Claude Code' : 'Codex', '\u00ab' + text.slice(0, 500) + '\u00bb'), 'error');
+					return;
+				}
 				await session.send(text);
 			}
 			if (action === 'approve' && typeof message.digest === 'string' && /^[a-f0-9]{64}$/.test(message.digest)) { await session.approve(message.digest); }
@@ -296,6 +309,11 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 		const uri = name => current.webview.asWebviewUri(vscode.Uri.joinPath(resources, name)).toString();
 		current.webview.html = `<!doctype html><html lang="es-AR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${current.webview.cspSource}; style-src ${current.webview.cspSource}; script-src 'nonce-${nonce}';"><link rel="stylesheet" href="${uri('chat.css')}"><title>Chat Harness</title></head><body><div id="app" class="chat-app" data-logo="${uri('logo.png')}"></div><script nonce="${nonce}" src="${current.webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'dist', 'chat.js'))}"></script></body></html>`;
 		const subscriptions = [current.webview.onDidReceiveMessage(message => receive(message).catch(error => report(selectedFolder(), error)))];
+		// A status older than five minutes is re-verified when the panel becomes visible again.
+		subscriptions.push(current.onDidChangeViewState?.(event => {
+			const age = mcpStatus.checkedAt ? Date.now() - Date.parse(mcpStatus.checkedAt) : Infinity;
+			if (event.webviewPanel.visible && mcpStatus.state !== 'checking' && age > 5 * 60 * 1000) { void refreshMcp(); }
+		}) ?? { dispose() { } });
 		subscriptions.push(current.onDidDispose(() => { mcpCheck?.cancel(); panel = undefined; subscriptions.forEach(item => item.dispose()); }));
 		void refreshProviders();
 		void refreshMcp();
@@ -306,4 +324,4 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 	return { receive };
 }
 
-module.exports = { createHandler, registerChat, probeMcpConnection, probeProvider };
+module.exports = { createHandler, registerChat, probeMcpConnection, probeProvider, labels };
