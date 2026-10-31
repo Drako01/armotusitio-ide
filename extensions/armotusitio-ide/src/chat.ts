@@ -129,7 +129,7 @@ function labels(t) {
 	return {
 		title: t('Chat Harness'), project: t('Proyecto'), provider: t('IA'), codex: 'Codex', claude: 'Claude Code',
 		model: t('Modelo de {0}', '{0}'), modelDefault: t('Predeterminado: {0}', '{0}'), modelCliDefault: t('Predeterminado del CLI'),
-		effort: t('Razonamiento de {0}', '{0}'), effortDefault: t('Esfuerzo: predeterminado'), effortLevels: { low: t('Bajo'), medium: t('Medio'), high: t('Alto'), xhigh: t('Extra alto'), max: t('Máximo') },
+		effort: t('Razonamiento de {0}', '{0}'), effortShort: t('Esfuerzo'), effortDefault: t('Esfuerzo: predeterminado'), effortLevels: { low: t('Bajo'), medium: t('Medio'), high: t('Alto'), xhigh: t('Extra alto'), max: t('Máximo') },
 		effortHint: t('La disponibilidad del nivel depende del modelo y del CLI instalado.'),
 		providerStatus: { ready: t('Autenticado'), unauthenticated: t('Sin sesi\u00f3n iniciada'), unavailable: t('No instalado'), incompatible: t('Versi\u00f3n incompatible'), unknown: t('Estado desconocido'), checking: t('Verificando\u2026') },
 		mcp: t('ArmotuSitio MCP'), mcpState: { connected: t('Conectado'), disconnected: t('Desconectado'), checking: t('Verificando'), error: t('Error') },
