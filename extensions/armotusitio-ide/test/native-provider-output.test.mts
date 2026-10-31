@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseProviderOutput, CodexEventAccumulator } from '../src/native-provider-output.ts';
+import { parseProviderOutput, ClaudeEventAccumulator, CodexEventAccumulator } from '../src/native-provider-output.ts';
 
 test('Codex JSONL exposes only final model message and measured tokens', () => {
 	const log = [
@@ -70,4 +70,20 @@ test('Codex accumulator streams each completed assistant message to its observer
 	const tolerant = new CodexEventAccumulator(() => { throw Error('observer'); });
 	tolerant.push(event('item.completed', { type: 'agent_message', text: 'ok' }));
 	assert.equal(tolerant.finish()?.message, 'ok');
+});
+
+test('Claude stream-json streams assistant text and a provider limit keeps its own explanation', () => {
+	const seen: string[] = [];
+	const claude = new ClaudeEventAccumulator(text => seen.push(text));
+	claude.push([
+		JSON.stringify({ type: 'system', subtype: 'init' }),
+		JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'Reviso la estructura.' }, { type: 'tool_use', name: 'Read' }] } }),
+		JSON.stringify({ type: 'result', result: 'Arquitectura en capas.', is_error: false, usage: { input_tokens: 5, output_tokens: 7 } })
+	].join('\n') + '\n');
+	const codex = parseProviderOutput('codex', JSON.stringify({ type: 'turn.failed', error: { message: 'You\u2019ve hit your usage limit. Try again at Nov 4th.' } }));
+	assert.deepEqual({ seen, final: claude.finish(), codex: [codex.message, codex.rateLimited, codex.providerError] }, {
+		seen: ['Reviso la estructura.'],
+		final: { message: 'Arquitectura en capas.', structured: true, providerError: false, usage: { inputTokens: 5, outputTokens: 7 } },
+		codex: ['You\u2019ve hit your usage limit. Try again at Nov 4th.', true, true]
+	});
 });

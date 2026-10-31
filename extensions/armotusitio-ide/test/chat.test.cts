@@ -154,10 +154,11 @@ async function panelFixture(replies, providerStatus = { claude: 'authenticated',
 		workspaceFolders.push({ name: index ? 'proyecto-' + index : 'clientes', uri: { fsPath, toString: () => 'file:///' + (index ? 'proyecto-' + index : 'clientes') } });
 	}
 	const memento = new Map();
+	const settings = new Map();
 	const vscode = {
 		l10n: { t: (text, ...args) => text.replace(/\{(\d+)\}/g, (_, i) => String(args[i])) }, ViewColumn: { One: 1 },
 		Uri: { joinPath: (base, ...parts) => base + '/' + parts.join('/') },
-		workspace: { isTrusted: true, workspaceFolders, getConfiguration: () => ({ get: (_, fallback) => fallback }) },
+		workspace: { isTrusted: true, workspaceFolders, getConfiguration: () => ({ get: (key, fallback) => settings.get(key) ?? fallback, update: async (key, value) => { settings.set(key, value); } }) },
 		window: { createWebviewPanel: () => panel, showWarningMessage: async (_text, _options, choice) => options.confirm ? choice : undefined, showErrorMessage: async () => undefined },
 		commands: { registerCommand: (id, fn) => { commands.set(id, fn); return noop(); }, executeCommand: async (...args) => { executed.push(args); } },
 		CancellationTokenSource: class { token = { isCancellationRequested: false, onCancellationRequested: noop }; cancel() { this.token.isCancellationRequested = true; } dispose() { } }
@@ -178,7 +179,8 @@ async function panelFixture(replies, providerStatus = { claude: 'authenticated',
 	const mcp = { enabled: () => true, credentialState: async () => ({ configured: true }), client: { tools: async () => [{ name: 'list_projects' }], reset() { } } };
 	const context = { extensionUri: 'ext', subscriptions: [], globalStorageUri: { fsPath: process.platform === 'win32' ? path.join(storage, 'private').replace(/^[A-Z]:/, drive => drive.toLowerCase()) : path.join(storage, 'private') }, workspaceState: { get: key => memento.get(key), update: async (key, value) => { memento.set(key, value); } } };
 	const diagnose = async provider => providerStatus[provider] === 'missing' ? { installed: false, version: null } : ({ installed: true, version: '1.0.0', localSession: providerStatus[provider], commandCompatibility: 'verified' });
-	registerChat(context, controller, async () => [], mcp, vscode, { diagnose });
+	const listModels = async provider => provider === 'claude' ? { defaultModel: 'opus', options: [{ id: 'sonnet', label: 'Sonnet' }] } : { options: [] };
+	registerChat(context, controller, async () => [], mcp, vscode, { diagnose, listModels });
 	await commands.get('atsIde.chat')();
 	await receive({ action: 'ready' });
 	await new Promise(resolve => setTimeout(resolve, 50));
@@ -205,6 +207,10 @@ test('Chat Harness panel: converse, revise, approve and follow execution without
 		assert.deepEqual({ claude: state().providers.claude.status, codex: state().providers.codex.status, mcp: state().mcp.state, tools: state().mcp.tools, host: state().mcp.endpoint },
 			{ claude: 'ready', codex: 'unauthenticated', mcp: 'connected', tools: 1, host: 'armotusitio.com.ar' });
 		assert.equal(JSON.stringify(posted).includes('X-ATS-Agent-Key'), false);
+		// The model is a validated user setting: a flag-like value is ignored, a listed model is stored.
+		await receive({ action: 'model', provider: 'claude', model: '--dangerously-skip-permissions' });
+		await receive({ action: 'model', provider: 'claude', model: 'sonnet' });
+		assert.deepEqual(state().models, { claude: { defaultModel: 'opus', options: [{ id: 'sonnet', label: 'Sonnet' }], selected: 'sonnet' }, codex: { options: [], selected: '' } });
 		await receive({ action: 'provider', provider: 'codex' });
 		await receive({ action: 'send', text: 'Quiero agregar un CRUD de clientes' });
 		await receive({ action: 'send', text: 'Nombre, email y CUIT' });

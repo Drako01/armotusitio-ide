@@ -63,7 +63,13 @@ type Translate = (message: string, ...args: string[]) => string;
 function failureNotice(t: Translate, outcome: AgentOutcome): string {
 	if (outcome.status === 'cancelled') { return t('Consulta cancelada.'); }
 	if (outcome.status === 'timeout') { return t('La IA no respondi\u00f3 a tiempo. Pod\u00e9s reintentar o acotar el pedido.'); }
-	if (outcome.rateLimited) { return t('El proveedor limit\u00f3 las solicitudes. Esper\u00e1 unos minutos o eleg\u00ed el otro proveedor.'); }
+	if (outcome.rateLimited) {
+		// The provider's own text says when the limit resets (minutes for throttling, days for an exhausted plan).
+		const detail = outcome.output.trim().slice(0, 400);
+		return detail
+			? t('El proveedor rechaz\u00f3 la consulta por l\u00edmite de uso: \u00ab{0}\u00bb. Eleg\u00ed el otro proveedor o esper\u00e1 a que se renueve el cupo.', detail)
+			: t('El proveedor limit\u00f3 las solicitudes. Esper\u00e1 unos minutos o eleg\u00ed el otro proveedor.');
+	}
 	if (outcome.scopeViolation) { return t('La consulta se descart\u00f3 porque el workspace cambi\u00f3 durante una tarea de solo lectura. Volv\u00e9 a enviarla.'); }
 	return t('La IA no pudo completar la respuesta (c\u00f3digo {0}). Revis\u00e1 que el proveedor est\u00e9 instalado y autenticado.', String(outcome.exitCode ?? 'n/a'));
 }

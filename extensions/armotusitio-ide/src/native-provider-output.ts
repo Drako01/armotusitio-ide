@@ -38,79 +38,58 @@ function object(value: unknown): Record<string, unknown> | undefined {
 	return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 }
 
-export function parseProviderOutput(provider: NativeProvider, raw: string): ParsedProviderOutput {
-	if (!raw || raw.length > 1024 * 1024) { return { message: raw, structured: false, providerError: false }; }
-	if (provider === 'claude') {
-		try {
-			const data = object(JSON.parse(raw));
-			if (data?.type === 'result' && typeof data.result === 'string') {
-				const stats = object(data.usage);
-				const input = amount(stats?.input_tokens);
-				const output = amount(stats?.output_tokens);
-				const cached = amount(stats?.cache_read_input_tokens);
-				const estimatedCostUsd = cost(data.total_cost_usd);
-				return {
-					message: data.result, structured: true, providerError: data.is_error === true,
-					...(data.is_error === true && throttled(data) ? { rateLimited: true as const } : {}),
-					usage: input !== undefined && output !== undefined
-						? {
-							inputTokens: input, outputTokens: output, ...(cached === undefined ? {} : { cachedInputTokens: cached }),
-							...(estimatedCostUsd === undefined ? {} : { estimatedCostUsd })
-						}
-						: undefined
-				};
+const MAX_RETAINED_MESSAGE = 64 * 1024;
+const MAX_FAILURE_TEXT = 1024;
+const unstructured = (raw: string): ParsedProviderOutput => ({ message: raw, structured: false, providerError: false });
+
+/** Final result shared by Claude's `json` output and the closing `result` event of `stream-json`. */
+function claudeResult(data: Record<string, unknown> | undefined): ParsedProviderOutput | undefined {
+	if (data?.type !== 'result' || typeof data.result !== 'string') { return undefined; }
+	const stats = object(data.usage);
+	const input = amount(stats?.input_tokens);
+	const output = amount(stats?.output_tokens);
+	const cached = amount(stats?.cache_read_input_tokens);
+	const estimatedCostUsd = cost(data.total_cost_usd);
+	return {
+		message: data.result, structured: true, providerError: data.is_error === true,
+		...(data.is_error === true && throttled(data) ? { rateLimited: true as const } : {}),
+		usage: input !== undefined && output !== undefined
+			? {
+				inputTokens: input, outputTokens: output, ...(cached === undefined ? {} : { cachedInputTokens: cached }),
+				...(estimatedCostUsd === undefined ? {} : { estimatedCostUsd })
 			}
-		} catch { /* Fallback supports older CLIs and mock providers. */ }
-		return { message: raw, structured: false, providerError: false };
-	}
-	if (provider === 'codex') {
-		try {
-			const lines = raw.split(/\r?\n/).filter(Boolean);
-			if (!lines.length) { throw Error('NO_EVENTS'); }
-			const events = lines.map(line => object(JSON.parse(line)));
-			if (events.some(x => !x || typeof x.type !== 'string')) { throw Error('BAD_EVENTS'); }
-			let message = '';
-			let providerError = false;
-			let rateLimited = false;
-			let latestUsage: ProviderUsage | undefined;
-			for (const event of events) {
-				if (!event) { continue; }
-				if (event.type === 'error' || event.type === 'turn.failed') { providerError = true; rateLimited ||= throttled(event); }
-				if (event.type === 'item.completed') {
-					const item = object(event.item);
-					if ((item?.type === 'agent_message' || item?.type === 'assistant_message') && typeof item.text === 'string') {
-						message = item.text;
-					}
-				}
-				if (event.type === 'turn.completed') {
-					const u = object(event.usage);
-					const input = amount(u?.input_tokens), output = amount(u?.output_tokens), cached = amount(u?.cached_input_tokens);
-					if (input !== undefined && output !== undefined) {
-						latestUsage = { inputTokens: input, outputTokens: output, ...(cached === undefined ? {} : { cachedInputTokens: cached }) };
-					}
-				}
-			}
-			if (message || providerError) {
-				return { message, structured: true, providerError, usage: latestUsage, ...(rateLimited ? { rateLimited: true as const } : {}) };
-			}
-		} catch { /* Fallback supports older CLIs and mock providers. */ }
-	}
-	return { message: raw, structured: false, providerError: false };
+			: undefined
+	};
 }
 
+export function parseProviderOutput(provider: NativeProvider, raw: string): ParsedProviderOutput {
+	if (!raw || raw.length > 1024 * 1024) { return unstructured(raw); }
+	if (provider === 'claude') {
+		// `--output-format json` may be pretty-printed by older CLIs; stream-json is one event per line.
+		try {
+			const result = claudeResult(object(JSON.parse(raw)));
+			if (result) { return result; }
+		} catch { /* Not a single document: read it as an event stream. */ }
+	}
+	const events = provider === 'claude' ? new ClaudeEventAccumulator() : new CodexEventAccumulator();
+	events.push(raw);
+	return events.finish() ?? unstructured(raw);
+}
 
 /**
- * Incremental Codex JSONL reducer. Retains final text/usage, not command logs or rollout data.
- * `onMessage` observes each completed assistant message as it arrives: real item-level streaming.
+ * Incremental JSONL reducer for provider event streams. Retains final text and usage, never tool logs.
+ * `onMessage` observes each assistant message as it arrives: real message-level streaming.
+ * A provider error without an answer keeps the provider's own error text, so the user sees why.
  */
-export class CodexEventAccumulator {
+abstract class ProviderEventAccumulator {
 	private pending = '';
 	private seen = 0;
 	private invalid = false;
-	private message = '';
-	private providerError = false;
-	private rateLimited = false;
-	private usage: ProviderUsage | undefined;
+	protected message = '';
+	protected failure = '';
+	protected providerError = false;
+	protected rateLimited = false;
+	protected usage: ProviderUsage | undefined;
 	private readonly onMessage?: (text: string) => void;
 
 	constructor(onMessage?: (text: string) => void) { this.onMessage = onMessage; }
@@ -123,42 +102,82 @@ export class CodexEventAccumulator {
 		while (boundary !== -1) {
 			const line = this.pending.slice(0, boundary).trim();
 			this.pending = this.pending.slice(boundary + 1);
-			if (line) { this.accept(line); }
+			if (line) { this.acceptLine(line); }
 			if (this.invalid) { this.pending = ''; return; }
 			boundary = this.pending.indexOf('\n');
 		}
 	}
 
-	private accept(line: string): void {
+	finish(): ParsedProviderOutput | null {
+		if (this.pending.trim()) { this.acceptLine(this.pending.trim()); }
+		if (this.invalid || !this.seen || (!this.message && !this.providerError)) { return null; }
+		return {
+			message: this.message || this.failure, structured: true, providerError: this.providerError, usage: this.usage,
+			...(this.rateLimited ? { rateLimited: true as const } : {})
+		};
+	}
+
+	protected abstract accept(event: Record<string, unknown>): void;
+
+	protected publish(text: string): void {
+		this.message = text.slice(-MAX_RETAINED_MESSAGE);
+		try { this.onMessage?.(this.message); }
+		catch { /* Observers have no authority over parsing. */ }
+	}
+
+	protected fail(event: Record<string, unknown>): void {
+		this.providerError = true;
+		this.rateLimited ||= throttled(event);
+		const text = [event.message, object(event.error)?.message].find(value => typeof value === 'string');
+		if (!this.failure && typeof text === 'string') { this.failure = text.slice(0, MAX_FAILURE_TEXT); }
+	}
+
+	private acceptLine(line: string): void {
 		try {
 			const event = object(JSON.parse(line));
 			if (!event || typeof event.type !== 'string') { this.invalid = true; return; }
 			this.seen++;
-			if (event.type === 'error' || event.type === 'turn.failed') { this.providerError = true; this.rateLimited ||= throttled(event); }
-			if (event.type === 'item.completed') {
-				const item = object(event.item);
-				if ((item?.type === 'agent_message' || item?.type === 'assistant_message') && typeof item.text === 'string') {
-					this.message = item.text.slice(-64 * 1024);
-					try { this.onMessage?.(this.message); }
-					catch { /* Observers have no authority over parsing. */ }
-				}
-			}
-			if (event.type === 'turn.completed') {
-				const u = object(event.usage);
-				const input = amount(u?.input_tokens), output = amount(u?.output_tokens), cached = amount(u?.cached_input_tokens);
-				if (input !== undefined && output !== undefined) {
-					this.usage = { inputTokens: input, outputTokens: output, ...(cached === undefined ? {} : { cachedInputTokens: cached }) };
-				}
-			}
+			this.accept(event);
 		} catch { this.invalid = true; }
 	}
+}
 
-	finish(): ParsedProviderOutput | null {
-		if (this.pending.trim()) { this.accept(this.pending.trim()); }
-		if (this.invalid || !this.seen || (!this.message && !this.providerError)) { return null; }
-		return {
-			message: this.message, structured: true, providerError: this.providerError, usage: this.usage,
-			...(this.rateLimited ? { rateLimited: true as const } : {})
-		};
+/** `codex exec --json`: completed agent messages, turn usage and error events. */
+export class CodexEventAccumulator extends ProviderEventAccumulator {
+	protected accept(event: Record<string, unknown>): void {
+		if (event.type === 'error' || event.type === 'turn.failed') { this.fail(event); }
+		if (event.type === 'item.completed') {
+			const item = object(event.item);
+			if ((item?.type === 'agent_message' || item?.type === 'assistant_message') && typeof item.text === 'string') { this.publish(item.text); }
+		}
+		if (event.type === 'turn.completed') {
+			const u = object(event.usage);
+			const input = amount(u?.input_tokens), output = amount(u?.output_tokens), cached = amount(u?.cached_input_tokens);
+			if (input !== undefined && output !== undefined) {
+				this.usage = { inputTokens: input, outputTokens: output, ...(cached === undefined ? {} : { cachedInputTokens: cached }) };
+			}
+		}
+	}
+}
+
+/** `claude --output-format stream-json`: assistant text blocks as they arrive, then one `result` event. */
+export class ClaudeEventAccumulator extends ProviderEventAccumulator {
+	protected accept(event: Record<string, unknown>): void {
+		if (event.type === 'assistant') {
+			const content = object(event.message)?.content;
+			const text = (Array.isArray(content) ? content : [])
+				.map(block => object(block))
+				.filter(block => block?.type === 'text' && typeof block.text === 'string')
+				.map(block => block!.text as string).join('\n');
+			if (text.trim()) { this.publish(text); }
+			return;
+		}
+		const result = claudeResult(event);
+		if (!result) { return; }
+		// The result text is the final answer; it is not re-published because its last block was already streamed.
+		this.message = result.message.slice(-MAX_RETAINED_MESSAGE);
+		this.providerError = result.providerError;
+		this.rateLimited ||= !!result.rateLimited;
+		this.usage = result.usage;
 	}
 }

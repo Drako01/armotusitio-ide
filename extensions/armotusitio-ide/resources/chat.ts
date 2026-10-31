@@ -100,6 +100,8 @@ function shell(): void {
 		(switcher.querySelector('[data-provider="' + next + '"]') as HTMLElement)?.focus();
 		event.preventDefault();
 	});
+	const model = el('select', 'model-select') as HTMLSelectElement; model.id = 'model';
+	model.addEventListener('change', () => api.postMessage({ action: 'model', provider: state?.chat?.provider, model: model.value }));
 	const mcp = el('button', 'mcp-pill') as HTMLButtonElement; mcp.type = 'button'; mcp.id = 'mcp-pill';
 	mcp.setAttribute('aria-expanded', 'false'); mcp.setAttribute('aria-controls', 'mcp-details');
 	mcp.append(el('span', 'dot'), el('span', 'mcp-label'));
@@ -107,7 +109,7 @@ function shell(): void {
 	const more = el('button', 'icon-button', '\u22ef') as HTMLButtonElement; more.type = 'button'; more.id = 'menu-button';
 	more.setAttribute('aria-label', L.menu); more.setAttribute('aria-expanded', 'false'); more.setAttribute('aria-controls', 'menu');
 	more.addEventListener('click', () => toggle('menu', more));
-	controls.append(switcher, mcp, more);
+	controls.append(switcher, model, mcp, more);
 	header.append(brand, controls);
 
 	const details = el('section', 'popover mcp-details'); details.id = 'mcp-details'; details.hidden = true; details.setAttribute('aria-label', L.mcp);
@@ -196,6 +198,7 @@ function renderHeader(): void {
 		button.querySelector('.provider-status').textContent = L.providerStatus[info.status] || info.status;
 		button.title = providerName(provider) + ' \u00b7 ' + (L.providerStatus[info.status] || info.status) + (info.version ? ' \u00b7 v' + info.version : '');
 	}
+	renderModel(selected);
 	const mcp = state.mcp; const pill = document.getElementById('mcp-pill');
 	pill.dataset.state = mcp.state;
 	pill.querySelector('.mcp-label').textContent = L.mcp + ': ' + L.mcpState[mcp.state];
@@ -220,6 +223,24 @@ function renderHeader(): void {
 	action('mcpCheck', L.mcpCheck);
 	action('mcpSettings', L.mcpSettings);
 	details.append(actions);
+}
+
+/** Models of the selected provider; the empty value is the CLI default, named when its configuration says which. */
+function renderModel(provider: string | undefined): void {
+	const select = document.getElementById('model') as HTMLSelectElement;
+	const info = provider ? state.models?.[provider] : undefined;
+	select.hidden = !info;
+	if (!info) { return; }
+	select.textContent = '';
+	select.setAttribute('aria-label', format(L.model, providerName(provider)));
+	const option = (value: string, label: string) => { const item = el('option', undefined, label) as HTMLOptionElement; item.value = value; select.append(item); };
+	option('', info.defaultModel ? format(L.modelDefault, info.defaultModel) : L.modelCliDefault);
+	for (const model of info.options) { option(model.id, model.label); }
+	// A model set by hand in settings stays visible even when the CLI does not advertise it.
+	if (info.selected && !info.options.some((model: any) => model.id === info.selected)) { option(info.selected, info.selected); }
+	select.value = info.selected || '';
+	select.disabled = !state.chat || busy();
+	select.title = format(L.model, providerName(provider)) + ': ' + (select.selectedOptions[0]?.textContent ?? '');
 }
 
 // ---------------------------------------------------------------- messages

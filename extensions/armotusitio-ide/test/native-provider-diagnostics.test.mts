@@ -32,16 +32,16 @@ test('diagnostics report availability but never imply authentication', async () 
 });
 
 test('CLI flag matrix rejects unknown versions of the invocation protocol', () => {
-	const codex = ['--sandbox', '--skip-git-repo-check', '--ask-for-approval', '--ephemeral', '--json'].join(' ');
-	const claude = ['--permission-mode', '--allowedTools', '--disallowedTools', '--max-turns', '--output-format'].join(' ');
+	const codex = ['--sandbox', '--skip-git-repo-check', '--ask-for-approval', '--ephemeral', '--json', '--model'].join(' ');
+	const claude = ['--permission-mode', '--allowedTools', '--disallowedTools', '--max-turns', '--output-format', '--verbose', '--model'].join(' ');
 	assert.equal(inspectProviderHelp('codex', 'Usage: codex exec ' + codex).compatibility, 'verified');
 	assert.equal(inspectProviderHelp('claude', 'Usage: claude ' + claude).compatibility, 'verified');
-	assert.deepEqual(inspectProviderHelp('codex', 'Usage: codex exec --json and no safety flags').missingFlags, ['--sandbox', '--skip-git-repo-check', '--ask-for-approval', '--ephemeral']);
+	assert.deepEqual(inspectProviderHelp('codex', 'Usage: codex exec --json and no safety flags').missingFlags, ['--sandbox', '--skip-git-repo-check', '--ask-for-approval', '--ephemeral', '--model']);
 	assert.equal(inspectProviderHelp('claude', '').compatibility, 'unknown');
 	// Real CLIs: Claude hides --max-turns from help, and Codex lists --ask-for-approval only in top-level help.
 	assert.equal(inspectProviderHelp('claude', 'Usage: claude ' + claude.replace('--max-turns', '')).compatibility, 'verified');
 	const codexTopLevel = 'Usage: codex [OPTIONS] [PROMPT]\n  -a, --ask-for-approval <POLICY>';
-	const codexExec = 'Usage: codex exec [OPTIONS]\n  --sandbox --skip-git-repo-check --ephemeral --json';
+	const codexExec = 'Usage: codex exec [OPTIONS]\n  --model --sandbox --skip-git-repo-check --ephemeral --json';
 	assert.equal(inspectProviderHelp('codex', codexExec).compatibility, 'unsupported');
 	assert.equal(inspectProviderHelp('codex', codexTopLevel + '\n' + codexExec).compatibility, 'verified');
 });

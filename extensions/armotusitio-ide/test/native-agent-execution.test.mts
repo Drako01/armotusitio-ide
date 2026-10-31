@@ -43,7 +43,17 @@ test('Claude uses plan for readers and fail-closed dontAsk for writers', () => {
 	assert.ok(writer.args.includes('Bash,WebFetch,WebSearch'));
 	assert.ok(!reader.args.includes('Read,Glob,Grep,Edit,Write'));
 	assert.ok(!writer.args.includes('--dangerously-skip-permissions'));
-	assert.deepEqual(writer.args.slice(-2), ['--output-format', 'json']);
+	assert.deepEqual(writer.args.slice(-3), ['--output-format', 'stream-json', '--verbose']);
+});
+
+test('a chosen model is passed explicitly and can never be read as a flag', () => {
+	const claude = buildAgentInvocation({ ...base, provider: 'claude', model: 'sonnet' });
+	const codex = buildAgentInvocation({ ...base, model: 'gpt-6.1-sol' });
+	assert.deepEqual([claude.args.slice(1, 3), codex.args.slice(3, 5), buildAgentInvocation(base).args.includes('--model')],
+		[['--model', 'sonnet'], ['--model', 'gpt-6.1-sol'], false]);
+	for (const model of ['--dangerously-skip-permissions', '', 'a b', 'x'.repeat(65)]) {
+		assert.throws(() => buildAgentInvocation({ ...base, model }), /HARNESS_AGENT_DRAFT_SCHEMA/);
+	}
 });
 
 test('a changed review or invalid duration never starts an agent', async () => {

@@ -112,7 +112,7 @@ test('provider choice persists per project and a running turn keeps the provider
 });
 
 test('hybrid projects can plan but cannot approve, and provider failures stay inside the chat', async () => {
-	const s = await session([plan('Plan', ['Paso']), { ...outcome('', 'failed'), rateLimited: true }, outcome('', 'timeout')], { writer: false });
+	const s = await session([plan('Plan', ['Paso']), { ...outcome('Try again at Nov 4th.', 'failed'), rateLimited: true }, outcome('', 'timeout')], { writer: false });
 	try {
 		await s.chat.send('Planific\u00e1');
 		const state = s.chat.snapshot().plan!;
@@ -120,7 +120,7 @@ test('hybrid projects can plan but cannot approve, and provider failures stay in
 		await assert.rejects(s.chat.approve(state.digest), /HARNESS_HYBRID_WRITER_UNAVAILABLE/);
 		await s.chat.send('otra'); await s.chat.send('y otra');
 		const notices = s.chat.snapshot().messages.filter(message => message.role === 'notice').map(message => message.text);
-		assert.deepEqual(notices.map(text => /limit\u00f3/.test(text) || /a tiempo/.test(text)), [true, true]);
+		assert.deepEqual(notices.map(text => /Nov 4th/.test(text) || /a tiempo/.test(text)), [true, true]);
 		assert.equal(s.calls.some(call => call.kind === 'implement'), false);
 	} finally { await s.cleanup(); }
 });

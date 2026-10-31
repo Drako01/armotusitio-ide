@@ -8,7 +8,7 @@ import * as path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { resolveNativeCommand } from './native-runtime.ts';
 import { captureAgentScope, scopeChanged } from './native-agent-scope.ts';
-import { parseProviderOutput, CodexEventAccumulator, type ProviderUsage } from './native-provider-output.ts';
+import { parseProviderOutput, ClaudeEventAccumulator, CodexEventAccumulator, type ProviderUsage } from './native-provider-output.ts';
 import { StringDecoder } from 'node:string_decoder';
 import { redactSecrets } from './native-redact.ts';
 import { reviewAgentDraft, validateReviewedAgent, type AgentDraft, type AgentReview } from './native-providers.ts';
@@ -57,19 +57,21 @@ export function buildAgentInvocation(draft: AgentDraft): AgentInvocation {
 			: 'This is a read-only assignment. Do not modify project files.',
 		draft.instruction
 	].join('\n\n');
+	const model = draft.model ? ['--model', draft.model] : [];
 	if (draft.provider === 'codex') {
 		return {
 			executable: 'codex',
 			// The approval flag is global and must precede the exec subcommand on current Codex CLIs.
-			args: ['--ask-for-approval', 'never', 'exec', '--sandbox', draft.readOnly ? 'read-only' : 'workspace-write', '--skip-git-repo-check', '--ephemeral', '--json', '-'],
+			args: ['--ask-for-approval', 'never', 'exec', ...model, '--sandbox', draft.readOnly ? 'read-only' : 'workspace-write', '--skip-git-repo-check', '--ephemeral', '--json', '-'],
 			stdin: instruction
 		};
 	}
 	// dontAsk denies tools that are not explicitly allowed, rather than silently bypassing permissions.
 	// plan mode is strictly read-only; don'tAsk is fail-closed if required tools lack an allow rule.
+	// stream-json (which requires --verbose in print mode) reports each assistant message as it is produced.
 	return {
 		executable: 'claude',
-		args: ['--print', '--permission-mode', draft.readOnly ? 'plan' : 'dontAsk', '--allowedTools', draft.readOnly ? 'Read,Glob,Grep' : 'Read,Glob,Grep,Edit,Write', '--disallowedTools', 'Bash,WebFetch,WebSearch', '--max-turns', '12', '--output-format', 'json'],
+		args: ['--print', ...model, '--permission-mode', draft.readOnly ? 'plan' : 'dontAsk', '--allowedTools', draft.readOnly ? 'Read,Glob,Grep' : 'Read,Glob,Grep,Edit,Write', '--disallowedTools', 'Bash,WebFetch,WebSearch', '--max-turns', '12', '--output-format', 'stream-json', '--verbose'],
 		stdin: instruction
 	};
 }
@@ -91,7 +93,7 @@ function stopProcess(child: ChildProcess): void {
 
 /**
  * Caller MUST verify Workspace Trust, project authority and consent immediately before invoking.
- * `onMessage` receives redacted intermediate assistant messages when the provider streams them (Codex JSONL).
+ * `onMessage` receives redacted intermediate assistant messages as the provider streams them (Codex JSONL, Claude stream-json).
  */
 export async function executeReviewedAgent(review: AgentReview, current: AgentDraft, durationMs = MAX_DURATION_MS, onProgress?: (progress: Readonly<AgentProgress>) => void, onMessage?: (text: string) => void): Promise<AgentExecution> {
 	validateReviewedAgent(review, current);
@@ -110,7 +112,8 @@ export async function executeReviewedAgent(review: AgentReview, current: AgentDr
 	let stdout = '', stderr = '', size = 0;
 	let lastProgress = 0;
 	let stdoutOverflow = false;
-	const codexEvents = current.provider === 'codex' ? new CodexEventAccumulator(onMessage && (text => onMessage(redactSecrets(text)))) : undefined;
+	const observe = onMessage && ((text: string) => onMessage(redactSecrets(text)));
+	const events = current.provider === 'codex' ? new CodexEventAccumulator(observe) : new ClaudeEventAccumulator(observe);
 	const stdoutDecoder = new StringDecoder('utf8');
 	const child = spawn(command.executable, command.args, {
 		cwd: canonical, env, shell: false, windowsHide: true, detached: process.platform !== 'win32',
@@ -127,7 +130,7 @@ export async function executeReviewedAgent(review: AgentReview, current: AgentDr
 		}
 		if (channel === 'stdout') {
 			const piece = stdoutDecoder.write(chunk);
-			codexEvents?.push(piece);
+			events.push(piece);
 			if (stdout.length + piece.length <= MAX_STDOUT_RETAINED) { stdout += piece; }
 			else { stdoutOverflow = true; }
 		} else if (stderr.length < MAX_STDERR_RETAINED) {
@@ -145,8 +148,8 @@ export async function executeReviewedAgent(review: AgentReview, current: AgentDr
 			ended = true; clearTimeout(timer);
 			void (async () => {
 				const tail = stdoutDecoder.end();
-				if (tail) { codexEvents?.push(tail); if (!stdoutOverflow && stdout.length + tail.length <= MAX_STDOUT_RETAINED) { stdout += tail; } }
-				const parsed = codexEvents?.finish() || parseProviderOutput(current.provider, stdout);
+				if (tail) { events.push(tail); if (!stdoutOverflow && stdout.length + tail.length <= MAX_STDOUT_RETAINED) { stdout += tail; } }
+				const parsed = events.finish() || parseProviderOutput(current.provider, stdout);
 				if (stdoutOverflow && !parsed.structured) { truncated = true; }
 				let status: AgentOutcome['status'] = timedOut ? 'timeout' : cancelled ? 'cancelled' : exitCode === 0 && !parsed.providerError && !truncated ? 'passed' : 'failed';
 				let scopeViolation = false;

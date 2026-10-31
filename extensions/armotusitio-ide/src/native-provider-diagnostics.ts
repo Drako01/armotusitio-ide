@@ -26,8 +26,8 @@ const MAX_HELP = 64 * 1024;
  * `claude --help` (2.1.x), so its absence there cannot prove incompatibility.
  */
 const REQUIRED_FLAGS: Record<NativeProvider, readonly string[]> = {
-	codex: ['--sandbox', '--skip-git-repo-check', '--ask-for-approval', '--ephemeral', '--json'],
-	claude: ['--permission-mode', '--allowedTools', '--disallowedTools', '--output-format']
+	codex: ['--sandbox', '--skip-git-repo-check', '--ask-for-approval', '--ephemeral', '--json', '--model'],
+	claude: ['--permission-mode', '--allowedTools', '--disallowedTools', '--output-format', '--verbose', '--model']
 };
 /** Codex documents global flags such as `--ask-for-approval` only in top-level help, and exec flags in `exec --help`. */
 const HELP_COMMANDS: Record<NativeProvider, readonly string[][]> = {

@@ -35,7 +35,7 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, .log:focus-v
 .brand-text { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
 .brand h1 { margin: 0; font-size: 1.15em; font-weight: 600; white-space: nowrap; }
 .project-name { color: var(--chat-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.project-select { font: inherit; color: var(--vscode-dropdown-foreground); background: var(--vscode-dropdown-background); border: 1px solid var(--vscode-dropdown-border, transparent); border-radius: var(--chat-radius); padding: 2px 6px; max-width: 220px; }
+.project-select, .model-select { font: inherit; color: var(--vscode-dropdown-foreground); background: var(--vscode-dropdown-background); border: 1px solid var(--vscode-dropdown-border, transparent); border-radius: var(--chat-radius); padding: 2px 6px; max-width: 220px; }
 .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .provider-switch { display: inline-flex; padding: 2px; border: 1px solid var(--chat-border); border-radius: var(--chat-radius-large); background: var(--vscode-input-background); }
 .provider-option { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 8px; color: var(--vscode-foreground); background: transparent; }

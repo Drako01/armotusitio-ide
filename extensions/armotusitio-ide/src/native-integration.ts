@@ -10,7 +10,7 @@ import { NativeHarness, nativePlanRevision, type Plan } from './native-harness.t
 import type { ChatImplementOutcome, ChatRuntime } from './native-chat-session.ts';
 import { harnessErrorCode, type GateSummary } from './native-chat.ts';
 import { proposeProjectConfig, loadProjectConfig, writeProjectConfig, generatedConfigDigest, removeGeneratedProjectConfig } from './native-project.ts';
-import { reviewAgentDraft, inspectAgentWorkspace, type NativeProvider, type AgentRole, type AgentDraft } from './native-providers.ts';
+import { reviewAgentDraft, inspectAgentWorkspace, modelOption, validModel, type NativeProvider, type AgentRole, type AgentDraft } from './native-providers.ts';
 import { buildSupportReport, exportSupportReport } from './native-support.ts';
 import { inspectHarnessAuthority } from './native-authority.ts';
 import { listProjectSkills, readProjectSkill, type ProjectSkill } from './native-project-skills.ts';
@@ -109,6 +109,16 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			maxCostUsdPer24h: settings.get('providerCostUsdPer24h', 0)
 		});
 	};
+	/** Model chosen for a provider (`atsHarness.<provider>Model`); empty keeps the CLI default. */
+	const modelFor = (provider: NativeProvider): string | undefined => {
+		const model: unknown = vscode.workspace.getConfiguration('atsHarness').get(provider + 'Model', '');
+		if (model === '') { return undefined; }
+		if (!validModel(model)) { throw Error('HARNESS_PROVIDER_MODEL_INVALID'); }
+		return model;
+	};
+	/** Every IDE agent draft: read-only unless implementing, with the model chosen for its provider. */
+	const draftOf = (root: string, provider: NativeProvider, role: AgentRole, instruction: string): AgentDraft =>
+		({ schemaVersion: 1, provider, role, projectRoot: root, instruction, readOnly: role !== 'implementer', ...modelOption(modelFor(provider)) });
 	/** Reported spend must be durable when a budget is enforced; otherwise it is best-effort telemetry. */
 	const recordSpend = async (folder: Host, root: string, provider: NativeProvider, fence: SharedExecutionFence, outcome: AgentOutcome): Promise<void> => {
 		try { await recordProviderSpend(metricsDirectory(root), provider, fence, outcome); }
@@ -177,8 +187,6 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 	controller.nativeChatRuntime = (folder: Host): ChatRuntime => {
 		const rootOf = (): Promise<string> => fs.realpath(folder.uri.fsPath);
 		const verificationOf = async (root: string): Promise<Plan | undefined> => (await inspectHarnessAuthority(root)).engine === 'ide-native' ? (await loadProjectConfig(root))?.plan : undefined;
-		const draftFor = (root: string, provider: NativeProvider, role: AgentRole, instruction: string): AgentDraft =>
-			({ schemaVersion: 1, provider, role, projectRoot: root, instruction, readOnly: role !== 'implementer' });
 		return {
 			async context() {
 				const root = await rootOf();
@@ -196,7 +204,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			},
 			async converse(provider, instruction, hooks, signal) {
 				const root = await rootOf();
-				return runGuardedAgent(folder, draftFor(root, provider, 'planner', instruction), {
+				return runGuardedAgent(folder, draftOf(root, provider, 'planner', instruction), {
 					onStarted: execution => hooks.started(() => execution.cancel()), onProgress: hooks.progress, onMessage: hooks.message, signal
 				});
 			},
@@ -213,7 +221,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 				let gates: GateSummary[] = verification?.gates.map(gate => ({ id: gate.id, status: 'pending' as const })) ?? [];
 				let verificationStatus: ChatImplementOutcome['verification']['status'] = 'skipped';
 				let verificationError: string | undefined;
-				const agent = await runGuardedAgent(folder, draftFor(root, provider, 'implementer', instruction + projectReferences(guides, skills as ProjectSkill[])), {
+				const agent = await runGuardedAgent(folder, draftOf(root, provider, 'implementer', instruction + projectReferences(guides, skills as ProjectSkill[])), {
 					onStarted: execution => { hooks.started(() => execution.cancel()); hooks.stage('agent'); },
 					onProgress: hooks.progress,
 					onMessage: hooks.message,
@@ -296,7 +304,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			const skills = await listProjectSkills(root);
 			const guides = await listProjectGuides(root);
 			const preview = { skills: skills.map(skill => ({ name: skill.name, source: skill.source, digest: skill.digest })), guides };
-			const draft = { schemaVersion: 1 as const, provider, role, projectRoot: root, instruction, readOnly };
+			const draft = draftOf(root, provider, role, instruction);
 			const reviewed = reviewAgentDraft(draft);
 			const inventory = await inspectAgentWorkspace(root);
 			if (!ensureTrust() || await fs.realpath(chosen.folder.uri.fsPath) !== root) { return; }
@@ -345,7 +353,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 				}
 			}
 			const instruction = requestedInstruction + projectReferences(guides, selectedProjectSkills);
-			const draft = { schemaVersion: 1 as const, provider, role, projectRoot: root, instruction, readOnly: role !== 'implementer' };
+			const draft = draftOf(root, provider, role, instruction);
 			const invocation = buildAgentInvocation(draft);
 			const preview = JSON.stringify({
 				project: root, role, provider, permissionMode: draft.readOnly ? 'read-only' : 'workspace-write (Codex) / dontAsk (Claude)',
@@ -428,7 +436,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			if (JSON.stringify((await loadProjectConfig(root))?.plan || null) !== verificationSnapshot) { throw Error('HARNESS_WORKFLOW_VERIFICATION_CHANGED'); }
 			assertProviderCapacity();
 			pendingWorkflows.add(root); controller.refresh();
-			const engine = new NativeAgentWorkflow(executionRoot, path.join(metricsDirectory(root), 'workflows'), root);
+			const engine = new NativeAgentWorkflow(executionRoot, path.join(metricsDirectory(root), 'workflows'), root, modelFor);
 			const unsubscribeEvents = engine.onEvent(() => { controller.refresh(); });
 			const validationEngine = isolation ? new NativeHarness(executionRoot, path.join(metricsDirectory(root), 'isolated-verification', isolation.id)) : chosen.engine;
 			let checkpoint: WorktreeCheckpoint | undefined;
