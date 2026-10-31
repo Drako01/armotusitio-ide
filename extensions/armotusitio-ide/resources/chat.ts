@@ -102,6 +102,8 @@ function shell(): void {
 	});
 	const model = el('select', 'model-select') as HTMLSelectElement; model.id = 'model';
 	model.addEventListener('change', () => api.postMessage({ action: 'model', provider: state?.chat?.provider, model: model.value }));
+	const effort = el('select', 'effort-select') as HTMLSelectElement; effort.id = 'effort';
+	effort.addEventListener('change', () => api.postMessage({ action: 'effort', provider: state?.chat?.provider, effort: effort.value }));
 	const mcp = el('button', 'mcp-pill') as HTMLButtonElement; mcp.type = 'button'; mcp.id = 'mcp-pill';
 	mcp.setAttribute('aria-expanded', 'false'); mcp.setAttribute('aria-controls', 'mcp-details');
 	mcp.append(el('span', 'dot'), el('span', 'mcp-label'));
@@ -109,7 +111,7 @@ function shell(): void {
 	const more = el('button', 'icon-button', '\u22ef') as HTMLButtonElement; more.type = 'button'; more.id = 'menu-button';
 	more.setAttribute('aria-label', L.menu); more.setAttribute('aria-expanded', 'false'); more.setAttribute('aria-controls', 'menu');
 	more.addEventListener('click', () => toggle('menu', more));
-	controls.append(switcher, model, mcp, more);
+	controls.append(switcher, model, effort, mcp, more);
 	header.append(brand, controls);
 
 	const details = el('section', 'popover mcp-details'); details.id = 'mcp-details'; details.hidden = true; details.setAttribute('aria-label', L.mcp);
@@ -199,6 +201,7 @@ function renderHeader(): void {
 		button.title = providerName(provider) + ' \u00b7 ' + (L.providerStatus[info.status] || info.status) + (info.version ? ' \u00b7 v' + info.version : '');
 	}
 	renderModel(selected);
+	renderEffort(selected);
 	const mcp = state.mcp; const pill = document.getElementById('mcp-pill');
 	pill.dataset.state = mcp.state;
 	pill.querySelector('.mcp-label').textContent = L.mcp + ': ' + L.mcpState[mcp.state];
@@ -241,6 +244,27 @@ function renderModel(provider: string | undefined): void {
 	select.value = info.selected || '';
 	select.disabled = !state.chat || busy();
 	select.title = format(L.model, providerName(provider)) + ': ' + (select.selectedOptions[0]?.textContent ?? '');
+}
+
+/** A separate explicit effort override; empty means the CLI/model's own default. */
+function renderEffort(provider: string | undefined): void {
+	const select = document.getElementById('effort') as HTMLSelectElement;
+	select.hidden = !provider;
+	if (!provider) { return; }
+	select.textContent = '';
+	select.setAttribute('aria-label', format(L.effort, providerName(provider)));
+	const option = (value: string, label: string) => {
+		const item = el('option', undefined, label) as HTMLOptionElement;
+		item.value = value;
+		select.append(item);
+	};
+	option('', L.effortDefault);
+	for (const level of ['low', 'medium', 'high', 'xhigh', ...(provider === 'claude' ? ['max'] : [])]) {
+		option(level, L.effortLevels[level]);
+	}
+	select.value = state.efforts?.[provider] || '';
+	select.disabled = !state.chat || busy();
+	select.title = format(L.effort, providerName(provider)) + ': ' + (select.selectedOptions[0]?.textContent ?? '') + '. ' + L.effortHint;
 }
 
 // ---------------------------------------------------------------- messages
