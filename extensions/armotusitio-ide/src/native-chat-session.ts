@@ -6,6 +6,7 @@
 import type { AgentOutcome } from './native-agent-execution.ts';
 import type { NativeProvider } from './native-providers.ts';
 import { redactSecrets } from './native-redact.ts';
+import { absorbMessages, compactionSplit } from './native-chat-memory.ts';
 import {
 	buildConversationInstruction, buildImplementationInstruction, chatMessage, extractChatPlan, harnessErrorCode, latestPlanMessage, pendingAlive, samePlanContent,
 	type ChatConversation, type ChatMessage, type ChatPlan, type ChatProjectContext, type ChatRunSummary, type ChatStore, type GateSummary, type RunStatus
@@ -178,6 +179,7 @@ export class HarnessChatSession {
 	async reset(): Promise<void> {
 		if (this.activity) { throw Error('HARNESS_ALREADY_RUNNING'); }
 		this.conversation.messages = [];
+		this.conversation.memory = undefined;
 		await this.persist({ replace: true });
 	}
 
@@ -207,14 +209,14 @@ export class HarnessChatSession {
 			await this.refreshContext();
 			if (!this.context) { throw Error('HARNESS_CHAT_CONTEXT_UNAVAILABLE'); }
 			const current = latestPlanMessage(this.conversation.messages)?.plan;
-			const instruction = buildConversationInstruction(this.conversation.messages, this.context, current);
+			const instruction = buildConversationInstruction(this.conversation.messages, this.context, current, this.conversation.memory);
 			if (controller.signal.aborted) { throw Error('HARNESS_CANCELLED_BEFORE_START'); }
 			const outcome = await this.runtime.converse(provider, instruction, hooks, controller.signal);
 			if (outcome.status !== 'passed' || !outcome.output.trim()) {
 				this.conversation.messages.push(chatMessage('notice', failureNotice(this.t, outcome), { tone: outcome.status === 'cancelled' ? 'info' : 'error', provider }));
 				return;
 			}
-			const extracted = extractChatPlan(outcome.output, (current?.version ?? 0) + 1);
+			const extracted = extractChatPlan(outcome.output, Math.max(current?.version ?? 0, this.conversation.memory?.lastPlanVersion ?? 0) + 1);
 			// A confirmed, unchanged plan keeps its version so the approval refers to what the user already reviewed.
 			const plan = extracted.plan && current && samePlanContent(extracted.plan, current) ? current : extracted.plan;
 			this.conversation.messages.push(chatMessage('assistant', extracted.text || this.t('Plan actualizado.'), { provider, plan }));
@@ -293,7 +295,9 @@ export class HarnessChatSession {
 	private errorNotice(error: unknown): string { return describeFailure(this.t, error); }
 
 	private async persist(options: { replace?: boolean } = {}): Promise<void> {
-		if (this.conversation.messages.length > 200) { this.conversation.messages.splice(0, this.conversation.messages.length - 200); }
+		// Old messages become memory; the latest plan and what follows it always stay.
+		const folded = compactionSplit(this.conversation.messages);
+		if (folded) { this.conversation.memory = absorbMessages(this.conversation.memory, this.conversation.messages.splice(0, folded), this.context?.root ?? ''); }
 		this.revision++;
 		this.emit();
 		const stored = await this.store.save(this.conversation, options);
