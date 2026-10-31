@@ -22,6 +22,8 @@ const at = new Date().toISOString();
 const state = activity => ({
 	type: 'state', trusted: true, project: { name: 'demo', id: 'a' }, projects: [{ name: 'demo', id: 'a' }],
 	providers: { codex: { status: 'ready', version: '1' }, claude: { status: 'ready', version: '2' } },
+	models: { claude: { options: [{ id: 'opus', label: 'Opus' }, { id: 'claude-opus-5-5', label: 'Opus 5.5' }], selected: 'claude-opus-5-5' }, codex: { options: [], selected: '' } },
+	efforts: { claude: 'medium', codex: '' },
 	mcp: { state: 'connected', tools: 3, endpoint: 'armotusitio.com.ar', enabled: true, checkedAt: at },
 	chat: {
 		provider: 'claude', revision: 1, writer: true, verification: [{ id: 'unit', command: 'npm test' }],
@@ -52,6 +54,12 @@ test('Chat Harness webview is keyboard operable, announces phases only and rende
 		// Model output: no element, handler or navigation is ever created from text.
 		assert.deepEqual(await page.evaluate(() => ({ pwned: window.pwned === true, scripts: document.querySelectorAll('#thread script, #thread img, #thread a, #thread b').length })), { pwned: false, scripts: 0 });
 
+		// Version and reasoning effort are separate accessible selectors.
+		assert.equal(await page.locator('#model').inputValue(), 'claude-opus-5-5');
+		assert.equal(await page.locator('#effort').inputValue(), 'medium');
+		assert.match(await page.getAttribute('#effort', 'aria-label'), /Razonamiento de Claude/);
+		await page.selectOption('#effort', 'low');
+		assert.deepEqual(await page.evaluate(() => window.sent.at(-1)), { action: 'effort', provider: 'claude', effort: 'low' });
 		// Provider selector follows the radio-group pattern: one tab stop, arrows change the selection.
 		await page.focus('.provider-option[aria-checked="true"]');
 		await page.keyboard.press('ArrowLeft');
