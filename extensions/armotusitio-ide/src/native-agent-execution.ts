@@ -58,11 +58,15 @@ export function buildAgentInvocation(draft: AgentDraft): AgentInvocation {
 		draft.instruction
 	].join('\n\n');
 	const model = draft.model ? ['--model', draft.model] : [];
+	// Keep effort as a reviewed, per-invocation override. Never modify CLI config files.
+	const effort = draft.effort ? draft.provider === 'codex'
+		? ['--config', 'model_reasoning_effort="' + draft.effort + '"']
+		: ['--effort', draft.effort] : [];
 	if (draft.provider === 'codex') {
 		return {
 			executable: 'codex',
 			// The approval flag is global and must precede the exec subcommand on current Codex CLIs.
-			args: ['--ask-for-approval', 'never', 'exec', ...model, '--sandbox', draft.readOnly ? 'read-only' : 'workspace-write', '--skip-git-repo-check', '--ephemeral', '--json', '-'],
+			args: ['--ask-for-approval', 'never', ...effort, 'exec', ...model, '--sandbox', draft.readOnly ? 'read-only' : 'workspace-write', '--skip-git-repo-check', '--ephemeral', '--json', '-'],
 			stdin: instruction
 		};
 	}
@@ -71,7 +75,7 @@ export function buildAgentInvocation(draft: AgentDraft): AgentInvocation {
 	// stream-json (which requires --verbose in print mode) reports each assistant message as it is produced.
 	return {
 		executable: 'claude',
-		args: ['--print', ...model, '--permission-mode', draft.readOnly ? 'plan' : 'dontAsk', '--allowedTools', draft.readOnly ? 'Read,Glob,Grep' : 'Read,Glob,Grep,Edit,Write', '--disallowedTools', 'Bash,WebFetch,WebSearch', '--max-turns', '12', '--output-format', 'stream-json', '--verbose'],
+		args: ['--print', ...model, ...effort, '--permission-mode', draft.readOnly ? 'plan' : 'dontAsk', '--allowedTools', draft.readOnly ? 'Read,Glob,Grep' : 'Read,Glob,Grep,Edit,Write', '--disallowedTools', 'Bash,WebFetch,WebSearch', '--max-turns', '12', '--output-format', 'stream-json', '--verbose'],
 		stdin: instruction
 	};
 }
