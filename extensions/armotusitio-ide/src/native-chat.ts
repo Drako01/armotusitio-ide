@@ -66,6 +66,8 @@ export interface ChatProjectContext {
 	skills: Array<{ name: string; source: string }>;
 	guides: string[];
 	verification?: { revision: string; gates: Array<{ id: string; command: string }> };
+	/** What confines each provider's writer and whether the user's isolation requirement allows it. */
+	isolation?: Record<NativeProvider, { writes: string; allowed: boolean }>;
 }
 
 import { absorbMessages, MEMORY_RESERVE_BYTES, renderMemory, validMemory, type ChatMemory } from './native-chat-memory.ts';

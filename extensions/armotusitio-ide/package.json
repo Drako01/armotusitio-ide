@@ -125,6 +125,13 @@
           "default": "",
           "description": "Nivel de esfuerzo de Claude Code para el chat y agentes nativos. Vacío respeta la configuración predeterminada del CLI; la compatibilidad depende del modelo."
         },
+        "atsHarness.writerIsolation": {
+          "type": "string",
+          "enum": ["tool-allowlist", "provider-sandbox", "os-kernel"],
+          "default": "tool-allowlist",
+          "scope": "application",
+          "description": "Aislamiento minimo exigido a un agente que modifica archivos. tool-allowlist: solo permisos de herramientas del proveedor. provider-sandbox: exige el sandbox del sistema operativo del propio proveedor (hoy solo Codex). os-kernel: exige un sandbox del kernel aplicado por el IDE, que ningun proveedor de modelos ofrece todavia, por lo que bloquea toda escritura."
+        },
         "atsHarness.coordinatedProjectWriters": {
           "type": "boolean",
           "default": false,

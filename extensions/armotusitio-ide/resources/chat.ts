@@ -307,7 +307,8 @@ function updatePlanCards(): void {
 		const actions = el('div', 'actions');
 		const approve = el('button', 'approve', L.approve) as HTMLButtonElement; approve.type = 'button';
 		approve.disabled = !current.approvable;
-		const hint = el('p', 'muted', current.blockedReason || L.approveHint); hint.id = 'plan-hint-' + current.messageId;
+		const isolation = state.chat.isolation ? ' ' + format(L.isolation, L.isolationLevel[state.chat.isolation.writes] || state.chat.isolation.writes) : '';
+		const hint = el('p', 'muted', current.blockedReason || L.approveHint + isolation); hint.id = 'plan-hint-' + current.messageId;
 		approve.setAttribute('aria-describedby', hint.id);
 		approve.addEventListener('click', () => { if (!approve.disabled) { approve.disabled = true; api.postMessage({ action: 'approve', digest: current.digest }); } });
 		const change = el('button', 'secondary', L.requestChanges) as HTMLButtonElement; change.type = 'button';

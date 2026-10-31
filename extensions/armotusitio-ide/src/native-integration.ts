@@ -29,6 +29,7 @@ import { createWorktreeCheckpoint, readWorktreeCheckpoint, rollbackWorktreeCheck
 import { integrateWorktreeChanges, reconcileWorktreeIntegration, rollbackWorktreeIntegration } from './native-worktree-integration.ts';
 import { delegateProjectGate, queryProjectEngineStatus } from './native-engine-interop.ts';
 import { acquireWriterLease, type WriterLease } from './native-hybrid-writer.ts';
+import { describeAgentIsolation, meetsWriterIsolation, parseWriterIsolation } from './native-isolation.ts';
 import { describeTrace, taskTrace, traceparent, workflowTrace } from './native-trace.ts';
 import {
 	reserveProviderInvocation, readProviderInvocationQuota, assertProviderBudget, recordProviderSpend, readProviderBudget,
@@ -110,6 +111,8 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			maxCostUsdPer24h: settings.get('providerCostUsdPer24h', 0)
 		});
 	};
+	/** Minimum confinement a writer must have; user-level, so a repository cannot lower it. */
+	const requiredWriterIsolation = () => parseWriterIsolation(vscode.workspace.getConfiguration('atsHarness').get('writerIsolation', 'tool-allowlist'));
 	/** Opt-in, user-level: a repository cannot enable external writers for itself. */
 	const coordinatedWriters = (): boolean => vscode.workspace.getConfiguration('atsHarness').get('coordinatedProjectWriters', false) === true;
 	/** Model chosen for a provider (`atsHarness.<provider>Model`); empty keeps the CLI default. */
@@ -155,6 +158,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 		if (authority.reason === 'project-path-unsafe') { throw Error('HARNESS_PROJECT_AUTHORITY_UNSAFE'); }
 		// A project Harness keeps writer authority over its checkout unless the user enabled coordinated writers,
 		// and even then the engine must acknowledge an exclusive lease below.
+		if (!draft.readOnly && !meetsWriterIsolation(draft.provider, requiredWriterIsolation())) { throw Error('HARNESS_AGENT_ISOLATION_INSUFFICIENT'); }
 		const hybridWriter = !draft.readOnly && authority.engine === 'project';
 		if (hybridWriter && !coordinatedWriters()) { throw Error('HARNESS_HYBRID_WRITER_UNAVAILABLE'); }
 		assertIdle(root, folder);
@@ -215,8 +219,9 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 				const [skills, guides, verification] = await Promise.all([listProjectSkills(root), listProjectGuides(root), verificationOf(root)]);
 				// A project Harness can host IDE writers only when the user opted in and its manifest declares the lease; the engine's acknowledgement is verified at approval.
 				const coordinated = authority.engine === 'project' && coordinatedWriters() && (await readProjectCapabilities(root).catch(() => [])).includes('writer-lease');
+				const isolation = Object.fromEntries((['codex', 'claude'] as const).map(provider => [provider, { writes: describeAgentIsolation(provider).writes, allowed: meetsWriterIsolation(provider, requiredWriterIsolation()) }])) as Record<NativeProvider, { writes: string; allowed: boolean }>;
 				return {
-					root, writer: (authority.engine === 'ide-native' || coordinated) && authorized(folder),
+					isolation, root, writer: (authority.engine === 'ide-native' || coordinated) && authorized(folder),
 					skills: skills.map(skill => ({ name: skill.name, source: skill.source })),
 					guides: guides.map(guide => guide.path),
 					verification: verification && {

@@ -621,3 +621,42 @@ test('a project with its own Harness accepts IDE writers only with the opt-in an
 		await f.cleanup();
 	}
 });
+
+test('the required writer isolation blocks providers that cannot offer it before anything starts', async () => {
+	const f = await fixture();
+	const originalPath = process.env.PATH;
+	const settings: Record<string, unknown> = {};
+	f.vscode.workspace.getConfiguration = () => ({ get: (key: string, fallback: unknown) => settings[key] ?? fallback });
+	try {
+		const root = await fs.realpath(f.roots[0]);
+		const bin = path.join(path.dirname(root), 'fake-isolation-bin');
+		await installFakeCodex(bin, ['#!/usr/bin/env node', 'process.stdin.resume(); process.stdin.on("end", () => { require("fs").writeFileSync("written.txt", "x"); console.log("done"); });'].join('\n'));
+		process.env.PATH = bin + path.delimiter + (originalPath || '');
+		const runtime = f.controller.nativeChatRuntime(f.vscode.workspace.workspaceFolders[0]);
+		const hooks = { started() { }, progress() { }, stage() { }, gates() { } };
+		const { extractChatPlan } = await import('../src/native-chat.ts');
+		const plan = extractChatPlan('```harness-plan\n{"title":"X","steps":["Escribir"]}\n```', 1).plan!;
+		const written = (): Promise<boolean> => fs.access(path.join(root, 'written.txt')).then(() => true, () => false);
+		const implement = (provider: 'codex' | 'claude') => runtime.implement({ provider, instruction: 'Implement the approved plan v1', plan }, hooks, new AbortController().signal);
+
+		// The default accepts the provider's tool permissions; the context tells the UI what confines each writer.
+		assert.deepEqual((await runtime.context()).isolation, { codex: { writes: 'provider-sandbox', allowed: true }, claude: { writes: 'tool-allowlist', allowed: true } });
+		settings.writerIsolation = 'provider-sandbox';
+		assert.deepEqual((await runtime.context()).isolation, { codex: { writes: 'provider-sandbox', allowed: true }, claude: { writes: 'tool-allowlist', allowed: false } });
+		await assert.rejects(implement('claude'), /HARNESS_AGENT_ISOLATION_INSUFFICIENT/);
+		assert.equal(await written(), false);
+		assert.equal((await implement('codex')).agent.status, 'passed');
+		assert.equal(await written(), true);
+
+		// A requirement no provider can meet, and any unrecognised value, block every writer.
+		await fs.rm(path.join(root, 'written.txt'));
+		for (const value of ['os-kernel', 'banana']) {
+			settings.writerIsolation = value;
+			await assert.rejects(implement('codex'), /HARNESS_AGENT_ISOLATION_INSUFFICIENT/);
+		}
+		assert.equal(await written(), false);
+	} finally {
+		if (originalPath === undefined) { delete process.env.PATH; } else { process.env.PATH = originalPath; }
+		await f.cleanup();
+	}
+});

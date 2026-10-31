@@ -55,6 +55,8 @@ export interface ChatSnapshot {
 	activity?: ChatActivity;
 	plan?: { messageId: string; version: number; digest: string; approvable: boolean; blockedReason?: string };
 	writer: boolean;
+	/** Isolation of the selected provider's writer, for display next to the approval. */
+	isolation?: { writes: string; allowed: boolean };
 	/** Commands that run automatically after an approved implementation. */
 	verification: Array<{ id: string; command: string }>;
 }
@@ -152,6 +154,7 @@ export class HarnessChatSession {
 			activity: this.activity ? { ...this.activity } : undefined,
 			plan: current ? { messageId: current.id, version: current.plan.version, digest: current.plan.digest, approvable: !this.activity && !blockedReason, blockedReason } : undefined,
 			writer,
+			isolation: this.context?.isolation?.[this.conversation.provider],
 			verification: this.context?.verification?.gates ?? []
 		};
 	}
@@ -160,6 +163,8 @@ export class HarnessChatSession {
 	private blockedReason(current: ChatMessage & { plan: ChatPlan }, writer: boolean): string | undefined {
 		if (!this.context) { return this.t('No se pudo leer el estado del proyecto. Reintent\u00e1 en unos segundos.'); }
 		if (!writer) { return this.t('Este proyecto tiene su propio Harness. El IDE no aplica cambios sin coordinaci\u00f3n verificable con ese motor. Si el motor soporta el lease de escritura (protocolo v2), pod\u00e9s habilitar \u00abatsHarness.coordinatedProjectWriters\u00bb.'); }
+		const isolation = this.context.isolation?.[this.conversation.provider];
+		if (isolation && !isolation.allowed) { return this.t('Tu configuraci\u00f3n exige un aislamiento de escritura que {0} no ofrece. Eleg\u00ed el otro proveedor o ajust\u00e1 \u00abatsHarness.writerIsolation\u00bb.', this.conversation.provider === 'claude' ? 'Claude Code' : 'Codex'); }
 		const position = this.conversation.messages.indexOf(current);
 		// New requirements suspend the plan until the assistant confirms or revises it.
 		if (this.conversation.messages.slice(position + 1).some(message => message.role === 'user')) { return this.t('Escribiste despu\u00e9s de este plan. Esper\u00e1 a que la IA lo confirme o lo actualice antes de aprobarlo.'); }
