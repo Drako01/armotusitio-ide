@@ -10,7 +10,7 @@ const { ChatStore, harnessErrorCode } = require('./native-chat.ts');
 const { HarnessChatSession, describeFailure } = require('./native-chat-session.ts');
 const { diagnoseProvider } = require('./native-provider-diagnostics.ts');
 const { listProviderModels } = require('./native-provider-models.ts');
-const { validModel } = require('./native-providers.ts');
+const { validModel, validEffort } = require('./native-providers.ts');
 const { endpoint } = require('./mcp.ts');
 
 /** Dispatch explicit slash commands without an LLM, shell interpolation or arbitrary MCP tool names. */
@@ -129,6 +129,8 @@ function labels(t) {
 	return {
 		title: t('Chat Harness'), project: t('Proyecto'), provider: t('IA'), codex: 'Codex', claude: 'Claude Code',
 		model: t('Modelo de {0}', '{0}'), modelDefault: t('Predeterminado: {0}', '{0}'), modelCliDefault: t('Predeterminado del CLI'),
+		effort: t('Razonamiento de {0}', '{0}'), effortDefault: t('Esfuerzo: predeterminado'), effortLevels: { low: t('Bajo'), medium: t('Medio'), high: t('Alto'), xhigh: t('Extra alto'), max: t('Máximo') },
+		effortHint: t('La disponibilidad del nivel depende del modelo y del CLI instalado.'),
 		providerStatus: { ready: t('Autenticado'), unauthenticated: t('Sin sesi\u00f3n iniciada'), unavailable: t('No instalado'), incompatible: t('Versi\u00f3n incompatible'), unknown: t('Estado desconocido'), checking: t('Verificando\u2026') },
 		mcp: t('ArmotuSitio MCP'), mcpState: { connected: t('Conectado'), disconnected: t('Desconectado'), checking: t('Verificando'), error: t('Error') },
 		mcpReason: { untrusted: t('El workspace no es confiable.'), disabled: t('La integraci\u00f3n est\u00e1 desactivada en este workspace.'), 'missing-key': t('No hay una clave configurada.'), auth: t('La clave fue rechazada o no tiene permisos.'), http: t('El servidor respondi\u00f3 con un error.'), protocol: t('La respuesta no cumple el protocolo MCP.'), network: t('No se pudo establecer la conexi\u00f3n.'), cancelled: t('Verificaci\u00f3n cancelada.') },
@@ -166,6 +168,8 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 	// Discovered from each CLI's own configuration; the choice itself lives in `atsHarness.<provider>Model`.
 	const models = { codex: { options: [] }, claude: { options: [] } };
 	const modelSetting = provider => provider + 'Model';
+	const effortSetting = provider => provider + 'Effort';
+	const chosenEfforts = () => Object.fromEntries(['codex', 'claude'].map(provider => [provider, vscode.workspace.getConfiguration('atsHarness').get(effortSetting(provider), '')]));
 	const chosenModels = () => Object.fromEntries(Object.entries(models).map(([provider, found]) => [provider, { ...found, selected: vscode.workspace.getConfiguration('atsHarness').get(modelSetting(provider), '') }]));
 	let mcpStatus: { state: string; reason?: string; tools?: number; checkedAt?: string } = { state: 'checking' };
 	let panel, mcpCheck;
@@ -202,7 +206,7 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 		// The webview drops its history whenever it receives no chat, so the next one must be complete.
 		else { posted = chat ? { key, revision: chat.revision } : { key: undefined, revision: -1 }; }
 		post({
-			type: 'state', trusted: !!vscode.workspace.isTrusted, providers, models: chosenModels(), mcp: { ...mcpStatus, endpoint: new URL(endpoint).host, enabled: !!mcp.enabled?.() },
+			type: 'state', trusted: !!vscode.workspace.isTrusted, providers, models: chosenModels(), efforts: chosenEfforts(), mcp: { ...mcpStatus, endpoint: new URL(endpoint).host, enabled: !!mcp.enabled?.() },
 			project: folder ? { name: folder.name, id: key } : null,
 			projects: folders().map(item => ({ name: item.name, id: item.uri.toString() })),
 			chat
@@ -312,6 +316,10 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 				await vscode.workspace.getConfiguration('atsHarness').update(modelSetting(message.provider), message.model, true);
 				publish(folder);
 			}
+			if (action === 'effort' && ['codex', 'claude'].includes(message.provider) && (message.effort === '' || validEffort(message.provider, message.effort))) {
+				await vscode.workspace.getConfiguration('atsHarness').update(effortSetting(message.provider), message.effort, true);
+				publish(folder);
+			}
 			if (action === 'reset' && !session.busy) {
 				const confirm = t('Empezar de nuevo');
 				if (await vscode.window.showWarningMessage(t('\u00bfEmpezar una conversaci\u00f3n nueva? El historial actual de este proyecto se borra.'), { modal: true }, confirm) === confirm) { await session.reset(); }
@@ -337,7 +345,7 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 		void refreshMcp();
 	}));
 	if (vscode.workspace.onDidChangeConfiguration) {
-		context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => { if (panel && ['codex', 'claude'].some(provider => event.affectsConfiguration('atsHarness.' + modelSetting(provider)))) { publish(); } }));
+		context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => { if (panel && ['codex', 'claude'].some(provider => event.affectsConfiguration('atsHarness.' + modelSetting(provider)) || event.affectsConfiguration('atsHarness.' + effortSetting(provider)))) { publish(); } }));
 	}
 	if (mcp.onDidChange) { context.subscriptions.push(mcp.onDidChange(() => { if (panel) { void refreshMcp(); } })); }
 	if (vscode.workspace.onDidGrantWorkspaceTrust) { context.subscriptions.push(vscode.workspace.onDidGrantWorkspaceTrust(() => { publish(); void receive({ action: 'ready' }); })); }
