@@ -222,14 +222,28 @@ La preferencia vigente al terminar la tarea determina si se muestra el aviso.
 No se notifican tareas externas ni entradas recuperadas del historial después de reiniciar.
 Desactivar `atsHarness.enabled` también silencia estos avisos.
 
+## Chat Harness conversacional
+
+Abrí **ArmotuSitio: Chat Harness** desde la paleta, la barra de estado o el inicio del IDE.
+Es una conversación real con la IA elegida sobre el proyecto abierto, y todo el flujo ocurre en el mismo panel.
+
+- **Enviar = conversar.** Cada mensaje inicia un turno de solo lectura del CLI local elegido (`codex exec --sandbox read-only` o `claude --permission-mode plan`). La IA puede leer el repositorio, hacer preguntas y proponer un plan, pero nunca modifica archivos al enviar.
+- **Plan versionado.** Cuando la IA propone o ajusta un plan, aparece una tarjeta «Plan vN» con pasos, archivos, riesgos, skills y las verificaciones configuradas. Solo la última versión puede aprobarse; las anteriores quedan como reemplazadas. «Pedir cambios» sigue la conversación.
+- **Aprobar y ejecutar = modificar código.** Ejecuta el agente implementador sobre el plan aprobado, identificado por su digest. Usa el mismo camino protegido que el resto del Harness nativo: Workspace Trust, lock compartido de escritores, cuota y presupuesto del proveedor, métricas y referencias a guías y skills verificadas por digest. Si el agente termina bien y el proyecto tiene `.ats-harness.json`, sus gates corren con el mismo lock y se registran como una tarea más en el historial.
+- **Seguimiento en el chat.** Se ven la etapa (preparación, agente, verificaciones), el estado de cada gate, el tiempo transcurrido y la actividad observada, y la ejecución se puede detener. Al terminar queda un resumen con el informe del agente y el resultado de las verificaciones, y la conversación continúa con ese contexto. Un plan que ya se ejecutó bien no se puede volver a aplicar; para eso se pide una versión nueva.
+- **Selector de IA.** La cabecera muestra **Codex / Claude Code** con su estado local (autenticado, sin sesión, no instalado o versión incompatible), obtenido con `--version`, `auth status` y la ayuda del CLI, sin enviar prompts. La elección se guarda por proyecto y cambiarla no afecta un turno ya iniciado.
+- **Estado de ArmotuSitio MCP.** El indicador muestra Conectado, Desconectado, Verificando o Error según un handshake real (`initialize` + `tools/list`) contra el endpoint existente; una clave guardada sola no cuenta como conexión. El detalle muestra servidor, cantidad de herramientas, motivo y hora de la última verificación, sin secretos, con accesos para verificar, habilitar, configurar o cambiar la clave. El MCP es opcional para conversar y ejecutar.
+- **Historial por proyecto.** La conversación se guarda en el almacenamiento privado del IDE, con un máximo de 200 mensajes. Un archivo dañado o alterado se archiva y no se usa. «Nueva conversación» pide confirmación.
+- **Proyectos con Harness propio** (`.harness/` o `harness/`): se puede conversar y planificar, pero «Aprobar y ejecutar» queda deshabilitado con el motivo visible, porque el IDE no habilita escritores concurrentes sin coordinación verificable con ese motor.
+
+Los mensajes que empiezan con `/` (por ejemplo `/estado` o `/tareas RED`) se resuelven con los comandos locales de abajo y su resultado queda en la conversación.
+
 ## Chat @harness y Work Management
 
-Abrí **ArmotuSitio: Chat Harness** desde la paleta o desde el inicio del IDE.
-El panel propio funciona sin Copilot ni llamadas a modelos de IA.
-Esta versión de la extensión requiere la base Code - OSS 1.143 del IDE.
 También se registra `@harness` en el chat nativo cuando ese chat tiene un proveedor predeterminado disponible.
 La integración no reemplaza al agente predeterminado ni requiere activar APIs propuestas.
-Son comandos explícitos; no es un planificador de lenguaje natural.
+En ese participante solo se aceptan comandos explícitos; el texto libre indica abrir Chat Harness.
+Esta versión de la extensión requiere la base Code - OSS 1.143 del IDE.
 
 ```text
 @harness comandos
@@ -270,11 +284,11 @@ No pegues claves en el chat ni las guardes en `settings.json`, `mcp.json` o arch
 Para desconectar por completo, desactivá `atsHarness.mcp.enabled` en los ajustes del IDE.
 Se requiere un workspace confiable para consultas y ejecución.
 
-Las respuestas se muestran como texto sin interpretar HTML o instrucciones del servidor.
-No se persiste la conversación y cada consulta HTTP tiene límites de tiempo y tamaño.
-**Cancelar consulta** interrumpe la espera; no revierte una modificación que ya aceptó el servidor.
+Las respuestas se muestran como texto sin interpretar HTML o instrucciones del servidor; en Chat Harness el Markdown se renderiza sin HTML.
+Cada consulta HTTP tiene límites de tiempo y tamaño.
+**Detener** interrumpe la espera; no revierte una modificación que ya aceptó el servidor.
 Si falla una modificación, consultá el estado actual antes de repetirla.
-No se transmite contexto del editor a un modelo de IA desde este participante.
+No se transmite contexto del editor a un modelo de IA desde el participante `@harness`.
 
 ## Bienvenida y actualización local
 
