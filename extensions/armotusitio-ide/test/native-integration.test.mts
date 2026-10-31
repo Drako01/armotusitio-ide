@@ -11,6 +11,12 @@ import { registerNativeHarness } from '../src/native-integration.ts';
 import { writeProjectConfig } from '../src/native-project.ts';
 import { inspectHarnessAuthority } from '../src/native-authority.ts';
 import { acquireSharedExecutionFence, inspectSharedExecutionFence } from '../src/native-shared-fence.ts';
+import { installFakeCodex } from './native-fake-provider.mts';
+
+/** VS Code reports `Uri.fsPath` with a lower-case drive letter on Windows; tests must use the same shape. */
+function vscodeFsPath(value: string): string {
+	return process.platform === 'win32' && /^[A-Z]:/.test(value) ? value[0].toLowerCase() + value.slice(1) : value;
+}
 
 async function fixture() {
 	const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-native-ui-'));
@@ -20,7 +26,7 @@ async function fixture() {
 	const documents: Array<{ content: string }> = [];
 	const notices: string[] = [];
 	const state = new Map();
-	const context = { subscriptions: [], globalStorageUri: { fsPath: path.join(directory, 'private') }, globalState: { get: key => state.get(key), update: async (key, value) => { state.set(key, value); } } };
+	const context = { subscriptions: [], globalStorageUri: { fsPath: vscodeFsPath(path.join(directory, 'private')) }, globalState: { get: key => state.get(key), update: async (key, value) => { state.set(key, value); } } };
 	const vscode = {
 		l10n: { t: (text: string, ...args: string[]) => text.replace(/\{(\d+)\}/g, (_, index) => args[index]) },
 		commands: { registerCommand: (id, command) => { commands.set(id, command); return { dispose() { } }; } },
@@ -422,4 +428,132 @@ test('IDE trace command exposes executed gate spans without task output', async 
 			{ kinds: ['task', 'gate'], statuses: ['ok', 'ok'], lines: 2 });
 		assert.equal(f.documents.at(-1)!.content.includes(process.version), false);
 	} finally { await f.cleanup(); }
+});
+
+test('chat runtime converses read-only, then implements an approved plan and runs configured gates under one fence', async () => {
+	const f = await fixture();
+	const originalPath = process.env.PATH;
+	try {
+		const root = await fs.realpath(f.roots[0]);
+		await writeProjectConfig(root, { schemaVersion: 1, runtime: 'ide-native', profile: 'custom', plan: { schemaVersion: 1, gates: [{ id: 'exists', executable: 'node', args: ['-e', 'require("fs").accessSync("clients.txt")'] }] } });
+		const bin = path.join(path.dirname(root), 'fake-bin');
+		// Test-only provider: writes only when it receives the approved implementation instruction.
+		await installFakeCodex(bin, [
+			'#!/usr/bin/env node',
+			'let input = ""; process.stdin.on("data", c => input += c);',
+			'process.stdin.on("end", () => {',
+			'  if (input.includes("Implement the approved plan")) { require("fs").writeFileSync("clients.txt", "crud"); console.log("Created clients.txt"); return; }',
+			'  console.log(["Propuesta", "```harness-plan", JSON.stringify({ title: "CRUD", steps: ["Crear clients.txt"] }), "```"].join(String.fromCharCode(10)));',
+			'});'
+		].join('\n'));
+		process.env.PATH = bin + path.delimiter + (originalPath || '');
+		const folder = f.vscode.workspace.workspaceFolders[0];
+		const runtime = f.controller.nativeChatRuntime(folder);
+		const context = await runtime.context();
+		assert.deepEqual({ writer: context.writer, gates: context.verification.gates.map(gate => gate.id) }, { writer: true, gates: ['exists'] });
+		const hooks = { started() { }, progress() { }, stage() { }, gates() { } };
+		const turn = await runtime.converse('codex', 'Quiero agregar un CRUD de clientes', hooks);
+		assert.equal(turn.status, 'passed');
+		assert.match(turn.output, /harness-plan/);
+		await assert.rejects(fs.access(path.join(root, 'clients.txt')));
+		const { extractChatPlan } = await import('../src/native-chat.ts');
+		const plan = extractChatPlan(turn.output, 1).plan!;
+		const stages: string[] = [];
+		const result = await runtime.implement({ provider: 'codex', instruction: 'Implement the approved plan v1', plan, verificationRevision: context.verification.revision }, { ...hooks, stage: stage => stages.push(stage) }, new AbortController().signal);
+		const digest = (await import('node:crypto')).createHash('sha256').update(root).digest('hex');
+		const storage = path.join(path.dirname(root), 'private', 'native-harness', digest);
+		assert.deepEqual({ agent: result.agent.status, verification: result.verification, stages, held: (await inspectSharedExecutionFence(root, storage)).held, file: await fs.readFile(path.join(root, 'clients.txt'), 'utf8') },
+			{ agent: 'passed', verification: { status: 'passed', gates: [{ id: 'exists', status: 'passed' }] }, stages: ['agent', 'verifying'], held: false, file: 'crud' });
+		// A changed verification plan invalidates the approval before any provider starts.
+		await assert.rejects(runtime.implement({ provider: 'codex', instruction: 'Implement the approved plan v1', plan, verificationRevision: 'f'.repeat(64) }, hooks, new AbortController().signal), /HARNESS_CHAT_VERIFICATION_CHANGED/);
+		// Project-owned Harness: conversation remains possible, writers are refused before launching the provider.
+		await fs.rm(path.join(root, 'clients.txt'));
+		await fs.mkdir(path.join(root, '.harness'));
+		assert.equal((await runtime.context()).writer, false);
+		await assert.rejects(runtime.implement({ provider: 'codex', instruction: 'Implement the approved plan v1', plan }, hooks, new AbortController().signal), /HARNESS_HYBRID_WRITER_UNAVAILABLE/);
+		await assert.rejects(fs.access(path.join(root, 'clients.txt')));
+	} finally {
+		if (originalPath === undefined) { delete process.env.PATH; } else { process.env.PATH = originalPath; }
+		await f.cleanup();
+	}
+});
+
+test('chat runtime streams real intermediate Codex messages, redacted, before the turn ends', async () => {
+	const f = await fixture();
+	const originalPath = process.env.PATH;
+	try {
+		const root = await fs.realpath(f.roots[0]);
+		const bin = path.join(path.dirname(root), 'fake-stream-bin');
+		// Test-only provider emitting Codex JSONL: one intermediate message, a pause, then the final answer.
+		await installFakeCodex(bin, [
+			'#!/usr/bin/env node',
+			'const line = (type, item) => process.stdout.write(JSON.stringify({ type, item }) + String.fromCharCode(10));',
+			'process.stdin.resume(); process.stdin.on("end", () => {',
+			'  line("item.completed", { type: "agent_message", text: "Revisando con token=abc123secret" });',
+			'  setTimeout(() => { line("item.completed", { type: "agent_message", text: "Listo" }); process.stdout.write(JSON.stringify({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } }) + String.fromCharCode(10)); }, 400);',
+			'});'
+		].join('\n'));
+		process.env.PATH = bin + path.delimiter + (originalPath || '');
+		const runtime = f.controller.nativeChatRuntime(f.vscode.workspace.workspaceFolders[0]);
+		const streamed: Array<{ text: string; at: number }> = [];
+		const turn = await runtime.converse('codex', 'hola', { started() { }, progress() { }, message: text => streamed.push({ text, at: Date.now() }) });
+		const finished = Date.now();
+		assert.deepEqual({ status: turn.status, output: turn.output, streamed: streamed.map(item => item.text) },
+			{ status: 'passed', output: 'Listo', streamed: ['Revisando con token=[redacted]', 'Listo'] });
+		assert.ok(finished - streamed[0].at >= 300, 'the first message must arrive before the provider finishes');
+	} finally {
+		if (originalPath === undefined) { delete process.env.PATH; } else { process.env.PATH = originalPath; }
+		await f.cleanup();
+	}
+});
+
+test('review #1/#3/#4: guidance edits keep the run, early cancel never spawns, late cancel marks gates cancelled', async () => {
+	const f = await fixture();
+	const originalPath = process.env.PATH;
+	try {
+		const root = await fs.realpath(f.roots[0]);
+		await fs.writeFile(path.join(root, 'AGENTS.md'), '# Before');
+		await writeProjectConfig(root, { schemaVersion: 1, runtime: 'ide-native', profile: 'custom', plan: { schemaVersion: 1, gates: [{ id: 'exists', executable: 'node', args: ['-e', 'require("fs").accessSync("clients.txt")'] }] } });
+		const bin = path.join(path.dirname(root), 'fake-guidance-bin');
+		const launches = path.join(path.dirname(root), 'launches.txt');
+		// Test-only provider: records each launch, edits project guidance and reports through Codex JSONL.
+		await installFakeCodex(bin, [
+			'#!/usr/bin/env node',
+			'const fs = require("fs");',
+			'fs.appendFileSync(' + JSON.stringify(launches) + ', "x");',
+			'process.stdin.resume(); process.stdin.on("end", () => {',
+			'  fs.writeFileSync("AGENTS.md", "# Updated by the plan"); fs.writeFileSync("clients.txt", "crud");',
+			'  process.stdout.write(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "Actualic\\u00e9 AGENTS.md" } }) + String.fromCharCode(10));',
+			'});'
+		].join('\n'));
+		process.env.PATH = bin + path.delimiter + (originalPath || '');
+		const runtime = f.controller.nativeChatRuntime(f.vscode.workspace.workspaceFolders[0]);
+		const context = await runtime.context();
+		const { extractChatPlan } = await import('../src/native-chat.ts');
+		const plan = extractChatPlan('```harness-plan\n{"title":"Docs","steps":["Actualizar AGENTS.md"]}\n```', 1).plan!;
+		const hooks = { started() { }, progress() { }, stage() { }, gates() { } };
+		const request = { provider: 'codex' as const, instruction: 'Implement the approved plan v1', plan, verificationRevision: context.verification.revision };
+		// #1: editing a guidance file is a legitimate plan; the run and its gates are reported, not discarded.
+		const edited = await runtime.implement(request, hooks, new AbortController().signal);
+		assert.deepEqual({ agent: edited.agent.status, output: edited.agent.output, verification: edited.verification.status }, { agent: 'passed', output: 'Actualic\u00e9 AGENTS.md', verification: 'passed' });
+		// #3: a signal aborted before spawn never launches the provider, spends no quota credit and releases the fence.
+		const settings: Record<string, number> = { providerCallsPer24h: 5 };
+		f.vscode.workspace.getConfiguration = () => ({ get: (key: string, fallback: unknown) => settings[key] ?? fallback });
+		const before = (await fs.readFile(launches, 'utf8')).length;
+		const aborted = new AbortController(); aborted.abort();
+		await assert.rejects(runtime.converse('codex', 'hola', hooks, aborted.signal), /HARNESS_CANCELLED_BEFORE_START/);
+		const digest = (await import('node:crypto')).createHash('sha256').update(root).digest('hex');
+		const storage = path.join(path.dirname(root), 'private', 'native-harness', digest);
+		const { readProviderInvocationQuota } = await import('../src/native-provider-quota.ts');
+		assert.deepEqual({ launches: (await fs.readFile(launches, 'utf8')).length - before, held: (await inspectSharedExecutionFence(root, storage)).held, used: (await readProviderInvocationQuota(storage, 5)).providers.codex?.used ?? 0 },
+			{ launches: 0, held: false, used: 0 });
+		// #4: Stop pressed after the writer finished but before gates ran reports them cancelled, never skipped.
+		const late = new AbortController();
+		const result = await runtime.implement(request, { ...hooks, message: () => late.abort() }, late.signal);
+		assert.deepEqual({ agent: result.agent.status, verification: result.verification.status, gates: result.verification.gates.map(gate => gate.status) },
+			{ agent: 'passed', verification: 'cancelled', gates: ['cancelled'] });
+	} finally {
+		if (originalPath === undefined) { delete process.env.PATH; } else { process.env.PATH = originalPath; }
+		await f.cleanup();
+	}
 });

@@ -8,9 +8,10 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { createHash, randomUUID } from 'node:crypto';
 import { spawn, type ChildProcess } from 'node:child_process';
+import { redactSecrets } from './native-redact.ts';
 import { fingerprintEvidence, evidenceKey, saveEvidenceMetadata, readEvidenceMetadata, type EvidenceFingerprint } from './native-evidence.ts';
 import { inspectHarnessAuthority } from './native-authority.ts';
-import { resolveNativeCommand } from './native-runtime.ts';
+import { processAlive, resolveNativeCommand } from './native-runtime.ts';
 import { acquireSharedExecutionFence, type SharedExecutionFence } from './native-shared-fence.ts';
 import { offlineSandboxInvocation, OFFLINE_SANDBOX_POLICIES, type OfflineSandboxPolicy } from './native-os-sandbox.ts';
 import { adaptiveWorkerBudget, sampleHostLoad } from './native-performance.ts';
@@ -71,9 +72,7 @@ export function selectNativeWave(ready: Gate[], availableCpus = adaptiveWorkerBu
 }
 
 function redact(value: string): string {
-	return value.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').replace(/\b(Bearer\s+)\S+/gi, '$1[redacted]')
-		.replace(/((?:token|password|secret|api[_-]?key)\s*[=:]\s*)(?:"[^"]*"|'[^']*'|\S+)/gi, '$1[redacted]')
-		.slice(-MAX_OUTPUT);
+	return redactSecrets(value).slice(-MAX_OUTPUT);
 }
 async function writeAtomic(file: string, value: unknown): Promise<void> {
 	const payload = JSON.stringify(value, null, 2);
@@ -89,7 +88,6 @@ async function contained(root: string, cwd = '.'): Promise<string> {
 	if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) { throw Error('HARNESS_PATH_ESCAPE'); }
 	return target;
 }
-function processAlive(pid: number): boolean { try { process.kill(pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException).code === 'EPERM'; } }
 export class NativeHarness {
 	private readonly project: string; private readonly storage: string;
 	private active = new Set<ChildProcess>(); private abortController?: AbortController;

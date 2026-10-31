@@ -20,15 +20,25 @@ export interface ProviderDiagnostic {
 }
 const VERSION_TIMEOUT = 5000;
 const MAX_CAPTURE = 4096;
+const MAX_HELP = 64 * 1024;
+/**
+ * Flags that must be documented in help. Claude's `--max-turns` is accepted but hidden from
+ * `claude --help` (2.1.x), so its absence there cannot prove incompatibility.
+ */
 const REQUIRED_FLAGS: Record<NativeProvider, readonly string[]> = {
-	codex: ['--sandbox', '--skip-git-repo-check', '--ask-for-approval', '--ephemeral', '--json'],
-	claude: ['--permission-mode', '--allowedTools', '--disallowedTools', '--max-turns', '--output-format']
+	codex: ['--sandbox', '--skip-git-repo-check', '--ask-for-approval', '--ephemeral', '--json', '--model'],
+	claude: ['--permission-mode', '--allowedTools', '--disallowedTools', '--output-format', '--verbose', '--model']
+};
+/** Codex documents global flags such as `--ask-for-approval` only in top-level help, and exec flags in `exec --help`. */
+const HELP_COMMANDS: Record<NativeProvider, readonly string[][]> = {
+	codex: [['--help'], ['exec', '--help']],
+	claude: [['--help']]
 };
 
 /** A CLI's help text is evidence of supported flags, never proof of authentication or sandbox enforcement. */
 export function inspectProviderHelp(provider: NativeProvider, help: string): { compatibility: 'verified' | 'unsupported' | 'unknown'; missingFlags: string[] } {
 	if (provider !== 'codex' && provider !== 'claude') { throw Error('HARNESS_PROVIDER_UNSUPPORTED'); }
-	if (typeof help !== 'string' || help.length > 32 * 1024 || help.trim().length < 20) { return { compatibility: 'unknown', missingFlags: [] }; }
+	if (typeof help !== 'string' || help.length > MAX_HELP || help.trim().length < 20) { return { compatibility: 'unknown', missingFlags: [] }; }
 	const flags = new Set(help.match(/--[A-Za-z][A-Za-z-]*/g) || []);
 	const missingFlags = REQUIRED_FLAGS[provider].filter(flag => !flags.has(flag));
 	return { compatibility: missingFlags.length ? 'unsupported' : 'verified', missingFlags };
@@ -79,18 +89,18 @@ export async function probeProviderLocalAuth(provider: NativeProvider): Promise<
 		const timer = setTimeout(() => finish(-1), VERSION_TIMEOUT);
 		timer.unref();
 		child.stdout?.on('data', (chunk: Buffer) => { bytes += chunk.length; if (bytes > MAX_CAPTURE) { finish(-1); return; } stdout += chunk.toString('utf8'); });
-		child.stderr?.on('data', (chunk: Buffer) => { bytes += chunk.length; if (bytes > MAX_CAPTURE) { finish(-1); } });
+		// Codex prints `login status` to stderr; Claude's JSON stays on stdout and must not be mixed.
+		child.stderr?.on('data', (chunk: Buffer) => { bytes += chunk.length; if (bytes > MAX_CAPTURE) { finish(-1); return; } if (provider === 'codex') { stdout += chunk.toString('utf8'); } });
 		child.once('error', () => finish(-1));
 		child.once('close', code => finish(code ?? -1));
 	});
 }
 
-/** Queries local static help only; this operation never passes a prompt to a provider. */
-export async function probeProviderCommandFlags(provider: NativeProvider): Promise<{ compatibility: 'verified' | 'unsupported' | 'unknown'; missingFlags: string[] }> {
-	if (provider !== 'codex' && provider !== 'claude') { throw Error('HARNESS_PROVIDER_UNSUPPORTED'); }
+/** Static help text of one subcommand, or null when it cannot be read within bounds. */
+async function readProviderHelp(provider: NativeProvider, args: readonly string[]): Promise<string | null> {
 	let resolved;
-	try { resolved = await resolveNativeCommand(provider, provider === 'codex' ? ['exec', '--help'] : ['--help']); }
-	catch { return { compatibility: 'unknown', missingFlags: [] }; }
+	try { resolved = await resolveNativeCommand(provider, [...args]); }
+	catch { return null; }
 	const env: NodeJS.ProcessEnv = {};
 	for (const key of ['PATH', 'Path', 'PATHEXT', 'SystemRoot', 'WINDIR', 'HOME', 'USERPROFILE', 'TEMP', 'TMP']) {
 		if (process.env[key]) { env[key] = process.env[key]; }
@@ -106,15 +116,24 @@ export async function probeProviderCommandFlags(provider: NativeProvider): Promi
 			settled = true;
 			clearTimeout(timer);
 			if (!compatible) { child.kill(); }
-			resolve(compatible ? inspectProviderHelp(provider, help) : { compatibility: 'unknown', missingFlags: [] });
+			resolve(compatible ? help : null);
 		};
 		const timer = setTimeout(() => finish(false), VERSION_TIMEOUT);
 		timer.unref();
-		child.stdout?.on('data', (part: Buffer) => { bytes += part.length; help += part.toString('utf8'); if (bytes > 32 * 1024) { finish(false); } });
-		child.stderr?.on('data', (part: Buffer) => { bytes += part.length; help += part.toString('utf8'); if (bytes > 32 * 1024) { finish(false); } });
+		const collect = (part: Buffer): void => { bytes += part.length; help += part.toString('utf8'); if (bytes > MAX_HELP / 2) { finish(false); } };
+		child.stdout?.on('data', collect);
+		child.stderr?.on('data', collect);
 		child.once('error', () => finish(false));
 		child.once('close', code => finish(code === 0));
 	});
+}
+
+/** Queries local static help only; this operation never passes a prompt to a provider. */
+export async function probeProviderCommandFlags(provider: NativeProvider): Promise<{ compatibility: 'verified' | 'unsupported' | 'unknown'; missingFlags: string[] }> {
+	if (provider !== 'codex' && provider !== 'claude') { throw Error('HARNESS_PROVIDER_UNSUPPORTED'); }
+	const helps = await Promise.all(HELP_COMMANDS[provider].map(args => readProviderHelp(provider, args)));
+	if (helps.some(help => help === null)) { return { compatibility: 'unknown', missingFlags: [] }; }
+	return inspectProviderHelp(provider, helps.join('\n'));
 }
 
 export async function diagnoseProvider(provider: NativeProvider): Promise<ProviderDiagnostic> {

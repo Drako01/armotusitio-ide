@@ -11,6 +11,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
+import { isCanonicalDirectory } from './native-path.ts';
 import { resolveNativeCommand } from './native-runtime.ts';
 import { listAgentWorktrees, type ManagedWorktree } from './native-agent-worktree.ts';
 import type { SharedExecutionFence } from './native-shared-fence.ts';
@@ -81,7 +82,7 @@ export async function validateManagedWorktree(worktree: ManagedWorktree): Promis
 export async function safeStorage(storage: string): Promise<void> {
 	await fs.mkdir(storage, { recursive: true, mode: 0o700 });
 	const stat = await fs.lstat(storage);
-	if (!stat.isDirectory() || stat.isSymbolicLink() || await fs.realpath(storage) !== path.resolve(storage)) {
+	if (!stat.isDirectory() || stat.isSymbolicLink() || !await isCanonicalDirectory(storage)) {
 		throw Error('HARNESS_CHECKPOINT_STORAGE_UNSAFE');
 	}
 }

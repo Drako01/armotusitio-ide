@@ -10,7 +10,7 @@ import * as os from 'node:os';
 import { installFakeCodex } from './native-fake-provider.mts';
 import { execFileSync } from 'node:child_process';
 import { buildAgentInvocation, executeReviewedAgent } from '../src/native-agent-execution.ts';
-import { reviewAgentDraft } from '../src/native-providers.ts';
+import { reviewAgentDraft, validateReviewedAgent, type NativeEffort } from '../src/native-providers.ts';
 
 const base = {
 	schemaVersion: 1 as const, provider: 'codex' as const, role: 'reviewer' as const,
@@ -43,7 +43,56 @@ test('Claude uses plan for readers and fail-closed dontAsk for writers', () => {
 	assert.ok(writer.args.includes('Bash,WebFetch,WebSearch'));
 	assert.ok(!reader.args.includes('Read,Glob,Grep,Edit,Write'));
 	assert.ok(!writer.args.includes('--dangerously-skip-permissions'));
-	assert.deepEqual(writer.args.slice(-2), ['--output-format', 'json']);
+	assert.deepEqual(writer.args.slice(-3), ['--output-format', 'stream-json', '--verbose']);
+});
+
+test('a chosen model is passed explicitly and can never be read as a flag', () => {
+	const claude = buildAgentInvocation({ ...base, provider: 'claude', model: 'sonnet' });
+	const codex = buildAgentInvocation({ ...base, model: 'gpt-6.1-sol' });
+	assert.deepEqual([claude.args.slice(1, 3), codex.args.slice(3, 5), buildAgentInvocation(base).args.includes('--model')],
+		[['--model', 'sonnet'], ['--model', 'gpt-6.1-sol'], false]);
+	for (const model of ['--dangerously-skip-permissions', '', 'a b', 'x'.repeat(65)]) {
+		assert.throws(() => buildAgentInvocation({ ...base, model }), /HARNESS_AGENT_DRAFT_SCHEMA/);
+	}
+});
+
+test('versioned Claude Opus and explicit effort reach the correct CLI arguments', () => {
+	const claude = buildAgentInvocation({ ...base, provider: 'claude', model: 'claude-opus-5-5', effort: 'medium' });
+	assert.deepEqual(claude.args.slice(0, 7), ['--print', '--model', 'claude-opus-5-5', '--effort', 'medium', '--permission-mode', 'plan']);
+	const codex = buildAgentInvocation({ ...base, model: 'gpt-5.6', effort: 'high' });
+	assert.deepEqual(codex.args.slice(0, 7), ['--ask-for-approval', 'never', '--config', 'model_reasoning_effort="high"', 'exec', '--model', 'gpt-5.6']);
+	assert.equal(buildAgentInvocation(base).args.includes('--config'), false);
+	assert.equal(buildAgentInvocation({ ...base, provider: 'claude' }).args.includes('--effort'), false);
+	for (const effort of ['--dangerously-skip-permissions', 'auto', 'unlimited', '', 'high;rm -rf']) {
+		assert.throws(() => buildAgentInvocation({ ...base, provider: 'claude', effort: effort as NativeEffort }), /HARNESS_AGENT_DRAFT_SCHEMA/);
+	}
+	assert.throws(() => buildAgentInvocation({ ...base, effort: 'max' }), /HARNESS_AGENT_DRAFT_SCHEMA/);
+	assert.doesNotThrow(() => buildAgentInvocation({ ...base, provider: 'claude', effort: 'max' }));
+});
+
+test('review digest binds effort so changes require fresh authorization', () => {
+	const selected = { ...base, effort: 'medium' as const };
+	const review = reviewAgentDraft(selected);
+	assert.equal(buildAgentInvocation({ ...selected, effort: 'low' }).args.includes('model_reasoning_effort="low"'), true);
+	assert.equal(review.fingerprint === reviewAgentDraft({ ...selected, effort: 'low' }).fingerprint, false);
+	assert.throws(() => validateReviewedAgent(review, { ...selected, effort: 'low' }), /HARNESS_AGENT_REVIEW_CHANGED/);
+});
+
+test('local Codex subprocess receives per-run effort while preserving shell-free invocation', async () => {
+	const folder = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-agent-effort-'));
+	const oldPath = process.env.PATH;
+	try {
+		await installFakeCodex(folder, '#!/usr/bin/env node\nprocess.stdin.resume(); process.stdin.on("end", () => console.log("EFFECTIVE_ARGS", JSON.stringify(process.argv.slice(2))));\n');
+		process.env.PATH = folder + path.delimiter + (oldPath || '');
+		const draft = { ...base, projectRoot: await fs.realpath(folder), effort: 'low' as const };
+		const run = await executeReviewedAgent(reviewAgentDraft(draft), draft, 10000);
+		const result = await run.outcome;
+		assert.equal(result.status, 'passed');
+		assert.match(result.output, /model_reasoning_effort=\\"low\\"/);
+	} finally {
+		if (oldPath === undefined) { delete process.env.PATH; } else { process.env.PATH = oldPath; }
+		await fs.rm(folder, { recursive: true, force: true });
+	}
 });
 
 test('a changed review or invalid duration never starts an agent', async () => {
