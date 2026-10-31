@@ -66,7 +66,7 @@ These tests exercise contracts and local fake providers. A true Codex/Claude smo
 
 ## Status after the finalization batch (2026-10-31)
 
-Validated on `6d4a67e843b` (Windows x64, plus a Linux x64 run of the extension suite); see `script_test.log` and `HARNESS_ENTERPRISE_AAA_STATUS.md` for evidence per capability. Of the remaining work listed above:
+Validated on `cc9fb886b4d` (Windows x64, plus a Linux x64 run of the extension suite); see `script_test.log` and `HARNESS_ENTERPRISE_AAA_STATUS.md` for evidence per capability. Of the remaining work listed above:
 
 - The shared project-engine protocol now includes a verifiable exclusive writer lease (IDE side done and tested against a real reference engine; the project engine must still adopt it).
 - Adaptive planning, an opt-in minimum writer isolation, a deterministic long-conversation memory, optional OTLP export and an engine benchmark with a real baseline comparison are implemented.

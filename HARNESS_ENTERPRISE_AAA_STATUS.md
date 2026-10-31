@@ -21,7 +21,7 @@ Esta guía documenta el alcance acordado y diferencia **código agregado a la ra
 
 > **Implementación, validación y certificación son cosas distintas.** *Implementado* significa que el código existe en la rama. *Validado* significa que los gates y las pruebas de abajo pasaron sobre un SHA concreto, en los sistemas indicados. *Certificado* significa que existe evidencia suficiente para afirmar el nivel Enterprise AAA: **no se certifica**, porque faltan pruebas críticas que dependen de recursos que no estaban disponibles (ver «Bloqueado o pendiente»).
 
-**SHA de código validado:** `6d4a67e843b` (partida: `7399012332a`, `origin/main`). Los commits posteriores solo agregan documentación y `script_test.log`.
+**SHA de código validado:** `cc9fb886b4d` (partida: `7399012332a`, `origin/main`). Los commits posteriores solo agregan documentación y `script_test.log`; el registro se ejecutó sobre el commit de documentación, con código idéntico, y la corrida de Linux sobre `6d4a67e843b`, que difiere solo en `scripts/ats-validation-log.mts`.
 **Evidencia:** [script_test.log](script_test.log) (Windows x64, Node v24.22.1), `docs/benchmarks/` (mediciones reales contra `main`) y la ejecución en Linux descrita abajo.
 
 | # | Capacidad | Estado | Archivos principales | Decisión de diseño | Pruebas | Riesgo residual o dependencia |
