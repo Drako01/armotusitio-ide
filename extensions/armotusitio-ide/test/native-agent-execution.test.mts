@@ -73,7 +73,7 @@ test('versioned Claude Opus and explicit effort reach the correct CLI arguments'
 test('review digest binds effort so changes require fresh authorization', () => {
 	const selected = { ...base, effort: 'medium' as const };
 	const review = reviewAgentDraft(selected);
-	assert.throws(() => buildAgentInvocation({ ...selected, effort: 'low' }), /^$|never/); // replaced below
+	assert.equal(buildAgentInvocation({ ...selected, effort: 'low' }).args.includes('model_reasoning_effort="low"'), true);
 	assert.equal(review.fingerprint === reviewAgentDraft({ ...selected, effort: 'low' }).fingerprint, false);
 });
 
