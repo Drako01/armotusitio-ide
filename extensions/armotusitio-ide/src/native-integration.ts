@@ -10,7 +10,7 @@ import { NativeHarness, nativePlanRevision, type Plan } from './native-harness.t
 import type { ChatImplementOutcome, ChatRuntime } from './native-chat-session.ts';
 import { harnessErrorCode, type GateSummary } from './native-chat.ts';
 import { proposeProjectConfig, loadProjectConfig, writeProjectConfig, generatedConfigDigest, removeGeneratedProjectConfig } from './native-project.ts';
-import { reviewAgentDraft, inspectAgentWorkspace, modelOption, validModel, type NativeProvider, type AgentRole, type AgentDraft } from './native-providers.ts';
+import { reviewAgentDraft, inspectAgentWorkspace, modelOption, effortOption, validModel, validEffort, type NativeProvider, type NativeEffort, type AgentRole, type AgentDraft } from './native-providers.ts';
 import { buildSupportReport, exportSupportReport } from './native-support.ts';
 import { inspectHarnessAuthority } from './native-authority.ts';
 import { listProjectSkills, readProjectSkill, type ProjectSkill } from './native-project-skills.ts';
@@ -116,9 +116,16 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 		if (!validModel(model)) { throw Error('HARNESS_PROVIDER_MODEL_INVALID'); }
 		return model;
 	};
-	/** Every IDE agent draft: read-only unless implementing, with the model chosen for its provider. */
+	/** Reasoning effort selected for a provider; empty preserves its CLI configuration. */
+	const effortFor = (provider: NativeProvider): NativeEffort | undefined => {
+		const effort: unknown = vscode.workspace.getConfiguration('atsHarness').get(provider + 'Effort', '');
+		if (effort === '') { return undefined; }
+		if (!validEffort(provider, effort)) { throw Error('HARNESS_PROVIDER_EFFORT_INVALID'); }
+		return effort;
+	};
+	/** Every IDE agent draft: read-only unless implementing, with the model and effort chosen for its provider. */
 	const draftOf = (root: string, provider: NativeProvider, role: AgentRole, instruction: string): AgentDraft =>
-		({ schemaVersion: 1, provider, role, projectRoot: root, instruction, readOnly: role !== 'implementer', ...modelOption(modelFor(provider)) });
+		({ schemaVersion: 1, provider, role, projectRoot: root, instruction, readOnly: role !== 'implementer', ...modelOption(modelFor(provider)), ...effortOption(effortFor(provider)) });
 	/** Reported spend must be durable when a budget is enforced; otherwise it is best-effort telemetry. */
 	const recordSpend = async (folder: Host, root: string, provider: NativeProvider, fence: SharedExecutionFence, outcome: AgentOutcome): Promise<void> => {
 		try { await recordProviderSpend(metricsDirectory(root), provider, fence, outcome); }
@@ -436,7 +443,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			if (JSON.stringify((await loadProjectConfig(root))?.plan || null) !== verificationSnapshot) { throw Error('HARNESS_WORKFLOW_VERIFICATION_CHANGED'); }
 			assertProviderCapacity();
 			pendingWorkflows.add(root); controller.refresh();
-			const engine = new NativeAgentWorkflow(executionRoot, path.join(metricsDirectory(root), 'workflows'), root, modelFor);
+			const engine = new NativeAgentWorkflow(executionRoot, path.join(metricsDirectory(root), 'workflows'), root, modelFor, effortFor);
 			const unsubscribeEvents = engine.onEvent(() => { controller.refresh(); });
 			const validationEngine = isolation ? new NativeHarness(executionRoot, path.join(metricsDirectory(root), 'isolated-verification', isolation.id)) : chosen.engine;
 			let checkpoint: WorktreeCheckpoint | undefined;
