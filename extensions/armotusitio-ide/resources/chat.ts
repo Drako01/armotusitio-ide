@@ -260,7 +260,7 @@ function renderEffort(provider: string | undefined): void {
 	};
 	option('', L.effortDefault);
 	for (const level of ['low', 'medium', 'high', 'xhigh', ...(provider === 'claude' ? ['max'] : [])]) {
-		option(level, L.effortLevels[level]);
+		option(level, L.effortShort + ': ' + L.effortLevels[level]);
 	}
 	select.value = state.efforts?.[provider] || '';
 	select.disabled = !state.chat || busy();
