@@ -17,7 +17,7 @@ export interface ProviderModels {
 const MAX_CONFIG_BYTES = 512 * 1024;
 const MAX_OPTIONS = 20;
 /** Claude Code resolves these aliases to the latest model of each family. */
-const CLAUDE_ALIASES = [{ id: 'opus', label: 'Opus (última versión disponible)' }, { id: 'sonnet', label: 'Sonnet (última versión disponible)' }, { id: 'haiku', label: 'Haiku (última versión disponible)' }];
+const CLAUDE_ALIASES = [{ id: 'opus', label: 'Opus (\u00faltima versi\u00f3n disponible)' }, { id: 'sonnet', label: 'Sonnet (\u00faltima versi\u00f3n disponible)' }, { id: 'haiku', label: 'Haiku (\u00faltima versi\u00f3n disponible)' }];
 /** Published versioned model IDs; availability still depends on the installed CLI and account. */
 const CLAUDE_VERSIONS = [
 	{ id: 'claude-opus-5-5', label: 'Opus 5.5' },
