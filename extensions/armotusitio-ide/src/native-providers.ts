@@ -9,6 +9,8 @@ import { createHash } from 'node:crypto';
 import { validateNativePlan, type Plan } from './native-harness.ts';
 
 export type NativeProvider = 'codex' | 'claude';
+/** Per-invocation effort; unsupported combinations are rejected by the selected CLI. */
+export type NativeEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 export type AgentRole = 'planner' | 'implementer' | 'reviewer';
 export interface AgentDraft {
 	schemaVersion: 1;
@@ -19,6 +21,8 @@ export interface AgentDraft {
 	readOnly: boolean;
 	/** Explicit model; absent means the provider CLI default. */
 	model?: string;
+	/** Explicit reasoning effort; absent preserves the provider CLI setting. */
+	effort?: NativeEffort;
 }
 export interface AgentReview {
 	draft: AgentDraft;
@@ -51,6 +55,14 @@ export function modelOption(model: string | undefined): { model?: string } {
 	return model ? { model } : {};
 }
 
+/** Known CLI effort levels, never forwarded as unvalidated command-line data. */
+export function validEffort(provider: NativeProvider, value: unknown): value is NativeEffort {
+	return typeof value === 'string' && (['low', 'medium', 'high', 'xhigh'].includes(value) || (provider === 'claude' && value === 'max'));
+}
+export function effortOption(effort: NativeEffort | undefined): { effort?: NativeEffort } {
+	return effort ? { effort } : {};
+}
+
 export function validateAgentDraft(input: unknown): AgentDraft {
 	if (!input || typeof input !== 'object' || Array.isArray(input)) { throw Error('HARNESS_AGENT_DRAFT_SCHEMA'); }
 	const value = input as AgentDraft;
@@ -59,7 +71,8 @@ export function validateAgentDraft(input: unknown): AgentDraft {
 		|| typeof value.instruction !== 'string' || !value.instruction.trim()
 		|| Buffer.byteLength(value.instruction, 'utf8') > MAX_INSTRUCTION || typeof value.readOnly !== 'boolean'
 		|| value.instruction.includes('\0') || value.projectRoot.includes('\0')
-		|| (value.model !== undefined && !validModel(value.model))) {
+		|| (value.model !== undefined && !validModel(value.model))
+		|| (value.effort !== undefined && !validEffort(value.provider, value.effort))) {
 		throw Error('HARNESS_AGENT_DRAFT_SCHEMA');
 	}
 	return value;
