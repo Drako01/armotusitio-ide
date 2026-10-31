@@ -83,7 +83,7 @@ test('Chat Harness webview is keyboard operable, announces phases only and rende
 		// Live activity: timers are hidden from assistive technology and outside the log region; phases are announced once.
 		await push(state({ kind: 'executing', provider: 'claude', startedAt: at, observedBytes: 9000, stage: 'verifying', planVersion: 1, gates: [{ id: 'unit', status: 'running' }] }));
 		const live = await page.evaluate(() => ({
-			inLog: !!document.querySelector('[role="log"] .thread #activity, .thread #activity'),
+			inLog: !!document.querySelector('[role="log"] #activity, [role="log"] #announcer, [aria-live] #activity'),
 			clockHidden: document.querySelector('#activity .clock').getAttribute('aria-hidden'),
 			announcer: document.getElementById('announcer').textContent,
 			stopVisible: !document.getElementById('stop').hidden

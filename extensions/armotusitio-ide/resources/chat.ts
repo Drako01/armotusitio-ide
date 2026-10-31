@@ -129,7 +129,7 @@ function shell(): void {
 	const empty = el('section', 'empty'); empty.id = 'empty';
 	const announcer = el('div', 'visually-hidden'); announcer.id = 'announcer'; announcer.setAttribute('role', 'status');
 	const conversation = el('div', 'conversation'); conversation.append(thread);
-	log.append(empty, conversation, activity, announcer);
+	log.append(empty, conversation);
 
 	const form = el('form', 'composer') as HTMLFormElement; form.id = 'composer';
 	const box = el('div', 'composer-box');
@@ -144,7 +144,7 @@ function shell(): void {
 	form.addEventListener('submit', event => { event.preventDefault(); submit(input.value); });
 	input.addEventListener('keydown', event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); form.requestSubmit(); } });
 	input.addEventListener('input', autosize);
-	app.append(header, details, menu, banner, log, form);
+	app.append(header, details, menu, banner, log, activity, announcer, form);
 }
 // Registered once: `shell()` runs again whenever the host re-sends labels.
 document.addEventListener('keydown', event => {

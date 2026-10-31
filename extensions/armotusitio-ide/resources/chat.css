@@ -122,7 +122,7 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, .log:focus-v
 .error-text { color: var(--chat-error); }
 
 /* Live activity */
-.activity { padding: 12px 14px; margin-bottom: 18px; border: 1px dashed var(--chat-border); border-radius: var(--chat-radius-large); }
+.activity { box-sizing: border-box; width: calc(100% - 32px); max-height: 40vh; overflow-y: auto; padding: 12px 14px; margin: 0 auto 10px; border: 1px dashed var(--chat-border); border-radius: var(--chat-radius-large); }
 .activity-head { display: flex; align-items: center; gap: 10px; }
 .partial { margin-top: 10px; padding-left: 12px; border-left: 2px solid var(--chat-border); }
 .partial-label { margin: 0 0 4px; font-size: .82em; color: var(--chat-muted); }

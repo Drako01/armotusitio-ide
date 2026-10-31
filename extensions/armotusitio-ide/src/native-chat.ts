@@ -7,6 +7,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { safeStorage, writeDurable } from './native-worktree-checkpoint.ts';
+import { processAlive } from './native-runtime.ts';
 import type { NativeProvider } from './native-providers.ts';
 
 export type ChatRole = 'user' | 'assistant' | 'notice' | 'run';
@@ -26,6 +27,8 @@ export interface ChatRunSummary {
 	planVersion: number;
 	provider: NativeProvider;
 	status: RunStatus;
+	/** Outcome of the writer alone: when it passed, files may have changed even if verification failed. */
+	agentStatus?: RunStatus;
 	durationMs: number;
 	verification: { status: RunStatus | 'skipped'; gates: GateSummary[]; error?: string };
 }
@@ -44,12 +47,15 @@ export interface PendingOperation {
 	kind: 'thinking' | 'executing';
 	startedAt: string;
 	planVersion?: number;
+	/** Extension host that owns the operation; another live window's operation is never declared interrupted. */
+	pid?: number;
 }
 export interface ChatConversation {
 	schemaVersion: 1;
 	provider: NativeProvider;
 	messages: ChatMessage[];
-	pending?: PendingOperation;
+	/** One entry per extension host with an operation in flight; windows never overwrite each other's markers. */
+	pending?: PendingOperation[];
 }
 /** Project facts the assistant may rely on; digests prove what was referenced, never grant permissions. */
 export interface ChatProjectContext {
@@ -216,10 +222,13 @@ function validMessage(value: ChatMessage): boolean {
 		(value.plan === undefined || (Number.isSafeInteger(value.plan.version) && value.plan.digest === chatPlanDigest(value.plan)));
 }
 
-function validPending(value: PendingOperation | undefined): boolean {
-	return value === undefined || (!!value && typeof value === 'object' && ['thinking', 'executing'].includes(value.kind) &&
+function validPending(value: PendingOperation[] | undefined): boolean {
+	return value === undefined || (Array.isArray(value) && value.length <= 16 && value.every(validPendingEntry));
+}
+function validPendingEntry(value: PendingOperation): boolean {
+	return (!!value && typeof value === 'object' && ['thinking', 'executing'].includes(value.kind) &&
 		typeof value.startedAt === 'string' && Number.isFinite(Date.parse(value.startedAt)) &&
-		(value.planVersion === undefined || Number.isSafeInteger(value.planVersion)));
+		(value.planVersion === undefined || Number.isSafeInteger(value.planVersion)) && (value.pid === undefined || (Number.isSafeInteger(value.pid) && value.pid > 0)));
 }
 
 /**
@@ -247,14 +256,21 @@ export class ChatStore {
 	 */
 	async save(conversation: ChatConversation, options: { replace?: boolean } = {}): Promise<ChatMessage[]> {
 		await safeStorage(this.directory);
+		// Read-merge-write must be atomic across windows, or a concurrent writer's message could be dropped.
+		return withFileLock(this.file + '.lock', () => this.merge(conversation, options));
+	}
+	private async merge(conversation: ChatConversation, options: { replace?: boolean }): Promise<ChatMessage[]> {
 		let messages = conversation.messages.slice(-MAX_MESSAGES);
-		const stored = await this.read().catch(() => undefined);
+		const stored = await this.read();
 		if (stored && !options.replace && digestOf(stored.raw) !== this.synced.digest) {
 			const theirs = new Set(stored.value.messages.map(message => message.id));
 			const mine = messages.filter(message => !theirs.has(message.id) && !this.synced.ids.has(message.id));
 			messages = [...stored.value.messages, ...mine].slice(-MAX_MESSAGES);
 		}
-		const value = { schemaVersion: 1, provider: conversation.provider, messages, ...(conversation.pending ? { pending: conversation.pending } : {}) };
+		// Keep live operations of other windows; this window's markers come only from its own conversation.
+		const foreign = (stored?.value.pending ?? []).filter(entry => entry.pid && entry.pid !== process.pid && processAlive(entry.pid));
+		const pending = [...foreign, ...(conversation.pending ?? [])];
+		const value = { schemaVersion: 1, provider: conversation.provider, messages, ...(pending.length ? { pending } : {}) };
 		await writeDurable(this.file, value, false, MAX_STATE_BYTES);
 		this.remember(JSON.stringify(value), messages);
 		return messages;
@@ -285,3 +301,28 @@ export class ChatStore {
 }
 
 function digestOf(raw: string): string { return createHash('sha256').update(raw).digest('hex'); }
+
+const LOCK_WAIT_MS = 5000;
+const LOCK_STALE_MS = 30000;
+/**
+ * Cross-process mutual exclusion through an exclusively created file. A lock older than LOCK_STALE_MS
+ * belongs to a crashed writer (a save takes milliseconds) and is removed; waiting longer fails loudly.
+ */
+async function withFileLock<T>(lock: string, work: () => Promise<T>): Promise<T> {
+	const deadline = Date.now() + LOCK_WAIT_MS;
+	for (; ;) {
+		try {
+			const handle = await fs.open(lock, 'wx', 0o600);
+			await handle.close();
+			break;
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== 'EEXIST') { throw error; }
+			const age = await fs.stat(lock).then(stat => Date.now() - stat.mtimeMs, () => 0);
+			if (age > LOCK_STALE_MS) { await fs.rm(lock, { force: true }); continue; }
+			if (Date.now() > deadline) { throw Error('HARNESS_CHAT_STATE_BUSY'); }
+			await new Promise(resolve => setTimeout(resolve, 15));
+		}
+	}
+	try { return await work(); }
+	finally { await fs.rm(lock, { force: true }); }
+}

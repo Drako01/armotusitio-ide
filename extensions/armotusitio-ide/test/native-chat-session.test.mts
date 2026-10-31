@@ -69,7 +69,7 @@ test('Send converses, revises the plan and never implements; Approve runs only t
 			{ kinds: ['converse', 'converse', 'converse', 'implement'], role: 'run', status: 'passed', gates: [{ id: 'unit', status: 'passed' }], plan: 2 });
 		assert.match(s.calls[3].instruction, /Implement the approved plan v2[\s\S]*Validaciones/);
 		// A successfully applied plan cannot be applied twice.
-		assert.deepEqual({ approvable: s.chat.snapshot().plan?.approvable, reason: /ya se ejecut/.test(s.chat.snapshot().plan?.blockedReason ?? '') }, { approvable: false, reason: true });
+		assert.deepEqual({ approvable: s.chat.snapshot().plan?.approvable, reason: /ya se aplic/.test(s.chat.snapshot().plan?.blockedReason ?? '') }, { approvable: false, reason: true });
 		await assert.rejects(s.chat.approve(second.digest), /HARNESS_CHAT_PLAN_NOT_APPROVABLE/);
 		assert.equal(s.calls.filter(call => call.kind === 'implement').length, 1);
 		// Progress was published while executing: stage, gates and activity bytes.
@@ -209,7 +209,7 @@ test('an execution interrupted by an IDE crash is reported once after restart an
 		await before.send('Plan');
 		// Simulate the IDE dying mid-run: the pending marker is persisted, the run result never is.
 		const crashed = (await store.load('claude')).conversation;
-		await store.save({ ...crashed, pending: { kind: 'executing', startedAt: new Date().toISOString(), planVersion: 1 } });
+		await store.save({ ...crashed, pending: [{ kind: 'executing', startedAt: new Date().toISOString(), planVersion: 1 }] });
 		const after = new HarnessChatSession(store, fake.runtime, () => undefined, t);
 		await after.open();
 		const notice = after.snapshot().messages.at(-1)!;
@@ -262,4 +262,65 @@ test('streamed partial messages are shown while thinking but never persisted', a
 			persisted: stored.includes('Analizando'), final: s.chat.snapshot().messages.at(-1)!.text, partialAfter: s.chat.snapshot().activity
 		}, { shown: true, persisted: false, final: 'Respuesta final', partialAfter: undefined });
 	} finally { await s.cleanup(); }
+});
+
+test('review #1: a writer that changed files cannot be applied again even when verification failed', async () => {
+	const s = await session([plan('Plan', ['Paso'])]);
+	try {
+		await s.chat.send('Plan');
+		s.runtime.implement = async (_request, hooks) => {
+			hooks.started(() => undefined);
+			return { agent: outcome('Edit\u00e9 AGENTS.md'), verification: { status: 'failed', gates: [], error: 'HARNESS_OPERATION_FAILED' } };
+		};
+		await s.chat.approve(s.chat.snapshot().plan!.digest);
+		const run = s.chat.snapshot().messages.at(-1)!;
+		const state = s.chat.snapshot().plan!;
+		assert.deepEqual({ report: run.text, status: run.run?.status, agent: run.run?.agentStatus, approvable: state.approvable, reason: /ya se aplic/.test(state.blockedReason ?? '') },
+			{ report: 'Edit\u00e9 AGENTS.md', status: 'failed', agent: 'passed', approvable: false, reason: true });
+	} finally { await s.cleanup(); }
+});
+
+test('review #3: Stop pressed as soon as it appears prevents the writer from starting', async () => {
+	const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-chat-early-cancel-'));
+	try {
+		const fake = scripted([plan('Plan', ['Paso'])]);
+		let cancelled = false;
+		// The Stop button is rendered from the first executing snapshot; press it right there.
+		const chat: HarnessChatSession = new HarnessChatSession(new ChatStore(directory), fake.runtime, snapshot => {
+			if (snapshot.activity?.kind === 'executing' && !cancelled) { cancelled = true; chat.cancel(); }
+		}, t);
+		await chat.open();
+		await chat.send('Plan');
+		let signalAtEntry: boolean | undefined;
+		fake.runtime.implement = async (_request, _hooks, signal) => { signalAtEntry = signal.aborted; throw Error('HARNESS_CANCELLED_BEFORE_START'); };
+		await chat.approve(chat.snapshot().plan!.digest);
+		const last = chat.snapshot().messages.at(-1)!;
+		assert.deepEqual({ signalAtEntry, tone: last.tone, hint: /no se modific/.test(last.text) }, { signalAtEntry: true, tone: 'info', hint: true });
+	} finally { await fs.rm(directory, { recursive: true, force: true }); }
+});
+
+test('review #5: a live operation of another window is neither reported as interrupted nor erased', async () => {
+	const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-chat-foreign-'));
+	const { spawn } = await import('node:child_process');
+	const other = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 20000)'], { stdio: 'ignore' });
+	try {
+		const store = new ChatStore(directory);
+		await store.load('claude');
+		await store.save({ schemaVersion: 1, provider: 'claude', messages: [], pending: [{ kind: 'executing', startedAt: new Date().toISOString(), planVersion: 1, pid: other.pid }] });
+		const fake = scripted(['ok']);
+		const window = new HarnessChatSession(new ChatStore(directory), fake.runtime, () => undefined, t);
+		await window.open();
+		await window.send('hola');
+		const stored = (await new ChatStore(directory).load('claude')).conversation;
+		assert.deepEqual({ notices: window.snapshot().messages.filter(message => /interrumpi/.test(message.text)).length, ownerKept: stored.pending?.some(entry => entry.pid === other.pid) },
+			{ notices: 0, ownerKept: true });
+		other.kill();
+		await new Promise(resolve => other.once('exit', resolve));
+		const after = new HarnessChatSession(new ChatStore(directory), fake.runtime, () => undefined, t);
+		await after.open();
+		assert.equal(after.snapshot().messages.filter(message => /interrumpi/.test(message.text)).length, 1);
+	} finally {
+		other.kill();
+		await fs.rm(directory, { recursive: true, force: true });
+	}
 });

@@ -11,7 +11,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { redactSecrets } from './native-redact.ts';
 import { fingerprintEvidence, evidenceKey, saveEvidenceMetadata, readEvidenceMetadata, type EvidenceFingerprint } from './native-evidence.ts';
 import { inspectHarnessAuthority } from './native-authority.ts';
-import { resolveNativeCommand } from './native-runtime.ts';
+import { processAlive, resolveNativeCommand } from './native-runtime.ts';
 import { acquireSharedExecutionFence, type SharedExecutionFence } from './native-shared-fence.ts';
 import { offlineSandboxInvocation, OFFLINE_SANDBOX_POLICIES, type OfflineSandboxPolicy } from './native-os-sandbox.ts';
 import { adaptiveWorkerBudget, sampleHostLoad } from './native-performance.ts';
@@ -88,7 +88,6 @@ async function contained(root: string, cwd = '.'): Promise<string> {
 	if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) { throw Error('HARNESS_PATH_ESCAPE'); }
 	return target;
 }
-function processAlive(pid: number): boolean { try { process.kill(pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException).code === 'EPERM'; } }
 export class NativeHarness {
 	private readonly project: string; private readonly storage: string;
 	private active = new Set<ChildProcess>(); private abortController?: AbortController;

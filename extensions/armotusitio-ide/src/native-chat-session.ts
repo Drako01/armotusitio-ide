@@ -6,6 +6,7 @@
 import type { AgentOutcome } from './native-agent-execution.ts';
 import type { NativeProvider } from './native-providers.ts';
 import { redactSecrets } from './native-redact.ts';
+import { processAlive } from './native-runtime.ts';
 import {
 	buildConversationInstruction, buildImplementationInstruction, chatMessage, extractChatPlan, harnessErrorCode, latestPlanMessage, samePlanContent,
 	type ChatConversation, type ChatMessage, type ChatPlan, type ChatProjectContext, type ChatRunSummary, type ChatStore, type GateSummary, type RunStatus
@@ -30,7 +31,7 @@ export interface ChatImplementOutcome {
 /** Engine boundary: the IDE provides the guarded implementation; tests provide a scripted one. */
 export interface ChatRuntime {
 	context(): Promise<ChatProjectContext>;
-	converse(provider: NativeProvider, instruction: string, hooks: ChatRunHooks): Promise<AgentOutcome>;
+	converse(provider: NativeProvider, instruction: string, hooks: ChatRunHooks, signal: AbortSignal): Promise<AgentOutcome>;
 	implement(request: { provider: NativeProvider; instruction: string; plan: ChatPlan; verificationRevision?: string }, hooks: ChatImplementHooks, signal: AbortSignal): Promise<ChatImplementOutcome>;
 }
 export interface ChatActivity {
@@ -79,6 +80,8 @@ function recoveryHint(t: Translate, code: string): string {
 	return t('La conversaci\u00f3n se conserva; pod\u00e9s reintentar.');
 }
 
+const cancelledBeforeStart = (error: unknown): boolean => harnessErrorCode(error) === 'HARNESS_CANCELLED_BEFORE_START';
+
 /** User-facing failure: a safe error code plus what to do next. Shared by the session and its host. */
 export function describeFailure(t: Translate, error: unknown): string {
 	const code = harnessErrorCode(error);
@@ -108,15 +111,16 @@ export class HarnessChatSession {
 			const { conversation, recovered } = await this.store.load(this.defaultProvider);
 			this.conversation = conversation;
 			if (recovered) { this.conversation.messages.push(chatMessage('notice', this.t('El historial anterior estaba da\u00f1ado y se archiv\u00f3. Empez\u00e1s una conversaci\u00f3n nueva.'), { tone: 'error' })); }
-			const interrupted = this.conversation.pending;
-			if (interrupted) {
+			// Another window's live operation is not ours to report (the store keeps it); only a dead owner means interrupted.
+			const interrupted = (this.conversation.pending ?? []).filter(entry => !entry.pid || entry.pid === process.pid || !processAlive(entry.pid));
+			this.conversation.pending = undefined;
+			for (const entry of interrupted) {
 				// The process that owned this operation is gone: say exactly what may be incomplete.
-				this.conversation.pending = undefined;
-				this.conversation.messages.push(chatMessage('notice', interrupted.kind === 'executing'
-					? this.t('La ejecuci\u00f3n del plan v{0} se interrumpi\u00f3 porque el IDE se cerr\u00f3. Revis\u00e1 los cambios del workspace (por ejemplo con git status) y, si el lock qued\u00f3 tomado, us\u00e1 \u00abArmoTuSitio: Reconciliar lock compartido obsoleto\u00bb antes de reintentar.', String(interrupted.planVersion ?? '?'))
+				this.conversation.messages.push(chatMessage('notice', entry.kind === 'executing'
+					? this.t('La ejecuci\u00f3n del plan v{0} se interrumpi\u00f3 porque el IDE se cerr\u00f3. Revis\u00e1 los cambios del workspace (por ejemplo con git status) y, si el lock qued\u00f3 tomado, us\u00e1 \u00abArmoTuSitio: Reconciliar lock compartido obsoleto\u00bb antes de reintentar.', String(entry.planVersion ?? '?'))
 					: this.t('La respuesta anterior se interrumpi\u00f3 porque el IDE se cerr\u00f3. Volv\u00e9 a enviar el mensaje.'), { tone: 'error' }));
 			}
-			if (recovered || interrupted) { await this.persist(); }
+			if (recovered || interrupted.length) { await this.persist(); }
 			await this.refreshContext();
 		})();
 		return this.loaded;
@@ -154,8 +158,9 @@ export class HarnessChatSession {
 		// New requirements suspend the plan until the assistant confirms or revises it.
 		if (this.conversation.messages.slice(position + 1).some(message => message.role === 'user')) { return this.t('Escribiste despu\u00e9s de este plan. Esper\u00e1 a que la IA lo confirme o lo actualice antes de aprobarlo.'); }
 		// A plan that already ran successfully is never applied twice; failed or cancelled runs can be retried.
-		const applied = this.conversation.messages.some(message => message.run?.planVersion === current.plan.version && message.run.status === 'passed');
-		return applied ? this.t('Este plan ya se ejecut\u00f3. Ped\u00ed cambios para generar una nueva versi\u00f3n.') : undefined;
+		// Once the writer finished, files may have changed even if verification failed: re-applying would duplicate work.
+		const applied = this.conversation.messages.some(message => message.run?.planVersion === current.plan.version && (message.run.status === 'passed' || message.run.agentStatus === 'passed'));
+		return applied ? this.t('Este plan ya se aplic\u00f3. Ped\u00ed a la IA los ajustes necesarios para generar una nueva versi\u00f3n.') : undefined;
 	}
 
 	/** Switching provider affects only future turns; a running turn keeps the provider it started with. */
@@ -188,7 +193,9 @@ export class HarnessChatSession {
 		// Credentials pasted by mistake are neither stored nor sent to the provider.
 		this.conversation.messages.push(chatMessage('user', redactSecrets(body)));
 		this.activity = { kind: 'thinking', provider, startedAt: new Date().toISOString(), observedBytes: 0 };
-		this.conversation.pending = { kind: 'thinking', startedAt: this.activity.startedAt };
+		this.conversation.pending = [{ kind: 'thinking', startedAt: this.activity.startedAt, pid: process.pid }];
+		const controller = new AbortController();
+		const hooks = this.hooks(() => controller.abort());
 		// Every failure after the activity starts, including storage, must end in `finally` and clear it.
 		try {
 			await this.persist();
@@ -196,7 +203,8 @@ export class HarnessChatSession {
 			if (!this.context) { throw Error('HARNESS_CHAT_CONTEXT_UNAVAILABLE'); }
 			const current = latestPlanMessage(this.conversation.messages)?.plan;
 			const instruction = buildConversationInstruction(this.conversation.messages, this.context, current);
-			const outcome = await this.runtime.converse(provider, instruction, this.hooks());
+			if (controller.signal.aborted) { throw Error('HARNESS_CANCELLED_BEFORE_START'); }
+			const outcome = await this.runtime.converse(provider, instruction, hooks, controller.signal);
 			if (outcome.status !== 'passed' || !outcome.output.trim()) {
 				this.conversation.messages.push(chatMessage('notice', failureNotice(this.t, outcome), { tone: outcome.status === 'cancelled' ? 'info' : 'error', provider }));
 				return;
@@ -206,7 +214,7 @@ export class HarnessChatSession {
 			const plan = extracted.plan && current && samePlanContent(extracted.plan, current) ? current : extracted.plan;
 			this.conversation.messages.push(chatMessage('assistant', extracted.text || this.t('Plan actualizado.'), { provider, plan }));
 		} catch (error) {
-			this.conversation.messages.push(chatMessage('notice', this.errorNotice(error), { tone: 'error', provider }));
+			this.conversation.messages.push(chatMessage('notice', this.errorNotice(error), { tone: cancelledBeforeStart(error) ? 'info' : 'error', provider }));
 		} finally {
 			this.finish();
 			await this.persist();
@@ -225,13 +233,14 @@ export class HarnessChatSession {
 		const controller = new AbortController();
 		this.conversation.messages.push(chatMessage('notice', this.t('Plan v{0} aprobado. Ejecutando con {1}.', String(plan.version), provider === 'claude' ? 'Claude Code' : 'Codex'), { tone: 'info', provider }));
 		this.activity = { kind: 'executing', provider, startedAt: new Date().toISOString(), observedBytes: 0, stage: 'preparing', planVersion: plan.version, gates: this.context.verification?.gates.map(gate => ({ id: gate.id, status: 'pending' as const })) ?? [] };
-		this.conversation.pending = { kind: 'executing', startedAt: this.activity.startedAt, planVersion: plan.version };
+		this.conversation.pending = [{ kind: 'executing', startedAt: this.activity.startedAt, planVersion: plan.version, pid: process.pid }];
 		const started = Date.now();
+		const runHooks = this.hooks(() => controller.abort());
 		try {
 			await this.persist();
 			const instruction = buildImplementationInstruction(plan, this.conversation.messages);
 			const hooks: ChatImplementHooks = {
-				...this.hooks(() => controller.abort()),
+				...runHooks,
 				stage: stage => { if (this.activity) { this.activity.stage = stage; this.emit(); } },
 				gates: gates => { if (this.activity) { this.activity.gates = gates; this.emit(); } }
 			};
@@ -241,10 +250,10 @@ export class HarnessChatSession {
 			if (status === 'passed' && result.verification.status !== 'skipped') { status = result.verification.status; }
 			this.conversation.messages.push(chatMessage('run', result.agent.output.trim() || this.t('El agente no devolvi\u00f3 un informe.'), {
 				provider, tone: status === 'passed' ? 'info' : 'error',
-				run: { planVersion: plan.version, provider, status, durationMs: Date.now() - started, verification: result.verification }
+				run: { planVersion: plan.version, provider, status, agentStatus: result.agent.status, durationMs: Date.now() - started, verification: result.verification }
 			}));
 		} catch (error) {
-			this.conversation.messages.push(chatMessage('notice', this.errorNotice(error), { tone: harnessErrorCode(error) === 'HARNESS_CANCELLED_BEFORE_START' ? 'info' : 'error', provider }));
+			this.conversation.messages.push(chatMessage('notice', this.errorNotice(error), { tone: cancelledBeforeStart(error) ? 'info' : 'error', provider }));
 		} finally {
 			this.finish();
 			await this.persist();

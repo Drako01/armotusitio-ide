@@ -125,6 +125,8 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 		onStarted?: (execution: AgentExecution) => void;
 		onProgress?: (observedBytes: number) => void;
 		onMessage?: (text: string) => void;
+		/** Aborting before the process exists stops the launch without spawning a provider. */
+		signal?: AbortSignal;
 		afterOutcome?: (outcome: AgentOutcome, fence: SharedExecutionFence) => Promise<void>;
 	} = {}): Promise<AgentOutcome> => {
 		const root = draft.projectRoot;
@@ -146,6 +148,9 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			await assertProviderBudget(metricsDirectory(root), draft.provider, providerBudget(folder), fence);
 			if (cap > 0) { await reserveProviderInvocation(metricsDirectory(root), draft.provider, fence, cap); }
 			if (!authorized(folder)) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
+			// A project Harness may have appeared while waiting for the fence: writers re-check right before spawning.
+			if (!draft.readOnly && (await inspectHarnessAuthority(root)).engine !== 'ide-native') { throw Error('HARNESS_HYBRID_WRITER_UNAVAILABLE'); }
+			if (hooks.signal?.aborted) { throw Error('HARNESS_CANCELLED_BEFORE_START'); }
 			await fence.assertCurrent();
 			execution = await executeReviewedAgent(reviewAgentDraft(draft), draft, undefined, hooks.onProgress && (progress => hooks.onProgress!(progress.observedBytes)), hooks.onMessage);
 		} catch (error) {
@@ -188,10 +193,10 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 					}
 				};
 			},
-			async converse(provider, instruction, hooks) {
+			async converse(provider, instruction, hooks, signal) {
 				const root = await rootOf();
 				return runGuardedAgent(folder, draftFor(root, provider, 'planner', instruction), {
-					onStarted: execution => hooks.started(() => execution.cancel()), onProgress: hooks.progress, onMessage: hooks.message
+					onStarted: execution => hooks.started(() => execution.cancel()), onProgress: hooks.progress, onMessage: hooks.message, signal
 				});
 			},
 			async implement({ provider, instruction, plan, verificationRevision }, hooks, signal) {
@@ -211,20 +216,28 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 					onStarted: execution => { hooks.started(() => execution.cancel()); hooks.stage('agent'); },
 					onProgress: hooks.progress,
 					onMessage: hooks.message,
+					signal,
 					afterOutcome: async (outcome, fence) => {
-						if (outcome.status !== 'passed' || !verification || signal.aborted) { return; }
+						if (outcome.status !== 'passed' || !verification) { return; }
+						// Configured gates that never ran because the user stopped the run are reported as cancelled, not skipped.
+						if (signal.aborted) {
+							verificationStatus = 'cancelled';
+							gates = verification.gates.map(gate => ({ id: gate.id, status: 'cancelled' }));
+							return;
+						}
 						hooks.stage('verifying');
-						await validateProjectGuides(root, guides);
-						const engine = engineFor(root);
-						const task = await engine.create('Chat: ' + plan.title.slice(0, 280), verification);
-						running.set(folder.uri.toString(), { engine, taskId: task.id }); controller.refresh();
-						const poll = setInterval(() => {
-							void engine.get(task.id).then(current => {
-								const results = current.attempts.at(-1)?.results ?? [];
-								hooks.gates(verification.gates.map(gate => ({ id: gate.id, status: results.find(result => result.id === gate.id)?.status ?? 'pending' })));
-							}, () => undefined);
-						}, 1000);
+						let poll: ReturnType<typeof setInterval> | undefined;
+						// Every verification failure, including setup, keeps the agent report and is recorded as failed.
 						try {
+							const engine = engineFor(root);
+							const task = await engine.create('Chat: ' + plan.title.slice(0, 280), verification);
+							running.set(folder.uri.toString(), { engine, taskId: task.id }); controller.refresh();
+							poll = setInterval(() => {
+								void engine.get(task.id).then(current => {
+									const results = current.attempts.at(-1)?.results ?? [];
+									hooks.gates(verification.gates.map(gate => ({ id: gate.id, status: results.find(result => result.id === gate.id)?.status ?? 'pending' })));
+								}, () => undefined);
+							}, 1000);
 							const finished = await engine.execute(task.id, await engine.reviewDigest(verification), () => authorized(folder), signal, fence);
 							const attempt = finished.attempts.at(-1);
 							gates = verification.gates.map(gate => ({ id: gate.id, status: attempt?.results.find(result => result.id === gate.id)?.status ?? 'cancelled' }));

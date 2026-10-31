@@ -100,3 +100,24 @@ test('two IDE windows on one project never drop each other messages and respect 
 		assert.deepEqual(afterReset.map(message => message.text), ['nuevo en B']);
 	} finally { await fs.rm(directory, { recursive: true, force: true }); }
 });
+
+test('review #2: interleaved saves from two windows never lose a message', async () => {
+	const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-chat-race-'));
+	try {
+		const first = new ChatStore(directory), second = new ChatStore(directory);
+		await first.load('claude'); await second.load('claude');
+		const sent: string[] = [];
+		// Each window adopts what `save` returns, exactly as the session does, while both save concurrently.
+		let windowA: ReturnType<typeof chatMessage>[] = [], windowB: ReturnType<typeof chatMessage>[] = [];
+		for (let index = 0; index < 20; index++) {
+			sent.push('A' + index, 'B' + index);
+			[windowA, windowB] = await Promise.all([
+				first.save({ schemaVersion: 1, provider: 'claude', messages: [...windowA, chatMessage('user', 'A' + index)] }),
+				second.save({ schemaVersion: 1, provider: 'claude', messages: [...windowB, chatMessage('user', 'B' + index)] })
+			]);
+		}
+		const stored = new Set((await new ChatStore(directory).load('claude')).conversation.messages.map(message => message.text));
+		assert.deepEqual(sent.filter(text => !stored.has(text)), []);
+		assert.equal((await fs.readdir(directory)).some(name => name.endsWith('.lock')), false);
+	} finally { await fs.rm(directory, { recursive: true, force: true }); }
+});

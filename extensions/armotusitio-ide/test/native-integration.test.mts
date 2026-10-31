@@ -506,3 +506,50 @@ test('chat runtime streams real intermediate Codex messages, redacted, before th
 		await f.cleanup();
 	}
 });
+
+test('review #1/#3/#4: guidance edits keep the run, early cancel never spawns, late cancel marks gates cancelled', async () => {
+	const f = await fixture();
+	const originalPath = process.env.PATH;
+	try {
+		const root = await fs.realpath(f.roots[0]);
+		await fs.writeFile(path.join(root, 'AGENTS.md'), '# Before');
+		await writeProjectConfig(root, { schemaVersion: 1, runtime: 'ide-native', profile: 'custom', plan: { schemaVersion: 1, gates: [{ id: 'exists', executable: 'node', args: ['-e', 'require("fs").accessSync("clients.txt")'] }] } });
+		const bin = path.join(path.dirname(root), 'fake-guidance-bin');
+		const launches = path.join(path.dirname(root), 'launches.txt');
+		// Test-only provider: records each launch, edits project guidance and reports through Codex JSONL.
+		await installFakeCodex(bin, [
+			'#!/usr/bin/env node',
+			'const fs = require("fs");',
+			'fs.appendFileSync(' + JSON.stringify(launches) + ', "x");',
+			'process.stdin.resume(); process.stdin.on("end", () => {',
+			'  fs.writeFileSync("AGENTS.md", "# Updated by the plan"); fs.writeFileSync("clients.txt", "crud");',
+			'  process.stdout.write(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "Actualic\\u00e9 AGENTS.md" } }) + String.fromCharCode(10));',
+			'});'
+		].join('\n'));
+		process.env.PATH = bin + path.delimiter + (originalPath || '');
+		const runtime = f.controller.nativeChatRuntime(f.vscode.workspace.workspaceFolders[0]);
+		const context = await runtime.context();
+		const { extractChatPlan } = await import('../src/native-chat.ts');
+		const plan = extractChatPlan('```harness-plan\n{"title":"Docs","steps":["Actualizar AGENTS.md"]}\n```', 1).plan!;
+		const hooks = { started() { }, progress() { }, stage() { }, gates() { } };
+		const request = { provider: 'codex' as const, instruction: 'Implement the approved plan v1', plan, verificationRevision: context.verification.revision };
+		// #1: editing a guidance file is a legitimate plan; the run and its gates are reported, not discarded.
+		const edited = await runtime.implement(request, hooks, new AbortController().signal);
+		assert.deepEqual({ agent: edited.agent.status, output: edited.agent.output, verification: edited.verification.status }, { agent: 'passed', output: 'Actualic\u00e9 AGENTS.md', verification: 'passed' });
+		// #3: a signal aborted before spawn never launches the provider and releases the fence.
+		const before = (await fs.readFile(launches, 'utf8')).length;
+		const aborted = new AbortController(); aborted.abort();
+		await assert.rejects(runtime.converse('codex', 'hola', hooks, aborted.signal), /HARNESS_CANCELLED_BEFORE_START/);
+		const digest = (await import('node:crypto')).createHash('sha256').update(root).digest('hex');
+		const storage = path.join(path.dirname(root), 'private', 'native-harness', digest);
+		assert.deepEqual({ launches: (await fs.readFile(launches, 'utf8')).length - before, held: (await inspectSharedExecutionFence(root, storage)).held }, { launches: 0, held: false });
+		// #4: Stop pressed after the writer finished but before gates ran reports them cancelled, never skipped.
+		const late = new AbortController();
+		const result = await runtime.implement(request, { ...hooks, message: () => late.abort() }, late.signal);
+		assert.deepEqual({ agent: result.agent.status, verification: result.verification.status, gates: result.verification.gates.map(gate => gate.status) },
+			{ agent: 'passed', verification: 'cancelled', gates: ['cancelled'] });
+	} finally {
+		if (originalPath === undefined) { delete process.env.PATH; } else { process.env.PATH = originalPath; }
+		await f.cleanup();
+	}
+});

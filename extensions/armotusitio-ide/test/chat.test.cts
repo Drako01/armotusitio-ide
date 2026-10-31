@@ -138,7 +138,7 @@ test('Markdown renderer input is parsed into inert blocks', () => {
  * Real `registerChat` host and session with a scripted runtime: the only fake is the AI provider behind
  * the engine boundary. `state()` rebuilds what the webview sees, reusing the history when it is omitted.
  */
-async function panelFixture(replies, providerStatus = { claude: 'authenticated', codex: 'unauthenticated' }) {
+async function panelFixture(replies, providerStatus = { claude: 'authenticated', codex: 'unauthenticated' }, options = { folders: 1, confirm: undefined }) {
 	const os = require('node:os'); const fsp = require('node:fs/promises'); const path = require('node:path');
 	const storage = await fsp.mkdtemp(path.join(os.tmpdir(), 'ats-chat-panel-'));
 	const root = await fsp.realpath(storage);
@@ -147,19 +147,26 @@ async function panelFixture(replies, providerStatus = { claude: 'authenticated',
 	const noop = () => ({ dispose() { } });
 	const panel = { reveal() { }, onDidDispose: noop, dispose() { }, webview: { cspSource: 'csp', asWebviewUri: value => value, onDidReceiveMessage: fn => { receive = fn; return noop(); }, postMessage: async value => { posted.push(JSON.parse(JSON.stringify(value))); return true; } } };
 	const commands = new Map();
-	const folder = { name: 'clientes', uri: { fsPath: root, toString: () => 'file:///clientes' } };
+	const workspaceFolders = [];
+	for (let index = 0; index < options.folders; index++) {
+		const fsPath = index ? path.join(root, 'project-' + index) : root;
+		await fsp.mkdir(fsPath, { recursive: true });
+		workspaceFolders.push({ name: index ? 'proyecto-' + index : 'clientes', uri: { fsPath, toString: () => 'file:///' + (index ? 'proyecto-' + index : 'clientes') } });
+	}
+	const memento = new Map();
 	const vscode = {
 		l10n: { t: (text, ...args) => text.replace(/\{(\d+)\}/g, (_, i) => String(args[i])) }, ViewColumn: { One: 1 },
 		Uri: { joinPath: (base, ...parts) => base + '/' + parts.join('/') },
-		workspace: { isTrusted: true, workspaceFolders: [folder], getConfiguration: () => ({ get: (_, fallback) => fallback }) },
-		window: { createWebviewPanel: () => panel, showWarningMessage: async () => undefined, showErrorMessage: async () => undefined },
+		workspace: { isTrusted: true, workspaceFolders, getConfiguration: () => ({ get: (_, fallback) => fallback }) },
+		window: { createWebviewPanel: () => panel, showWarningMessage: async (_text, _options, choice) => options.confirm ? choice : undefined, showErrorMessage: async () => undefined },
 		commands: { registerCommand: (id, fn) => { commands.set(id, fn); return noop(); }, executeCommand: async (...args) => { executed.push(args); } },
 		CancellationTokenSource: class { token = { isCancellationRequested: false, onCancellationRequested: noop }; cancel() { this.token.isCancellationRequested = true; } dispose() { } }
 	};
 	const answer = text => ({ status: 'passed', exitCode: 0, durationMs: 1, output: text, truncated: false });
 	const controller = {
-		nativeChatRuntime: () => ({
-			async context() { return { root, writer: true, skills: [], guides: [], verification: { revision: 'c'.repeat(64), gates: [{ id: 'unit', command: 'npm test' }] } }; },
+		nativeChatRuntime: folder => ({
+			root: folder.uri.fsPath,
+			async context() { return { root: this.root, writer: true, skills: [], guides: [], verification: { revision: 'c'.repeat(64), gates: [{ id: 'unit', command: 'npm test' }] } }; },
 			async converse(provider, instruction, hooks) { calls.push(['converse', provider]); hooks.started(() => undefined); hooks.progress(8192); hooks.progress(16384); return answer(replies.shift()); },
 			async implement(request, hooks) {
 				calls.push(['implement', request.provider, request.plan.version]);
@@ -169,7 +176,7 @@ async function panelFixture(replies, providerStatus = { claude: 'authenticated',
 		})
 	};
 	const mcp = { enabled: () => true, credentialState: async () => ({ configured: true }), client: { tools: async () => [{ name: 'list_projects' }], reset() { } } };
-	const context = { extensionUri: 'ext', subscriptions: [], globalStorageUri: { fsPath: process.platform === 'win32' ? path.join(storage, 'private').replace(/^[A-Z]:/, drive => drive.toLowerCase()) : path.join(storage, 'private') }, workspaceState: { get: () => undefined, update: async () => undefined } };
+	const context = { extensionUri: 'ext', subscriptions: [], globalStorageUri: { fsPath: process.platform === 'win32' ? path.join(storage, 'private').replace(/^[A-Z]:/, drive => drive.toLowerCase()) : path.join(storage, 'private') }, workspaceState: { get: key => memento.get(key), update: async (key, value) => { memento.set(key, value); } } };
 	const diagnose = async provider => providerStatus[provider] === 'missing' ? { installed: false, version: null } : ({ installed: true, version: '1.0.0', localSession: providerStatus[provider], commandCompatibility: 'verified' });
 	registerChat(context, controller, async () => [], mcp, vscode, { diagnose });
 	await commands.get('atsIde.chat')();
@@ -240,5 +247,38 @@ test('a provider that is not installed is reported before spending a turn, keepi
 		await f.receive({ action: 'send', text: 'Explicame el proyecto' });
 		const last = f.state().chat.messages.at(-1);
 		assert.deepEqual({ calls: f.calls.length, role: last.role, kept: last.text.includes('Explicame el proyecto'), named: last.text.includes('Claude Code') }, { calls: 0, role: 'notice', kept: true, named: true });
+	} finally { await f.cleanup(); }
+});
+
+test('each project keeps its own conversation; switching never mixes or leaks history', async () => {
+	const f = await panelFixture(['respuesta para clientes', 'respuesta para proyecto-1'], undefined, { folders: 2, confirm: true });
+	try {
+		await f.receive({ action: 'send', text: 'mensaje de clientes' });
+		await f.receive({ action: 'project', id: 'file:///proyecto-1' });
+		assert.deepEqual({ project: f.state().project.name, messages: f.state().chat.messages.length }, { project: 'proyecto-1', messages: 0 });
+		await f.receive({ action: 'send', text: 'mensaje de proyecto-1' });
+		await f.receive({ action: 'project', id: 'file:///clientes' });
+		assert.deepEqual(f.state().chat.messages.map(message => message.text), ['mensaje de clientes', 'respuesta para clientes']);
+		// An unknown project id from the webview is ignored, never created.
+		await f.receive({ action: 'project', id: 'file:///otro' });
+		assert.equal(f.state().project.name, 'clientes');
+		// A confirmed reset clears only the selected project.
+		await f.receive({ action: 'reset' });
+		assert.equal(f.state().chat.messages.length, 0);
+		await f.receive({ action: 'project', id: 'file:///proyecto-1' });
+		assert.deepEqual(f.state().chat.messages.map(message => message.text), ['mensaje de proyecto-1', 'respuesta para proyecto-1']);
+	} finally { await f.cleanup(); }
+});
+
+test('review #7: switching away before a project loads and back again keeps the visible history', async () => {
+	const f = await panelFixture(['respuesta A'], undefined, { folders: 2, confirm: false });
+	try {
+		await f.receive({ action: 'send', text: 'mensaje A' });
+		// The second project starts loading; the user returns before it finishes.
+		const away = f.receive({ action: 'project', id: 'file:///proyecto-1' });
+		const back = f.receive({ action: 'project', id: 'file:///clientes' });
+		await Promise.all([away, back]);
+		assert.deepEqual({ project: f.state().project.name, messages: f.state().chat.messages.map(message => message.text) },
+			{ project: 'clientes', messages: ['mensaje A', 'respuesta A'] });
 	} finally { await f.cleanup(); }
 });

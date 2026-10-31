@@ -191,7 +191,8 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 		const session = key && sessions.get(key);
 		let chat = session?.loaded ? session.snapshot() : null;
 		if (chat && posted.key === key && posted.revision === chat.revision) { chat = { ...chat, messages: undefined }; }
-		else if (chat) { posted = { key, revision: chat.revision }; }
+		// The webview drops its history whenever it receives no chat, so the next one must be complete.
+		else { posted = chat ? { key, revision: chat.revision } : { key: undefined, revision: -1 }; }
 		post({
 			type: 'state', trusted: !!vscode.workspace.isTrusted, providers, mcp: { ...mcpStatus, endpoint: new URL(endpoint).host, enabled: !!mcp.enabled?.() },
 			project: folder ? { name: folder.name, id: key } : null,
@@ -199,6 +200,8 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 			chat
 		});
 	};
+	/** A load that finishes after the user switched projects must not replace the visible one. */
+	const publishIfSelected = folder => { if (selectedFolder()?.uri.toString() === folder.uri.toString()) { publish(folder); } };
 	/** One session per folder survives panel close, so a running execution keeps reporting when reopened. */
 	const sessionFor = folder => {
 		const key = folder.uri.toString();
@@ -248,7 +251,7 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 			posted = { key: undefined, revision: -1 };
 			post({ type: 'init', labels: labels(t) });
 			publish();
-			if (folder && vscode.workspace.isTrusted) { await sessionFor(folder).then(() => publish(folder), error => report(folder, error)); }
+			if (folder && vscode.workspace.isTrusted) { await sessionFor(folder).then(() => publishIfSelected(folder), error => report(folder, error)); }
 			return;
 		}
 		if (action === 'project' && typeof message.id === 'string') {
@@ -256,7 +259,7 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 			if (!target) { return; }
 			await context.workspaceState?.update('atsChat.folder', target.uri.toString());
 			publish(target);
-			if (vscode.workspace.isTrusted) { await sessionFor(target).then(() => publish(target), error => report(target, error)); }
+			if (vscode.workspace.isTrusted) { await sessionFor(target).then(() => publishIfSelected(target), error => report(target, error)); }
 			return;
 		}
 		if (action === 'mcpCheck') { await refreshMcp(); return; }
