@@ -132,6 +132,13 @@
           "scope": "application",
           "description": "Aislamiento minimo exigido a un agente que modifica archivos. tool-allowlist: solo permisos de herramientas del proveedor. provider-sandbox: exige el sandbox del sistema operativo del propio proveedor (hoy solo Codex). os-kernel: exige un sandbox del kernel aplicado por el IDE, que ningun proveedor de modelos ofrece todavia, por lo que bloquea toda escritura."
         },
+        "atsHarness.otlpEndpoint": {
+          "type": "string",
+          "default": "",
+          "scope": "application",
+          "pattern": "^$|^https?://",
+          "description": "Endpoint OTLP/HTTP (por ejemplo https://colector.local:4318/v1/traces) para exportar trazas del Harness de forma opcional. Solo https, o http hacia esta maquina; nunca se envian prompts, salida de la IA, rutas ni credenciales, y cada exportacion requiere confirmacion."
+        },
         "atsHarness.coordinatedProjectWriters": {
           "type": "boolean",
           "default": false,
@@ -231,6 +238,10 @@
       {
         "command": "atsHarness.nativeWorkflowHistory",
         "title": "ArmoTuSitio: Historial de workflows multiagente"
+      },
+      {
+        "command": "atsHarness.nativeTraceExport",
+        "title": "ArmoTuSitio: Exportar trazas del Harness por OTLP (opcional)"
       },
       {
         "command": "atsHarness.nativeTrace",

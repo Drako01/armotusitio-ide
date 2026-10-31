@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "mode": "observed-local",
+  "runs": 7,
+  "platform": "win32",
+  "arch": "x64",
+  "node": "v24.22.1",
+  "cpus": 16,
+  "coldStartMs": {
+    "medianMs": 67.21,
+    "maxMs": 74
+  },
+  "gateLatency": {
+    "medianMs": 65.56,
+    "maxMs": 75.3
+  },
+  "agentPreparation": {
+    "medianMs": 0.02,
+    "maxMs": 0.27
+  },
+  "fourGates": {
+    "sequential": {
+      "medianMs": 1538.61,
+      "maxMs": 1552.28
+    },
+    "parallel": {
+      "medianMs": 418.14,
+      "maxMs": 428.59
+    },
+    "speedup": 3.68
+  },
+  "historyGrowth": {
+    "50": {
+      "bytes": 54617,
+      "saveMs": 4.01
+    },
+    "100": {
+      "bytes": 109192,
+      "saveMs": 3.98
+    },
+    "200": {
+      "bytes": 218442,
+      "saveMs": 5.2
+    }
+  },
+  "resources": {
+    "cpuUserMs": 344,
+    "cpuSystemMs": 391,
+    "rssDeltaMB": 0.55,
+    "heapUsedMB": 12.42
+  },
+  "tokensAndCost": "not measured: no provider is called; only provider-reported data would be recorded",
+  "comparedToBaseline": {
+    "coldStart": "1.3%",
+    "gateLatency": "0.2%",
+    "agentPreparation": "0.0%",
+    "sequentialFourGates": "0.0%",
+    "parallelFourGates": "0.3%",
+    "save200": "4.8%",
+    "note": "negative is faster; both runs are real measurements on the same machine, so differences below the run-to-run noise are not improvements"
+  }
+}

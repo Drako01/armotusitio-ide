@@ -29,10 +29,11 @@ import { createWorktreeCheckpoint, readWorktreeCheckpoint, rollbackWorktreeCheck
 import { integrateWorktreeChanges, reconcileWorktreeIntegration, rollbackWorktreeIntegration } from './native-worktree-integration.ts';
 import { delegateProjectGate, queryProjectEngineStatus } from './native-engine-interop.ts';
 import { assessWorkflowRecovery } from './native-workflow-recovery.ts';
+import { exportOtlp, validateOtlpEndpoint } from './native-otlp.ts';
 import { buildAdaptiveWorkflow, type ProviderAvailability } from './native-agent-planner.ts';
 import { acquireWriterLease, type WriterLease } from './native-hybrid-writer.ts';
 import { describeAgentIsolation, meetsWriterIsolation, parseWriterIsolation } from './native-isolation.ts';
-import { describeTrace, taskTrace, traceparent, workflowTrace } from './native-trace.ts';
+import { describeTrace, taskTrace, traceparent, workflowTrace, type TraceSpan } from './native-trace.ts';
 import {
 	reserveProviderInvocation, readProviderInvocationQuota, assertProviderBudget, recordProviderSpend, readProviderBudget,
 	validateProviderBudgetPolicy, budgetEnabled, type ProviderBudgetPolicy
@@ -555,14 +556,33 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 	}));
 
 
+	/** The most recent workflow and task traces of a project, derived from persisted records. */
+	const collectTraces = async (root: string, engine: NativeHarness): Promise<TraceSpan[][]> => {
+		const workflows = (await new NativeAgentWorkflow(root, path.join(metricsDirectory(root), 'workflows')).history()).slice(0, 5);
+		const tasks = (await engine.list()).slice(0, 5);
+		return [...workflows.map(workflowTrace), ...tasks.map(taskTrace).filter(spans => spans.length)];
+	};
+	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.nativeTraceExport', async (requested?: string) => {
+		try {
+			if (!ensureTrust()) { return; }
+			const endpoint = vscode.workspace.getConfiguration('atsHarness').get('otlpEndpoint', '');
+			if (!endpoint) { vscode.window.showInformationMessage(vscode.l10n.t('Configur\u00e1 atsHarness.otlpEndpoint para exportar trazas. Es opcional y nada se env\u00eda sin tu confirmaci\u00f3n.')); return; }
+			const url = validateOtlpEndpoint(endpoint);
+			const chosen = await choose(requested); if (!chosen) { return; }
+			const spans = (await collectTraces(await fs.realpath(chosen.folder.uri.fsPath), chosen.engine)).flat();
+			const confirm = vscode.l10n.t('Exportar {0} spans', String(spans.length));
+			if (await vscode.window.showWarningMessage(vscode.l10n.t('Enviar {0} spans (estructura y contadores, sin prompts ni salida de la IA) a {1}?', String(spans.length), url.origin), { modal: true }, confirm) !== confirm) { return; }
+			if (!authorized(chosen.folder)) { return; }
+			const result = await exportOtlp(spans, endpoint, String(context.extension?.packageJSON?.version ?? 'unknown'));
+			vscode.window.showInformationMessage(vscode.l10n.t('Trazas exportadas: {0} spans (HTTP {1}).', String(result.spans), String(result.status)));
+		} catch (error) { showError(error); }
+	}));
 	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.nativeTrace', async (requested?: string) => {
 		try {
 			if (!ensureTrust()) { return; }
 			const chosen = await choose(requested); if (!chosen) { return; }
 			const root = await fs.realpath(chosen.folder.uri.fsPath);
-			const workflows = (await new NativeAgentWorkflow(root, path.join(metricsDirectory(root), 'workflows')).history()).slice(0, 5);
-			const tasks = (await chosen.engine.list()).slice(0, 5);
-			const traces = [...workflows.map(workflowTrace), ...tasks.map(taskTrace).filter(spans => spans.length)];
+			const traces = await collectTraces(root, chosen.engine);
 			if (!authorized(chosen.folder)) { return; }
 			await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({
 				language: 'json',

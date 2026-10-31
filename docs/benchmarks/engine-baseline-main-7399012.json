@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "mode": "observed-local",
+  "runs": 7,
+  "platform": "win32",
+  "arch": "x64",
+  "node": "v24.22.1",
+  "cpus": 16,
+  "coldStartMs": {
+    "medianMs": 66.37,
+    "maxMs": 69.31
+  },
+  "gateLatency": {
+    "medianMs": 65.44,
+    "maxMs": 76.68
+  },
+  "agentPreparation": {
+    "medianMs": 0.02,
+    "maxMs": 0.28
+  },
+  "fourGates": {
+    "sequential": {
+      "medianMs": 1538.5,
+      "maxMs": 1543.42
+    },
+    "parallel": {
+      "medianMs": 416.9,
+      "maxMs": 421.4
+    },
+    "speedup": 3.69
+  },
+  "historyGrowth": {
+    "50": {
+      "bytes": 54617,
+      "saveMs": 3.93
+    },
+    "100": {
+      "bytes": 109192,
+      "saveMs": 4.13
+    },
+    "200": {
+      "bytes": 218442,
+      "saveMs": 4.96
+    }
+  },
+  "resources": {
+    "cpuUserMs": 219,
+    "cpuSystemMs": 594,
+    "rssDeltaMB": 1.16,
+    "heapUsedMB": 12.62
+  },
+  "tokensAndCost": "not measured: no provider is called; only provider-reported data would be recorded"
+}
