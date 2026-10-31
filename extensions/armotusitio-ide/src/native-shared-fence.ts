@@ -6,6 +6,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { isCanonicalDirectory } from './native-path.ts';
 
 export type FenceOwner = 'native-task' | 'native-agent' | 'native-workflow' | 'project';
 export interface SharedExecutionFence {
@@ -90,7 +91,7 @@ export async function acquireSharedExecutionFence(root: string, storage: string,
 	await fs.mkdir(storage, { recursive: true, mode: 0o700 });
 	const directory = await fs.lstat(storage);
 	if (!directory.isDirectory() || directory.isSymbolicLink() ||
-		await fs.realpath(storage) !== path.resolve(storage)) { throw Error('HARNESS_FENCE_STORAGE_UNSAFE'); }
+		!await isCanonicalDirectory(storage)) { throw Error('HARNESS_FENCE_STORAGE_UNSAFE'); }
 	const projectKey = createHash('sha256').update(canonical).digest('hex');
 	await assertNoRecoveryGuard(storage);
 	const lockPath = path.join(storage, LOCK);
@@ -283,7 +284,7 @@ export async function reconcileSharedExecutionFence(
 	}
 	const directory = await fs.lstat(storage);
 	if (!directory.isDirectory() || directory.isSymbolicLink() ||
-		await fs.realpath(storage) !== path.resolve(storage)) {
+		!await isCanonicalDirectory(storage)) {
 		throw Error('HARNESS_FENCE_STORAGE_UNSAFE');
 	}
 	const guardPath = path.join(storage, RECOVERY_GUARD);

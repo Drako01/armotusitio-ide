@@ -6,6 +6,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
+import { isCanonicalDirectory } from './native-path.ts';
 import { executeReviewedAgent, type AgentExecution, type AgentOutcome } from './native-agent-execution.ts';
 import { reviewAgentDraft, validateHandoffPlan, type HandoffPlan, type Handoff, type AgentRole, type NativeProvider } from './native-providers.ts';
 import { parseReviewerVerdict, boundedHandoff } from './native-review.ts';
@@ -225,7 +226,7 @@ export class NativeAgentWorkflow {
 			throw error;
 		}
 		if (!stat.isDirectory() || stat.isSymbolicLink() ||
-			await fs.realpath(this.storage) !== path.resolve(this.storage)) {
+			!await isCanonicalDirectory(this.storage)) {
 			throw Error('HARNESS_WORKFLOW_UNSAFE_STORAGE');
 		}
 		return true;

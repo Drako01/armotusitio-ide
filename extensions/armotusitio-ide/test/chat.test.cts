@@ -171,7 +171,7 @@ test('Chat Harness panel: converse, revise, approve and follow execution without
 		})
 	};
 	const mcp = { enabled: () => true, credentialState: async () => ({ configured: true }), client: { tools: async () => [{ name: 'list_projects' }], reset() { } } };
-	const context = { extensionUri: 'ext', subscriptions: [], globalStorageUri: { fsPath: path.join(storage, 'private') }, workspaceState: { get: () => undefined, update: async () => undefined } };
+	const context = { extensionUri: 'ext', subscriptions: [], globalStorageUri: { fsPath: process.platform === 'win32' ? path.join(storage, 'private').replace(/^[A-Z]:/, drive => drive.toLowerCase()) : path.join(storage, 'private') }, workspaceState: { get: () => undefined, update: async () => undefined } };
 	const diagnose = async provider => ({ installed: true, version: '1.0.0', localSession: provider === 'claude' ? 'authenticated' : 'unauthenticated', commandCompatibility: 'verified' });
 	try {
 		registerChat(context, controller, async () => [], mcp, vscode, { diagnose });

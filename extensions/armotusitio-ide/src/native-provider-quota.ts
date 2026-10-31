@@ -9,6 +9,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { isCanonicalDirectory } from './native-path.ts';
 import type { NativeProvider } from './native-providers.ts';
 import type { SharedExecutionFence } from './native-shared-fence.ts';
 import type { ProviderUsage } from './native-provider-output.ts';
@@ -77,7 +78,7 @@ async function privateDirectory(directory: string, create: boolean): Promise<boo
 		if (!create && (error as NodeJS.ErrnoException).code === 'ENOENT') { return false; }
 		throw error;
 	}
-	if (!stat.isDirectory() || stat.isSymbolicLink() || await fs.realpath(directory) !== path.resolve(directory)) {
+	if (!stat.isDirectory() || stat.isSymbolicLink() || !await isCanonicalDirectory(directory)) {
 		throw Error('HARNESS_PROVIDER_QUOTA_STORAGE_UNSAFE');
 	}
 	return true;

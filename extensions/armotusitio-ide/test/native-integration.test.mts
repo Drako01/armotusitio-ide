@@ -13,6 +13,11 @@ import { inspectHarnessAuthority } from '../src/native-authority.ts';
 import { acquireSharedExecutionFence, inspectSharedExecutionFence } from '../src/native-shared-fence.ts';
 import { installFakeCodex } from './native-fake-provider.mts';
 
+/** VS Code reports `Uri.fsPath` with a lower-case drive letter on Windows; tests must use the same shape. */
+function vscodeFsPath(value: string): string {
+	return process.platform === 'win32' && /^[A-Z]:/.test(value) ? value[0].toLowerCase() + value.slice(1) : value;
+}
+
 async function fixture() {
 	const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-native-ui-'));
 	const roots = [path.join(directory, 'project one'), path.join(directory, 'project two')];
@@ -21,7 +26,7 @@ async function fixture() {
 	const documents: Array<{ content: string }> = [];
 	const notices: string[] = [];
 	const state = new Map();
-	const context = { subscriptions: [], globalStorageUri: { fsPath: path.join(directory, 'private') }, globalState: { get: key => state.get(key), update: async (key, value) => { state.set(key, value); } } };
+	const context = { subscriptions: [], globalStorageUri: { fsPath: vscodeFsPath(path.join(directory, 'private')) }, globalState: { get: key => state.get(key), update: async (key, value) => { state.set(key, value); } } };
 	const vscode = {
 		l10n: { t: (text: string, ...args: string[]) => text.replace(/\{(\d+)\}/g, (_, index) => args[index]) },
 		commands: { registerCommand: (id, command) => { commands.set(id, command); return { dispose() { } }; } },
