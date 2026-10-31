@@ -234,6 +234,15 @@ El costo dominante de un turno es el proveedor, entre segundos y minutos. El ove
 
 No se declara certificación multiplataforma.
 
+## 9.1 Extensión posterior del PR #37: selección de versión y esfuerzo de IA
+
+Este incremento incorpora opciones de versión explícita de Claude Code (por ejemplo, `claude-opus-5-5`) junto a los alias que siguen el modelo más reciente. Agrega un selector independiente de esfuerzo por proveedor: `low`, `medium`, `high`, `xhigh` y, para Claude, `max`, siempre con la opción de conservar el predeterminado del CLI.
+
+- **Frontera de ejecución:** `AgentDraft` valida el esfuerzo con un listado cerrado, y su fingerprint lo vincula a la revisión de ejecución; Claude recibe `--effort <nivel>` y Codex recibe `--config model_reasoning_effort="<nivel>"`, mediante argumentos literales sin shell.
+- **Cobertura:** pruebas añadidas para los argumentos del CLI y valores inválidos, descubrimiento de versiones, estado del host y selector accesible en Chromium. Los workflows nativos también heredan el esfuerzo elegido por proveedor.
+- **Disponibilidad:** las versiones anunciadas por Anthropic y las preferencias locales no certifican que una cuenta tenga acceso a un modelo concreto. El CLI es quien determina si acepta el modelo y esfuerzo seleccionados.
+- **Evidencia:** este incremento fue editado mediante el conector GitHub. Los checks ejecutables de Windows para el nuevo HEAD **quedan pendientes de ejecución local**; no se reutilizan los resultados de un SHA anterior para declararlo aprobado.
+
 ## 10. Decisión: APPROVED WITH CONDITIONS
 
 **Fundamento.**
