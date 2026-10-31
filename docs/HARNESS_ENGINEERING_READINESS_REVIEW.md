@@ -5,7 +5,7 @@
 | Repositorio | `Drako01/armotusitio-ide` |
 | Rama revisada y destino | `feat/native-chat-harness-enterprise-upgrade` (desde `main` en `d0b02f4d9fa`, release `ats-v1.144.0-r2`) |
 | Fecha | 2026-10-31 |
-| SHA de código evaluado | `62ecfba86dc` (el commit final de la rama solo agrega este documento) |
+| SHA de código evaluado | Corte principal de auditoría `62ecfba86dc`; ampliación de streaming/modelos `89fbc7df95`; actualización de versión `b0f2a18c0d` (0.6.0). El commit de esta revisión documental es posterior. |
 | Entorno de verificación | Windows 11 Pro x64 10.0.26220, Node v24.22.1, Codex CLI 0.160.0, Claude Code 2.1.224 |
 | Decisión | **APPROVED WITH CONDITIONS** (ver §10) |
 
@@ -20,7 +20,7 @@ Método aplicado, en este orden:
 3. Identificación de defectos, clasificación P0/P1/P2, corrección y test de regresión que reproduce cada escenario, uno por uno.
 4. Revisión adversarial independiente del diff completo `main...HEAD`, realizada por un revisor separado sin acceso de escritura. Los siete hallazgos que reportó se corrigieron con un test cada uno.
 5. Verificación independiente del commit de remediación (§6.3).
-6. Gates completos sobre el SHA final.
+6. Gates del corte auditado y evidencia posterior del PR.
 
 No se modificó el endpoint, el contrato ni la autenticación del MCP (`src/mcp.ts` no tiene cambios en la rama). No se hicieron llamadas reales a modelos de IA en las pruebas automatizadas: los proveedores de los tests son scripts locales controlados.
 
@@ -80,7 +80,7 @@ Estado: todos los hallazgos de esta tabla están **corregidos en el SHA final** 
 | F18 | P2 | El estado MCP no se reverificaba con el panel abierto. | Indicador desactualizado. | Reverificación al volver visible si el dato tiene más de 5 minutos (`2a8c48a`). |
 | F19 | P2 | Errores sin indicación de qué hacer. | El usuario no sabe el siguiente paso. | Pistas accionables por código: lock, cupo, confianza, configuración cambiada (`2a8c48a`). |
 | F20 | P2 | Listeners globales registrados en cada `init`. | Duplicación de handlers. | Registro único (`2a8c48a`). |
-| F21 | P2 | Sin streaming. | Sin feedback del contenido mientras el agente trabaja. | **Codex: implementado.** Los eventos JSONL `item.completed` se muestran redactados como «Respuesta en curso» y no se persisten (`95c1e9f`). **Claude: pendiente** (condición C3). |
+| F21 | P2 | Sin streaming. | Sin feedback del contenido mientras el agente trabaja. | **Codex y Claude: implementados.** Codex consume eventos JSONL `item.completed` (`95c1e9f`); Claude utiliza `--output-format stream-json --verbose` y procesa eventos `assistant` y `result` (`89fbc7df95`). Se muestran mensajes intermedios redactados sin persistirlos. Es streaming por eventos/mensajes, no necesariamente por token. La validación autenticada end-to-end sigue incluida en C1. |
 | F22 | P2 | La autoridad de escritura solo se verificaba antes del lock. | Ventana TOCTOU si aparece un `.harness/` mientras se espera el lock. | Se re-verifica bajo el lock, justo antes del spawn (`6632c6c`). |
 | F23 | P2 | La cancelación y la re-verificación de autoridad ocurrían después de reservar cuota. | Cada cancelación temprana consumía un crédito de 24 h. | Se verifican antes de cuota y presupuesto (`62ecfba`). |
 | F24 | P2 | El lock del historial no tenía dueño: la limpieza por antigüedad podía borrar un lock vivo. | Dos escritores simultáneos tras un cierre previo. | El lock contiene `<pid>:<token>`, solo lo borra su dueño y se abandona solo si el proceso dueño murió, con traslado y re-verificación (`62ecfba`). |
@@ -112,7 +112,7 @@ Los tests nuevos o reforzados en este ciclo cubren el contrato de cada hallazgo:
 - **Unitarias y de contrato:**
   - `native-chat.test.mts`: planes, prompts, store, cuarentena, ventanas concurrentes y carrera.
   - `native-chat-session.test.mts`: flujo, invalidación, cancelación temprana y tardía, recuperación, ventanas ajenas, secretos, inyección y revisión.
-  - `native-redact.test.mts`, `native-provider-output.test.mts` (streaming) y `native-provider-diagnostics.test.mts` (CLIs reales actuales).
+  - `native-redact.test.mts`, `native-provider-output.test.mts` (streaming Codex y Claude, incluidos eventos parciales y respuesta final), `native-agent-execution.test.mts` (argumentos `stream-json` de Claude) y `native-provider-diagnostics.test.mts` (CLIs reales actuales).
 - **Integración con el motor real** (`native-integration.test.mts`): runtime del chat con un proveedor Codex local y controlado, gates reales y lock real. Cubre:
   - Liberación del lock.
   - Invalidación por cambio de verificaciones.
@@ -160,11 +160,11 @@ Lo que la cobertura **no** demuestra:
 - Contraste de color en todos los temas.
 - Comportamiento en Linux y macOS.
 
-## 6. Gates sobre el SHA final
+## 6. Gates y evidencia por revisión
 
 ### 6.1 Gates obligatorios
 
-Todos los resultados corresponden al commit de código `62ecfba86dc` (el último commit que modifica código). El commit que agrega este documento solo cambia documentación; los gates se vuelven a ejecutar sobre él y se informan en la entrega.
+Los resultados de la siguiente tabla pertenecen al **corte inicial de auditoría** `62ecfba86dc`; no deben interpretarse como verificación de los commits posteriores. La ampliación de streaming de Claude y modelos se realizó en `89fbc7df95`, seguida de la actualización de versión en `b0f2a18c0d`. La evidencia más reciente declarada en el PR se diferencia a continuación.
 
 | Gate | Resultado |
 | --- | --- |
@@ -186,6 +186,14 @@ Los 2 omitidos son preexistentes y legítimos: el sandbox de kernel requiere Lin
 
 1. Revisión adversarial del diff completo: 2 P1 y 5 P2 (F12 a F16, F22 y la ubicación de la región viva de F11). Todos corregidos con un test que reproduce cada escenario.
 2. Verificación del commit de remediación: confirmó correctas las siete correcciones, sin deadlocks, y encontró cinco P2 nuevos introducidos por la remediación. Todos se corrigieron en `62ecfba` (F23 a F26 más un JSDoc mal ubicado), y el test de cuota falla con el orden anterior (1 crédito consumido).
+
+### 6.4 Cambios posteriores al corte y evidencia declarada del PR #37
+
+- **Streaming Claude (C3 resuelta a nivel de implementación):** `89fbc7df95` añade `--output-format stream-json --verbose` a la invocación de Claude; `ClaudeEventAccumulator` procesa los mensajes `assistant` y el evento final `result`. `native-provider-output.test.mts` y `native-agent-execution.test.mts` verifican el contrato y los argumentos, y `native-chat-session.test.mts` comprueba que los mensajes parciales se muestran sin persistirse.
+- **Selección de modelo y mensajes de límite de proveedor:** incorporados en `89fbc7df95`; un límite real conserva la explicación entregada por el CLI, en vez de fabricar una fecha de restablecimiento.
+- **Versión de extensión:** `b0f2a18c0d` eleva la versión a `0.6.0`.
+- **Verificaciones indicadas en la descripción del PR #37 para Windows x64 / Node 24.22.1:** `ats-harness-check.mts` **8/8 PASS**; suite completa **331 tests: 329 PASS, 0 FAIL, 2 SKIP**; `npm run check`, `git diff --check`, higiene y ESLint **PASS**. Son resultados **reportados en el PR**, no ejecuciones independientes de esta actualización documental. GitHub Actions permanece deshabilitado.
+- **Prueba manual reportada:** Claude respondió en el IDE instalado y Codex informó correctamente que la cuota estaba agotada. **No constituye** la prueba autenticada completa del flujo conversación → plan → aprobación → escritura → gates (C1), ni acredita Linux/macOS (C2).
 
 ## 7. Rendimiento medido
 
@@ -241,14 +249,13 @@ No se declara certificación multiplataforma.
   - El estado se recupera tras un cierre.
 - **Revisión independiente:** sus hallazgos están corregidos y re-verificados.
 
-**Por qué no APPROVED.** Hay requisitos esenciales que no se pueden verificar en este entorno. Según el propio criterio de la consigna, no se puede aprobar sin evidencia. Antes de publicar, se deben cumplir:
+**Por qué no APPROVED.** C3 ya está implementada y cubierta por pruebas automatizadas, pero las condiciones de aceptación **C1 y C2 no tienen evidencia completa**. Por el criterio de revisión acordado, no corresponde elevar la decisión sin esa evidencia. Condiciones y riesgos que permanecen:
 
-- **C1, E2E real del chat.** No se ejecutó la conversación ni la implementación con Codex y Claude reales en este ciclo (política de no consumir cuota en pruebas automatizadas). Requisito: smoke manual autenticado en el IDE instalado en Windows («Quiero agregar un CRUD de clientes» → plan → aprobación → gates), con un proveedor por vez, en un proyecto descartable.
-- **C2, Linux y macOS.** Ejecutar `npm test` y `node scripts/ats-harness-check.mts` en ambos sistemas, incluidos los tests de sandbox del kernel.
-- **C3, streaming de Claude.** Hoy Claude devuelve la respuesta completa al final. Pasar a `--output-format stream-json` requiere validar el formato contra el CLI real.
+- **C1, E2E real del chat: ABIERTA.** Se reportó una respuesta manual de Claude y un mensaje válido de cuota agotada de Codex, pero no hay evidencia de ambos recorridos autenticados completos hasta ejecución y gates. Requisito: smoke manual autenticado en IDE instalado en Windows («Quiero agregar un CRUD de clientes» → conversación → plan → aprobación → escritura → gates → resultado), con cada proveedor por separado, en un proyecto descartable. Para Claude, incluir la visualización de eventos `stream-json` de una sesión real.
+- **C2, Linux y macOS: ABIERTA.** Ejecutar `npm test` y `node scripts/ats-harness-check.mts` en ambos sistemas, incluidos los tests de sandbox disponibles. No hay resultados de esas plataformas en la evidencia del PR.
 - **C4, coordinación con Harnesses externos.** La ejecución con escritura queda deshabilitada por diseño en proyectos con `.harness/`. Habilitarla requiere un protocolo verificable de escritor único con el motor externo (decisión de producto pendiente: predominio del Harness nativo).
 - **C5, aislamiento del writer.** No hay sandbox de SO para el agente implementador en Windows; Codex `workspace-write` puede ejecutar comandos en su sandbox. El riesgo residual se acepta mediante aprobación explícita y Workspace Trust, y debe figurar en la documentación del usuario.
 - **C6, accesibilidad manual.** Prueba con NVDA y VoiceOver y medición de contraste en los temas claro, oscuro y de alto contraste.
 - **C7, contexto largo.** El prompt incluye unos 13 KB del historial más reciente; las conversaciones largas pierden contexto antiguo (no hay resumen automático).
 
-Con C1 y C2 cumplidos sin hallazgos nuevos, la decisión puede pasar a APPROVED para uso interno. C3 a C7 son mejoras y decisiones de producto, no bloqueantes de seguridad.
+**C3 (streaming de Claude): RESUELTA en código y tests** mediante `89fbc7df95`. Su ejecución autenticada en la interfaz se validará como parte de C1. Las condiciones C4 a C7 son riesgos y decisiones de producto expresamente documentados; no se declaran resueltas. Solo con **C1 y C2 verificadas**, sin hallazgos nuevos y aceptando formalmente los riesgos residuales, podrá reconsiderarse **APPROVED para uso interno**.
