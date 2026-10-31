@@ -38,6 +38,12 @@ test('CLI flag matrix rejects unknown versions of the invocation protocol', () =
 	assert.equal(inspectProviderHelp('claude', 'Usage: claude ' + claude).compatibility, 'verified');
 	assert.deepEqual(inspectProviderHelp('codex', 'Usage: codex exec --json and no safety flags').missingFlags, ['--sandbox', '--skip-git-repo-check', '--ask-for-approval', '--ephemeral']);
 	assert.equal(inspectProviderHelp('claude', '').compatibility, 'unknown');
+	// Real CLIs: Claude hides --max-turns from help, and Codex lists --ask-for-approval only in top-level help.
+	assert.equal(inspectProviderHelp('claude', 'Usage: claude ' + claude.replace('--max-turns', '')).compatibility, 'verified');
+	const codexTopLevel = 'Usage: codex [OPTIONS] [PROMPT]\n  -a, --ask-for-approval <POLICY>';
+	const codexExec = 'Usage: codex exec [OPTIONS]\n  --sandbox --skip-git-repo-check --ephemeral --json';
+	assert.equal(inspectProviderHelp('codex', codexExec).compatibility, 'unsupported');
+	assert.equal(inspectProviderHelp('codex', codexTopLevel + '\n' + codexExec).compatibility, 'verified');
 });
 
 test('local auth detection never promotes ambiguous output to authenticated model access', () => {
