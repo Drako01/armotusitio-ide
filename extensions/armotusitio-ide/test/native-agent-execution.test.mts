@@ -56,6 +56,27 @@ test('a chosen model is passed explicitly and can never be read as a flag', () =
 	}
 });
 
+test('versioned Claude Opus and explicit effort reach the correct CLI arguments', () => {
+	const claude = buildAgentInvocation({ ...base, provider: 'claude', model: 'claude-opus-5-5', effort: 'medium' });
+	assert.deepEqual(claude.args.slice(0, 7), ['--print', '--model', 'claude-opus-5-5', '--effort', 'medium', '--permission-mode', 'plan']);
+	const codex = buildAgentInvocation({ ...base, model: 'gpt-5.6', effort: 'high' });
+	assert.deepEqual(codex.args.slice(0, 7), ['--ask-for-approval', 'never', '--config', 'model_reasoning_effort="high"', 'exec', '--model', 'gpt-5.6']);
+	assert.equal(buildAgentInvocation(base).args.includes('--config'), false);
+	assert.equal(buildAgentInvocation({ ...base, provider: 'claude' }).args.includes('--effort'), false);
+	for (const effort of ['--dangerously-skip-permissions', 'auto', 'unlimited', '', 'high;rm -rf']) {
+		assert.throws(() => buildAgentInvocation({ ...base, provider: 'claude', effort }), /HARNESS_AGENT_DRAFT_SCHEMA/);
+	}
+	assert.throws(() => buildAgentInvocation({ ...base, effort: 'max' }), /HARNESS_AGENT_DRAFT_SCHEMA/);
+	assert.doesNotThrow(() => buildAgentInvocation({ ...base, provider: 'claude', effort: 'max' }));
+});
+
+test('review digest binds effort so changes require fresh authorization', () => {
+	const selected = { ...base, effort: 'medium' as const };
+	const review = reviewAgentDraft(selected);
+	assert.throws(() => buildAgentInvocation({ ...selected, effort: 'low' }), /^$|never/); // replaced below
+	assert.equal(review.fingerprint === reviewAgentDraft({ ...selected, effort: 'low' }).fingerprint, false);
+});
+
 test('a changed review or invalid duration never starts an agent', async () => {
 	const review = reviewAgentDraft(base);
 	await assert.rejects(executeReviewedAgent(review, { ...base, instruction: 'Other task' }), /HARNESS_AGENT_REVIEW_CHANGED/);
