@@ -211,7 +211,16 @@ test('Chat Harness panel: converse, revise, approve and follow execution without
 		await receive({ action: 'model', provider: 'claude', model: '--dangerously-skip-permissions' });
 		await receive({ action: 'model', provider: 'claude', model: 'sonnet' });
 		assert.deepEqual(state().models, { claude: { defaultModel: 'opus', options: [{ id: 'sonnet', label: 'Sonnet' }], selected: 'sonnet' }, codex: { options: [], selected: '' } });
+		await receive({ action: 'effort', provider: 'claude', effort: '--unsafe' });
+		assert.equal(state().efforts.claude, '');
+		await receive({ action: 'effort', provider: 'claude', effort: 'medium' });
+		assert.equal(state().efforts.claude, 'medium');
+		await receive({ action: 'effort', provider: 'codex', effort: 'max' });
+		assert.equal(state().efforts.codex, '');
+		await receive({ action: 'effort', provider: 'codex', effort: 'low' });
+		assert.equal(state().efforts.codex, 'low');
 		await receive({ action: 'provider', provider: 'codex' });
+		assert.equal(state().efforts.claude, 'medium');
 		await receive({ action: 'send', text: 'Quiero agregar un CRUD de clientes' });
 		await receive({ action: 'send', text: 'Nombre, email y CUIT' });
 		const v1 = state().chat.plan;
