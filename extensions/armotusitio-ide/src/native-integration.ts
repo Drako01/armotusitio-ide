@@ -274,6 +274,11 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 					onMessage: hooks.message,
 					signal,
 					afterOutcome: async (outcome, fence) => {
+						if (outcome.status !== 'passed' && verification) {
+							// Gates that never ran because the writer did not succeed are not "pending": that would suggest they still will.
+							gates = verification.gates.map(gate => ({ id: gate.id, status: 'cancelled' }));
+							if (outcome.status === 'cancelled') { verificationStatus = 'cancelled'; }
+						}
 						if (outcome.status !== 'passed' || !verification) { return; }
 						// Configured gates that never ran because the user stopped the run are reported as cancelled, not skipped.
 						if (signal.aborted) {

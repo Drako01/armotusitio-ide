@@ -85,6 +85,13 @@ const ITEM_LIMIT = 1000;
 function text(value: unknown, max: number): string | undefined {
 	return typeof value === 'string' && value.trim() && value.length <= max && !value.includes('\0') ? value.trim() : undefined;
 }
+/**
+ * A path the plan says it will touch must be project-relative: absolute paths, drive letters, `~` and `..` segments
+ * are never plausible plan entries and would only point the implementer at files outside the project.
+ */
+function isProjectRelative(file: string): boolean {
+	return !/^([a-zA-Z]:|[/\\~])/.test(file) && !file.split(/[/\\]/).includes('..');
+}
 function list(value: unknown, required: boolean): string[] | undefined {
 	if (value === undefined && !required) { return []; }
 	if (!Array.isArray(value) || value.length > LIST_LIMIT || (required && !value.length)) { return undefined; }
@@ -111,7 +118,8 @@ export function extractChatPlan(answer: string, version: number): { text: string
 		if (!value || typeof value !== 'object' || Array.isArray(value)) { continue; }
 		const title = text(value.title, 200), summary = text(value.summary, 4000) ?? '';
 		const steps = list(value.steps, true), files = list(value.files, false), risks = list(value.risks, false), skills = list(value.skills, false);
-		if (!title || !steps || !files || !risks || !skills || skills.length > 8) { continue; }
+		// A plan naming paths outside the project is not a plan the user could safely approve: it is dropped, not trimmed.
+		if (!title || !steps || !files || !files.every(isProjectRelative) || !risks || !skills || skills.length > 8) { continue; }
 		const candidate = { version, title, summary, steps, files, risks, skills };
 		plan = { ...candidate, digest: chatPlanDigest(candidate) };
 		visible = visible.replace(match[0], '');
