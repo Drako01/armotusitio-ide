@@ -28,6 +28,8 @@ import { acquireSharedExecutionFence, inspectSharedExecutionFence, reconcileShar
 import { createWorktreeCheckpoint, readWorktreeCheckpoint, rollbackWorktreeCheckpoint, type WorktreeCheckpoint } from './native-worktree-checkpoint.ts';
 import { integrateWorktreeChanges, reconcileWorktreeIntegration, rollbackWorktreeIntegration } from './native-worktree-integration.ts';
 import { delegateProjectGate, queryProjectEngineStatus } from './native-engine-interop.ts';
+import { assessWorkflowRecovery } from './native-workflow-recovery.ts';
+import { buildAdaptiveWorkflow, type ProviderAvailability } from './native-agent-planner.ts';
 import { acquireWriterLease, type WriterLease } from './native-hybrid-writer.ts';
 import { describeAgentIsolation, meetsWriterIsolation, parseWriterIsolation } from './native-isolation.ts';
 import { describeTrace, taskTrace, traceparent, workflowTrace } from './native-trace.ts';
@@ -113,6 +115,22 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 	};
 	/** Minimum confinement a writer must have; user-level, so a repository cannot lower it. */
 	const requiredWriterIsolation = () => parseWriterIsolation(vscode.workspace.getConfiguration('atsHarness').get('writerIsolation', 'tool-allowlist'));
+	/** Live facts for adaptive provider assignment: local diagnostics only, no model call. */
+	const providerAvailability = async (root: string, folder: Host): Promise<ProviderAvailability[]> => {
+		const providers = ['codex', 'claude'] as const;
+		const [diagnostics, quota, budget] = await Promise.all([
+			Promise.all(providers.map(provider => diagnoseProvider(provider).catch(() => undefined))),
+			readProviderInvocationQuota(metricsDirectory(root), providerCallsPer24h(folder)),
+			readProviderBudget(metricsDirectory(root), providerBudget(folder))
+		]);
+		return providers.map((provider, index) => ({
+			provider,
+			usable: !!diagnostics[index]?.installed && diagnostics[index]?.commandCompatibility !== 'unsupported' && diagnostics[index]?.localSession !== 'unauthenticated',
+			remainingCalls: quota.providers[provider].remaining ?? undefined,
+			coolingDown: budget.providers[provider].rateLimitedUntil !== null,
+			writerAllowed: meetsWriterIsolation(provider, requiredWriterIsolation())
+		}));
+	};
 	/** Opt-in, user-level: a repository cannot enable external writers for itself. */
 	const coordinatedWriters = (): boolean => vscode.workspace.getConfiguration('atsHarness').get('coordinatedProjectWriters', false) === true;
 	/** Model chosen for a provider (`atsHarness.<provider>Model`); empty keeps the CLI default. */
@@ -422,9 +440,11 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			if (runningAgents.has(root) || pendingAgents.has(root) || runningWorkflows.has(root) || pendingWorkflows.has(root) || running.has(chosen.folder.uri.toString())) {
 				throw Error('HARNESS_ALREADY_RUNNING');
 			}
-			const provider = await vscode.window.showQuickPick(['codex', 'claude'], { title: 'Proveedor para el workflow multiagente' }) as NativeProvider | undefined;
-			if (!provider) { return; }
-			const reviewerMode = await vscode.window.showQuickPick([
+			// `adaptive` is last so the manual choices keep their position: it assigns providers from live availability.
+			const choice = await vscode.window.showQuickPick(['codex', 'claude', 'adaptive'], { title: 'Proveedor para el workflow multiagente' }) as NativeProvider | 'adaptive' | undefined;
+			if (!choice) { return; }
+			const provider: NativeProvider = choice === 'adaptive' ? 'codex' : choice;
+			const reviewerMode = choice === 'adaptive' ? { value: 'same' } : await vscode.window.showQuickPick([
 				{ label: 'Mismo proveedor en todas las fases', value: 'same' },
 				{ label: 'Revisi\u00f3n cruzada con el otro proveedor', value: 'cross' }
 			], { title: 'Independencia del agente revisor' });
@@ -444,15 +464,16 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 				isolation = await createAgentWorktree(root, path.join(metricsDirectory(root), 'isolated-worktrees'));
 				executionRoot = isolation.root;
 			}
-			const plan = proposedWorkflow(provider, instruction);
-			plan.handoffs.find(h => h.id === 'review')!.provider = reviewerProvider;
+			const adaptive = choice === 'adaptive' ? buildAdaptiveWorkflow(instruction, await providerAvailability(root, chosen.folder)) : undefined;
+			const plan = adaptive?.plan ?? proposedWorkflow(provider, instruction);
+			if (!adaptive) { plan.handoffs.find(h => h.id === 'review')!.provider = reviewerProvider; }
 			const digest = workflowDigest(executionRoot, plan);
 			const verification = (await loadProjectConfig(root))?.plan;
 			const verificationSnapshot = JSON.stringify(verification || null);
 			await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({
 				language: 'json',
 				content: JSON.stringify({
-					project: root, executionRoot, isolationMode: mode.value, handoffs: plan.handoffs, maxCorrectiveCycles: 1, maxProviderCalls: 5, verification: verification || 'NOT_CONFIGURED', digest,
+					project: root, executionRoot, isolationMode: mode.value, handoffs: plan.handoffs, assignments: adaptive?.assignments, maxCorrectiveCycles: 1, maxProviderCalls: 5, verification: verification || 'NOT_CONFIGURED', digest,
 					notice: mode.value === 'worktree' ? 'La IA operar\u00e1 \u00fanicamente en este checkout Git separado; se conservar\u00e1 despu\u00e9s para revisar los cambios. No se hace commit ni merge.' : 'La IA operar\u00e1 sobre el workspace actual sin aislamiento de archivos. No se hace commit ni merge.'
 				}, null, 2)
 			}), { preview: true });
@@ -668,7 +689,9 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			if (!authorized(chosen.folder)) { return; }
 			const workflow = new NativeAgentWorkflow(root, path.join(metricsDirectory(root), 'workflows'));
 			const updated = await workflow.reconcile();
-			vscode.window.showInformationMessage('Workflows reconciliados: ' + updated);
+			// Say which interrupted workflows cannot be restarted because a writer may already have changed files.
+			const uncertain = (await workflow.history()).filter(record => record.status === 'interrupted').map(assessWorkflowRecovery).filter(assessment => !assessment.restartAllowed);
+			vscode.window.showInformationMessage('Workflows reconciliados: ' + updated + (uncertain.length ? '. ' + uncertain.length + ' tuvo un escritor iniciado: no se reinicia; revis\u00e1 su worktree antes de integrarlo o descartarlo.' : ''));
 		} catch (error) { showError(error); } finally { controller.refresh(); }
 	}));
 

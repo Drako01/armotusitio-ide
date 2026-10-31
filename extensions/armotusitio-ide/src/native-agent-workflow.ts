@@ -8,6 +8,7 @@ import * as path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { isCanonicalDirectory } from './native-path.ts';
 import { executeReviewedAgent, type AgentExecution, type AgentOutcome } from './native-agent-execution.ts';
+import { assessWorkflowRecovery } from './native-workflow-recovery.ts';
 import { modelOption, effortOption, reviewAgentDraft, validateHandoffPlan, type HandoffPlan, type Handoff, type AgentRole, type NativeProvider, type NativeEffort } from './native-providers.ts';
 import { parseReviewerVerdict, boundedHandoff } from './native-review.ts';
 import { planAgentWaves, validateDAGReviewCoverage } from './native-agent-dag.ts';
@@ -582,7 +583,7 @@ export class NativeAgentWorkflow {
 			previous.planDigest !== digest) {
 			throw Error('HARNESS_RESUME_STATE_INVALID');
 		}
-		if (previous.steps.some(step => step.role === 'implementer' && step.status !== 'pending') ||
+		if (!assessWorkflowRecovery(previous).restartAllowed ||
 			previous.steps.some(step => !plan.handoffs.some(h => h.id === step.id && h.role === step.role && h.provider === step.provider))) {
 			throw Error('HARNESS_RESUME_WRITE_UNCERTAIN');
 		}
