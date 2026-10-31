@@ -24,10 +24,7 @@ type NativeOptions = { authorize?: () => boolean; node?: string; host?: string; 
 type Entry = { nodeStates?: Record<string, string>; evidence?: Record<string, string>; nativePlanRevision?: string; creationUncertain?: boolean; providerRevision?: string; logs?: string; issueKey?: string; planDigest?: string; reviewed?: string; previousPlan?: object[]; cancellation?: boolean; observedAt?: number; detectedEndedAt?: number; detectedAt?: number; origin?: string; timeline?: { phase: string; at: number; attempt?: number; unit?: string }[]; title?: string; id: string; project: string; profile: { id: string; root: string }; host: string; phase: string; startedAt: number; endedAt?: number; questions: Question[]; knownQuestions: Question[]; answers: Record<string, string>; file?: string; nativeId?: string; error?: string; mode?: string; ready?: boolean; plan?: { domain: string; nodes: { id: string; agent: string; kind?: string; dependencies?: string[] }[] }[]; warnings?: { id?: string; message: string; hint: string; blocking: boolean }[]; progress?: ReturnType<typeof progressView>; progressError?: boolean; checkedAt?: number; restored?: boolean };
 
 /** Keep user prompts and credentials out of execution summaries and diagnostic output. */
-function redact(value) {
-	return String(value).replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').replace(/\b(Bearer\s+)[^\s"']+/gi, '$1[redacted]')
-		.replace(/(["']?(?:token|secret|password|api[_-]?key|connection[_-]?token)["']?\s*[=:]\s*)(?:"(?:\\.|[^"\\])*"|'[^']*'|[^\s,"'}]+)/gi, (_, prefix) => prefix + '"[redacted]"');
-}
+const { redactSecrets: redact } = require('./native-redact.ts');
 
 const sharedReads = new Map();
 const rootReads = new Map();

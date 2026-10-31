@@ -8,6 +8,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { createHash, randomUUID } from 'node:crypto';
 import { spawn, type ChildProcess } from 'node:child_process';
+import { redactSecrets } from './native-redact.ts';
 import { fingerprintEvidence, evidenceKey, saveEvidenceMetadata, readEvidenceMetadata, type EvidenceFingerprint } from './native-evidence.ts';
 import { inspectHarnessAuthority } from './native-authority.ts';
 import { resolveNativeCommand } from './native-runtime.ts';
@@ -71,9 +72,7 @@ export function selectNativeWave(ready: Gate[], availableCpus = adaptiveWorkerBu
 }
 
 function redact(value: string): string {
-	return value.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').replace(/\b(Bearer\s+)\S+/gi, '$1[redacted]')
-		.replace(/((?:token|password|secret|api[_-]?key)\s*[=:]\s*)(?:"[^"]*"|'[^']*'|\S+)/gi, '$1[redacted]')
-		.slice(-MAX_OUTPUT);
+	return redactSecrets(value).slice(-MAX_OUTPUT);
 }
 async function writeAtomic(file: string, value: unknown): Promise<void> {
 	const payload = JSON.stringify(value, null, 2);

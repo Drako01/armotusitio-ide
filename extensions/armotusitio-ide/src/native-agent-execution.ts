@@ -10,6 +10,7 @@ import { resolveNativeCommand } from './native-runtime.ts';
 import { captureAgentScope, scopeChanged } from './native-agent-scope.ts';
 import { parseProviderOutput, CodexEventAccumulator, type ProviderUsage } from './native-provider-output.ts';
 import { StringDecoder } from 'node:string_decoder';
+import { redactSecrets } from './native-redact.ts';
 import { reviewAgentDraft, validateReviewedAgent, type AgentDraft, type AgentReview } from './native-providers.ts';
 
 const MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
@@ -71,13 +72,6 @@ export function buildAgentInvocation(draft: AgentDraft): AgentInvocation {
 		args: ['--print', '--permission-mode', draft.readOnly ? 'plan' : 'dontAsk', '--allowedTools', draft.readOnly ? 'Read,Glob,Grep' : 'Read,Glob,Grep,Edit,Write', '--disallowedTools', 'Bash,WebFetch,WebSearch', '--max-turns', '12', '--output-format', 'json'],
 		stdin: instruction
 	};
-}
-
-function redactOutput(value: string): string {
-	return value.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')
-		.replace(/\b(Bearer\s+)\S+/gi, '$1[REDACTED]')
-		.replace(/((?:token|password|secret|api[_-]?key)\s*[=:]\s*)(?:"[^"]*"|'[^']*'|\S+)/gi, '$1[REDACTED]')
-		.replace(/\b(?:sk-[A-Za-z0-9_-]{16,}|github_pat_[A-Za-z0-9_]{16,})\b/g, '[REDACTED]');
 }
 
 function stopProcess(child: ChildProcess): void {
@@ -167,7 +161,7 @@ export async function executeReviewedAgent(review: AgentReview, current: AgentDr
 				}
 				resolve({
 					status, exitCode, durationMs: Date.now() - started, truncated,
-					output: redactOutput(parsed.structured ? parsed.message : stdout + (stderr ? '\n' + stderr : '')),
+					output: redactSecrets(parsed.structured ? parsed.message : stdout + (stderr ? '\n' + stderr : '')),
 					scopeViolation, scopeVerified, structuredOutput: parsed.structured, usage: parsed.usage,
 					...(parsed.rateLimited ? { rateLimited: true as const } : {})
 				});
