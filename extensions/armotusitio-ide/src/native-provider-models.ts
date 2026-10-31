@@ -17,7 +17,19 @@ export interface ProviderModels {
 const MAX_CONFIG_BYTES = 512 * 1024;
 const MAX_OPTIONS = 20;
 /** Claude Code resolves these aliases to the latest model of each family. */
-const CLAUDE_ALIASES = [{ id: 'opus', label: 'Opus' }, { id: 'sonnet', label: 'Sonnet' }, { id: 'haiku', label: 'Haiku' }];
+const CLAUDE_ALIASES = [{ id: 'opus', label: 'Opus (última versión disponible)' }, { id: 'sonnet', label: 'Sonnet (última versión disponible)' }, { id: 'haiku', label: 'Haiku (última versión disponible)' }];
+/** Published versioned model IDs; availability still depends on the installed CLI and account. */
+const CLAUDE_VERSIONS = [
+	{ id: 'claude-opus-5-5', label: 'Opus 5.5' },
+	{ id: 'claude-opus-5', label: 'Opus 5' },
+	{ id: 'claude-opus-4-8', label: 'Opus 4.8' },
+	{ id: 'claude-opus-4-7', label: 'Opus 4.7' },
+	{ id: 'claude-opus-4-6', label: 'Opus 4.6' },
+	{ id: 'claude-sonnet-5-5', label: 'Sonnet 5.5' },
+	{ id: 'claude-sonnet-5', label: 'Sonnet 5' },
+	{ id: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
+	{ id: 'claude-haiku-5-5', label: 'Haiku 5.5' }
+];
 
 /** A missing, oversized or unreadable optional file means "unknown", never an error. */
 async function readConfig(file: string): Promise<string | undefined> {
@@ -50,7 +62,7 @@ async function claudeModels(env: NodeJS.ProcessEnv, home: string): Promise<Provi
 	const settings = parseJson(await readConfig(path.join(env.CLAUDE_CONFIG_DIR || path.join(home, '.claude'), 'settings.json')));
 	// ANTHROPIC_MODEL overrides the settings file, as in the CLI.
 	const configured = env.ANTHROPIC_MODEL || settings?.model;
-	return { ...(validModel(configured) ? { defaultModel: configured } : {}), options: CLAUDE_ALIASES };
+	return { ...(validModel(configured) ? { defaultModel: configured } : {}), options: [...CLAUDE_ALIASES, ...CLAUDE_VERSIONS] };
 }
 
 export function listProviderModels(provider: NativeProvider, env: NodeJS.ProcessEnv = process.env, home = os.homedir()): Promise<ProviderModels> {
