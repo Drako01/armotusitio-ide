@@ -147,8 +147,9 @@ export class HarnessChatSession {
 		const provider = this.conversation.provider;
 		this.conversation.messages.push(chatMessage('user', body));
 		this.activity = { kind: 'thinking', provider, startedAt: new Date().toISOString(), observedBytes: 0 };
-		await this.persist();
+		// Every failure after the activity starts, including storage, must end in `finally` and clear it.
 		try {
+			await this.persist();
 			await this.refreshContext();
 			if (!this.context) { throw Error('HARNESS_CHAT_CONTEXT_UNAVAILABLE'); }
 			const current = latestPlan(this.conversation.messages);
@@ -180,9 +181,9 @@ export class HarnessChatSession {
 		const controller = new AbortController();
 		this.conversation.messages.push(chatMessage('notice', this.t('Plan v{0} aprobado. Ejecutando con {1}.', String(plan.version), provider === 'claude' ? 'Claude Code' : 'Codex'), { tone: 'info', provider }));
 		this.activity = { kind: 'executing', provider, startedAt: new Date().toISOString(), observedBytes: 0, stage: 'preparing', planVersion: plan.version, gates: this.context.verification?.gates.map(gate => ({ id: gate.id, status: 'pending' as const })) ?? [] };
-		await this.persist();
 		const started = Date.now();
 		try {
+			await this.persist();
 			const instruction = buildImplementationInstruction(plan, this.conversation.messages);
 			const hooks: ChatImplementHooks = {
 				...this.hooks(() => controller.abort()),

@@ -125,6 +125,16 @@ test('hybrid projects can plan but cannot approve, and provider failures stay in
 	} finally { await s.cleanup(); }
 });
 
+test('a storage failure never leaves the chat stuck in a thinking state or launches the provider', async () => {
+	const s = await session(['respuesta']);
+	try {
+		s.store.save = async () => { throw Error('HARNESS_CHECKPOINT_STORAGE_UNSAFE'); };
+		await assert.rejects(s.chat.send('hola'), /HARNESS_CHECKPOINT_STORAGE_UNSAFE/);
+		assert.deepEqual({ busy: s.chat.busy, activity: s.snapshots.at(-1)?.activity, calls: s.calls.length, notice: /HARNESS_CHECKPOINT_STORAGE_UNSAFE/.test(s.chat.snapshot().messages.at(-1)!.text) },
+			{ busy: false, activity: undefined, calls: 0, notice: true });
+	} finally { await s.cleanup(); }
+});
+
 test('cancelling an execution aborts the runtime signal and records the cancelled run', async () => {
 	const s = await session([plan('Plan', ['Paso'])]);
 	try {

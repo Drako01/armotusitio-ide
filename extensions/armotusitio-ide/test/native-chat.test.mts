@@ -72,3 +72,13 @@ test('chat store persists per project, trims history and quarantines corrupt sta
 		assert.ok((await fs.readdir(path.join(directory, 'chat'))).some(name => name.endsWith('.corrupt')));
 	} finally { await fs.rm(directory, { recursive: true, force: true }); }
 });
+
+test('chat store accepts the lower-case drive letter that VS Code reports for global storage on Windows', { skip: process.platform !== 'win32' }, async () => {
+	const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-chat-drive-'));
+	try {
+		const lower = directory[0].toLowerCase() + directory.slice(1);
+		const store = new ChatStore(path.join(lower, 'chat'));
+		await store.save({ schemaVersion: 1, provider: 'codex', messages: [chatMessage('user', 'hola')] });
+		assert.equal((await store.load('claude')).conversation.messages.length, 1);
+	} finally { await fs.rm(directory, { recursive: true, force: true }); }
+});

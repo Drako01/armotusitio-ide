@@ -77,11 +77,15 @@ export async function validateManagedWorktree(worktree: ManagedWorktree): Promis
 	const currentCommon = await fs.realpath(path.resolve(root, await git(root, ['rev-parse', '--git-common-dir'])));
 	if (expectedCommon !== currentCommon) { throw Error('HARNESS_CHECKPOINT_REPOSITORY_MISMATCH'); }
 }
+/** Windows paths are case-insensitive, and VS Code reports `fsPath` with a lower-case drive letter. */
+function samePath(left: string, right: string, platform: NodeJS.Platform = process.platform): boolean {
+	return platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right;
+}
 /** Create a private, canonical, non-linked state directory. */
 export async function safeStorage(storage: string): Promise<void> {
 	await fs.mkdir(storage, { recursive: true, mode: 0o700 });
 	const stat = await fs.lstat(storage);
-	if (!stat.isDirectory() || stat.isSymbolicLink() || await fs.realpath(storage) !== path.resolve(storage)) {
+	if (!stat.isDirectory() || stat.isSymbolicLink() || !samePath(await fs.realpath(storage), path.resolve(storage))) {
 		throw Error('HARNESS_CHECKPOINT_STORAGE_UNSAFE');
 	}
 }
