@@ -113,6 +113,18 @@
           "pattern": "^$|^[A-Za-z0-9][A-Za-z0-9._:\\[\\]-]{0,63}$",
           "description": "Modelo o alias de Claude Code (opus, sonnet, haiku) para el Chat Harness y los agentes nativos. Vacio usa el predeterminado de Claude Code."
         },
+        "atsHarness.codexEffort": {
+          "type": "string",
+          "enum": ["", "low", "medium", "high", "xhigh"],
+          "default": "",
+          "description": "Nivel de razonamiento de Codex para el chat y agentes nativos. Vacío respeta la configuración predeterminada del CLI; la compatibilidad depende del modelo."
+        },
+        "atsHarness.claudeEffort": {
+          "type": "string",
+          "enum": ["", "low", "medium", "high", "xhigh", "max"],
+          "default": "",
+          "description": "Nivel de esfuerzo de Claude Code para el chat y agentes nativos. Vacío respeta la configuración predeterminada del CLI; la compatibilidad depende del modelo."
+        },
         "atsHarness.providerCallsPer24h": {
           "type": "integer",
           "default": 0,
