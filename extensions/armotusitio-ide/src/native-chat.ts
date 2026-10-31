@@ -222,6 +222,13 @@ function validMessage(value: ChatMessage): boolean {
 		(value.plan === undefined || (Number.isSafeInteger(value.plan.version) && value.plan.digest === chatPlanDigest(value.plan)));
 }
 
+/** Longest plausible operation (a 30 min agent plus verification gates); older markers are interrupted. */
+const PENDING_MAX_AGE_MS = 6 * 60 * 60 * 1000;
+/** A marker is live only while its owner process exists and it is not older than any real operation. */
+export function pendingAlive(entry: PendingOperation, now = Date.now()): boolean {
+	return !!entry.pid && processAlive(entry.pid) && now - Date.parse(entry.startedAt) < PENDING_MAX_AGE_MS;
+}
+
 function validPending(value: PendingOperation[] | undefined): boolean {
 	return value === undefined || (Array.isArray(value) && value.length <= 16 && value.every(validPendingEntry));
 }
@@ -268,7 +275,7 @@ export class ChatStore {
 			messages = [...stored.value.messages, ...mine].slice(-MAX_MESSAGES);
 		}
 		// Keep live operations of other windows; this window's markers come only from its own conversation.
-		const foreign = (stored?.value.pending ?? []).filter(entry => entry.pid && entry.pid !== process.pid && processAlive(entry.pid));
+		const foreign = (stored?.value.pending ?? []).filter(entry => entry.pid !== process.pid && pendingAlive(entry));
 		const pending = [...foreign, ...(conversation.pending ?? [])];
 		const value = { schemaVersion: 1, provider: conversation.provider, messages, ...(pending.length ? { pending } : {}) };
 		await writeDurable(this.file, value, false, MAX_STATE_BYTES);
@@ -290,6 +297,8 @@ export class ChatStore {
 			throw error;
 		}
 		const value = JSON.parse(raw) as ChatConversation;
+		// Earlier builds of this branch stored one marker object instead of a list.
+		if (value?.pending && !Array.isArray(value.pending)) { value.pending = [value.pending as unknown as PendingOperation]; }
 		if (value?.schemaVersion !== 1 || !PROVIDERS.includes(value.provider) || !Array.isArray(value.messages) ||
 			value.messages.length > MAX_MESSAGES || !value.messages.every(validMessage) || !validPending(value.pending)) { throw Error('HARNESS_CHAT_STATE_INVALID'); }
 		return { raw, value };
@@ -305,24 +314,44 @@ function digestOf(raw: string): string { return createHash('sha256').update(raw)
 const LOCK_WAIT_MS = 5000;
 const LOCK_STALE_MS = 30000;
 /**
- * Cross-process mutual exclusion through an exclusively created file. A lock older than LOCK_STALE_MS
- * belongs to a crashed writer (a save takes milliseconds) and is removed; waiting longer fails loudly.
+ * Cross-process mutual exclusion through an exclusively created file holding `<pid>:<token>`. Only the
+ * owner deletes its lock; a lock is abandoned only when its owner process is gone. Waiting longer fails loudly.
  */
 async function withFileLock<T>(lock: string, work: () => Promise<T>): Promise<T> {
+	const owner = process.pid + ':' + randomUUID();
 	const deadline = Date.now() + LOCK_WAIT_MS;
 	for (; ;) {
-		try {
-			const handle = await fs.open(lock, 'wx', 0o600);
-			await handle.close();
-			break;
-		} catch (error) {
+		try { await fs.writeFile(lock, owner, { flag: 'wx', mode: 0o600 }); break; }
+		catch (error) {
 			if ((error as NodeJS.ErrnoException).code !== 'EEXIST') { throw error; }
-			const age = await fs.stat(lock).then(stat => Date.now() - stat.mtimeMs, () => 0);
-			if (age > LOCK_STALE_MS) { await fs.rm(lock, { force: true }); continue; }
+			if (await removeAbandonedLock(lock)) { continue; }
 			if (Date.now() > deadline) { throw Error('HARNESS_CHAT_STATE_BUSY'); }
 			await new Promise(resolve => setTimeout(resolve, 15));
 		}
 	}
 	try { return await work(); }
-	finally { await fs.rm(lock, { force: true }); }
+	finally { if (await fs.readFile(lock, 'utf8').catch(() => undefined) === owner) { await fs.rm(lock, { force: true }); } }
+}
+
+/**
+ * Remove a lock whose owner process no longer exists (an unreadable owner falls back to LOCK_STALE_MS).
+ * The lock is moved aside first and its content re-checked, so a fresh lock created meanwhile is restored.
+ */
+async function removeAbandonedLock(lock: string): Promise<boolean> {
+	const content = await fs.readFile(lock, 'utf8').catch(() => undefined);
+	if (content === undefined) { return true; }
+	const pid = Number(content.split(':')[0]);
+	const age = await fs.stat(lock).then(stat => Date.now() - stat.mtimeMs, () => 0);
+	const live = Number.isSafeInteger(pid) && pid > 0 ? processAlive(pid) : age <= LOCK_STALE_MS;
+	if (live) { return false; }
+	const aside = lock + '.' + randomUUID() + '.abandoned';
+	try { await fs.rename(lock, aside); } catch { return false; }
+	if (await fs.readFile(aside, 'utf8').catch(() => undefined) !== content) {
+		// A live writer re-created the lock between the read and the move: hand it back (link fails if taken).
+		await fs.link(aside, lock).catch(() => undefined);
+		await fs.rm(aside, { force: true });
+		return false;
+	}
+	await fs.rm(aside, { force: true });
+	return true;
 }

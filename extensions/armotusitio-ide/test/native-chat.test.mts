@@ -8,7 +8,7 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import {
-	ChatStore, buildConversationInstruction, buildImplementationInstruction, chatMessage, chatPlanDigest, extractChatPlan, latestPlan,
+	pendingAlive, ChatStore, buildConversationInstruction, buildImplementationInstruction, chatMessage, chatPlanDigest, extractChatPlan, latestPlan,
 	type ChatProjectContext
 } from '../src/native-chat.ts';
 
@@ -120,4 +120,36 @@ test('review #2: interleaved saves from two windows never lose a message', async
 		assert.deepEqual(sent.filter(text => !stored.has(text)), []);
 		assert.equal((await fs.readdir(directory)).some(name => name.endsWith('.lock')), false);
 	} finally { await fs.rm(directory, { recursive: true, force: true }); }
+});
+
+test('verification: legacy pending marker, lock ownership and expired markers', async () => {
+	const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-chat-verify-'));
+	const { spawn } = await import('node:child_process');
+	const live = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 20000)'], { stdio: 'ignore' });
+	try {
+		const file = path.join(directory, 'conversation.json');
+		// A conversation written by an earlier build with a single marker object stays readable.
+		await fs.writeFile(file, JSON.stringify({ schemaVersion: 1, provider: 'codex', messages: [chatMessage('user', 'hola')], pending: { kind: 'thinking', startedAt: new Date().toISOString() } }));
+		const legacy = await new ChatStore(directory).load('claude');
+		assert.deepEqual({ recovered: legacy.recovered, messages: legacy.conversation.messages.length, pending: legacy.conversation.pending?.length }, { recovered: false, messages: 1, pending: 1 });
+		// A lock left by a dead process is removed; a lock held by a live process is never stolen.
+		const store = new ChatStore(directory);
+		await store.load('claude');
+		await fs.writeFile(file + '.lock', '999999999:abandoned');
+		await store.save({ schemaVersion: 1, provider: 'claude', messages: [] });
+		assert.equal((await fs.readdir(directory)).some(name => name.includes('.lock')), false);
+		await fs.writeFile(file + '.lock', live.pid + ':held');
+		await assert.rejects(store.save({ schemaVersion: 1, provider: 'claude', messages: [] }), /HARNESS_CHAT_STATE_BUSY/);
+		assert.equal(await fs.readFile(file + '.lock', 'utf8'), live.pid + ':held');
+		// A marker is live only with a living owner and a plausible age: a reused pid cannot hide an interruption forever.
+		const now = Date.now();
+		assert.deepEqual([
+			pendingAlive({ kind: 'executing', startedAt: new Date(now).toISOString(), pid: live.pid }, now),
+			pendingAlive({ kind: 'executing', startedAt: new Date(now - 7 * 3600 * 1000).toISOString(), pid: live.pid }, now),
+			pendingAlive({ kind: 'thinking', startedAt: new Date(now).toISOString() }, now)
+		], [true, false, false]);
+	} finally {
+		live.kill();
+		await fs.rm(directory, { recursive: true, force: true });
+	}
 });

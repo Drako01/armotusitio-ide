@@ -6,9 +6,8 @@
 import type { AgentOutcome } from './native-agent-execution.ts';
 import type { NativeProvider } from './native-providers.ts';
 import { redactSecrets } from './native-redact.ts';
-import { processAlive } from './native-runtime.ts';
 import {
-	buildConversationInstruction, buildImplementationInstruction, chatMessage, extractChatPlan, harnessErrorCode, latestPlanMessage, samePlanContent,
+	buildConversationInstruction, buildImplementationInstruction, chatMessage, extractChatPlan, harnessErrorCode, latestPlanMessage, pendingAlive, samePlanContent,
 	type ChatConversation, type ChatMessage, type ChatPlan, type ChatProjectContext, type ChatRunSummary, type ChatStore, type GateSummary, type RunStatus
 } from './native-chat.ts';
 
@@ -112,7 +111,7 @@ export class HarnessChatSession {
 			this.conversation = conversation;
 			if (recovered) { this.conversation.messages.push(chatMessage('notice', this.t('El historial anterior estaba da\u00f1ado y se archiv\u00f3. Empez\u00e1s una conversaci\u00f3n nueva.'), { tone: 'error' })); }
 			// Another window's live operation is not ours to report (the store keeps it); only a dead owner means interrupted.
-			const interrupted = (this.conversation.pending ?? []).filter(entry => !entry.pid || entry.pid === process.pid || !processAlive(entry.pid));
+			const interrupted = (this.conversation.pending ?? []).filter(entry => entry.pid === process.pid || !pendingAlive(entry));
 			this.conversation.pending = undefined;
 			for (const entry of interrupted) {
 				// The process that owned this operation is gone: say exactly what may be incomplete.

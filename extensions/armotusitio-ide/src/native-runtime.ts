@@ -6,12 +6,12 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { constants } from 'node:fs';
 
-/** Well-known npm layouts only; never execute .cmd, .ps1 or shell shims. */
 /** True while `pid` exists on this host (EPERM means it exists but belongs to another user). */
 export function processAlive(pid: number): boolean {
 	try { process.kill(pid, 0); return true; } catch (error) { return (error as NodeJS.ErrnoException).code === 'EPERM'; }
 }
 
+/** Well-known npm layouts only; never execute .cmd, .ps1 or shell shims. */
 export function windowsNpmProviderCandidates(directory: string, executable: 'codex' | 'claude'): { native?: string; script: string } {
 	const moduleRoot = path.join(directory, 'node_modules');
 	if (executable === 'codex') {

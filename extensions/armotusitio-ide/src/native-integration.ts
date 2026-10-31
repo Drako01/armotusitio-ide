@@ -144,13 +144,14 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 		try {
 			fence = await acquireSharedExecutionFence(root, metricsDirectory(root), 'native-agent');
 			await fence.assertCurrent();
+			// Checked before quota and budget, so a refused or cancelled launch never spends a provider credit.
+			// A project Harness may have appeared while waiting for the fence: writers re-check under it.
+			if (!draft.readOnly && (await inspectHarnessAuthority(root)).engine !== 'ide-native') { throw Error('HARNESS_HYBRID_WRITER_UNAVAILABLE'); }
+			if (hooks.signal?.aborted) { throw Error('HARNESS_CANCELLED_BEFORE_START'); }
 			const cap = providerCallsPer24h(folder);
 			await assertProviderBudget(metricsDirectory(root), draft.provider, providerBudget(folder), fence);
 			if (cap > 0) { await reserveProviderInvocation(metricsDirectory(root), draft.provider, fence, cap); }
 			if (!authorized(folder)) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
-			// A project Harness may have appeared while waiting for the fence: writers re-check right before spawning.
-			if (!draft.readOnly && (await inspectHarnessAuthority(root)).engine !== 'ide-native') { throw Error('HARNESS_HYBRID_WRITER_UNAVAILABLE'); }
-			if (hooks.signal?.aborted) { throw Error('HARNESS_CANCELLED_BEFORE_START'); }
 			await fence.assertCurrent();
 			execution = await executeReviewedAgent(reviewAgentDraft(draft), draft, undefined, hooks.onProgress && (progress => hooks.onProgress!(progress.observedBytes)), hooks.onMessage);
 		} catch (error) {

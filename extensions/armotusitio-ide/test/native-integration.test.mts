@@ -536,13 +536,17 @@ test('review #1/#3/#4: guidance edits keep the run, early cancel never spawns, l
 		// #1: editing a guidance file is a legitimate plan; the run and its gates are reported, not discarded.
 		const edited = await runtime.implement(request, hooks, new AbortController().signal);
 		assert.deepEqual({ agent: edited.agent.status, output: edited.agent.output, verification: edited.verification.status }, { agent: 'passed', output: 'Actualic\u00e9 AGENTS.md', verification: 'passed' });
-		// #3: a signal aborted before spawn never launches the provider and releases the fence.
+		// #3: a signal aborted before spawn never launches the provider, spends no quota credit and releases the fence.
+		const settings: Record<string, number> = { providerCallsPer24h: 5 };
+		f.vscode.workspace.getConfiguration = () => ({ get: (key: string, fallback: unknown) => settings[key] ?? fallback });
 		const before = (await fs.readFile(launches, 'utf8')).length;
 		const aborted = new AbortController(); aborted.abort();
 		await assert.rejects(runtime.converse('codex', 'hola', hooks, aborted.signal), /HARNESS_CANCELLED_BEFORE_START/);
 		const digest = (await import('node:crypto')).createHash('sha256').update(root).digest('hex');
 		const storage = path.join(path.dirname(root), 'private', 'native-harness', digest);
-		assert.deepEqual({ launches: (await fs.readFile(launches, 'utf8')).length - before, held: (await inspectSharedExecutionFence(root, storage)).held }, { launches: 0, held: false });
+		const { readProviderInvocationQuota } = await import('../src/native-provider-quota.ts');
+		assert.deepEqual({ launches: (await fs.readFile(launches, 'utf8')).length - before, held: (await inspectSharedExecutionFence(root, storage)).held, used: (await readProviderInvocationQuota(storage, 5)).providers.codex?.used ?? 0 },
+			{ launches: 0, held: false, used: 0 });
 		// #4: Stop pressed after the writer finished but before gates ran reports them cancelled, never skipped.
 		const late = new AbortController();
 		const result = await runtime.implement(request, { ...hooks, message: () => late.abort() }, late.signal);
