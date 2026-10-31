@@ -10,7 +10,7 @@ import * as os from 'node:os';
 import { installFakeCodex } from './native-fake-provider.mts';
 import { execFileSync } from 'node:child_process';
 import { buildAgentInvocation, executeReviewedAgent } from '../src/native-agent-execution.ts';
-import { reviewAgentDraft } from '../src/native-providers.ts';
+import { reviewAgentDraft, type NativeEffort } from '../src/native-providers.ts';
 
 const base = {
 	schemaVersion: 1 as const, provider: 'codex' as const, role: 'reviewer' as const,
@@ -64,7 +64,7 @@ test('versioned Claude Opus and explicit effort reach the correct CLI arguments'
 	assert.equal(buildAgentInvocation(base).args.includes('--config'), false);
 	assert.equal(buildAgentInvocation({ ...base, provider: 'claude' }).args.includes('--effort'), false);
 	for (const effort of ['--dangerously-skip-permissions', 'auto', 'unlimited', '', 'high;rm -rf']) {
-		assert.throws(() => buildAgentInvocation({ ...base, provider: 'claude', effort }), /HARNESS_AGENT_DRAFT_SCHEMA/);
+		assert.throws(() => buildAgentInvocation({ ...base, provider: 'claude', effort: effort as NativeEffort }), /HARNESS_AGENT_DRAFT_SCHEMA/);
 	}
 	assert.throws(() => buildAgentInvocation({ ...base, effort: 'max' }), /HARNESS_AGENT_DRAFT_SCHEMA/);
 	assert.doesNotThrow(() => buildAgentInvocation({ ...base, provider: 'claude', effort: 'max' }));
