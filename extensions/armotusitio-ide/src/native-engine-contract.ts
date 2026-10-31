@@ -14,7 +14,7 @@ export type Capability =
 	| 'verification-gates' | 'durable-tasks' | 'durable-workflows' | 'provider-execution'
 	| 'agent-handoffs' | 'reconciliation' | 'bounded-processes' | 'parallel-gates'
 	| 'worktree-isolation' | 'os-sandbox' | 'network-policy' | 'token-accounting'
-	| 'cost-accounting' | 'autonomous-repair';
+	| 'cost-accounting' | 'autonomous-repair' | 'writer-lease';
 export interface EngineCapabilities {
 	schemaVersion: typeof ENGINE_CONTRACT_VERSION;
 	engine: 'ide-native' | 'project';
@@ -30,7 +30,7 @@ const ALL: Capability[] = [
 	'verification-gates', 'durable-tasks', 'durable-workflows', 'provider-execution',
 	'agent-handoffs', 'reconciliation', 'bounded-processes', 'parallel-gates',
 	'worktree-isolation', 'os-sandbox', 'network-policy', 'token-accounting',
-	'cost-accounting', 'autonomous-repair'
+	'cost-accounting', 'autonomous-repair', 'writer-lease'
 ];
 const VERIFIED_NATIVE: Capability[] = [
 	'verification-gates', 'durable-tasks', 'durable-workflows', 'provider-execution',
@@ -177,7 +177,7 @@ export async function entryDigest(entry: string, unsafe: string): Promise<string
  * bounded output and a deadline. Aborting kills the process and reports `cancelled`.
  */
 export async function runProjectEntry(
-	cwd: string, entry: string, args: string[], timeoutMs: number, scope: 'HARNESS_HANDSHAKE' | 'HARNESS_PROJECT_STATUS' | 'HARNESS_PROJECT_GATE', signal?: AbortSignal
+	cwd: string, entry: string, args: string[], timeoutMs: number, scope: 'HARNESS_HANDSHAKE' | 'HARNESS_PROJECT_STATUS' | 'HARNESS_PROJECT_GATE' | 'HARNESS_HYBRID_WRITER', signal?: AbortSignal
 ): Promise<{ output: string; cancelled: boolean }> {
 	const env: NodeJS.ProcessEnv = {};
 	for (const key of ['PATH', 'Path', 'SystemRoot', 'WINDIR', 'HOME', 'USERPROFILE', 'TEMP', 'TMP']) {

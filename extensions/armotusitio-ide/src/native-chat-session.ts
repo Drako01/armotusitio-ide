@@ -159,7 +159,7 @@ export class HarnessChatSession {
 	/** Why the latest plan cannot be approved right now, if anything blocks it. */
 	private blockedReason(current: ChatMessage & { plan: ChatPlan }, writer: boolean): string | undefined {
 		if (!this.context) { return this.t('No se pudo leer el estado del proyecto. Reintent\u00e1 en unos segundos.'); }
-		if (!writer) { return this.t('Este proyecto tiene su propio Harness. El IDE no aplica cambios sin coordinaci\u00f3n verificable con ese motor.'); }
+		if (!writer) { return this.t('Este proyecto tiene su propio Harness. El IDE no aplica cambios sin coordinaci\u00f3n verificable con ese motor. Si el motor soporta el lease de escritura (protocolo v2), pod\u00e9s habilitar \u00abatsHarness.coordinatedProjectWriters\u00bb.'); }
 		const position = this.conversation.messages.indexOf(current);
 		// New requirements suspend the plan until the assistant confirms or revises it.
 		if (this.conversation.messages.slice(position + 1).some(message => message.role === 'user')) { return this.t('Escribiste despu\u00e9s de este plan. Esper\u00e1 a que la IA lo confirme o lo actualice antes de aprobarlo.'); }

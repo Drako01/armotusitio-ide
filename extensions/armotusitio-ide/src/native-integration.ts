@@ -21,13 +21,14 @@ import { buildAgentInvocation, executeReviewedAgent, type AgentExecution, type A
 import { readAgentStatistics, recordAgentMetric } from './native-agent-metrics.ts';
 import { NativeAgentWorkflow, proposedWorkflow, workflowDigest, type WorkflowRun } from './native-agent-workflow.ts';
 import { createAgentWorktree, removeCleanAgentWorktree, listAgentWorktrees, type ManagedWorktree } from './native-agent-worktree.ts';
-import { describeEngine, probeProjectHandshake, compareHybridCapabilities, verifiedNativeCapabilities } from './native-engine-contract.ts';
+import { describeEngine, probeProjectHandshake, readProjectCapabilities, compareHybridCapabilities, verifiedNativeCapabilities } from './native-engine-contract.ts';
 import { diagnoseProvider } from './native-provider-diagnostics.ts';
 import { summarizeGatePerformance } from './native-performance.ts';
 import { acquireSharedExecutionFence, inspectSharedExecutionFence, reconcileSharedExecutionFence, type SharedExecutionFence } from './native-shared-fence.ts';
 import { createWorktreeCheckpoint, readWorktreeCheckpoint, rollbackWorktreeCheckpoint, type WorktreeCheckpoint } from './native-worktree-checkpoint.ts';
 import { integrateWorktreeChanges, reconcileWorktreeIntegration, rollbackWorktreeIntegration } from './native-worktree-integration.ts';
 import { delegateProjectGate, queryProjectEngineStatus } from './native-engine-interop.ts';
+import { acquireWriterLease, type WriterLease } from './native-hybrid-writer.ts';
 import { describeTrace, taskTrace, traceparent, workflowTrace } from './native-trace.ts';
 import {
 	reserveProviderInvocation, readProviderInvocationQuota, assertProviderBudget, recordProviderSpend, readProviderBudget,
@@ -109,6 +110,8 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			maxCostUsdPer24h: settings.get('providerCostUsdPer24h', 0)
 		});
 	};
+	/** Opt-in, user-level: a repository cannot enable external writers for itself. */
+	const coordinatedWriters = (): boolean => vscode.workspace.getConfiguration('atsHarness').get('coordinatedProjectWriters', false) === true;
 	/** Model chosen for a provider (`atsHarness.<provider>Model`); empty keeps the CLI default. */
 	const modelFor = (provider: NativeProvider): string | undefined => {
 		const model: unknown = vscode.workspace.getConfiguration('atsHarness').get(provider + 'Model', '');
@@ -150,20 +153,27 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 		if (!authorized(folder)) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
 		const authority = await inspectHarnessAuthority(root);
 		if (authority.reason === 'project-path-unsafe') { throw Error('HARNESS_PROJECT_AUTHORITY_UNSAFE'); }
-		// Hybrid projects keep exclusive writer authority over their checkout.
-		if (!draft.readOnly && authority.engine === 'project') { throw Error('HARNESS_HYBRID_WRITER_UNAVAILABLE'); }
+		// A project Harness keeps writer authority over its checkout unless the user enabled coordinated writers,
+		// and even then the engine must acknowledge an exclusive lease below.
+		const hybridWriter = !draft.readOnly && authority.engine === 'project';
+		if (hybridWriter && !coordinatedWriters()) { throw Error('HARNESS_HYBRID_WRITER_UNAVAILABLE'); }
 		assertIdle(root, folder);
 		assertProviderCapacity();
 		// Reserve the project before the async provider lookup to prevent parallel launches.
 		pendingAgents.add(root); controller.refresh();
 		let execution: AgentExecution;
 		let fence: SharedExecutionFence | undefined;
+		let lease: WriterLease | undefined;
 		try {
 			fence = await acquireSharedExecutionFence(root, metricsDirectory(root), 'native-agent');
 			await fence.assertCurrent();
 			// Checked before quota and budget, so a refused or cancelled launch never spends a provider credit.
-			// A project Harness may have appeared while waiting for the fence: writers re-check under it.
-			if (!draft.readOnly && (await inspectHarnessAuthority(root)).engine !== 'ide-native') { throw Error('HARNESS_HYBRID_WRITER_UNAVAILABLE'); }
+			// Authority may have changed while waiting for the fence: writers re-check under it.
+			if (!draft.readOnly) {
+				if ((await inspectHarnessAuthority(root)).engine !== (hybridWriter ? 'project' : 'ide-native')) { throw Error('HARNESS_HYBRID_WRITER_UNAVAILABLE'); }
+				// Running the approved plan is the explicit consent to run the project's engine entrypoint.
+				if (hybridWriter) { lease = await acquireWriterLease(root, true, () => authorized(folder), fence, hooks.signal); }
+			}
 			if (hooks.signal?.aborted) { throw Error('HARNESS_CANCELLED_BEFORE_START'); }
 			const cap = providerCallsPer24h(folder);
 			await assertProviderBudget(metricsDirectory(root), draft.provider, providerBudget(folder), fence);
@@ -172,6 +182,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			await fence.assertCurrent();
 			execution = await executeReviewedAgent(reviewAgentDraft(draft), draft, undefined, hooks.onProgress && (progress => hooks.onProgress!(progress.observedBytes)), hooks.onMessage);
 		} catch (error) {
+			await lease?.release().catch(() => undefined);
 			if (fence) { await fence.release(); }
 			throw error;
 		} finally { pendingAgents.delete(root); }
@@ -179,12 +190,15 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 		try {
 			hooks.onStarted?.(execution);
 			const result = await execution.outcome;
+			// The engine acknowledges the end of the lease first; a broken lease is reported after the accounting.
+			const leaseFailure = await lease?.release().then(() => undefined, (error: unknown) => error);
 			await recordSpend(folder, root, draft.provider, fence, result);
 			try { await recordAgentMetric(metricsDirectory(root), draft.provider, draft.role, result); }
 			catch { void vscode.window.showWarningMessage('No se pudo registrar la m\u00e9trica local del agente.'); }
+			if (leaseFailure) { throw leaseFailure; }
 			await hooks.afterOutcome?.(result, fence);
 			return result;
-		} finally { runningAgents.delete(root); await fence.release(); controller.refresh(); }
+		} finally { await lease?.release().catch(() => undefined); runningAgents.delete(root); await fence.release(); controller.refresh(); }
 	};
 	/** Guidance and skill references appended to an agent instruction; contents are read by the agent, digests pin them. */
 	const projectReferences = (guides: ProjectGuide[], skills: ProjectSkill[]): string =>
@@ -199,8 +213,10 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 				const root = await rootOf();
 				const authority = await inspectHarnessAuthority(root);
 				const [skills, guides, verification] = await Promise.all([listProjectSkills(root), listProjectGuides(root), verificationOf(root)]);
+				// A project Harness can host IDE writers only when the user opted in and its manifest declares the lease; the engine's acknowledgement is verified at approval.
+				const coordinated = authority.engine === 'project' && coordinatedWriters() && (await readProjectCapabilities(root).catch(() => [])).includes('writer-lease');
 				return {
-					root, writer: authority.engine === 'ide-native' && authorized(folder),
+					root, writer: (authority.engine === 'ide-native' || coordinated) && authorized(folder),
 					skills: skills.map(skill => ({ name: skill.name, source: skill.source })),
 					guides: guides.map(guide => guide.path),
 					verification: verification && {
