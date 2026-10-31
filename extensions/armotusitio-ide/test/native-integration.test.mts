@@ -477,3 +477,32 @@ test('chat runtime converses read-only, then implements an approved plan and run
 		await f.cleanup();
 	}
 });
+
+test('chat runtime streams real intermediate Codex messages, redacted, before the turn ends', async () => {
+	const f = await fixture();
+	const originalPath = process.env.PATH;
+	try {
+		const root = await fs.realpath(f.roots[0]);
+		const bin = path.join(path.dirname(root), 'fake-stream-bin');
+		// Test-only provider emitting Codex JSONL: one intermediate message, a pause, then the final answer.
+		await installFakeCodex(bin, [
+			'#!/usr/bin/env node',
+			'const line = (type, item) => process.stdout.write(JSON.stringify({ type, item }) + String.fromCharCode(10));',
+			'process.stdin.resume(); process.stdin.on("end", () => {',
+			'  line("item.completed", { type: "agent_message", text: "Revisando con token=abc123secret" });',
+			'  setTimeout(() => { line("item.completed", { type: "agent_message", text: "Listo" }); process.stdout.write(JSON.stringify({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } }) + String.fromCharCode(10)); }, 400);',
+			'});'
+		].join('\n'));
+		process.env.PATH = bin + path.delimiter + (originalPath || '');
+		const runtime = f.controller.nativeChatRuntime(f.vscode.workspace.workspaceFolders[0]);
+		const streamed: Array<{ text: string; at: number }> = [];
+		const turn = await runtime.converse('codex', 'hola', { started() { }, progress() { }, message: text => streamed.push({ text, at: Date.now() }) });
+		const finished = Date.now();
+		assert.deepEqual({ status: turn.status, output: turn.output, streamed: streamed.map(item => item.text) },
+			{ status: 'passed', output: 'Listo', streamed: ['Revisando con token=[redacted]', 'Listo'] });
+		assert.ok(finished - streamed[0].at >= 300, 'the first message must arrive before the provider finishes');
+	} finally {
+		if (originalPath === undefined) { delete process.env.PATH; } else { process.env.PATH = originalPath; }
+		await f.cleanup();
+	}
+});

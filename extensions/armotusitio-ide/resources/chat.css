@@ -124,6 +124,8 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, .log:focus-v
 /* Live activity */
 .activity { padding: 12px 14px; margin-bottom: 18px; border: 1px dashed var(--chat-border); border-radius: var(--chat-radius-large); }
 .activity-head { display: flex; align-items: center; gap: 10px; }
+.partial { margin-top: 10px; padding-left: 12px; border-left: 2px solid var(--chat-border); }
+.partial-label { margin: 0 0 4px; font-size: .82em; color: var(--chat-muted); }
 .clock { margin-left: auto; font-variant-numeric: tabular-nums; }
 .spinner { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--chat-border); border-top-color: var(--chat-accent); animation: spin .8s linear infinite; }
 .stages { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 10px 0 0; padding: 0; list-style: none; }

@@ -124,6 +124,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 	const runGuardedAgent = async (folder: Host, draft: AgentDraft, hooks: {
 		onStarted?: (execution: AgentExecution) => void;
 		onProgress?: (observedBytes: number) => void;
+		onMessage?: (text: string) => void;
 		afterOutcome?: (outcome: AgentOutcome, fence: SharedExecutionFence) => Promise<void>;
 	} = {}): Promise<AgentOutcome> => {
 		const root = draft.projectRoot;
@@ -146,7 +147,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			if (cap > 0) { await reserveProviderInvocation(metricsDirectory(root), draft.provider, fence, cap); }
 			if (!authorized(folder)) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
 			await fence.assertCurrent();
-			execution = await executeReviewedAgent(reviewAgentDraft(draft), draft, undefined, hooks.onProgress && (progress => hooks.onProgress!(progress.observedBytes)));
+			execution = await executeReviewedAgent(reviewAgentDraft(draft), draft, undefined, hooks.onProgress && (progress => hooks.onProgress!(progress.observedBytes)), hooks.onMessage);
 		} catch (error) {
 			if (fence) { await fence.release(); }
 			throw error;
@@ -190,7 +191,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			async converse(provider, instruction, hooks) {
 				const root = await rootOf();
 				return runGuardedAgent(folder, draftFor(root, provider, 'planner', instruction), {
-					onStarted: execution => hooks.started(() => execution.cancel()), onProgress: hooks.progress
+					onStarted: execution => hooks.started(() => execution.cancel()), onProgress: hooks.progress, onMessage: hooks.message
 				});
 			},
 			async implement({ provider, instruction, plan, verificationRevision }, hooks, signal) {
@@ -209,6 +210,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 				const agent = await runGuardedAgent(folder, draftFor(root, provider, 'implementer', instruction + projectReferences(guides, skills as ProjectSkill[])), {
 					onStarted: execution => { hooks.started(() => execution.cancel()); hooks.stage('agent'); },
 					onProgress: hooks.progress,
+					onMessage: hooks.message,
 					afterOutcome: async (outcome, fence) => {
 						if (outcome.status !== 'passed' || !verification || signal.aborted) { return; }
 						hooks.stage('verifying');

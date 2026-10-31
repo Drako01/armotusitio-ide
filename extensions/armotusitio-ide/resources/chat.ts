@@ -357,6 +357,11 @@ function renderActivity(): void {
 	const clock = el('span', 'muted clock', elapsed(activity.startedAt)); clock.setAttribute('aria-hidden', 'true');
 	head.append(spinner, el('strong', undefined, title), clock);
 	box.append(head);
+	if (activity.partial) {
+		// Real intermediate message from the provider stream; replaced by the final answer when the turn ends.
+		const partial = el('div', 'partial'); partial.append(el('p', 'partial-label', L.partial), markdown(activity.partial));
+		box.append(partial);
+	}
 	if (activity.kind === 'executing') {
 		const stages = el('ol', 'stages');
 		const order = ['preparing', 'agent', 'verifying'];

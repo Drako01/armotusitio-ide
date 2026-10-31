@@ -82,3 +82,21 @@ test('chat store accepts the lower-case drive letter that VS Code reports for gl
 		assert.equal((await store.load('claude')).conversation.messages.length, 1);
 	} finally { await fs.rm(directory, { recursive: true, force: true }); }
 });
+
+test('two IDE windows on one project never drop each other messages and respect a reset', async () => {
+	const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-chat-windows-'));
+	try {
+		const first = new ChatStore(directory), second = new ChatStore(directory);
+		const seed = chatMessage('user', 'seed');
+		await first.load('claude'); await first.save({ schemaVersion: 1, provider: 'claude', messages: [seed] });
+		const a = (await first.load('claude')).conversation, b = (await second.load('claude')).conversation;
+		const fromA = chatMessage('user', 'desde A'), fromB = chatMessage('user', 'desde B');
+		await first.save({ ...a, messages: [...a.messages, fromA] });
+		const merged = await second.save({ ...b, messages: [...b.messages, fromB] });
+		assert.deepEqual(merged.map(message => message.text), ['seed', 'desde A', 'desde B']);
+		// Window A starts a new conversation; B's next message must not resurrect the old history.
+		await first.save({ schemaVersion: 1, provider: 'claude', messages: [] }, { replace: true });
+		const afterReset = await second.save({ schemaVersion: 1, provider: 'claude', messages: [...merged, chatMessage('user', 'nuevo en B')] });
+		assert.deepEqual(afterReset.map(message => message.text), ['nuevo en B']);
+	} finally { await fs.rm(directory, { recursive: true, force: true }); }
+});

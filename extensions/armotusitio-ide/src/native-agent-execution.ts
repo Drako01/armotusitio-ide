@@ -89,8 +89,11 @@ function stopProcess(child: ChildProcess): void {
 	}
 }
 
-/** Caller MUST verify Workspace Trust, project authority and consent immediately before invoking. */
-export async function executeReviewedAgent(review: AgentReview, current: AgentDraft, durationMs = MAX_DURATION_MS, onProgress?: (progress: Readonly<AgentProgress>) => void): Promise<AgentExecution> {
+/**
+ * Caller MUST verify Workspace Trust, project authority and consent immediately before invoking.
+ * `onMessage` receives redacted intermediate assistant messages when the provider streams them (Codex JSONL).
+ */
+export async function executeReviewedAgent(review: AgentReview, current: AgentDraft, durationMs = MAX_DURATION_MS, onProgress?: (progress: Readonly<AgentProgress>) => void, onMessage?: (text: string) => void): Promise<AgentExecution> {
 	validateReviewedAgent(review, current);
 	if (!Number.isSafeInteger(durationMs) || durationMs < 1000 || durationMs > MAX_DURATION_MS) { throw Error('HARNESS_AGENT_TIMEOUT_INVALID'); }
 	const canonical = await fs.realpath(current.projectRoot);
@@ -107,7 +110,7 @@ export async function executeReviewedAgent(review: AgentReview, current: AgentDr
 	let stdout = '', stderr = '', size = 0;
 	let lastProgress = 0;
 	let stdoutOverflow = false;
-	const codexEvents = current.provider === 'codex' ? new CodexEventAccumulator() : undefined;
+	const codexEvents = current.provider === 'codex' ? new CodexEventAccumulator(onMessage && (text => onMessage(redactSecrets(text)))) : undefined;
 	const stdoutDecoder = new StringDecoder('utf8');
 	const child = spawn(command.executable, command.args, {
 		cwd: canonical, env, shell: false, windowsHide: true, detached: process.platform !== 'win32',

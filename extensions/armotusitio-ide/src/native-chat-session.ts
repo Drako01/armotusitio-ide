@@ -16,6 +16,8 @@ export interface ChatRunHooks {
 	/** Called once the provider process exists, so the session can cancel it. */
 	started(cancel: () => void): void;
 	progress(observedBytes: number): void;
+	/** Intermediate assistant message, already redacted, when the provider streams them. */
+	message?(text: string): void;
 }
 export interface ChatImplementHooks extends ChatRunHooks {
 	stage(stage: ImplementStage): void;
@@ -38,6 +40,8 @@ export interface ChatActivity {
 	observedBytes: number;
 	/** Cancellation was requested; the UI stops offering it while the process winds down. */
 	cancelling?: boolean;
+	/** Latest streamed assistant message of this turn; never persisted, replaced by the final answer. */
+	partial?: string;
 	stage?: ImplementStage;
 	planVersion?: number;
 	gates?: GateSummary[];
@@ -164,7 +168,7 @@ export class HarnessChatSession {
 	async reset(): Promise<void> {
 		if (this.activity) { throw Error('HARNESS_ALREADY_RUNNING'); }
 		this.conversation.messages = [];
-		await this.persist();
+		await this.persist({ replace: true });
 	}
 
 	cancel(): void { this.cancelActive?.(); }
@@ -263,7 +267,8 @@ export class HarnessChatSession {
 				if (this.activity?.stage === 'preparing') { this.activity.stage = 'agent'; }
 				this.emit();
 			},
-			progress: observedBytes => { if (this.activity) { this.activity.observedBytes = observedBytes; this.emit(); } }
+			progress: observedBytes => { if (this.activity) { this.activity.observedBytes = observedBytes; this.emit(); } },
+			message: text => { if (this.activity) { this.activity.partial = text.length > 8000 ? text.slice(-8000) : text; this.emit(); } }
 		};
 	}
 
@@ -273,11 +278,17 @@ export class HarnessChatSession {
 
 	private errorNotice(error: unknown): string { return describeFailure(this.t, error); }
 
-	private async persist(): Promise<void> {
+	private async persist(options: { replace?: boolean } = {}): Promise<void> {
 		if (this.conversation.messages.length > 200) { this.conversation.messages.splice(0, this.conversation.messages.length - 200); }
 		this.revision++;
 		this.emit();
-		await this.store.save(this.conversation);
+		const stored = await this.store.save(this.conversation, options);
+		// Another window added messages to this project's conversation: adopt the merged history.
+		if (stored.length !== this.conversation.messages.length || stored.some((message, index) => message.id !== this.conversation.messages[index].id)) {
+			this.conversation.messages = stored;
+			this.revision++;
+			this.emit();
+		}
 	}
 
 	private emit(): void { if (this.conversation) { this.listener(this.snapshot()); } }

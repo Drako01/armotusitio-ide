@@ -142,7 +142,7 @@ function labels(t) {
 		run: { passed: t('Ejecuci\u00f3n completada'), failed: t('La ejecuci\u00f3n fall\u00f3'), cancelled: t('Ejecuci\u00f3n cancelada'), timeout: t('Tiempo agotado') },
 		gate: { pending: t('Pendiente'), running: t('En curso'), passed: t('Pas\u00f3'), failed: t('Fall\u00f3'), cancelled: t('Cancelada') },
 		verification: t('Verificaciones'), verificationSkipped: t('Sin verificaciones configuradas'), duration: t('Duraci\u00f3n'), copy: t('Copiar'), copied: t('Copiado'),
-		copyMessage: t('Copiar respuesta'), copyCode: t('Copiar c\u00f3digo'), activity: t('Actividad en curso'), idle: t('Sin actividad en curso'), cancelling: t('Deteniendo\u2026'),
+		copyMessage: t('Copiar respuesta'), partial: t('Respuesta en curso'), copyCode: t('Copiar c\u00f3digo'), activity: t('Actividad en curso'), idle: t('Sin actividad en curso'), cancelling: t('Deteniendo\u2026'),
 		menu: t('M\u00e1s opciones'), newChat: t('Nueva conversaci\u00f3n'), openTasks: t('Abrir panel de tareas'), refreshProviders: t('Verificar proveedores'), commands: t('Ver comandos'),
 		noProject: t('Abr\u00ed una carpeta para empezar a conversar sobre su c\u00f3digo.'), untrusted: t('Este workspace no es confiable. Marcalo como confiable para conversar y ejecutar.'), hybrid: t('Este proyecto tiene su propio Harness: pod\u00e9s conversar y planificar, pero la ejecuci\u00f3n con escritura est\u00e1 deshabilitada.'),
 		log: t('Conversaci\u00f3n')

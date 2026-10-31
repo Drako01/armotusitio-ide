@@ -246,3 +246,20 @@ test('snapshot revision changes with the history and not with progress', async (
 		assert.ok(s.chat.snapshot().revision > before);
 	} finally { await s.cleanup(); }
 });
+
+test('streamed partial messages are shown while thinking but never persisted', async () => {
+	const s = await session([]);
+	try {
+		s.runtime.converse = async (_provider, _instruction, hooks) => {
+			hooks.started(() => undefined);
+			hooks.message?.('Analizando el repositorio');
+			return outcome('Respuesta final');
+		};
+		await s.chat.send('hola');
+		const stored = JSON.stringify((await s.store.load('claude')).conversation);
+		assert.deepEqual({
+			shown: s.snapshots.some(snapshot => snapshot.activity?.partial === 'Analizando el repositorio'),
+			persisted: stored.includes('Analizando'), final: s.chat.snapshot().messages.at(-1)!.text, partialAfter: s.chat.snapshot().activity
+		}, { shown: true, persisted: false, final: 'Respuesta final', partialAfter: undefined });
+	} finally { await s.cleanup(); }
+});

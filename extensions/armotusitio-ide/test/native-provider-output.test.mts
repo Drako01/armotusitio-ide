@@ -54,3 +54,20 @@ test('Codex streaming reducer handles chunked JSONL and excludes tool logs', () 
 	assert.deepEqual(result?.usage, { inputTokens: 77, outputTokens: 9 });
 	assert.ok(!result?.message.includes('xxxx'));
 });
+
+test('Codex accumulator streams each completed assistant message to its observer as it arrives', () => {
+	const seen: string[] = [];
+	const reducer = new CodexEventAccumulator(text => seen.push(text));
+	const event = (type: string, item?: object) => JSON.stringify({ type, ...(item ? { item } : {}) }) + '\n';
+	reducer.push(event('item.completed', { type: 'agent_message', text: 'Leyendo el proyecto' }));
+	reducer.push(event('item.completed', { type: 'command_execution', command: 'ls' }));
+	assert.deepEqual(seen, ['Leyendo el proyecto']);
+	reducer.push(event('item.completed', { type: 'agent_message', text: 'Respuesta final' }).slice(0, 20));
+	assert.deepEqual(seen, ['Leyendo el proyecto']);
+	reducer.push(event('item.completed', { type: 'agent_message', text: 'Respuesta final' }).slice(20));
+	assert.deepEqual({ seen, final: reducer.finish()?.message }, { seen: ['Leyendo el proyecto', 'Respuesta final'], final: 'Respuesta final' });
+	// A throwing observer can never break parsing.
+	const tolerant = new CodexEventAccumulator(() => { throw Error('observer'); });
+	tolerant.push(event('item.completed', { type: 'agent_message', text: 'ok' }));
+	assert.equal(tolerant.finish()?.message, 'ok');
+});

@@ -99,7 +99,10 @@ export function parseProviderOutput(provider: NativeProvider, raw: string): Pars
 }
 
 
-/** Incremental Codex JSONL reducer. Retains final text/usage, not command logs or rollout data. */
+/**
+ * Incremental Codex JSONL reducer. Retains final text/usage, not command logs or rollout data.
+ * `onMessage` observes each completed assistant message as it arrives: real item-level streaming.
+ */
 export class CodexEventAccumulator {
 	private pending = '';
 	private seen = 0;
@@ -108,6 +111,9 @@ export class CodexEventAccumulator {
 	private providerError = false;
 	private rateLimited = false;
 	private usage: ProviderUsage | undefined;
+	private readonly onMessage?: (text: string) => void;
+
+	constructor(onMessage?: (text: string) => void) { this.onMessage = onMessage; }
 
 	push(text: string): void {
 		if (this.invalid) { return; }
@@ -133,6 +139,8 @@ export class CodexEventAccumulator {
 				const item = object(event.item);
 				if ((item?.type === 'agent_message' || item?.type === 'assistant_message') && typeof item.text === 'string') {
 					this.message = item.text.slice(-64 * 1024);
+					try { this.onMessage?.(this.message); }
+					catch { /* Observers have no authority over parsing. */ }
 				}
 			}
 			if (event.type === 'turn.completed') {

@@ -222,37 +222,66 @@ function validPending(value: PendingOperation | undefined): boolean {
 		(value.planVersion === undefined || Number.isSafeInteger(value.planVersion)));
 }
 
-/** One private JSON document per project, written atomically. Corrupt state is quarantined, never trusted. */
+/**
+ * One private JSON document per project, written atomically. Corrupt state is quarantined, never trusted.
+ * Several IDE windows may share it: a save that finds the file changed since this store last synced keeps
+ * the other window's history and appends only this window's new messages (messages are immutable, ids unique).
+ */
 export class ChatStore {
 	private readonly directory: string;
 	private readonly file: string;
+	private synced = { digest: '', ids: new Set<string>() };
 	constructor(directory: string) { this.directory = directory; this.file = path.join(directory, 'conversation.json'); }
 	async load(fallbackProvider: NativeProvider): Promise<{ conversation: ChatConversation; recovered: boolean }> {
 		const empty: ChatConversation = { schemaVersion: 1, provider: fallbackProvider, messages: [] };
+		try {
+			const stored = await this.read();
+			if (!stored) { this.synced = { digest: '', ids: new Set() }; return { conversation: empty, recovered: false }; }
+			this.remember(stored.raw, stored.value.messages);
+			return { conversation: stored.value, recovered: false };
+		} catch { return { conversation: empty, recovered: await this.quarantine() }; }
+	}
+	/**
+	 * Persist and return the messages actually stored, which include another window's concurrent additions.
+	 * `replace` (a new conversation) intentionally discards the stored history instead of merging it.
+	 */
+	async save(conversation: ChatConversation, options: { replace?: boolean } = {}): Promise<ChatMessage[]> {
+		await safeStorage(this.directory);
+		let messages = conversation.messages.slice(-MAX_MESSAGES);
+		const stored = await this.read().catch(() => undefined);
+		if (stored && !options.replace && digestOf(stored.raw) !== this.synced.digest) {
+			const theirs = new Set(stored.value.messages.map(message => message.id));
+			const mine = messages.filter(message => !theirs.has(message.id) && !this.synced.ids.has(message.id));
+			messages = [...stored.value.messages, ...mine].slice(-MAX_MESSAGES);
+		}
+		const value = { schemaVersion: 1, provider: conversation.provider, messages, ...(conversation.pending ? { pending: conversation.pending } : {}) };
+		await writeDurable(this.file, value, false, MAX_STATE_BYTES);
+		this.remember(JSON.stringify(value), messages);
+		return messages;
+	}
+	private remember(raw: string, messages: readonly ChatMessage[]): void {
+		this.synced = { digest: digestOf(raw), ids: new Set(messages.map(message => message.id)) };
+	}
+	/** Validated stored conversation, undefined when absent; throws on unsafe or invalid state. */
+	private async read(): Promise<{ raw: string; value: ChatConversation } | undefined> {
 		let raw: string;
 		try {
 			const stat = await fs.lstat(this.file);
 			if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_STATE_BYTES) { throw Error('HARNESS_CHAT_STATE_INVALID'); }
 			raw = await fs.readFile(this.file, 'utf8');
 		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code === 'ENOENT') { return { conversation: empty, recovered: false }; }
-			return { conversation: empty, recovered: await this.quarantine() };
+			if ((error as NodeJS.ErrnoException).code === 'ENOENT') { return undefined; }
+			throw error;
 		}
-		try {
-			const value = JSON.parse(raw) as ChatConversation;
-			if (value?.schemaVersion !== 1 || !PROVIDERS.includes(value.provider) || !Array.isArray(value.messages) ||
-				value.messages.length > MAX_MESSAGES || !value.messages.every(validMessage) || !validPending(value.pending)) { throw Error('HARNESS_CHAT_STATE_INVALID'); }
-			return { conversation: value, recovered: false };
-		} catch { return { conversation: empty, recovered: await this.quarantine() }; }
-	}
-	async save(conversation: ChatConversation): Promise<void> {
-		await safeStorage(this.directory);
-		const messages = conversation.messages.slice(-MAX_MESSAGES);
-		const pending = conversation.pending ? { pending: conversation.pending } : {};
-		await writeDurable(this.file, { schemaVersion: 1, provider: conversation.provider, messages, ...pending }, false, MAX_STATE_BYTES);
+		const value = JSON.parse(raw) as ChatConversation;
+		if (value?.schemaVersion !== 1 || !PROVIDERS.includes(value.provider) || !Array.isArray(value.messages) ||
+			value.messages.length > MAX_MESSAGES || !value.messages.every(validMessage) || !validPending(value.pending)) { throw Error('HARNESS_CHAT_STATE_INVALID'); }
+		return { raw, value };
 	}
 	private async quarantine(): Promise<boolean> {
 		await fs.rename(this.file, this.file + '.' + Date.now() + '.corrupt').catch(() => fs.rm(this.file, { force: true }));
 		return true;
 	}
 }
+
+function digestOf(raw: string): string { return createHash('sha256').update(raw).digest('hex'); }
