@@ -99,20 +99,25 @@ test('kernel-enforced sandbox lets a gate read the workspace but denies writes i
 	const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'ats-sandbox-enforce-')));
 	const state = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-sandbox-enforce-state-'));
 	try {
-		await fs.writeFile(path.join(root, 'input.txt'), 'visible');
+		await fs.writeFile(path.join(root, 'input.txt'), 'visible' + String.fromCharCode(10));
 		const engine = new NativeHarness(root, state);
 		// Merged-/usr Linux exposes /bin as a symlink, which the sandbox rejects by design.
-		const bin = process.platform === 'darwin' ? '/bin' : '/usr/bin';
+		// Gates name bare executables and the sandbox accepts only a real file: Debian and Ubuntu ship `sh` as a symlink to dash,
+		// and recent Ubuntu ships coreutils as symlinks, so both gates use the shell and its builtins.
+		const shell = path.basename(await fs.realpath((process.platform === 'darwin' ? '/bin' : '/usr/bin') + '/sh'));
 		const task = await engine.create('Enforced sandbox', {
 			schemaVersion: 1, gates: [
-				{ id: 'read', executable: bin + '/cat', args: ['input.txt'], sandbox: 'offline-readonly' },
-				{ id: 'write', executable: bin + '/sh', args: ['-c', 'echo escaped > written.txt'], sandbox: 'offline-readonly', dependsOn: ['read'] }
+				{ id: 'read', executable: shell, args: ['-c', 'read line < input.txt && test "$line" = visible'], sandbox: 'offline-readonly' },
+				{ id: 'write', executable: shell, args: ['-c', 'echo escaped > written.txt'], sandbox: 'offline-readonly', dependsOn: ['read'] }
 			]
 		});
 		const result = await engine.execute(task.id, await engine.reviewDigest(task.plan), () => true);
-		const gates = result.attempts.at(-1)!.results.map(gate => ({ id: gate.id, status: gate.status }));
+		const results = result.attempts.at(-1)!.results;
+		const gates = results.map(gate => ({ id: gate.id, status: gate.status }));
 		assert.deepEqual({ gates, written: existsSync(path.join(root, 'written.txt')) },
 			{ gates: [{ id: 'read', status: 'passed' }, { id: 'write', status: 'failed' }], written: false });
+		// The write must fail because the kernel denied it, not because the sandbox was unavailable.
+		assert.doesNotMatch(JSON.stringify(results.at(-1)), /HARNESS_OS_SANDBOX_UNAVAILABLE|HARNESS_EXECUTABLE_UNAVAILABLE/);
 	} finally {
 		await fs.rm(root, { recursive: true, force: true });
 		await fs.rm(state, { recursive: true, force: true });

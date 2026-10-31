@@ -5,46 +5,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
-import * as os from 'node:os';
 import * as path from 'node:path';
-import { registerNativeHarness } from '../src/native-integration.ts';
 import { writeProjectConfig } from '../src/native-project.ts';
 import { inspectHarnessAuthority } from '../src/native-authority.ts';
 import { acquireSharedExecutionFence, inspectSharedExecutionFence } from '../src/native-shared-fence.ts';
 import { installFakeCodex } from './native-fake-provider.mts';
+import { referenceEngine } from './native-reference-engine.mts';
 
-/** VS Code reports `Uri.fsPath` with a lower-case drive letter on Windows; tests must use the same shape. */
-function vscodeFsPath(value: string): string {
-	return process.platform === 'win32' && /^[A-Z]:/.test(value) ? value[0].toLowerCase() + value.slice(1) : value;
-}
-
-async function fixture() {
-	const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-native-ui-'));
-	const roots = [path.join(directory, 'project one'), path.join(directory, 'project two')];
-	await Promise.all(roots.map(root => fs.mkdir(root)));
-	const commands = new Map();
-	const documents: Array<{ content: string }> = [];
-	const notices: string[] = [];
-	const state = new Map();
-	const context = { subscriptions: [], globalStorageUri: { fsPath: vscodeFsPath(path.join(directory, 'private')) }, globalState: { get: key => state.get(key), update: async (key, value) => { state.set(key, value); } } };
-	const vscode = {
-		l10n: { t: (text: string, ...args: string[]) => text.replace(/\{(\d+)\}/g, (_, index) => args[index]) },
-		commands: { registerCommand: (id, command) => { commands.set(id, command); return { dispose() { } }; } },
-		workspace: {
-			isTrusted: true, getConfiguration: () => ({ get: (_, fallback) => fallback }),
-			workspaceFolders: roots.map(root => ({ name: path.basename(root), uri: { fsPath: root, toString: () => root } })),
-			openTextDocument: async document => { documents.push(document); return document; }
-		},
-		window: {
-			showTextDocument: async () => { }, showQuickPick: async items => items[0], showInputBox: async () => 'Fixture task',
-			showWarningMessage: async (_, __, action) => action,
-			showInformationMessage: async message => { notices.push(message); }, showErrorMessage: async message => { notices.push(message); }
-		}
-	};
-	const controller = { refresh() { }, nativeProjects: async () => [] };
-	registerNativeHarness(context, vscode, controller);
-	return { roots, vscode, documents, notices, controller, invoke: (command: string, root: string) => commands.get('atsHarness.' + command)(root), cleanup: async () => { for (const disposable of context.subscriptions) { disposable.dispose(); } await fs.rm(directory, { recursive: true, force: true }); } };
-}
+import { fixture } from './native-integration-fixture.mts';
 
 test('native IDE flow preserves the full configured DAG and isolates two open roots', async () => {
 	const f = await fixture();
@@ -552,6 +520,108 @@ test('review #1/#3/#4: guidance edits keep the run, early cancel never spawns, l
 		const result = await runtime.implement(request, { ...hooks, message: () => late.abort() }, late.signal);
 		assert.deepEqual({ agent: result.agent.status, verification: result.verification.status, gates: result.verification.gates.map(gate => gate.status) },
 			{ agent: 'passed', verification: 'cancelled', gates: ['cancelled'] });
+	} finally {
+		if (originalPath === undefined) { delete process.env.PATH; } else { process.env.PATH = originalPath; }
+		await f.cleanup();
+	}
+});
+
+test('a project with its own Harness accepts IDE writers only with the opt-in and a verified engine lease', async () => {
+	const f = await fixture();
+	const originalPath = process.env.PATH;
+	const settings: Record<string, unknown> = {};
+	f.vscode.workspace.getConfiguration = () => ({ get: (key: string, fallback: unknown) => settings[key] ?? fallback });
+	try {
+		const root = await fs.realpath(f.roots[0]);
+		const engine = await referenceEngine({ root });
+		const bin = path.join(path.dirname(root), 'fake-hybrid-bin');
+		// Test-only provider: writes a file and, like a competing scheduler, tries to start an engine task meanwhile.
+		await installFakeCodex(bin, [
+			'#!/usr/bin/env node',
+			'let input = ""; process.stdin.on("data", c => input += c);',
+			'process.stdin.on("end", () => {',
+			'  try { require("child_process").execFileSync(process.execPath, [".harness/core.mjs", "start-task"], { stdio: "ignore" }); } catch { /* an honest engine refuses */ }',
+			'  require("fs").writeFileSync("clients.txt", "crud"); console.log("Created clients.txt");',
+			'});'
+		].join('\n'));
+		process.env.PATH = bin + path.delimiter + (originalPath || '');
+		const runtime = f.controller.nativeChatRuntime(f.vscode.workspace.workspaceFolders[0]);
+		const hooks = { started() { }, progress() { }, stage() { }, gates() { } };
+		const { extractChatPlan } = await import('../src/native-chat.ts');
+		const plan = extractChatPlan('```harness-plan\n{"title":"CRUD","steps":["Crear clients.txt"]}\n```', 1).plan!;
+		const request = { provider: 'codex' as const, instruction: 'Implement the approved plan v1', plan };
+		const written = (): Promise<boolean> => fs.access(path.join(root, 'clients.txt')).then(() => true, () => false);
+		const tasks = async (): Promise<number> => JSON.parse(await fs.readFile(path.join(root, '.harness', 'state', 'tasks.json'), 'utf8')).length;
+		const leaseHeld = (): Promise<boolean> => fs.access(path.join(root, '.harness', 'state', 'lease.json')).then(() => true, () => false);
+
+		// Default: the project engine keeps exclusive authority.
+		assert.equal((await runtime.context()).writer, false);
+		await assert.rejects(runtime.implement(request, hooks, new AbortController().signal), /HARNESS_HYBRID_WRITER_UNAVAILABLE/);
+		assert.equal(await written(), false);
+
+		// Opted in and honest: the lease is held while the agent writes, the engine's own task is refused, then released.
+		settings.coordinatedProjectWriters = true;
+		assert.equal((await runtime.context()).writer, true);
+		const honest = await runtime.implement(request, hooks, new AbortController().signal);
+		assert.deepEqual({ agent: honest.agent.status, written: await written(), tasks: await tasks(), leaseHeld: await leaseHeld() }, { agent: 'passed', written: true, tasks: 0, leaseHeld: false });
+
+		// An engine that ignores the lease is caught: the agent already wrote, so the run is reported as a violation.
+		await fs.rm(path.join(root, 'clients.txt'));
+		await engine.setMode('ignore-lease');
+		await assert.rejects(runtime.implement(request, hooks, new AbortController().signal), /HARNESS_HYBRID_WRITER_COORDINATION_VIOLATED/);
+		assert.deepEqual({ written: await written(), tasks: await tasks(), leaseHeld: await leaseHeld() }, { written: true, tasks: 1, leaseHeld: false });
+
+		// The task it started keeps the project blocked for writers until the engine itself reconciles.
+		await fs.rm(path.join(root, 'clients.txt'));
+		await assert.rejects(runtime.implement(request, hooks, new AbortController().signal), /HARNESS_HYBRID_WRITER_PROJECT_BUSY/);
+		assert.equal(await written(), false);
+
+		// An engine that does not honour the fence epoch is refused before any provider starts.
+		await fs.writeFile(path.join(root, '.harness', 'state', 'tasks.json'), '[]');
+		await engine.setMode('ignore-fence');
+		await assert.rejects(runtime.implement(request, hooks, new AbortController().signal), /HARNESS_HYBRID_WRITER_FENCE_IGNORED/);
+		assert.equal(await written(), false);
+		const digest = (await import('node:crypto')).createHash('sha256').update(root).digest('hex');
+		assert.equal((await inspectSharedExecutionFence(root, path.join(path.dirname(root), 'private', 'native-harness', digest))).held, false);
+	} finally {
+		if (originalPath === undefined) { delete process.env.PATH; } else { process.env.PATH = originalPath; }
+		await f.cleanup();
+	}
+});
+
+test('the required writer isolation blocks providers that cannot offer it before anything starts', async () => {
+	const f = await fixture();
+	const originalPath = process.env.PATH;
+	const settings: Record<string, unknown> = {};
+	f.vscode.workspace.getConfiguration = () => ({ get: (key: string, fallback: unknown) => settings[key] ?? fallback });
+	try {
+		const root = await fs.realpath(f.roots[0]);
+		const bin = path.join(path.dirname(root), 'fake-isolation-bin');
+		await installFakeCodex(bin, ['#!/usr/bin/env node', 'process.stdin.resume(); process.stdin.on("end", () => { require("fs").writeFileSync("written.txt", "x"); console.log("done"); });'].join('\n'));
+		process.env.PATH = bin + path.delimiter + (originalPath || '');
+		const runtime = f.controller.nativeChatRuntime(f.vscode.workspace.workspaceFolders[0]);
+		const hooks = { started() { }, progress() { }, stage() { }, gates() { } };
+		const { extractChatPlan } = await import('../src/native-chat.ts');
+		const plan = extractChatPlan('```harness-plan\n{"title":"X","steps":["Escribir"]}\n```', 1).plan!;
+		const written = (): Promise<boolean> => fs.access(path.join(root, 'written.txt')).then(() => true, () => false);
+		const implement = (provider: 'codex' | 'claude') => runtime.implement({ provider, instruction: 'Implement the approved plan v1', plan }, hooks, new AbortController().signal);
+
+		// The default accepts the provider's tool permissions; the context tells the UI what confines each writer.
+		assert.deepEqual((await runtime.context()).isolation, { codex: { writes: 'provider-sandbox', allowed: true }, claude: { writes: 'tool-allowlist', allowed: true } });
+		settings.writerIsolation = 'provider-sandbox';
+		assert.deepEqual((await runtime.context()).isolation, { codex: { writes: 'provider-sandbox', allowed: true }, claude: { writes: 'tool-allowlist', allowed: false } });
+		await assert.rejects(implement('claude'), /HARNESS_AGENT_ISOLATION_INSUFFICIENT/);
+		assert.equal(await written(), false);
+		assert.equal((await implement('codex')).agent.status, 'passed');
+		assert.equal(await written(), true);
+
+		// A requirement no provider can meet, and any unrecognised value, block every writer.
+		await fs.rm(path.join(root, 'written.txt'));
+		for (const value of ['os-kernel', 'banana']) {
+			settings.writerIsolation = value;
+			await assert.rejects(implement('codex'), /HARNESS_AGENT_ISOLATION_INSUFFICIENT/);
+		}
+		assert.equal(await written(), false);
 	} finally {
 		if (originalPath === undefined) { delete process.env.PATH; } else { process.env.PATH = originalPath; }
 		await f.cleanup();

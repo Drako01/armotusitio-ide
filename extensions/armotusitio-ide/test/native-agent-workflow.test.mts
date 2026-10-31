@@ -658,3 +658,23 @@ test('revoked trust during provider preflight never starts a provider CLI', asyn
 		await fs.rm(root, { recursive: true, force: true });
 	}
 });
+
+test('recovery assessment separates confirmed, uncertain and untouched steps and never offers a restart after a writer started', async () => {
+	const { assessWorkflowRecovery } = await import('../src/native-workflow-recovery.ts');
+	const record = (steps: Array<[string, 'planner' | 'implementer' | 'reviewer', string]>) => ({
+		schemaVersion: 1 as const, id: 'wf', createdAt: new Date().toISOString(), projectKey: 'k', planDigest: 'd', status: 'interrupted' as const,
+		steps: steps.map(([id, role, status]) => ({ id, role, provider: 'codex' as const, status: status as 'pending' }))
+	});
+	const readerOnly = assessWorkflowRecovery(record([['plan', 'planner', 'passed'], ['implement', 'implementer', 'pending'], ['review', 'reviewer', 'pending']]));
+	const midWrite = assessWorkflowRecovery(record([['plan', 'planner', 'passed'], ['implement', 'implementer', 'interrupted'], ['review', 'reviewer', 'pending']]));
+	const afterWrite = assessWorkflowRecovery(record([['plan', 'planner', 'passed'], ['implement', 'implementer', 'passed'], ['review', 'reviewer', 'running']]));
+	assert.deepEqual({
+		readerOnly: [readerOnly.restartAllowed, readerOnly.actions, readerOnly.steps.map(step => step.certainty)],
+		midWrite: [midWrite.restartAllowed, midWrite.uncertainWriters, midWrite.confirmedWriters, midWrite.actions],
+		afterWrite: [afterWrite.restartAllowed, afterWrite.uncertainWriters, afterWrite.confirmedWriters, afterWrite.steps.map(step => step.certainty)]
+	}, {
+		readerOnly: [true, ['restart'], ['confirmed', 'not-started', 'not-started']],
+		midWrite: [false, ['implement'], [], ['inspect-worktree', 'review-and-integrate', 'discard-worktree']],
+		afterWrite: [false, [], ['implement'], ['confirmed', 'confirmed', 'uncertain']]
+	});
+});

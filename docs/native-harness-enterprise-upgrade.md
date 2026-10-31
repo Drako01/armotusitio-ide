@@ -63,3 +63,12 @@ npm run check --prefix extensions/armotusitio-ide
 ```
 
 These tests exercise contracts and local fake providers. A true Codex/Claude smoke test is opt-in and requires authenticated local CLI installations. The absence of a CI run or runtime results must be reported as **unverified**. The code has been pushed, but neither a successful CI run nor real authenticated agent execution was observed in this environment.
+
+## Status after the finalization batch (2026-10-31)
+
+Validated on `cc9fb886b4d` (Windows x64, plus a Linux x64 run of the extension suite); see `script_test.log` and `HARNESS_ENTERPRISE_AAA_STATUS.md` for evidence per capability. Of the remaining work listed above:
+
+- The shared project-engine protocol now includes a verifiable exclusive writer lease (IDE side done and tested against a real reference engine; the project engine must still adopt it).
+- Adaptive planning, an opt-in minimum writer isolation, a deterministic long-conversation memory, optional OTLP export and an engine benchmark with a real baseline comparison are implemented.
+- Granular resume after a writer started is still not implemented; the recovery assessment only classifies what is certain and what is not.
+- OS-level isolation of provider processes on Windows, macOS runs, authenticated end to end runs and the manual screen-reader matrix remain open.

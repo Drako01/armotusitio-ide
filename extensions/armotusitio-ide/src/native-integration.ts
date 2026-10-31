@@ -21,14 +21,19 @@ import { buildAgentInvocation, executeReviewedAgent, type AgentExecution, type A
 import { readAgentStatistics, recordAgentMetric } from './native-agent-metrics.ts';
 import { NativeAgentWorkflow, proposedWorkflow, workflowDigest, type WorkflowRun } from './native-agent-workflow.ts';
 import { createAgentWorktree, removeCleanAgentWorktree, listAgentWorktrees, type ManagedWorktree } from './native-agent-worktree.ts';
-import { describeEngine, probeProjectHandshake, compareHybridCapabilities, verifiedNativeCapabilities } from './native-engine-contract.ts';
+import { describeEngine, probeProjectHandshake, readProjectCapabilities, compareHybridCapabilities, verifiedNativeCapabilities } from './native-engine-contract.ts';
 import { diagnoseProvider } from './native-provider-diagnostics.ts';
 import { summarizeGatePerformance } from './native-performance.ts';
 import { acquireSharedExecutionFence, inspectSharedExecutionFence, reconcileSharedExecutionFence, type SharedExecutionFence } from './native-shared-fence.ts';
 import { createWorktreeCheckpoint, readWorktreeCheckpoint, rollbackWorktreeCheckpoint, type WorktreeCheckpoint } from './native-worktree-checkpoint.ts';
 import { integrateWorktreeChanges, reconcileWorktreeIntegration, rollbackWorktreeIntegration } from './native-worktree-integration.ts';
 import { delegateProjectGate, queryProjectEngineStatus } from './native-engine-interop.ts';
-import { describeTrace, taskTrace, traceparent, workflowTrace } from './native-trace.ts';
+import { assessWorkflowRecovery } from './native-workflow-recovery.ts';
+import { exportOtlp, validateOtlpEndpoint } from './native-otlp.ts';
+import { buildAdaptiveWorkflow, type ProviderAvailability } from './native-agent-planner.ts';
+import { acquireWriterLease, type WriterLease } from './native-hybrid-writer.ts';
+import { describeAgentIsolation, meetsWriterIsolation, parseWriterIsolation } from './native-isolation.ts';
+import { describeTrace, taskTrace, traceparent, workflowTrace, type TraceSpan } from './native-trace.ts';
 import {
 	reserveProviderInvocation, readProviderInvocationQuota, assertProviderBudget, recordProviderSpend, readProviderBudget,
 	validateProviderBudgetPolicy, budgetEnabled, type ProviderBudgetPolicy
@@ -109,6 +114,26 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			maxCostUsdPer24h: settings.get('providerCostUsdPer24h', 0)
 		});
 	};
+	/** Minimum confinement a writer must have; user-level, so a repository cannot lower it. */
+	const requiredWriterIsolation = () => parseWriterIsolation(vscode.workspace.getConfiguration('atsHarness').get('writerIsolation', 'tool-allowlist'));
+	/** Live facts for adaptive provider assignment: local diagnostics only, no model call. */
+	const providerAvailability = async (root: string, folder: Host): Promise<ProviderAvailability[]> => {
+		const providers = ['codex', 'claude'] as const;
+		const [diagnostics, quota, budget] = await Promise.all([
+			Promise.all(providers.map(provider => diagnoseProvider(provider).catch(() => undefined))),
+			readProviderInvocationQuota(metricsDirectory(root), providerCallsPer24h(folder)),
+			readProviderBudget(metricsDirectory(root), providerBudget(folder))
+		]);
+		return providers.map((provider, index) => ({
+			provider,
+			usable: !!diagnostics[index]?.installed && diagnostics[index]?.commandCompatibility !== 'unsupported' && diagnostics[index]?.localSession !== 'unauthenticated',
+			remainingCalls: quota.providers[provider].remaining ?? undefined,
+			coolingDown: budget.providers[provider].rateLimitedUntil !== null,
+			writerAllowed: meetsWriterIsolation(provider, requiredWriterIsolation())
+		}));
+	};
+	/** Opt-in, user-level: a repository cannot enable external writers for itself. */
+	const coordinatedWriters = (): boolean => vscode.workspace.getConfiguration('atsHarness').get('coordinatedProjectWriters', false) === true;
 	/** Model chosen for a provider (`atsHarness.<provider>Model`); empty keeps the CLI default. */
 	const modelFor = (provider: NativeProvider): string | undefined => {
 		const model: unknown = vscode.workspace.getConfiguration('atsHarness').get(provider + 'Model', '');
@@ -150,20 +175,28 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 		if (!authorized(folder)) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
 		const authority = await inspectHarnessAuthority(root);
 		if (authority.reason === 'project-path-unsafe') { throw Error('HARNESS_PROJECT_AUTHORITY_UNSAFE'); }
-		// Hybrid projects keep exclusive writer authority over their checkout.
-		if (!draft.readOnly && authority.engine === 'project') { throw Error('HARNESS_HYBRID_WRITER_UNAVAILABLE'); }
+		// A project Harness keeps writer authority over its checkout unless the user enabled coordinated writers,
+		// and even then the engine must acknowledge an exclusive lease below.
+		if (!draft.readOnly && !meetsWriterIsolation(draft.provider, requiredWriterIsolation())) { throw Error('HARNESS_AGENT_ISOLATION_INSUFFICIENT'); }
+		const hybridWriter = !draft.readOnly && authority.engine === 'project';
+		if (hybridWriter && !coordinatedWriters()) { throw Error('HARNESS_HYBRID_WRITER_UNAVAILABLE'); }
 		assertIdle(root, folder);
 		assertProviderCapacity();
 		// Reserve the project before the async provider lookup to prevent parallel launches.
 		pendingAgents.add(root); controller.refresh();
 		let execution: AgentExecution;
 		let fence: SharedExecutionFence | undefined;
+		let lease: WriterLease | undefined;
 		try {
 			fence = await acquireSharedExecutionFence(root, metricsDirectory(root), 'native-agent');
 			await fence.assertCurrent();
 			// Checked before quota and budget, so a refused or cancelled launch never spends a provider credit.
-			// A project Harness may have appeared while waiting for the fence: writers re-check under it.
-			if (!draft.readOnly && (await inspectHarnessAuthority(root)).engine !== 'ide-native') { throw Error('HARNESS_HYBRID_WRITER_UNAVAILABLE'); }
+			// Authority may have changed while waiting for the fence: writers re-check under it.
+			if (!draft.readOnly) {
+				if ((await inspectHarnessAuthority(root)).engine !== (hybridWriter ? 'project' : 'ide-native')) { throw Error('HARNESS_HYBRID_WRITER_UNAVAILABLE'); }
+				// Running the approved plan is the explicit consent to run the project's engine entrypoint.
+				if (hybridWriter) { lease = await acquireWriterLease(root, true, () => authorized(folder), fence, hooks.signal); }
+			}
 			if (hooks.signal?.aborted) { throw Error('HARNESS_CANCELLED_BEFORE_START'); }
 			const cap = providerCallsPer24h(folder);
 			await assertProviderBudget(metricsDirectory(root), draft.provider, providerBudget(folder), fence);
@@ -172,6 +205,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			await fence.assertCurrent();
 			execution = await executeReviewedAgent(reviewAgentDraft(draft), draft, undefined, hooks.onProgress && (progress => hooks.onProgress!(progress.observedBytes)), hooks.onMessage);
 		} catch (error) {
+			await lease?.release().catch(() => undefined);
 			if (fence) { await fence.release(); }
 			throw error;
 		} finally { pendingAgents.delete(root); }
@@ -179,12 +213,15 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 		try {
 			hooks.onStarted?.(execution);
 			const result = await execution.outcome;
+			// The engine acknowledges the end of the lease first; a broken lease is reported after the accounting.
+			const leaseFailure = await lease?.release().then(() => undefined, (error: unknown) => error);
 			await recordSpend(folder, root, draft.provider, fence, result);
 			try { await recordAgentMetric(metricsDirectory(root), draft.provider, draft.role, result); }
 			catch { void vscode.window.showWarningMessage('No se pudo registrar la m\u00e9trica local del agente.'); }
+			if (leaseFailure) { throw leaseFailure; }
 			await hooks.afterOutcome?.(result, fence);
 			return result;
-		} finally { runningAgents.delete(root); await fence.release(); controller.refresh(); }
+		} finally { await lease?.release().catch(() => undefined); runningAgents.delete(root); await fence.release(); controller.refresh(); }
 	};
 	/** Guidance and skill references appended to an agent instruction; contents are read by the agent, digests pin them. */
 	const projectReferences = (guides: ProjectGuide[], skills: ProjectSkill[]): string =>
@@ -199,8 +236,11 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 				const root = await rootOf();
 				const authority = await inspectHarnessAuthority(root);
 				const [skills, guides, verification] = await Promise.all([listProjectSkills(root), listProjectGuides(root), verificationOf(root)]);
+				// A project Harness can host IDE writers only when the user opted in and its manifest declares the lease; the engine's acknowledgement is verified at approval.
+				const coordinated = authority.engine === 'project' && coordinatedWriters() && (await readProjectCapabilities(root).catch(() => [])).includes('writer-lease');
+				const isolation = Object.fromEntries((['codex', 'claude'] as const).map(provider => [provider, { writes: describeAgentIsolation(provider).writes, allowed: meetsWriterIsolation(provider, requiredWriterIsolation()) }])) as Record<NativeProvider, { writes: string; allowed: boolean }>;
 				return {
-					root, writer: authority.engine === 'ide-native' && authorized(folder),
+					isolation, root, writer: (authority.engine === 'ide-native' || coordinated) && authorized(folder),
 					skills: skills.map(skill => ({ name: skill.name, source: skill.source })),
 					guides: guides.map(guide => guide.path),
 					verification: verification && {
@@ -234,6 +274,11 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 					onMessage: hooks.message,
 					signal,
 					afterOutcome: async (outcome, fence) => {
+						if (outcome.status !== 'passed' && verification) {
+							// Gates that never ran because the writer did not succeed are not "pending": that would suggest they still will.
+							gates = verification.gates.map(gate => ({ id: gate.id, status: 'cancelled' }));
+							if (outcome.status === 'cancelled') { verificationStatus = 'cancelled'; }
+						}
 						if (outcome.status !== 'passed' || !verification) { return; }
 						// Configured gates that never ran because the user stopped the run are reported as cancelled, not skipped.
 						if (signal.aborted) {
@@ -401,9 +446,11 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			if (runningAgents.has(root) || pendingAgents.has(root) || runningWorkflows.has(root) || pendingWorkflows.has(root) || running.has(chosen.folder.uri.toString())) {
 				throw Error('HARNESS_ALREADY_RUNNING');
 			}
-			const provider = await vscode.window.showQuickPick(['codex', 'claude'], { title: 'Proveedor para el workflow multiagente' }) as NativeProvider | undefined;
-			if (!provider) { return; }
-			const reviewerMode = await vscode.window.showQuickPick([
+			// `adaptive` is last so the manual choices keep their position: it assigns providers from live availability.
+			const choice = await vscode.window.showQuickPick(['codex', 'claude', 'adaptive'], { title: 'Proveedor para el workflow multiagente' }) as NativeProvider | 'adaptive' | undefined;
+			if (!choice) { return; }
+			const provider: NativeProvider = choice === 'adaptive' ? 'codex' : choice;
+			const reviewerMode = choice === 'adaptive' ? { value: 'same' } : await vscode.window.showQuickPick([
 				{ label: 'Mismo proveedor en todas las fases', value: 'same' },
 				{ label: 'Revisi\u00f3n cruzada con el otro proveedor', value: 'cross' }
 			], { title: 'Independencia del agente revisor' });
@@ -423,15 +470,16 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 				isolation = await createAgentWorktree(root, path.join(metricsDirectory(root), 'isolated-worktrees'));
 				executionRoot = isolation.root;
 			}
-			const plan = proposedWorkflow(provider, instruction);
-			plan.handoffs.find(h => h.id === 'review')!.provider = reviewerProvider;
+			const adaptive = choice === 'adaptive' ? buildAdaptiveWorkflow(instruction, await providerAvailability(root, chosen.folder)) : undefined;
+			const plan = adaptive?.plan ?? proposedWorkflow(provider, instruction);
+			if (!adaptive) { plan.handoffs.find(h => h.id === 'review')!.provider = reviewerProvider; }
 			const digest = workflowDigest(executionRoot, plan);
 			const verification = (await loadProjectConfig(root))?.plan;
 			const verificationSnapshot = JSON.stringify(verification || null);
 			await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({
 				language: 'json',
 				content: JSON.stringify({
-					project: root, executionRoot, isolationMode: mode.value, handoffs: plan.handoffs, maxCorrectiveCycles: 1, maxProviderCalls: 5, verification: verification || 'NOT_CONFIGURED', digest,
+					project: root, executionRoot, isolationMode: mode.value, handoffs: plan.handoffs, assignments: adaptive?.assignments, maxCorrectiveCycles: 1, maxProviderCalls: 5, verification: verification || 'NOT_CONFIGURED', digest,
 					notice: mode.value === 'worktree' ? 'La IA operar\u00e1 \u00fanicamente en este checkout Git separado; se conservar\u00e1 despu\u00e9s para revisar los cambios. No se hace commit ni merge.' : 'La IA operar\u00e1 sobre el workspace actual sin aislamiento de archivos. No se hace commit ni merge.'
 				}, null, 2)
 			}), { preview: true });
@@ -513,14 +561,33 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 	}));
 
 
+	/** The most recent workflow and task traces of a project, derived from persisted records. */
+	const collectTraces = async (root: string, engine: NativeHarness): Promise<TraceSpan[][]> => {
+		const workflows = (await new NativeAgentWorkflow(root, path.join(metricsDirectory(root), 'workflows')).history()).slice(0, 5);
+		const tasks = (await engine.list()).slice(0, 5);
+		return [...workflows.map(workflowTrace), ...tasks.map(taskTrace).filter(spans => spans.length)];
+	};
+	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.nativeTraceExport', async (requested?: string) => {
+		try {
+			if (!ensureTrust()) { return; }
+			const endpoint = vscode.workspace.getConfiguration('atsHarness').get('otlpEndpoint', '');
+			if (!endpoint) { vscode.window.showInformationMessage(vscode.l10n.t('Configur\u00e1 atsHarness.otlpEndpoint para exportar trazas. Es opcional y nada se env\u00eda sin tu confirmaci\u00f3n.')); return; }
+			const url = validateOtlpEndpoint(endpoint);
+			const chosen = await choose(requested); if (!chosen) { return; }
+			const spans = (await collectTraces(await fs.realpath(chosen.folder.uri.fsPath), chosen.engine)).flat();
+			const confirm = vscode.l10n.t('Exportar {0} spans', String(spans.length));
+			if (await vscode.window.showWarningMessage(vscode.l10n.t('Enviar {0} spans (estructura y contadores, sin prompts ni salida de la IA) a {1}?', String(spans.length), url.origin), { modal: true }, confirm) !== confirm) { return; }
+			if (!authorized(chosen.folder)) { return; }
+			const result = await exportOtlp(spans, endpoint, String(context.extension?.packageJSON?.version ?? 'unknown'));
+			vscode.window.showInformationMessage(vscode.l10n.t('Trazas exportadas: {0} spans (HTTP {1}).', String(result.spans), String(result.status)));
+		} catch (error) { showError(error); }
+	}));
 	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.nativeTrace', async (requested?: string) => {
 		try {
 			if (!ensureTrust()) { return; }
 			const chosen = await choose(requested); if (!chosen) { return; }
 			const root = await fs.realpath(chosen.folder.uri.fsPath);
-			const workflows = (await new NativeAgentWorkflow(root, path.join(metricsDirectory(root), 'workflows')).history()).slice(0, 5);
-			const tasks = (await chosen.engine.list()).slice(0, 5);
-			const traces = [...workflows.map(workflowTrace), ...tasks.map(taskTrace).filter(spans => spans.length)];
+			const traces = await collectTraces(root, chosen.engine);
 			if (!authorized(chosen.folder)) { return; }
 			await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({
 				language: 'json',
@@ -647,7 +714,9 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			if (!authorized(chosen.folder)) { return; }
 			const workflow = new NativeAgentWorkflow(root, path.join(metricsDirectory(root), 'workflows'));
 			const updated = await workflow.reconcile();
-			vscode.window.showInformationMessage('Workflows reconciliados: ' + updated);
+			// Say which interrupted workflows cannot be restarted because a writer may already have changed files.
+			const uncertain = (await workflow.history()).filter(record => record.status === 'interrupted').map(assessWorkflowRecovery).filter(assessment => !assessment.restartAllowed);
+			vscode.window.showInformationMessage('Workflows reconciliados: ' + updated + (uncertain.length ? '. ' + uncertain.length + ' tuvo un escritor iniciado: no se reinicia; revis\u00e1 su worktree antes de integrarlo o descartarlo.' : ''));
 		} catch (error) { showError(error); } finally { controller.refresh(); }
 	}));
 

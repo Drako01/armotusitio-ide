@@ -35,7 +35,7 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, .log:focus-v
 .brand-text { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
 .brand h1 { margin: 0; font-size: 1.15em; font-weight: 600; white-space: nowrap; }
 .project-name { color: var(--chat-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.project-select, .model-select, .effort-select { font: inherit; color: var(--vscode-dropdown-foreground); background: var(--vscode-dropdown-background); border: 1px solid var(--vscode-dropdown-border, transparent); border-radius: var(--chat-radius); padding: 2px 6px; max-width: 220px; }
+.project-select, .model-select, .effort-select { min-height: 24px; font: inherit; color: var(--vscode-dropdown-foreground); background: var(--vscode-dropdown-background); border: 1px solid var(--vscode-dropdown-border, transparent); border-radius: var(--chat-radius); padding: 2px 6px; max-width: 220px; }
 .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .provider-switch { display: inline-flex; padding: 2px; border: 1px solid var(--chat-border); border-radius: var(--chat-radius-large); background: var(--vscode-input-background); }
 .provider-option { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 8px; color: var(--vscode-foreground); background: transparent; }
@@ -82,7 +82,7 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, .log:focus-v
 .message.notice { padding: 8px 12px; border-left: 3px solid var(--chat-accent); border-radius: var(--chat-radius); background: var(--chat-raised); }
 .message.notice.error, .message.run.error { border-left-color: var(--chat-error); }
 .message.run { padding: 12px 14px; border: 1px solid var(--chat-border); border-left: 3px solid var(--chat-ok); border-radius: var(--chat-radius-large); background: var(--chat-raised); }
-.link-button { padding: 0; color: var(--vscode-textLink-foreground); background: transparent; }
+.link-button { padding: 0; min-width: 24px; min-height: 24px; color: var(--vscode-textLink-foreground); background: transparent; }
 .link-button:hover { background: transparent !important; text-decoration: underline; }
 .copy { margin-top: 4px; font-size: .85em; }
 

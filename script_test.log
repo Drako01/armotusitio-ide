@@ -1,0 +1,80 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+ArmoTuSitio IDE Harness validation record
+date: 2026-10-31T21:27:05.710Z
+system: Windows_NT 10.0.26220 x64, 16 logical CPUs
+node: v24.22.1
+commit: 6a49e907536195930110017f379f35ac6291c256 (feat/harness-enterprise-aaa-finalization)
+working tree: clean
+note: Windows x64 run on the commit that follows the last code change; later commits add only this record
+
+== Harness focused verifier
+command: node.exe scripts/ats-harness-check.mts
+exit code: 0 (PASS), 27.1 s
+tests: tests 272, pass 268, fail 0, skipped 4
+stage: PASS | TypeScript
+stage: PASS | Webview resources
+stage: PASS | UI bridge and renderer
+stage: PASS | Extension bundle
+stage: PASS | Native package resources
+stage: PASS | Focused hygiene
+stage: PASS | Chat benchmark smoke
+stage: PASS | Engine benchmark smoke
+stage: PASS | Diff whitespace
+hygiene: Hygiene checked 100 files
+warnings: 53
+warning> (Use `node --trace-warnings ...` to show where the warning was created)
+warning> (node:35880) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///F:/vscode/extensions/armotusitio-ide/src/native-worktree-checkpoint.ts is not specified and it doesn't parse as CommonJS.
+warning> To eliminate this warning, add "type": "module" to \\?\F:\vscode\extensions\armotusitio-ide\package.json.
+warning> (node:38264) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///F:/vscode/extensions/armotusitio-ide/src/native-worktree-checkpoint.ts is not specified and it doesn't parse as CommonJS.
+warning> (node:37028) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///F:/vscode/extensions/armotusitio-ide/src/native-worktree-checkpoint.ts is not specified and it doesn't parse as CommonJS.
+warning> (node:1068) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///F:/vscode/extensions/armotusitio-ide/src/native-review.ts is not specified and it doesn't parse as CommonJS.
+warning> (node:42576) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///F:/vscode/extensions/armotusitio-ide/src/native-agent-workflow.ts is not specified and it doesn't parse as CommonJS.
+warning> (node:38372) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///F:/vscode/extensions/armotusitio-ide/src/native-agent-workflow.ts is not specified and it doesn't parse as CommonJS.
+warning> (node:43884) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///F:/vscode/extensions/armotusitio-ide/src/native-agent-execution.ts is not specified and it doesn't parse as CommonJS.
+warning> (node:8568) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///F:/vscode/extensions/armotusitio-ide/src/native-agent-metrics.ts is not specified and it doesn't parse as CommonJS.
+
+== Extension tests
+command: npm test --prefix extensions/armotusitio-ide
+exit code: 0 (PASS), 20.0 s
+tests: tests 363, pass 359, fail 0, skipped 4
+warnings: 55
+warning> (node:40704) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///F:/vscode/extensions/armotusitio-ide/src/native-worktree-checkpoint.ts is not specified and it doesn't parse as CommonJS.
+warning> To eliminate this warning, add "type": "module" to \\?\F:\vscode\extensions\armotusitio-ide\package.json.
+warning> (Use `node --trace-warnings ...` to show where the warning was created)
+warning> (node:40892) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///F:/vscode/extensions/armotusitio-ide/src/native-worktree-checkpoint.ts is not specified and it doesn't parse as CommonJS.
+warning> (node:42476) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///F:/vscode/extensions/armotusitio-ide/src/native-worktree-checkpoint.ts is not specified and it doesn't parse as CommonJS.
+warning> (node:40748) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///F:/vscode/extensions/armotusitio-ide/src/native-review.ts is not specified and it doesn't parse as CommonJS.
+warning> (node:42636) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///F:/vscode/extensions/armotusitio-ide/src/native-agent-workflow.ts is not specified and it doesn't parse as CommonJS.
+warning> (node:12508) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///F:/vscode/extensions/armotusitio-ide/src/native-agent-workflow.ts is not specified and it doesn't parse as CommonJS.
+warning> (node:15940) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///F:/vscode/extensions/armotusitio-ide/src/native-agent-execution.ts is not specified and it doesn't parse as CommonJS.
+warning> (node:3704) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///F:/vscode/extensions/armotusitio-ide/src/native-agent-metrics.ts is not specified and it doesn't parse as CommonJS.
+
+== Extension typecheck and resources
+command: npm run check --prefix extensions/armotusitio-ide
+exit code: 0 (PASS), 0.5 s
+warnings: 1
+warning> (Use `node --trace-warnings ...` to show where the warning was created)
+
+== Repository hygiene
+command: npm run hygiene
+exit code: 0 (PASS), 110.8 s
+hygiene: Hygiene checked 14194 files
+warnings: 0
+
+== Whitespace check
+command: git diff --check
+exit code: 0 (PASS), 0.0 s
+warnings: 0
+
+summary: all 5 gates PASSED on commit 6a49e907536
+
+== Linux x64 (code identical, run separately before the documentation commits)
+system: Ubuntu 25.x on WSL2 (kernel 6.18), bubblewrap 0.11.1, Node v24.22.1 from a temporary directory
+command: node --test test/*.test.cts test/native-*.test.mts (from extensions/armotusitio-ide, on the Windows-mounted tree at 6d4a67e843b)
+exit code: 0 (PASS)
+tests: tests 363, pass 355, fail 0, skipped 8
+skipped: 2 opt-in real-quota or real-sandbox tests, 3 Windows-only, 3 needing go or php (not installed in this distribution)
+not covered: npm run hygiene and the focused verifier were not run on Linux; macOS and Linux ARM64 were not run
