@@ -125,6 +125,16 @@ test('hybrid projects can plan but cannot approve, and provider failures stay in
 	} finally { await s.cleanup(); }
 });
 
+test('a read-only turn that skipped oversized trees says which ones, without failing', async () => {
+	const s = await session([{ ...outcome(plan('Plan', ['Paso'])), scopeUnscanned: ['infra/demo', 'apps/big'] }]);
+	try {
+		await s.chat.send('Planificá');
+		const messages = s.chat.snapshot().messages;
+		assert.deepEqual(messages.map(message => message.role), ['user', 'assistant', 'notice']);
+		assert.match(messages[2].text, /«infra\/demo», «apps\/big»/);
+	} finally { await s.cleanup(); }
+});
+
 test('a storage failure never leaves the chat stuck in a thinking state or launches the provider', async () => {
 	const s = await session(['respuesta']);
 	try {
