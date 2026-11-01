@@ -6,12 +6,9 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
-import { spawn } from 'node:child_process';
-import { resolveNativeCommand } from './native-runtime.ts';
+import { gitOutput } from './native-git.ts';
 import { sensitiveScopeDigest } from './native-sensitive-scope.ts';
 
-const MAX_CAPTURE = 12 * 1024 * 1024;
-const CAPTURE_TIMEOUT = 25_000;
 const SENSITIVE = ['.env', '.env.local', '.env.production', '.env.development', '.netrc', 'credentials.json'];
 
 async function fingerprintFile(file: string): Promise<string> {
@@ -25,34 +22,13 @@ async function fingerprintFile(file: string): Promise<string> {
 	return createHash('sha256').update(await fs.readFile(file)).digest('hex');
 }
 
-async function gitHash(root: string, args: string[]): Promise<string> {
-	const command = await resolveNativeCommand('git', args);
-	const hash = createHash('sha256');
-	return await new Promise<string>((resolve, reject) => {
-		const child = spawn(command.executable, command.args, {
-			cwd: root, shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
-			env: { PATH: process.env.PATH, Path: process.env.Path, SystemRoot: process.env.SystemRoot, HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, GIT_OPTIONAL_LOCKS: '0' }
-		});
-		let bytes = 0, failed = false, stderr = '';
-		const timer = setTimeout(() => { failed = true; child.kill(); }, CAPTURE_TIMEOUT);
-		timer.unref();
-		child.stdout?.on('data', (chunk: Buffer) => {
-			bytes += chunk.length;
-			if (bytes > MAX_CAPTURE) { failed = true; child.kill(); return; }
-			hash.update(chunk);
-		});
-		child.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString('utf8').slice(0, 512); });
-		child.once('error', () => { clearTimeout(timer); reject(Error('HARNESS_SCOPE_GIT_UNAVAILABLE')); });
-		child.once('close', code => {
-			clearTimeout(timer);
-			if (failed || code !== 0) { reject(Error('HARNESS_SCOPE_GIT_FAILED')); }
-			else { resolve(hash.digest('hex')); }
-		});
-	});
-}
+const gitHash = async (root: string, args: string[]): Promise<string> => createHash('sha256').update(await gitOutput(root, args)).digest('hex');
+
 export interface ScopeSnapshot {
 	source: 'git' | 'none';
 	digest: string;
+	/** Folders the sensitive-file scan could not fully analyze; surfaced to the user, never silently dropped. */
+	unscanned: string[];
 }
 
 export async function captureAgentScope(root: string): Promise<ScopeSnapshot> {
@@ -64,11 +40,13 @@ export async function captureAgentScope(root: string): Promise<ScopeSnapshot> {
 		throw error;
 	});
 	for (const name of SENSITIVE) { hash.update(name + ':' + await fingerprintFile(path.join(root, name))); }
-	hash.update((await sensitiveScopeDigest(root)).digest);
-	if (!marker) { return { source: 'none', digest: hash.digest('hex') }; }
+	const sensitive = await sensitiveScopeDigest(root);
+	hash.update(sensitive.digest);
+	const { unscanned } = sensitive;
+	if (!marker) { return { source: 'none', digest: hash.digest('hex'), unscanned }; }
 	hash.update(await gitHash(root, ['status', '--porcelain=v1', '-z', '--untracked-files=normal']));
 	hash.update(await gitHash(root, ['diff', '--no-ext-diff', '--binary', 'HEAD']));
-	return { source: 'git', digest: hash.digest('hex') };
+	return { source: 'git', digest: hash.digest('hex'), unscanned };
 }
 
 export function scopeChanged(before: ScopeSnapshot, after: ScopeSnapshot): boolean {

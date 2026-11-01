@@ -88,6 +88,12 @@ function recoveryHint(t: Translate, code: string): string {
 	return t('La conversaci\u00f3n se conserva; pod\u00e9s reintentar.');
 }
 
+/** The read-only integrity check skipped trees that were too large or deep; say which, so nothing is skipped silently. */
+function unscannedNotice(t: Translate, folders: readonly string[]): string {
+	const shown = folders.slice(0, 5).map(folder => '\u00ab' + folder + '\u00bb').join(', ');
+	return t('El control de archivos sensibles no analiz\u00f3 estas carpetas por su tama\u00f1o: {0}{1}. Si son cach\u00e9s o salida generada, agregalas al .gitignore.', shown, folders.length > 5 ? ' (+' + (folders.length - 5) + ')' : '');
+}
+
 const cancelledBeforeStart = (error: unknown): boolean => harnessErrorCode(error) === 'HARNESS_CANCELLED_BEFORE_START';
 
 /** User-facing failure: a safe error code plus what to do next. Shared by the session and its host. */
@@ -225,6 +231,7 @@ export class HarnessChatSession {
 			// A confirmed, unchanged plan keeps its version so the approval refers to what the user already reviewed.
 			const plan = extracted.plan && current && samePlanContent(extracted.plan, current) ? current : extracted.plan;
 			this.conversation.messages.push(chatMessage('assistant', extracted.text || this.t('Plan actualizado.'), { provider, plan }));
+			if (outcome.scopeUnscanned?.length) { this.conversation.messages.push(chatMessage('notice', unscannedNotice(this.t, outcome.scopeUnscanned), { tone: 'info', provider })); }
 		} catch (error) {
 			this.conversation.messages.push(chatMessage('notice', this.errorNotice(error), { tone: cancelledBeforeStart(error) ? 'info' : 'error', provider }));
 		} finally {

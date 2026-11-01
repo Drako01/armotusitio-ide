@@ -31,6 +31,8 @@ export interface AgentOutcome {
 	truncated: boolean;
 	scopeViolation?: boolean;
 	scopeVerified?: boolean;
+	/** Folders the sensitive-file scan could not analyze (too large or deep); empty or absent when fully scanned. */
+	scopeUnscanned?: string[];
 	usage?: ProviderUsage;
 	structuredOutput?: boolean;
 	rateLimited?: true;
@@ -158,11 +160,13 @@ export async function executeReviewedAgent(review: AgentReview, current: AgentDr
 				let status: AgentOutcome['status'] = timedOut ? 'timeout' : cancelled ? 'cancelled' : exitCode === 0 && !parsed.providerError && !truncated ? 'passed' : 'failed';
 				let scopeViolation = false;
 				let scopeVerified = false;
+				let scopeUnscanned: string[] | undefined;
 				if (initialScope) {
 					try {
 						const finalScope = await captureAgentScope(canonical);
 						scopeViolation = scopeChanged(initialScope, finalScope);
 						scopeVerified = initialScope.source === 'git' && finalScope.source === 'git';
+						scopeUnscanned = [...new Set([...initialScope.unscanned, ...finalScope.unscanned])].sort();
 						if (scopeViolation) { status = 'failed'; }
 					} catch {
 						// Fail closed: a reader that cannot be checked is never reported as successful.
@@ -172,7 +176,7 @@ export async function executeReviewedAgent(review: AgentReview, current: AgentDr
 				resolve({
 					status, exitCode, durationMs: Date.now() - started, truncated,
 					output: redactSecrets(parsed.structured ? parsed.message : stdout + (stderr ? '\n' + stderr : '')),
-					scopeViolation, scopeVerified, structuredOutput: parsed.structured, usage: parsed.usage,
+					scopeViolation, scopeVerified, ...(scopeUnscanned?.length ? { scopeUnscanned } : {}), structuredOutput: parsed.structured, usage: parsed.usage,
 					...(parsed.rateLimited ? { rateLimited: true as const } : {})
 				});
 			})();
