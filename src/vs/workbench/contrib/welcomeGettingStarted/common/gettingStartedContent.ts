@@ -113,6 +113,17 @@ type GettingStartedStartEntryContent = BuiltinGettingStartedStartEntry[];
 
 export const startEntries: GettingStartedStartEntryContent = [
 	{
+		id: 'armotusitio.openChatHarness',
+		title: localize('gettingStarted.armotusitioChatHarness.title', "Chat Harness"),
+		description: localize('gettingStarted.armotusitioChatHarness.description', "Chat with the AI, plan and run changes with approval"),
+		icon: Codicon.commentDiscussion,
+		when: 'config.atsHarness.enabled',
+		content: {
+			type: 'startEntry',
+			command: 'command:atsIde.chat',
+		}
+	},
+	{
 		id: 'welcome.showNewFileEntries',
 		title: localize('gettingStarted.newFile.title', "New File..."),
 		description: localize('gettingStarted.newFile.description', "Open a new untitled text file, notebook, or custom editor."),

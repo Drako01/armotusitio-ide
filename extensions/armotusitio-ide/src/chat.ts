@@ -193,6 +193,15 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 	const chosenModels = () => Object.fromEntries(Object.entries(models).map(([provider, found]) => [provider, { ...found, selected: vscode.workspace.getConfiguration('atsHarness').get(modelSetting(provider), '') }]));
 	let mcpStatus: { state: string; reason?: string; tools?: number; checkedAt?: string } = { state: 'checking' };
 	let panel, mcpCheck;
+	if (vscode.window?.createStatusBarItem) {
+		const shortcut = vscode.window.createStatusBarItem('atsHarness.chat', vscode.StatusBarAlignment.Left, 19);
+		context.subscriptions.push(shortcut);
+		shortcut.name = t('Chat del Harness'); shortcut.text = '$(comment-discussion) Chat Harness';
+		shortcut.tooltip = t('Conversar con la IA, planificar y ejecutar cambios con aprobaci\u00f3n.'); shortcut.command = 'atsIde.chat';
+		const update = () => vscode.workspace.getConfiguration('atsHarness').get('enabled', true) ? shortcut.show() : shortcut.hide();
+		update();
+		context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => { if (event.affectsConfiguration('atsHarness.enabled')) { update(); } }));
+	}
 	if (vscode.chat?.createChatParticipant) {
 		const participant = vscode.chat.createChatParticipant('atsIde.harness', async (request, _context, stream, token) => {
 			const output = await handle((request.command ? request.command + ' ' : '') + request.prompt, token);

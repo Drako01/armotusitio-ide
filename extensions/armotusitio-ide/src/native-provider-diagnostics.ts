@@ -18,7 +18,8 @@ export interface ProviderDiagnostic {
 	missingFlags: string[];
 	reason: 'cli-found' | 'cli-unavailable' | 'version-command-failed';
 }
-const VERSION_TIMEOUT = 5000;
+/** Codex 0.160 takes 3-4 s just to start on Windows; under startup load 5 s reported an installed CLI as missing. */
+const VERSION_TIMEOUT = 20000;
 const MAX_CAPTURE = 4096;
 const MAX_HELP = 64 * 1024;
 /**
