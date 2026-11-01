@@ -100,3 +100,38 @@ summary:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-of
 #task-composer > summary { font-weight: 500; }
 #task-composer section { margin-top: 16px; }
 @media (max-width: 360px) { .local-task-row { align-items: flex-start; flex-direction: column; gap: 8px; } }
+
+/* Inicio control center (block AC): whitespace over boxes, color only for state, works at 300px. */
+.workspace-header { gap: 10px; margin-bottom: 20px; }
+.workspace-header h1 { font-size: 20px; margin: 0; letter-spacing: 0; }
+.ask { display: grid; gap: 8px; }
+.ask-title { margin: 0; font-size: 18px; font-weight: 600; }
+.ask textarea, .ask select, #feed-filter { box-sizing: border-box; width: 100%; font: inherit; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, var(--vscode-panel-border)); border-radius: 4px; padding: 8px; }
+.ask textarea { resize: vertical; min-height: 56px; }
+.ask textarea:focus-visible, .ask select:focus-visible, #feed-filter:focus-visible { outline: 2px solid var(--vscode-focusBorder); outline-offset: 1px; }
+.ask-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.ask-row p { margin: 0; font-size: 12px; }
+.feed-section { margin-top: 28px; }
+.feed-section h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--vscode-descriptionForeground); margin-bottom: 8px; }
+.feed-section.attention h2 { color: var(--vscode-editorWarning-foreground); }
+.feed-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+.feed-item { display: grid; gap: 4px; padding: 8px 0 8px 10px; border-left: 3px solid var(--vscode-panel-border); }
+.feed-item.needs { border-left-color: var(--vscode-editorWarning-foreground); }
+.feed-item.state-running { border-left-color: var(--vscode-progressBar-background); }
+.feed-item.state-failed, .feed-item.state-blocked { border-left-color: var(--vscode-errorForeground); }
+.feed-item.state-completed { border-left-color: var(--vscode-testing-iconPassed, var(--vscode-panel-border)); }
+.feed-item.stale { opacity: .7; }
+.feed-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; min-width: 0; }
+.feed-state { font-size: 12px; font-weight: 600; white-space: nowrap; }
+.feed-title { font-weight: 600; overflow-wrap: anywhere; }
+.feed-meta { margin: 0; font-size: 12px; overflow-wrap: anywhere; }
+.feed-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.feed-actions button { min-height: 26px; padding: 3px 10px; }
+.feed-empty { margin: 0; }
+#feed-filter { margin-bottom: 8px; }
+.project-strip { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 28px; }
+.project-chip { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); }
+.project-chip.warning { background: transparent; color: var(--vscode-editorWarning-foreground); border: 1px solid currentColor; }
+.more { margin-top: 28px; }
+.more > summary { cursor: pointer; color: var(--vscode-descriptionForeground); }
+@media (max-width: 420px) { main { padding: 16px 12px; } }

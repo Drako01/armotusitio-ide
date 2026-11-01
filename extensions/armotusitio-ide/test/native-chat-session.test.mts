@@ -10,10 +10,12 @@ import * as path from 'node:path';
 import { ChatStore, type ChatProjectContext } from '../src/native-chat.ts';
 import { HarnessChatSession, type ChatRuntime, type ChatSnapshot } from '../src/native-chat-session.ts';
 import type { AgentOutcome } from '../src/native-agent-execution.ts';
+import type { RunDiffSummary } from '../src/native-run-diff.ts';
 
 const t = (text: string, ...args: string[]) => text.replace(/\{(\d+)\}/g, (_, index) => args[Number(index)]);
 const outcome = (output: string, status: AgentOutcome['status'] = 'passed'): AgentOutcome => ({ status, exitCode: status === 'passed' ? 0 : 1, durationMs: 5, output, truncated: false });
 const plan = (title: string, steps: string[]) => '```harness-plan\n' + JSON.stringify({ title, summary: 'Resumen', steps }) + '\n```';
+const changed = (...files: string[]): RunDiffSummary => ({ available: true, files: files.map(file => ({ path: file, change: 'modified' as const, preexisting: false })), count: files.length });
 
 /** Scripted provider used only in tests: records every call so the Send/Approve boundary can be asserted. */
 function scripted(replies: Array<string | AgentOutcome>, context: Partial<ChatProjectContext> = {}) {
@@ -30,8 +32,8 @@ function scripted(replies: Array<string | AgentOutcome>, context: Partial<ChatPr
 		async implement(request, hooks, signal) {
 			calls.push({ kind: 'implement', provider: request.provider, instruction: request.instruction });
 			hooks.started(() => undefined); hooks.stage('verifying'); hooks.gates([{ id: 'unit', status: 'running' }]);
-			if (signal.aborted) { return { agent: outcome('', 'cancelled'), verification: { status: 'skipped', gates: [] } }; }
-			return { agent: outcome('Archivos: src/clients.ts'), verification: { status: 'passed', gates: [{ id: 'unit', status: 'passed' }] } };
+			if (signal.aborted) { return { agent: outcome('', 'cancelled'), verification: { status: 'skipped', gates: [] }, diff: changed() }; }
+			return { agent: outcome('Archivos: src/clients.ts'), verification: { status: 'passed', gates: [{ id: 'unit', status: 'passed' }] }, diff: changed('src/clients.ts') };
 		}
 	};
 	return { runtime, calls, setWriter: (value: boolean) => { writer = value; } };
@@ -154,10 +156,10 @@ test('cancelling an execution aborts the runtime signal and records the cancelle
 			hooks.started(() => undefined);
 			s.chat.cancel();
 			aborted = signal.aborted;
-			return { agent: outcome('', 'cancelled'), verification: { status: 'skipped', gates: [] } };
+			return { agent: outcome('', 'cancelled'), verification: { status: 'skipped', gates: [] }, diff: changed() };
 		};
 		await s.chat.approve(s.chat.snapshot().plan!.digest);
-		assert.deepEqual({ aborted, status: s.chat.snapshot().messages.at(-1)!.run?.status, busy: s.chat.busy }, { aborted: true, status: 'cancelled', busy: false });
+		assert.deepEqual({ aborted, status: s.chat.snapshot().messages.at(-1)!.run?.status, kind: s.chat.snapshot().messages.at(-1)!.run?.outcome?.kind, busy: s.chat.busy }, { aborted: true, status: 'cancelled', kind: 'unchanged', busy: false });
 	} finally { await s.cleanup(); }
 });
 
@@ -274,19 +276,69 @@ test('streamed partial messages are shown while thinking but never persisted', a
 	} finally { await s.cleanup(); }
 });
 
-test('review #1: a writer that changed files cannot be applied again even when verification failed', async () => {
+test('only a completed run applies a plan: failed verification and unchanged runs can be retried', async () => {
 	const s = await session([plan('Plan', ['Paso'])]);
 	try {
 		await s.chat.send('Plan');
-		s.runtime.implement = async (_request, hooks) => {
-			hooks.started(() => undefined);
-			return { agent: outcome('Edit\u00e9 AGENTS.md'), verification: { status: 'failed', gates: [], error: 'HARNESS_OPERATION_FAILED' } };
-		};
+		const results = [
+			{ agent: outcome('Edit\u00e9 AGENTS.md'), verification: { status: 'failed' as const, gates: [], error: 'HARNESS_OPERATION_FAILED' }, diff: changed('AGENTS.md') },
+			{ agent: outcome('No hizo falta cambiar nada'), verification: { status: 'passed' as const, gates: [] }, diff: changed() },
+			{ agent: outcome('Listo'), verification: { status: 'passed' as const, gates: [] }, diff: changed('AGENTS.md') }
+		];
+		s.runtime.implement = async (_request, hooks) => { hooks.started(() => undefined); return results.shift()!; };
+		const kinds: Array<{ kind?: string; approvable?: boolean; retryable?: boolean }> = [];
+		for (let attempt = 0; attempt < 3; attempt++) {
+			await s.chat.approve(s.chat.snapshot().plan!.digest);
+			const state = s.chat.snapshot();
+			kinds.push({ kind: state.messages.at(-1)!.run?.outcome?.kind, approvable: state.plan?.approvable, retryable: state.run?.retryable });
+		}
+		assert.deepEqual({ kinds, reason: /ya se aplic/.test(s.chat.snapshot().plan?.blockedReason ?? '') }, {
+			kinds: [{ kind: 'failed', approvable: true, retryable: true }, { kind: 'unchanged', approvable: true, retryable: true }, { kind: 'completed', approvable: false, retryable: false }],
+			reason: true
+		});
+	} finally { await s.cleanup(); }
+});
+
+test('a run stopped by its turn budget is partial and Continue resumes the Claude session without a new approval', async () => {
+	const session_id = '8b725e4b-cd27-430d-beca-a8a5e83257b3';
+	const s = await session([plan('Cobertura', ['Tests de identity'])]);
+	try {
+		await s.chat.send('Sub\u00ed la cobertura');
+		const requests: Array<{ instruction: string; resumeSession?: string }> = [];
+		const results = [
+			{ agent: { ...outcome('Voy por la mitad', 'failed'), stopReason: 'max-turns' as const, sessionId: session_id }, verification: { status: 'skipped' as const, gates: [] }, diff: changed('identity_test.go') },
+			{ agent: outcome('Informe final'), verification: { status: 'passed' as const, gates: [] }, diff: changed('identity_test.go', 'services_test.go') }
+		];
+		s.runtime.implement = async (request, hooks) => { requests.push({ instruction: request.instruction, resumeSession: request.resumeSession }); hooks.started(() => undefined); return results.shift()!; };
 		await s.chat.approve(s.chat.snapshot().plan!.digest);
-		const run = s.chat.snapshot().messages.at(-1)!;
-		const state = s.chat.snapshot().plan!;
-		assert.deepEqual({ report: run.text, status: run.run?.status, agent: run.run?.agentStatus, approvable: state.approvable, reason: /ya se aplic/.test(state.blockedReason ?? '') },
-			{ report: 'Edit\u00e9 AGENTS.md', status: 'failed', agent: 'passed', approvable: false, reason: true });
+		const partial = s.chat.snapshot();
+		const runId = partial.run!.messageId;
+		assert.deepEqual({ kind: partial.messages.at(-1)!.run?.outcome?.kind, reason: partial.messages.at(-1)!.run?.outcome?.reason, files: partial.messages.at(-1)!.run?.outcome?.diff.count, run: partial.run, approvable: partial.plan?.approvable },
+			{ kind: 'partial', reason: 'max-turns', files: 1, run: { messageId: runId, continuable: true, retryable: true, discardable: false }, approvable: true });
+		await s.chat.continueRun(runId);
+		const done = s.chat.snapshot();
+		assert.deepEqual({ resumed: requests[1].resumeSession, short: /^Continue implementing the approved plan v1/.test(requests[1].instruction), kind: done.messages.at(-1)!.run?.outcome?.kind, continued: done.messages.at(-1)!.run?.continued, approvable: done.plan?.approvable },
+			{ resumed: session_id, short: true, kind: 'completed', continued: true, approvable: false });
+		// A run that is no longer the latest one cannot be continued.
+		await assert.rejects(s.chat.continueRun(runId), /HARNESS_CHAT_RUN_NOT_CONTINUABLE/);
+	} finally { await s.cleanup(); }
+});
+
+test('Continue with another provider starts a fresh run that lists the files already changed', async () => {
+	const s = await session([plan('Cobertura', ['Tests'])]);
+	try {
+		await s.chat.send('Sub\u00ed la cobertura');
+		const requests: Array<{ instruction: string; resumeSession?: string }> = [];
+		const results = [
+			{ agent: outcome('', 'timeout'), verification: { status: 'skipped' as const, gates: [] }, diff: changed('a_test.go') },
+			{ agent: outcome('Listo'), verification: { status: 'passed' as const, gates: [] }, diff: changed('b_test.go') }
+		];
+		s.runtime.implement = async (request, hooks) => { requests.push({ instruction: request.instruction, resumeSession: request.resumeSession }); hooks.started(() => undefined); return results.shift()!; };
+		await s.chat.approve(s.chat.snapshot().plan!.digest);
+		await s.chat.selectProvider('codex');
+		await s.chat.continueRun(s.chat.snapshot().run!.messageId);
+		assert.deepEqual({ resumed: requests[1].resumeSession, plan: /Implement the approved plan v1/.test(requests[1].instruction), files: /reached the time limit[\s\S]*- a_test\.go \(modified\)/.test(requests[1].instruction) },
+			{ resumed: undefined, plan: true, files: true });
 	} finally { await s.cleanup(); }
 });
 

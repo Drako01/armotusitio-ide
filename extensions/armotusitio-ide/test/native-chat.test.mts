@@ -18,6 +18,24 @@ const context: ChatProjectContext = {
 };
 const block = (value: object) => '```harness-plan\n' + JSON.stringify(value) + '\n```';
 
+test('the current message is always sent whole: project detail and history give way to it, never the reverse', () => {
+	// The reported case: a 3.4 KB message in a project with many skills and guides, on the smallest budget.
+	const crowded: ChatProjectContext = {
+		...context, guides: Array.from({ length: 30 }, (_, index) => 'docs/guide-' + index + '.md'),
+		skills: Array.from({ length: 80 }, (_, index) => ({ name: 'redevent-skill-' + index, source: '.agents/skills' }))
+	};
+	const message = 'Plan de cobertura: ' + 'tanda con tests de caracterización '.repeat(95);
+	const history = [...Array.from({ length: 40 }, (_, index) => chatMessage(index % 2 ? 'assistant' : 'user', 'mensaje anterior ' + index + ' ' + 'x'.repeat(900))), chatMessage('user', message)];
+	const small = buildConversationInstruction(history, crowded);
+	const large = buildConversationInstruction(history, { ...crowded, promptBudget: 64 * 1024 });
+	assert.deepEqual({
+		whole: small.endsWith('[user] ' + message), fits: Buffer.byteLength(small, 'utf8') <= 13 * 1024, compact: small.includes('(+40 more)'),
+		largeKeepsDetail: large.includes('.agents/skills/redevent-skill-79/SKILL.md'), largeHasMoreHistory: large.split('mensaje anterior').length > small.split('mensaje anterior').length
+	}, { whole: true, fits: true, compact: true, largeKeepsDetail: true, largeHasMoreHistory: true });
+	// Only a message that cannot fit even alone is rejected.
+	assert.throws(() => buildConversationInstruction([chatMessage('user', 'z'.repeat(14 * 1024))], crowded), /HARNESS_CHAT_MESSAGE_TOO_LARGE/);
+});
+
 test('assistant answers keep Markdown visible and expose only the last valid versioned plan', () => {
 	const answer = 'Te propongo esto:\n\n' + block({ title: 'Draft', steps: ['a'] }) + '\n\nY ajustado:\n' +
 		block({ title: 'CRUD de clientes', summary: 'API y UI', steps: ['Modelo', 'Endpoints'], files: ['src/clients.ts'], skills: ['api'] }) +

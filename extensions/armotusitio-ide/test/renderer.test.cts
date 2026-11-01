@@ -20,14 +20,15 @@ async function main() {
 	const vscode = { l10n: { t: value => value }, ViewColumn: { One: 1 }, Uri: { joinPath: (base, ...parts) => base + '/' + parts.join('/') }, workspace: { isTrusted: true, onDidGrantWorkspaceTrust: noop }, window: { createWebviewPanel: () => panel }, commands: { registerCommand: (id, fn) => { commands.set(id, fn); return noop(); }, executeCommand() { } } };
 	const workspace = { views: () => [], toolResult: () => undefined, receive: async () => false };
 	const module = { exports: {} };
-	vm.runInNewContext(fs.readFileSync(path.join(root, 'src/home.ts'), 'utf8'), { module, require: name => name === 'vscode' ? vscode : name === './workspace.ts' ? { createWorkspace: () => workspace } : require(name) });
+	vm.runInNewContext(fs.readFileSync(path.join(root, 'src/home.ts'), 'utf8'), { module, require: name => name === 'vscode' ? vscode : name === './home-labels.ts' ? require('../src/home-labels.ts') : name === './workspace.ts' ? { createWorkspace: () => workspace } : require(name) });
 	module.exports.registerHome({ extensionUri: 'https://audit.invalid', subscriptions: [] }, { getProvider: async () => ({ label: 'Codex', supported: true }), getHistory: () => [], progress: [], onDidChangeTreeData: noop }, async () => [{ profile: { id: 'redevent', name: 'RedEvent', root: '/repo', actions: [], workflow: true, tools: [] } }]);
 	commands.get('atsIde.home')(); await receive({ action: 'ready' });
 	let html = panel.webview.html.replace(/<meta http-equiv="Content-Security-Policy"[^>]*>/, '').replace(/<script[^>]*src=[^>]*><\/script>/g, '').replace(/<link[^>]*>/g, '');
 	html = html.replace('</head>', '<style>:root{--vscode-editor-background:#181818;--vscode-editor-foreground:#ddd;--vscode-descriptionForeground:#aaa;--vscode-panel-border:#333;--vscode-font-family:Segoe UI;--vscode-button-background:#0078d4;--vscode-button-foreground:white;--vscode-button-secondaryBackground:#333;--vscode-input-background:#222;--vscode-input-foreground:#eee;--vscode-progressBar-background:#0078d4;--vscode-editorWarning-foreground:#d7ba7d;--vscode-textLink-foreground:#4daafc}' + fs.readFileSync(path.join(root, 'resources/home.css'), 'utf8') + '</style></head>');
 	html = html.replace(/<img[^>]*>/g, '');
 	const sources = Object.fromEntries(['home', 'workflow', 'tools', 'reconcile'].map(name => ['./' + name + '.ts', stripTypeScriptTypes(fs.readFileSync(path.join(root, 'resources/' + name + '.ts'), 'utf8'))]));
-	sources['../src/presentation.ts'] = stripTypeScriptTypes(fs.readFileSync(path.join(root, 'src/presentation.ts'), 'utf8'));
+	sources['./home/feed.ts'] = stripTypeScriptTypes(fs.readFileSync(path.join(root, 'resources/home/feed.ts'), 'utf8'));
+	sources['../src/presentation.ts'] =stripTypeScriptTypes(fs.readFileSync(path.join(root, 'src/presentation.ts'), 'utf8'));
 	const browser = await chromium.launch({ headless: true, ...(process.env.ATS_TEST_BROWSER ? { executablePath: process.env.ATS_TEST_BROWSER } : process.platform === 'win32' ? { executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe' } : { channel: 'chrome' }) });
 	const results = [];
 	try {
@@ -39,6 +40,8 @@ async function main() {
 			const cache = {};
 			const load = name => { if (cache[name]) { return cache[name].exports; } const module = { exports: {} }; cache[name] = module; new Function('module', 'require', sources[name])(module, load); return module.exports; };
 			load('./home.ts');
+			// The task form and its history live under "Más" since Inicio became the control center.
+			(document.getElementById('more') as HTMLDetailsElement).open = true;
 		}, sources);
 		const push = async () => { await page.evaluate(value => window.postMessage(value, '*'), state); await page.evaluate(() => new Promise(resolve => requestAnimationFrame(resolve))); };
 		const entry = { id: 'active', nativeId: 'native-active', title: 'Tarea activa de auditor\u00eda', project: '/repo', phase: 'running', host: 'codex', owned: true, checkedAt: Date.now(), questions: [], warnings: [{ id: 'dirty-tree', blocking: false, message: 'Synthetic warning', hint: 'Review local changes' }], progress: { state: 'running', live: true, percent: 63, nodes: [{ id: 'reviewer', agent: 'reviewer', status: 'running' }] } };

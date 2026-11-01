@@ -6,7 +6,7 @@
   "publisher": "armotusitio",
   "license": "MIT",
   "engines": {
-    "vscode": "^1.143.0"
+    "vscode": "^1.144.0"
   },
   "main": "./dist/extension.js",
   "activationEvents": [
@@ -145,6 +145,72 @@
           "scope": "application",
           "description": "Permite que el Chat Harness modifique proyectos con Harness propio solo mientras el motor del proyecto confirme un lease exclusivo de escritura (protocolo v2). Si el motor no lo declara, lo ignora o crea tareas durante la ejecucion, la escritura se rechaza o se informa como violacion. Desactivado por defecto."
         },
+        "atsHarness.implementerMaxTurns": {
+          "type": "integer",
+          "default": 50,
+          "minimum": 10,
+          "maximum": 150,
+          "scope": "application",
+          "description": "Turnos maximos de Claude Code al ejecutar un plan aprobado. El tope de 30 minutos por ejecucion es fijo; si una ejecucion se corta por turnos o por tiempo queda como Parcial y se puede Continuar sin volver a aprobar."
+        },
+        "atsHarness.redisUrl": {
+          "type": "string",
+          "default": "",
+          "scope": "application",
+          "description": "Redis opcional para la cache de verificaciones (solo loopback, sin credenciales), por ejemplo redis://127.0.0.1:16379. Vacio: se usa HARNESS_REDIS_URL o el primer Redis local que responda; sin Redis, la cache usa disco."
+        },
+        "atsHarness.redisCandidates": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["127.0.0.1:6379", "127.0.0.1:16379", "127.0.0.1:56379"],
+          "scope": "application",
+          "description": "Puertos locales donde buscar Redis, en orden. Se usa el primero que responda PING sin pedir contrasena."
+        },
+        "atsHarness.notifyWebhook": {
+          "type": "string",
+          "default": "",
+          "scope": "application",
+          "description": "Webhook https opcional para recibir avisos en el celular (objetivo terminado, necesita una respuesta, proceso trabado). Solo se envian titulo y estado, nunca codigo, rutas ni salida."
+        },
+        "atsHarness.stallMinutes": {
+          "type": "integer",
+          "default": 15,
+          "minimum": 1,
+          "maximum": 240,
+          "scope": "application",
+          "description": "Minutos sin salida ni progreso tras los cuales un proceso largo se marca como trabado en Inicio."
+        },
+        "atsHarness.goalReservePercent": {
+          "type": "integer",
+          "default": 20,
+          "minimum": 0,
+          "maximum": 90,
+          "scope": "application",
+          "description": "Porcentaje del cupo local de llamadas que los objetivos autonomos nunca consumen, para que puedas seguir trabajando a mano."
+        },
+        "atsHarness.goalProvider": {
+          "type": "string",
+          "enum": ["claude", "codex"],
+          "default": "claude",
+          "scope": "application",
+          "description": "Proveedor principal de los objetivos autonomos. El revisor usa el otro proveedor cuando esta disponible."
+        },
+        "atsHarness.agentCommands.allow": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "maxItems": 50,
+          "scope": "application",
+          "description": "Comandos extra que el agente puede ejecutar ademas de los presets por ecosistema, como \"make test\" o \"just\". Siempre dentro del piso del IDE: nunca habilita shell, codigo inline, git que modifique, publicar, red ni borrados. Solo en la configuracion de Usuario, para que un repositorio no pueda ampliarlo."
+        },
+        "atsHarness.promptBudgetKiB": {
+          "type": "integer",
+          "default": 64,
+          "minimum": 13,
+          "maximum": 256,
+          "scope": "application",
+          "description": "Tamano maximo, en KiB, de la instruccion que el Chat Harness envia a la IA. Tu mensaje actual siempre se envia completo; el historial antiguo y el detalle de skills y guias se resumen para entrar en este presupuesto."
+        },
         "atsHarness.providerCallsPer24h": {
           "type": "integer",
           "default": 0,
@@ -230,6 +296,38 @@
       {
         "command": "atsHarness.nativeAgentExecute",
         "title": "ArmoTuSitio: Ejecutar agente IA con autorización"
+      },
+      {
+        "command": "atsHarness.goal",
+        "title": "ArmoTuSitio: Iniciar objetivo autónomo"
+      },
+      {
+        "command": "atsHarness.devSecrets",
+        "title": "ArmoTuSitio: Secretos de desarrollo para tests"
+      },
+      {
+        "command": "atsHarness.webSearch",
+        "title": "ArmoTuSitio: Búsqueda web del agente en este proyecto"
+      },
+      {
+        "command": "atsHarness.diagnoseProject",
+        "title": "ArmoTuSitio: Diagnosticar Harness del proyecto"
+      },
+      {
+        "command": "atsHarness.machineDoctor",
+        "title": "ArmoTuSitio: Médico de la máquina"
+      },
+      {
+        "command": "atsHarness.decisions",
+        "title": "ArmoTuSitio: Decisiones del proyecto"
+      },
+      {
+        "command": "atsHarness.submitReview",
+        "title": "ArmoTuSitio: Enviar revisión de la entrega"
+      },
+      {
+        "command": "atsHarness.reviewComment",
+        "title": "Comentar"
       },
       {
         "command": "atsHarness.nativeAgentWorkflow",
@@ -412,6 +510,13 @@
       }
     ],
     "menus": {
+      "comments/commentThread/context": [
+        {
+          "command": "atsHarness.reviewComment",
+          "group": "inline",
+          "when": "commentController == atsHarness.review"
+        }
+      ],
       "view/title": [
         {
           "command": "atsHarness.selectProvider",

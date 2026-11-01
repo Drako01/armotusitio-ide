@@ -7,6 +7,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 import { validateNativePlan, type Plan } from './native-harness.ts';
+import { validSessionId } from './native-provider-output.ts';
 
 export type NativeProvider = 'codex' | 'claude';
 /** Per-invocation effort; unsupported combinations are rejected by the selected CLI. */
@@ -23,6 +24,12 @@ export interface AgentDraft {
 	model?: string;
 	/** Explicit reasoning effort; absent preserves the provider CLI setting. */
 	effort?: NativeEffort;
+	/** Turn budget for Claude (`--max-turns`); absent uses the read-only default. Codex has no turn limit. */
+	maxTurns?: number;
+	/** Claude session to continue with `--resume`; only an implementer can resume, and only its own session. */
+	resumeSession?: string;
+	/** The provider's own web search for this project (decision D9); off when absent. Web fetching is never allowed. */
+	webSearch?: boolean;
 }
 export interface AgentReview {
 	draft: AgentDraft;
@@ -40,7 +47,9 @@ export interface Handoff {
 }
 export interface HandoffPlan { schemaVersion: 1; handoffs: Handoff[] }
 
-const MAX_INSTRUCTION = 16 * 1024;
+/** Largest prompt budget (`atsHarness.promptBudgetKiB`) plus the project references appended to it. */
+const MAX_INSTRUCTION = 320 * 1024;
+export const MAX_AGENT_TURNS = 150;
 const IGNORED = new Set(['node_modules', '.git', '.env', 'dist', 'build', '.harness']);
 const ROLES: readonly AgentRole[] = ['planner', 'implementer', 'reviewer'];
 const PROVIDERS: readonly NativeProvider[] = ['codex', 'claude'];
@@ -72,7 +81,10 @@ export function validateAgentDraft(input: unknown): AgentDraft {
 		|| Buffer.byteLength(value.instruction, 'utf8') > MAX_INSTRUCTION || typeof value.readOnly !== 'boolean'
 		|| value.instruction.includes('\0') || value.projectRoot.includes('\0')
 		|| (value.model !== undefined && !validModel(value.model))
-		|| (value.effort !== undefined && !validEffort(value.provider, value.effort))) {
+		|| (value.effort !== undefined && !validEffort(value.provider, value.effort))
+		|| (value.maxTurns !== undefined && (!Number.isSafeInteger(value.maxTurns) || value.maxTurns < 1 || value.maxTurns > MAX_AGENT_TURNS))
+		|| (value.resumeSession !== undefined && (!validSessionId(value.resumeSession) || value.provider !== 'claude' || value.role !== 'implementer'))
+		|| (value.webSearch !== undefined && typeof value.webSearch !== 'boolean')) {
 		throw Error('HARNESS_AGENT_DRAFT_SCHEMA');
 	}
 	return value;

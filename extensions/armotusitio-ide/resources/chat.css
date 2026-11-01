@@ -115,8 +115,12 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, .log:focus-v
 .plan-footer .muted { margin: 8px 0 0; font-size: .9em; }
 .approve { font-weight: 600; }
 .badge, .status-badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: .8em; font-weight: 600; background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); }
-.status-badge.passed { background: var(--chat-ok); color: var(--vscode-editor-background); }
-.status-badge.failed, .status-badge.timeout { background: var(--chat-error); color: var(--vscode-editor-background); }
+.status-badge.passed, .status-badge.completed { background: var(--chat-ok); color: var(--vscode-editor-background); }
+.status-badge.failed, .status-badge.timeout, .status-badge.blocked { background: var(--chat-error); color: var(--vscode-editor-background); }
+.status-badge.partial { background: var(--chat-warning); color: var(--vscode-editor-background); }
+.run-files { margin: 8px 0; }
+.run-files summary { cursor: pointer; color: var(--chat-muted); }
+.run-actions:empty { display: none; }
 .run-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .run-summary { margin-bottom: 10px; }
 .error-text { color: var(--chat-error); }

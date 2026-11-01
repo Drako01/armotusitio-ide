@@ -6,15 +6,24 @@
 const vscode = require('vscode');
 const { randomBytes } = require('node:crypto');
 const { createWorkspace } = require('./workspace.ts');
+const { inicioLabels } = require('./home-labels.ts');
 
-/** Register a local operations overview backed by the existing harness controller. */
-function registerHome(context, controller, projects) {
+/**
+ * Inicio: the Harness control center. The top answers what is running, what needs you and how to ask for something;
+ * it reads the shared activity feed and acts through the chat's own methods. Earlier tools live under "Mas".
+ */
+function registerHome(context, controller, projects, options) {
 	let panel;
 	let updateRevision = 0;
 	let draft;
 	let reveal;
-	const t = message => vscode.l10n.t(message);
+	const t = (message, ...args) => vscode.l10n.t(message, ...args);
+	const { feed, chat } = options || {};
 	const workspace = createWorkspace(context, controller, projects);
+	const folders = () => (vscode.workspace.workspaceFolders || []).map(folder => ({ name: folder.name, id: folder.uri.toString() }));
+	/** Feed changes arrive at most four times per second and carry only the items, not the whole page state. */
+	const postFeed = () => { void panel?.webview.postMessage({ type: 'feed', items: feed?.snapshot() || [] }); };
+	if (feed) { context.subscriptions.push(feed.onDidChange(postFeed)); }
 	controller.restoreHarnessDraft = (root, text) => panel?.webview.postMessage({ type: 'restoreDraft', root, text });
 	controller.openTask = prompt => vscode.commands.executeCommand('atsIde.home', { prompt });
 	async function update() {
@@ -26,6 +35,7 @@ function registerHome(context, controller, projects) {
 		if (!panel || revision !== updateRevision) { return; }
 		void panel.webview.postMessage({
 			type: 'state', preferences: controller.getHarnessPreferences?.(), draftPersistence: controller.canPersistHarnessDrafts === true, trusted: vscode.workspace.isTrusted,
+			inicio: inicioLabels(t), folders: folders(), activity: feed?.snapshot() || [],
 			labels: {
 				toolReady: t('Resultado disponible'), toolSearch: t('Buscar por tarea o \u00e1rea'), toolShowing: t('Tareas mostradas'), toolOpenTask: t('Ver progreso'), toolRegisteredActive: t('Activa en el registro \u00b7 consult\u00e1 el progreso para comprobar su ejecuci\u00f3n'),
 				toolGroups: { tasks: t('Tareas'), quality: t('Calidad y diagn\u00f3stico'), context: t('Contexto y agentes'), performance: t('Rendimiento'), maintenance: t('Mantenimiento') },
@@ -50,7 +60,7 @@ function registerHome(context, controller, projects) {
 	}
 	context.subscriptions.push(vscode.commands.registerCommand('atsIde.home', (options = undefined) => {
 		if (typeof options?.task === 'string' && typeof options?.root === 'string') { reveal = { type: 'reveal', id: options.task, project: options.root }; }
-		if (typeof options?.prompt === 'string' && options.prompt.length <= 32000) { draft = options.prompt; }
+		if (typeof options?.prompt === 'string' && options.prompt.length <= 10000) { draft = options.prompt; }
 		if (panel) { panel.reveal(); if (reveal) { void panel.webview.postMessage(reveal); reveal = undefined; } if (draft) { void panel.webview.postMessage({ type: 'draft', text: draft }); draft = undefined; } update(); return; }
 		const resources = vscode.Uri.joinPath(context.extensionUri, 'resources');
 		panel = vscode.window.createWebviewPanel('atsIde.home', t('Inicio \u00b7 ArmotuSitio IDE'), vscode.ViewColumn.One, {
@@ -64,8 +74,14 @@ function registerHome(context, controller, projects) {
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${current.webview.cspSource}; style-src ${current.webview.cspSource}; script-src 'nonce-${nonce}';">
 <link rel="stylesheet" href="${uri('home.css')}"><title>ArmotuSitio IDE</title></head>
 <body><main>
-<header class="workspace-header"><img src="${uri('logo.png')}" alt="ArmotuSitio" width="32" height="32"><div><p class="eyebrow">ARMOTUSITIO IDE</p><h1>${t('Harness')}</h1><p class="subtitle">${t('Eleg\u00ed un proyecto, prepar\u00e1 tu tarea y segu\u00ed el resultado.')}</p></div></header>
+<header class="workspace-header"><img src="${uri('logo.png')}" alt="ArmotuSitio" width="24" height="24"><h1>${t('Harness')}</h1></header>
 <p id="trust" class="notice" role="status" hidden></p>
+<form id="ask" class="ask" aria-labelledby="ask-title"><h2 id="ask-title" class="ask-title"></h2><div id="ask-project"></div><textarea id="ask-text" rows="2"></textarea><div class="ask-row"><p id="ask-hint" class="muted"></p><button id="ask-send" type="submit"></button></div></form>
+<section id="feed-attention" class="feed-section attention" aria-labelledby="feed-attention-title" hidden><h2 id="feed-attention-title"></h2><ul class="feed-list"></ul></section>
+<section id="feed-now" class="feed-section" aria-labelledby="feed-now-title"><h2 id="feed-now-title"></h2><ul class="feed-list" aria-live="polite"></ul></section>
+<section id="feed-recent" class="feed-section" aria-labelledby="feed-recent-title"><h2 id="feed-recent-title"></h2><input id="feed-filter" type="search" hidden><ul class="feed-list"></ul></section>
+<nav id="project-strip" class="project-strip" aria-label="${t('Proyectos')}"></nav>
+<details id="more" class="more"><summary>${t('M\u00e1s')}</summary>
 <section aria-labelledby="projects-title"><div class="section-heading"><h2 id="projects-title">${t('Tus proyectos')}</h2><span class="muted">${t('Harness local')}</span></div><div id="projects"></div></section>
 
 <details id="task-composer"><summary>${t('Preparar una tarea')}</summary><section aria-labelledby="task-title"><h2 id="task-title">${t('Describ\u00ed lo que necesit\u00e1s')}</h2><p class="muted">${t('Primero se prepara un plan. La ejecuci\u00f3n requiere tu aprobaci\u00f3n.')}</p>
@@ -75,7 +91,7 @@ function registerHome(context, controller, projects) {
 <button id="prepare-task" type="submit">${t('Preparar tarea')}</button><p id="task-feedback" role="status" aria-live="polite"></p></form></section>
 </details>
 <section aria-labelledby="activity-title"><div class="section-heading"><h2 id="activity-title">${t('Tus tareas')}</h2><button type="button" class="secondary icon-button" data-action="refresh" title="${t('Actualizar estado')}" aria-label="${t('Actualizar estado')}"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16"><path fill="currentColor" d="M13 2v4H9l1.5-1.5A4.5 4.5 0 1 0 12.4 9h1A5.5 5.5 0 1 1 11.2 3.8L13 2Z"/></svg></button></div><div id="workflow-runs" aria-live="polite"></div></section>
-<details class="advanced"><summary>${t('Herramientas avanzadas e integraciones')}</summary>
+<details class="advanced"><summary>${t('Herramientas avanzadas e integraciones')}</summary><p class="muted">${t('Tambi\u00e9n est\u00e1n en la paleta de comandos (ArmoTuSitio: …).')}</p>
 <section aria-labelledby="native-tools-title"><h2 id="native-tools-title">${t('Herramientas del Harness')}</h2><form id="native-tools"><label for="tool-project">${t('Proyecto')}<select id="tool-project"></select></label><label for="tool-choice">${t('\u00bfQu\u00e9 necesit\u00e1s hacer?')}<select id="tool-choice"></select></label><p id="tool-description" class="muted"></p><label id="tool-task-label" for="tool-task" hidden>${t('Identificador de la tarea')}<input id="tool-task" maxlength="100" placeholder="20261024-\u2026"></label><label id="tool-host-label" for="tool-host" hidden>${t('IA que quer\u00e9s probar')}<select id="tool-host"><option value="codex">Codex</option><option value="claude">Claude Code</option></select></label><button id="tool-run" type="submit">${t('Abrir herramienta')}</button></form><div id="tool-result" aria-live="polite"></div></section>
 <div class="toolbar"><button data-action="open">${t('Abrir un proyecto')}</button><button class="secondary" data-action="theme">${t('Cambiar tema')}</button><button class="secondary" data-action="refresh">${t('Actualizar')}</button></div>
 
@@ -92,11 +108,25 @@ function registerHome(context, controller, projects) {
 </div></section>
 <section aria-labelledby="progress-title"><h2 id="progress-title">${t('Progreso del Harness')}</h2><div id="progress" aria-live="polite"></div></section>
 <section aria-labelledby="runs-title"><div class="section-heading"><h2 id="runs-title">${t('Historial de tareas del IDE')}</h2><div class="actions"><button class="secondary" data-action="clear">${t('Borrar historial')}</button><button class="secondary" data-action="cancel">${t('Cancelar una tarea')}</button></div></div><p class="muted">${t('Hasta 20 tareas por proyecto. Se guardan en este workspace, sin logs ni comandos privados.')}</p><div id="runs" role="log" aria-live="polite"></div></section>
-</details><footer>${t('Las tareas usan el Harness del proyecto. Revis\u00e1 el plan antes de ejecutar: los agentes pueden modificar archivos y correr verificaciones.')}</footer>
+</details></details>
 </main><script nonce="${nonce}" src="${current.webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'dist', 'home.js'))}"></script></body></html>`;
 		const disposables = [];
 		disposables.push(current.webview.onDidReceiveMessage(async message => {
 			if (!message || typeof message.action !== 'string') { return; }
+			// The request field and feed actions go through the chat: one circuit, one validation, idempotent actions.
+			if (message.action === 'ask' && typeof message.text === 'string' && typeof message.folder === 'string') {
+				if (!vscode.workspace.isTrusted) { return; }
+				await chat?.ask(message.folder, message.text); return;
+			}
+			if (message.action === 'act' && typeof message.id === 'string' && typeof message.command === 'string') {
+				if (await chat?.act(message.id, message.command)) { return; }
+				if (await controller.goalAct?.(message.id, message.command)) { return; }
+				// Task and external items open their detail, which lives under "Mas".
+				const item = feed?.snapshot().find(entry => entry.id === message.id);
+				if (item?.kind === 'task' && item.parentId) { void panel?.webview.postMessage({ type: 'reveal', id: item.parentId, project: item.project }); }
+				void panel?.webview.postMessage({ type: 'openMore' });
+				return;
+			}
 			if (message.action === 'projectInfo') {
 				const project = (await projects()).find(project => project.profile.root === message.root);
 				if (project?.profile.id === 'project-native') { await vscode.window.showInformationMessage(t('El Harness del proyecto conserva la prioridad. Para usarlo desde el IDE debe ofrecer una entrada y un contrato compatibles. No se modificaron sus archivos.')); }

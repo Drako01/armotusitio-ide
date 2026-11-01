@@ -136,6 +136,13 @@ export async function probeProviderCommandFlags(provider: NativeProvider): Promi
 	return inspectProviderHelp(provider, helps.join('\n'));
 }
 
+/** Whether the installed CLI offers its own web search (decision D9, EC-147): Claude's `WebSearch` tool is built in; Codex documents it in help. */
+export async function probeWebSearch(provider: NativeProvider): Promise<boolean> {
+	if (provider === 'claude') { return true; }
+	const help = await readProviderHelp(provider, ['--help']);
+	return !!help && /--search\b|web_search/.test(help);
+}
+
 export async function diagnoseProvider(provider: NativeProvider): Promise<ProviderDiagnostic> {
 	if (provider !== 'codex' && provider !== 'claude') { throw Error('HARNESS_PROVIDER_UNSUPPORTED'); }
 	let resolved;

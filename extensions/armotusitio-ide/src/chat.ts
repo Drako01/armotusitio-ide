@@ -6,8 +6,9 @@
 const path = require('node:path');
 const fs = require('node:fs/promises');
 const { randomBytes, createHash } = require('node:crypto');
-const { ChatStore, harnessErrorCode } = require('./native-chat.ts');
-const { HarnessChatSession, describeFailure } = require('./native-chat-session.ts');
+const { ChatStore, harnessErrorCode, MAX_USER_MESSAGE_CHARS } = require('./native-chat.ts');
+const { HarnessChatSession, describeFailure, chatActivityItems } = require('./native-chat-session.ts');
+import type { ActivityFeed } from './native-activity-feed.ts';
 const { diagnoseProvider } = require('./native-provider-diagnostics.ts');
 const { listProviderModels } = require('./native-provider-models.ts');
 const { validModel, validEffort } = require('./native-providers.ts');
@@ -23,7 +24,7 @@ function createHandler(vscode, controller, projects, mcp) {
 		const [raw = '', ...words] = text.split(/\s+/);
 		const action = raw.toLowerCase();
 		if (action === 'ayuda' || !action) { return help(); }
-		if (text.length > 10000) { return t('El mensaje es demasiado largo.'); }
+		if (text.length > MAX_USER_MESSAGE_CHARS) { return t('El mensaje es demasiado largo.'); }
 		if (!vscode.workspace.isTrusted) { return t('Marc\u00e1 el workspace como confiable para consultar o ejecutar comandos.'); }
 		try {
 			if (action === 'comandos' && !words.length) {
@@ -145,6 +146,23 @@ function labels(t) {
 		plan: t('Plan v{0}', '{0}'), planSteps: t('Pasos'), planFiles: t('Archivos'), planRisks: t('Riesgos'), planSkills: t('Skills del proyecto'), planVerification: t('Verificaciones autom\u00e1ticas'), planNoVerification: t('Sin verificaciones configuradas. Pod\u00e9s configurarlas con \u00abConfigurar Harness nativo del proyecto\u00bb.'),
 		approve: t('Aprobar y ejecutar'), requestChanges: t('Pedir cambios'), requestPrefix: t('Cambios al plan: '), superseded: t('Reemplazado por una versi\u00f3n m\u00e1s nueva'), approveHint: t('Al aprobar, el agente modifica archivos del proyecto con permisos de escritura acotados y luego corren las verificaciones.'),
 		run: { passed: t('Ejecuci\u00f3n completada'), failed: t('La ejecuci\u00f3n fall\u00f3'), cancelled: t('Ejecuci\u00f3n cancelada'), timeout: t('Tiempo agotado') },
+		outcome: { completed: t('Completada'), partial: t('Parcial'), blocked: t('Bloqueada'), unchanged: t('Sin cambios'), failed: t('Fallida') },
+		outcomeHint: {
+			'max-turns': t('Us\u00f3 todos sus turnos antes de terminar. Continuar retoma desde donde qued\u00f3, sin volver a aprobar.'),
+			timeout: t('Lleg\u00f3 al tope de 30 minutos. Continuar retoma desde donde qued\u00f3, sin volver a aprobar.'),
+			cancelled: t('Se detuvo antes de terminar. Pod\u00e9s continuar desde donde qued\u00f3.'),
+			verification: t('Las verificaciones fallaron. Pod\u00e9s reintentar o pedir cambios al plan.'),
+			provider: t('El proveedor no complet\u00f3 la ejecuci\u00f3n. Pod\u00e9s reintentar o elegir el otro proveedor.'),
+			unchanged: t('Termin\u00f3 sin modificar archivos. El plan sigue aprobable: reintent\u00e1 o ped\u00ed cambios.'),
+			blocked: t('El agente necesita algo que no puede resolver solo: {0}', '{0}'),
+			'web-search-secret': t('Una b\u00fasqueda web inclu\u00eda un secreto y la ejecuci\u00f3n se cort\u00f3. La consulta ya lleg\u00f3 al buscador del proveedor: rot\u00e1 ese secreto.')
+		},
+		searches: t('B\u00fasquedas web de esta ejecuci\u00f3n ({0})', '{0}'),
+		needs: { service: t('un servicio'), credential: t('una credencial'), policy: t('un permiso'), decision: t('una decisi\u00f3n tuya'), toolchain: t('una herramienta'), disk: t('espacio en disco') },
+		changedFiles: t('Archivos que cambi\u00f3 esta ejecuci\u00f3n ({0})', '{0}'), changedMore: t('y {0} m\u00e1s', '{0}'), preexisting: t('ya ten\u00eda cambios tuyos'),
+		change: { added: t('nuevo'), modified: t('modificado'), deleted: t('borrado') },
+		continueRun: t('Continuar'), retry: t('Reintentar'), continuedRun: t('Continuaci\u00f3n'), maxMessageChars: MAX_USER_MESSAGE_CHARS,
+		discardRun: t('Descartar cambios de esta ejecuci\u00f3n'), openHome: t('Ver en Inicio'),
 		gate: { pending: t('Pendiente'), running: t('En curso'), passed: t('Pas\u00f3'), failed: t('Fall\u00f3'), cancelled: t('Cancelada') },
 		verification: t('Verificaciones'), verificationSkipped: t('Sin verificaciones configuradas'), duration: t('Duraci\u00f3n'), copy: t('Copiar'), copied: t('Copiado'),
 		copyMessage: t('Copiar respuesta'), partial: t('Respuesta en curso'), copyCode: t('Copiar c\u00f3digo'), activity: t('Actividad en curso'), idle: t('Sin actividad en curso'), cancelling: t('Deteniendo\u2026'),
@@ -160,7 +178,7 @@ function labels(t) {
  * Standalone conversational panel plus the native chat participant for explicit commands.
  * `options.diagnose` and `options.listModels` are test seams for local CLI diagnostics and model discovery.
  */
-function registerChat(context, controller, projects, mcp, vscode, options: { diagnose?: typeof diagnoseProvider; listModels?: typeof listProviderModels } = {}) {
+function registerChat(context, controller, projects, mcp, vscode, options: { diagnose?: typeof diagnoseProvider; listModels?: typeof listProviderModels; feed?: ActivityFeed } = {}) {
 	const handle = createHandler(vscode, controller, projects, mcp);
 	const t = (message, ...args) => vscode.l10n.t(message, ...args);
 	const diagnose = options.diagnose || diagnoseProvider;
@@ -175,15 +193,6 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 	const chosenModels = () => Object.fromEntries(Object.entries(models).map(([provider, found]) => [provider, { ...found, selected: vscode.workspace.getConfiguration('atsHarness').get(modelSetting(provider), '') }]));
 	let mcpStatus: { state: string; reason?: string; tools?: number; checkedAt?: string } = { state: 'checking' };
 	let panel, mcpCheck;
-	if (vscode.window?.createStatusBarItem) {
-		const shortcut = vscode.window.createStatusBarItem('atsHarness.chat', vscode.StatusBarAlignment.Left, 19);
-		context.subscriptions.push(shortcut);
-		shortcut.name = t('Chat del Harness'); shortcut.text = '$(comment-discussion) Chat Harness';
-		shortcut.tooltip = t('Conversar con la IA, planificar y ejecutar cambios con aprobaci\u00f3n.'); shortcut.command = 'atsIde.chat';
-		const update = () => vscode.workspace.getConfiguration('atsHarness').get('enabled', true) ? shortcut.show() : shortcut.hide();
-		update();
-		context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => { if (event.affectsConfiguration('atsHarness.enabled')) { update(); } }));
-	}
 	if (vscode.chat?.createChatParticipant) {
 		const participant = vscode.chat.createChatParticipant('atsIde.harness', async (request, _context, stream, token) => {
 			const output = await handle((request.command ? request.command + ' ' : '') + request.prompt, token);
@@ -193,6 +202,8 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 		context.subscriptions.push(participant);
 	}
 	const folders = () => vscode.workspace.workspaceFolders || [];
+	/** Short, colon-free key of a folder for feed item ids (`chat:<key>:<suffix>`). */
+	const feedKeyOf = (uri: string): string => createHash('sha256').update(uri).digest('hex').slice(0, 16);
 	const selectedFolder = () => {
 		const saved = context.workspaceState?.get('atsChat.folder');
 		return folders().find(folder => folder.uri.toString() === saved) || folders()[0];
@@ -228,7 +239,16 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 				const runtime = controller.nativeChatRuntime?.(folder);
 				if (!runtime) { throw Error('HARNESS_CHAT_UNAVAILABLE'); }
 				const preferred = providers.claude.status === 'ready' || providers.codex.status !== 'ready' ? 'claude' : 'codex';
-				entry.session = new HarnessChatSession(new ChatStore(directory), runtime, () => { if (selectedFolder()?.uri.toString() === key) { publish(folder); } }, t, preferred);
+				const feedKey = feedKeyOf(key);
+				entry.session = new HarnessChatSession(new ChatStore(directory), runtime, snapshot => {
+					if (selectedFolder()?.uri.toString() === key) { publish(folder); }
+					if (options.feed) {
+						const items = chatActivityItems(snapshot, { key: feedKey, name: folder.name }, t);
+						const ids = new Set(items.map(item => item.id));
+						options.feed.retain(item => !item.id.startsWith('chat:' + feedKey + ':') || ids.has(item.id));
+						for (const item of items) { options.feed.publish(item); }
+					}
+				}, t, preferred);
 				await entry.session.open();
 				entry.loaded = true;
 				return entry;
@@ -294,7 +314,11 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 		try {
 			if (action === 'send' && typeof message.text === 'string') {
 				const text = message.text.trim();
-				if (!text || text.length > 10000) { return; }
+				if (!text) { return; }
+				if (text.length > MAX_USER_MESSAGE_CHARS) {
+					await session.note(t('El mensaje tiene {0} caracteres y el m\u00e1ximo es {1}: sobran {2}. Guard\u00e1 el detalle en un archivo del proyecto y mencion\u00e1 su ruta.', String(text.length), String(MAX_USER_MESSAGE_CHARS), String(text.length - MAX_USER_MESSAGE_CHARS)), 'error');
+					return;
+				}
 				if (text.startsWith('/')) {
 					const source = new vscode.CancellationTokenSource();
 					// A four-backtick fence keeps triple backticks inside command output inert.
@@ -311,6 +335,12 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 				await session.send(text);
 			}
 			if (action === 'approve' && typeof message.digest === 'string' && /^[a-f0-9]{64}$/.test(message.digest)) { await session.approve(message.digest); }
+			if (action === 'continue' && typeof message.messageId === 'string' && message.messageId.length <= 64) { await session.continueRun(message.messageId); }
+			if (action === 'discard' && typeof message.messageId === 'string' && message.messageId.length <= 64) {
+				const confirm = t('Descartar cambios');
+				if (await vscode.window.showWarningMessage(t('\u00bfDescartar los archivos que cambi\u00f3 esta ejecuci\u00f3n? Los que ten\u00edan cambios tuyos no se tocan.'), { modal: true }, confirm) === confirm) { await session.discardRun(message.messageId); }
+			}
+			if (action === 'openHome') { await vscode.commands.executeCommand('atsIde.home'); }
 			if (action === 'cancel') { session.cancel(); }
 			if (action === 'provider' && ['codex', 'claude'].includes(message.provider)) { await session.selectProvider(message.provider); }
 			if (action === 'model' && ['codex', 'claude'].includes(message.provider) && (message.model === '' || validModel(message.model))) {
@@ -347,12 +377,51 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 		void refreshMcp();
 	}));
 	if (vscode.workspace.onDidChangeConfiguration) {
-		context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => { if (panel && ['codex', 'claude'].some(provider => event.affectsConfiguration('atsHarness.' + modelSetting(provider)) || event.affectsConfiguration('atsHarness.' + effortSetting(provider)))) { publish(); } }));
+		context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
+			if (panel && ['codex', 'claude'].some(provider => event.affectsConfiguration('atsHarness.' + modelSetting(provider)) || event.affectsConfiguration('atsHarness.' + effortSetting(provider)))) { publish(); }
+			// Writer settings apply immediately: the plan card re-reads the project facts instead of asking for a reload.
+			if (['atsHarness.coordinatedProjectWriters', 'atsHarness.writerIsolation', 'atsHarness.promptBudgetKiB'].some(setting => event.affectsConfiguration(setting))) {
+				for (const entry of sessions.values()) { if (entry.loaded) { void entry.session.refreshContext(); } }
+			}
+		}));
 	}
 	if (mcp.onDidChange) { context.subscriptions.push(mcp.onDidChange(() => { if (panel) { void refreshMcp(); } })); }
 	if (vscode.workspace.onDidGrantWorkspaceTrust) { context.subscriptions.push(vscode.workspace.onDidGrantWorkspaceTrust(() => { publish(); void receive({ action: 'ready' }); })); }
 	context.subscriptions.push({ dispose() { for (const entry of sessions.values()) { entry.session?.cancel(); } mcpCheck?.cancel(); panel?.dispose(); } });
-	return { receive };
+	/** Select a project in the chat and show it; Inicio uses this so both views share one conversation. */
+	const focus = async folder => {
+		await context.workspaceState?.update('atsChat.folder', folder.uri.toString());
+		await vscode.commands.executeCommand('atsIde.chat');
+		publish(folder);
+	};
+	/** Inicio's request field: the same circuit, limit and validation as typing in the chat. */
+	const ask = async (folderUri: string, text: string) => {
+		const folder = folders().find(item => item.uri.toString() === folderUri);
+		if (!folder || typeof text !== 'string' || !text.trim()) { return; }
+		await focus(folder);
+		void receive({ action: 'send', text }).catch(error => report(folder, error));
+	};
+	/**
+	 * Run a feed action on a chat item through the same session methods the chat buttons use. Idempotent: each action
+	 * re-checks the session state first, so pressing it in Inicio and in the chat never runs twice.
+	 */
+	const act = async (itemId: string, action: string): Promise<boolean> => {
+		const match = /^chat:(?<key>[0-9a-f]{16}):(?<suffix>[\w-]{1,64})$/.exec(itemId);
+		const folder = match && folders().find(item => feedKeyOf(item.uri.toString()) === match.groups!.key);
+		if (!folder) { return false; }
+		if (action === 'open') { await focus(folder); return true; }
+		const entry = await sessionFor(folder).catch(error => { report(folder, error); return undefined; });
+		if (!entry) { return true; }
+		const { session } = entry;
+		const state = session.snapshot();
+		const run = (work: Promise<void>) => { void work.catch(error => report(folder, error)); };
+		if (action === 'stop') { session.cancel(); }
+		if (action === 'approve' && state.plan?.approvable && !state.run) { run(session.approve(state.plan.digest)); }
+		if (action === 'retry' && state.plan && state.run?.retryable) { run(session.approve(state.plan.digest)); }
+		if (action === 'continue' && state.run?.continuable && state.run.messageId === match.groups!.suffix) { run(session.continueRun(state.run.messageId)); }
+		return true;
+	};
+	return { receive, ask, act };
 }
 
 module.exports = { createHandler, registerChat, probeMcpConnection, probeProvider, labels };

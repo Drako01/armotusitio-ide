@@ -250,6 +250,21 @@ Los mensajes que empiezan con `/` (por ejemplo `/estado` o `/tareas RED`) se res
 - **Exportación OTLP opcional** (`atsHarness.otlpEndpoint`, comando «Exportar trazas del Harness por OTLP»). Solo https, o http hacia esta máquina; sin credenciales ni redirecciones; confirmación que nombra el destino y la cantidad de spans. Salen estructura y contadores, nunca prompts, salida de la IA, rutas ni credenciales.
 - **Recuperación.** «Reconciliar workflows interrumpidos» indica qué workflows tuvieron un escritor iniciado: no se reinician, y su worktree debe revisarse antes de integrarlo o descartarlo.
 
+### Cambios de la r5: el Harness como compañero
+
+La r5 reemplaza la mayoría de los bloqueos por caminos guiados, sin dejar de mostrar los límites. Cambios de comportamiento:
+
+- **El agente corre comandos.** Los escritores reciben el servidor de herramientas del IDE (`ats-runner`): builds, tests y linters de cada ecosistema detectado (Go, Node, Python, Rust, .NET, PHP), con un piso fijo (sin `git` que modifique, publicar, desplegar, red ni shell), presets por ecosistema y extras propios en `atsHarness.agentCommands.allow`. Si el Harness del proyecto declara `command-runner`, cada comando lo ejecuta ese Harness con su propia política. Cada comando queda auditado y la salida completa en un log. Claude sigue sin `Bash`, y `WebFetch` está prohibido siempre.
+- **Corridas que terminan bien.** El resultado se clasifica en Completada, Parcial, Bloqueada, Sin cambios o Fallida. Solo una corrida Completada marca el plan como aplicado. «Continuar» retoma una corrida parcial: Claude reanuda su sesión y Codex corre de nuevo con los archivos que ya tocó. «Descartar cambios de esta ejecución» deshace solo lo que tocó el agente y no pisa lo que editaste después. Los turnos se configuran en `atsHarness.implementerMaxTurns` (50 por defecto, entre 10 y 150) y el tamaño del prompt en `atsHarness.promptBudgetKiB` (64 KiB por defecto).
+- **Entorno del proyecto.** Las dependencias se sincronizan desde los lockfiles antes de la corrida, sin scripts de instalación, y durante la corrida cada toolchain trabaja en modo offline. Las cachés de las toolchains van incluidas. Un servicio declarado que no responde se ofrece levantar desde el compose del proyecto, con tu clic: el agente nunca ejecuta Docker.
+- **Inicio como centro de control.** Muestra en un único feed lo que está en curso, lo que necesita tu atención y lo reciente, de todas las fuentes: chat, objetivos, tareas, el Harness del proyecto y procesos externos. Los procesos externos aparecen escribiendo un JSON de progreso en `ATS_PROGRESS_DIR`, como hace `release.sh`. La barra de estado tiene un solo ítem, que muestra el cupo y la caché en su tooltip.
+- **Objetivos autónomos** («ArmoTuSitio: Iniciar objetivo autónomo»). Una carta con alcance, presupuesto y Definición de Terminado guía el trabajo; el IDE alterna los roles de planificador, implementador y revisor y vigila la integridad de los pasos (tests debilitados, archivos fuera de alcance) y las ediciones tuyas en paralelo. El progreso queda en un journal que sobrevive al cierre del IDE. La entrega va a una rama `harness/<objetivo>` con un commit por paso; push y PR quedan a tu cargo. También se puede arrancar desde una card de Work Management, coordinar varios repos o tomar los comentarios de una revisión.
+- **Herramientas nuevas:** inteligencia del editor para el agente (definición, referencias, `rename`), secretos de desarrollo en el llavero del sistema («Secretos de desarrollo para tests»), entornos efímeros, «Médico de la máquina», memoria de decisiones con exportación a ADR, caché de resultados de gates (en disco o en Redis local, `atsHarness.redisUrl`) y estimación de cupo antes de un objetivo (`atsHarness.goalReservePercent`).
+- **Búsqueda web opcional por proyecto** («Búsqueda web del agente en este proyecto»): apagada por defecto y guardada en el almacenamiento del IDE, no en el repositorio. Encendida, el agente puede buscar documentación con el buscador de su proveedor. Las consultas aparecen en el informe, y una consulta que contiene un secreto corta la corrida. Nunca puede abrir URLs, y los comandos siguen sin red.
+- **Diagnóstico en una vista** («Diagnosticar Harness del proyecto»): autoridad y capacidades del Harness, proveedores, ajustes efectivos, cupo, política de comandos, ecosistemas, servicios y caché.
+
+Quien use VS Code común con el Harness propio del proyecto no ve ningún cambio: lo que se agregó al protocolo (`ide-run`, `command-runner`) solo actúa cuando lo invoca el IDE.
+
 ### Pruebas con IA real (opt-in)
 
 Los tests automáticos nunca consumen cuota. La prueba de punta a punta con un proveedor autenticado existe pero está apagada: `ATS_E2E_PROVIDER=codex|claude`, `ATS_E2E_ACKNOWLEDGE_REAL_MODEL_CALLS=1` y, opcionalmente, `ATS_E2E_MAX_CALLS` (2 a 5, por defecto 3) corren el flujo completo en un proyecto descartable. `ATS_REAL_SANDBOX=1` ejecuta en Windows la medición del sandbox de Codex sin llamar a ningún modelo. La matriz manual para lectores de pantalla está en `docs/CHAT_HARNESS_ACCESSIBILITY_MATRIX.md`.
@@ -259,7 +274,7 @@ Los tests automáticos nunca consumen cuota. La prueba de punta a punta con un p
 También se registra `@harness` en el chat nativo cuando ese chat tiene un proveedor predeterminado disponible.
 La integración no reemplaza al agente predeterminado ni requiere activar APIs propuestas.
 En ese participante solo se aceptan comandos explícitos; el texto libre indica abrir Chat Harness.
-Esta versión de la extensión requiere la base Code - OSS 1.143 del IDE.
+Esta versión de la extensión requiere la base Code - OSS 1.144 del IDE.
 
 ```text
 @harness comandos

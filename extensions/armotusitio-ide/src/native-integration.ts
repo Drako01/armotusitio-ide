@@ -5,24 +5,41 @@
 /* Native Harness IDE commands. Never execute project scripts merely by detecting them. */
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
+import { currentToolchainEnvironment } from './native-toolchain-env.ts';
+import { detectEcosystems, describeEcosystems } from './native-ecosystems.ts';
+import { registerGoalIntegration } from './native-goal-integration.ts';
+import { createCommandPolicy, type CommandPolicyConfig } from './native-command-policy.ts';
+import type { RunnerConfig } from './ats-runner.ts';
+import type { ActivityFeed } from './native-activity-feed.ts';
+import { createResultCache, type ResultCache } from './native-result-cache.ts';
+import { composeUpCommand, detectServiceNeeds, probeService } from './native-services.ts';
+import { runCommand } from './native-command-runner.ts';
+import { openToolChannel } from './native-tool-server.ts';
+import { runEditorTool, type EditorBackend } from './native-editor-tools.ts';
+import { KeychainDevSecrets } from './native-dev-secrets.ts';
+import { doctorReport, runDoctor, type DoctorCheck, type Exec } from './native-machine-doctor.ts';
+import { collectOrphans, validateTemplate, type EnvironmentTemplate } from './native-ephemeral-env.ts';
+import { execFile } from 'node:child_process';
+import { resolveNativeCommand } from './native-runtime.ts';
 import { NativeHarness, nativePlanRevision, type Plan } from './native-harness.ts';
 import type { ChatImplementOutcome, ChatRuntime } from './native-chat-session.ts';
 import { harnessErrorCode, type GateSummary } from './native-chat.ts';
 import { proposeProjectConfig, loadProjectConfig, writeProjectConfig, generatedConfigDigest, removeGeneratedProjectConfig } from './native-project.ts';
-import { reviewAgentDraft, inspectAgentWorkspace, modelOption, effortOption, validModel, validEffort, type NativeProvider, type NativeEffort, type AgentRole, type AgentDraft } from './native-providers.ts';
+import { reviewAgentDraft, inspectAgentWorkspace, modelOption, effortOption, validModel, validEffort, MAX_AGENT_TURNS, type NativeProvider, type NativeEffort, type AgentRole, type AgentDraft } from './native-providers.ts';
+import { captureWorkingTree, diffWorkingTree, discardRunChanges, fingerprintFiles, type RunDiffSummary, type WorkingTreeSnapshot } from './native-run-diff.ts';
 import { buildSupportReport, exportSupportReport } from './native-support.ts';
 import { inspectHarnessAuthority } from './native-authority.ts';
 import { listProjectSkills, readProjectSkill, type ProjectSkill } from './native-project-skills.ts';
 import { listProjectGuides, validateProjectGuides, type ProjectGuide } from './native-project-guidance.ts';
 import { readProjectGateCatalog, validateProjectGateCatalog, planProjectGateWaves } from './native-project-gates.ts';
 import { assessHybridGateReadiness } from './native-hybrid-readiness.ts';
-import { buildAgentInvocation, executeReviewedAgent, type AgentExecution, type AgentOutcome } from './native-agent-execution.ts';
+import { buildAgentInvocation, executeReviewedAgent, type AgentExecution, type AgentOutcome, type ToolServerLaunch } from './native-agent-execution.ts';
 import { readAgentStatistics, recordAgentMetric } from './native-agent-metrics.ts';
 import { NativeAgentWorkflow, proposedWorkflow, workflowDigest, type WorkflowRun } from './native-agent-workflow.ts';
 import { createAgentWorktree, removeCleanAgentWorktree, listAgentWorktrees, type ManagedWorktree } from './native-agent-worktree.ts';
 import { describeEngine, probeProjectHandshake, readProjectCapabilities, compareHybridCapabilities, verifiedNativeCapabilities } from './native-engine-contract.ts';
-import { diagnoseProvider } from './native-provider-diagnostics.ts';
+import { diagnoseProvider, probeWebSearch } from './native-provider-diagnostics.ts';
 import { summarizeGatePerformance } from './native-performance.ts';
 import { acquireSharedExecutionFence, inspectSharedExecutionFence, reconcileSharedExecutionFence, type SharedExecutionFence } from './native-shared-fence.ts';
 import { createWorktreeCheckpoint, readWorktreeCheckpoint, rollbackWorktreeCheckpoint, type WorktreeCheckpoint } from './native-worktree-checkpoint.ts';
@@ -148,9 +165,102 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 		if (!validEffort(provider, effort)) { throw Error('HARNESS_PROVIDER_EFFORT_INVALID'); }
 		return effort;
 	};
+	/** Implementer turn budget (`atsHarness.implementerMaxTurns`, decision D4); out-of-range values fail loudly. */
+	const implementerMaxTurns = (): number => {
+		const turns: unknown = vscode.workspace.getConfiguration('atsHarness').get('implementerMaxTurns', 50);
+		if (!Number.isSafeInteger(turns) || (turns as number) < 10 || (turns as number) > MAX_AGENT_TURNS) { throw Error('HARNESS_AGENT_TURNS_INVALID'); }
+		return turns as number;
+	};
+	/** Prompt budget in bytes (`atsHarness.promptBudgetKiB`); the chat domain clamps it to its supported range. */
+	const promptBudgetBytes = (): number => {
+		const kib: unknown = vscode.workspace.getConfiguration('atsHarness').get('promptBudgetKiB', 64);
+		return (Number.isSafeInteger(kib) ? kib as number : 64) * 1024;
+	};
+	/** `atsHarness.agentCommands.allow`: user extras, always inside the IDE floor. */
+	const commandExtras = (): string[] => {
+		const extras: unknown = vscode.workspace.getConfiguration('atsHarness').get('agentCommands.allow', []);
+		return Array.isArray(extras) ? extras.filter((entry): entry is string => typeof entry === 'string' && entry.length <= 200).slice(0, 50) : [];
+	};
+	/** Language-server queries for agents (block S), through the VS Code providers the editor already runs. */
+	const editorBackend: EditorBackend = {
+		async locations(kind, file, line, character) {
+			const command = { definition: 'vscode.executeDefinitionProvider', references: 'vscode.executeReferenceProvider', implementations: 'vscode.executeImplementationProvider', typeDefinition: 'vscode.executeTypeDefinitionProvider' }[kind];
+			const results: Host[] = await vscode.commands.executeCommand(command, vscode.Uri.file(file), new vscode.Position(line, character)) ?? [];
+			return results.map(item => { const uri = item.uri ?? item.targetUri; const range = item.range ?? item.targetSelectionRange ?? item.targetRange; return { file: uri.fsPath, line: range.start.line, character: range.start.character }; });
+		},
+		async symbols(file, query) {
+			const results: Host[] = file ? await vscode.commands.executeCommand('vscode.executeDocumentSymbolProvider', vscode.Uri.file(file)) ?? [] : await vscode.commands.executeCommand('vscode.executeWorkspaceSymbolProvider', query) ?? [];
+			const flat = (items: Host[]): Host[] => items.flatMap(item => [item, ...flat(item.children ?? [])]);
+			return flat(results).map(item => ({ name: item.name, kind: vscode.SymbolKind[item.kind] ?? String(item.kind), file: (item.location?.uri ?? vscode.Uri.file(file!)).fsPath, line: (item.location?.range ?? item.range).start.line }));
+		},
+		async hover(file, line, character) {
+			const hovers: Host[] = await vscode.commands.executeCommand('vscode.executeHoverProvider', vscode.Uri.file(file), new vscode.Position(line, character)) ?? [];
+			return hovers.flatMap(hover => hover.contents.map((content: Host) => typeof content === 'string' ? content : content.value ?? ''));
+		},
+		async calls(direction, file, line, character) {
+			const items: Host[] = await vscode.commands.executeCommand('vscode.prepareCallHierarchy', vscode.Uri.file(file), new vscode.Position(line, character)) ?? [];
+			if (!items[0]) { return []; }
+			const calls: Host[] = await vscode.commands.executeCommand(direction === 'incoming' ? 'vscode.provideIncomingCalls' : 'vscode.provideOutgoingCalls', items[0]) ?? [];
+			return calls.map(call => { const target = call.from ?? call.to; return { file: target.uri.fsPath, line: target.range.start.line, character: target.range.start.character, preview: target.name }; });
+		},
+		async diagnostics(file) {
+			const entries: Array<[Host, Host[]]> = file ? [[vscode.Uri.file(file), vscode.languages.getDiagnostics(vscode.Uri.file(file))]] : vscode.languages.getDiagnostics();
+			return entries.flatMap(([uri, items]) => items.map(item => ({ file: uri.fsPath, line: item.range.start.line, severity: ['error', 'warning', 'info', 'hint'][item.severity] ?? 'info', message: item.message })));
+		},
+		async rename(file, line, character, name) {
+			const edit: Host = await vscode.commands.executeCommand('vscode.executeDocumentRenameProvider', vscode.Uri.file(file), new vscode.Position(line, character), name);
+			return edit && { files: edit.entries().map(([uri]: [Host]) => uri.fsPath), apply: async () => { await vscode.workspace.applyEdit(edit); await vscode.workspace.saveAll(false); } };
+		},
+		async organizeImports(file) {
+			const actions: Host[] = await vscode.commands.executeCommand('vscode.executeCodeActionProvider', vscode.Uri.file(file), new vscode.Range(0, 0, 0, 0), vscode.CodeActionKind.SourceOrganizeImports.value) ?? [];
+			const edit = actions.find(action => action.edit)?.edit;
+			return edit && { files: edit.entries().map(([uri]: [Host]) => uri.fsPath), apply: async () => { await vscode.workspace.applyEdit(edit); await vscode.workspace.saveAll(false); } };
+		}
+	};
+	/** Development secrets (block V): the OS keychain plus metadata without values. */
+	const devSecrets = new KeychainDevSecrets({
+		get: key => context.secrets.get(key), store: (key, value) => context.secrets.store(key, value), delete: key => context.secrets.delete(key),
+		metadata: () => context.globalState.get('atsHarness.devSecrets.v1', []), saveMetadata: value => context.globalState.update('atsHarness.devSecrets.v1', value)
+	});
+	const projectKeyOf = (root: string): string => createHash('sha256').update(root).digest('hex').slice(0, 16);
+	/** Web search per project (decision D9): in the IDE's storage, never in the repository (D8); off by default. */
+	const webSearchKey = (root: string): string => 'atsHarness.webSearch.' + projectKeyOf(root);
+	const webSearchOn = (root: string): boolean => context.globalState.get(webSearchKey(root), false) === true;
+	const searchSupport = new Map<NativeProvider, Promise<boolean>>();
+	/**
+	 * Per-run configuration of the `ats-runner` tool server, written in the IDE's storage (outside the project) and
+	 * removed after the run. A project Harness that declares `command-runner` runs each command itself (layer 2).
+	 * `inScope` limits editor refactors to the run's scope (a goal's charter); a chat run may edit the whole project.
+	 */
+	const prepareToolServer = async (root: string, maxTurns: number, inScope: (file: string) => boolean = () => true, extraEnv: Record<string, string> = {}): Promise<{ launch: ToolServerLaunch; policy: string[]; ecosystems: string[]; dispose(): Promise<void> }> => {
+		const authority = await inspectHarnessAuthority(root);
+		const delegate = authority.engine === 'project' && !!authority.entry && (await readProjectCapabilities(root).catch(() => [])).includes('command-runner');
+		const subprojects = delegate ? [] : await detectEcosystems(root);
+		const policy: CommandPolicyConfig = { subprojects, delegate, extras: commandExtras() };
+		const directory = path.join(metricsDirectory(root), 'runs', Date.now() + '-' + randomBytes(6).toString('hex'));
+		await fs.mkdir(directory, { recursive: true, mode: 0o700 });
+		const { env } = await currentToolchainEnvironment();
+		const channel = await openToolChannel(directory, async (method, params) => {
+			const input = (params ?? {}) as { name?: string; input?: Record<string, unknown>; command?: string; args?: string[]; cwd?: string };
+			if (method === 'editor' && typeof input.name === 'string') { return runEditorTool({ root, backend: editorBackend, inScope }, input.name, input.input ?? {}); }
+			if (method === 'secrets' && typeof input.command === 'string') { return devSecrets.forCommand(projectKeyOf(root), input.command, Array.isArray(input.args) ? input.args : [], input.cwd ?? '.'); }
+			throw Error('HARNESS_TOOL');
+		});
+		const config: RunnerConfig = { schemaVersion: 1, root, policy, env: { ...env, ...extraEnv }, logDirectory: path.join(directory, 'logs'), maxTurns, channel: { address: channel.address, token: channel.token }, ...(delegate ? { delegateEntry: path.join(root, authority.entry!) } : {}) };
+		const configFile = path.join(directory, 'runner.json');
+		await fs.writeFile(configFile, JSON.stringify(config), { mode: 0o600 });
+		const launch = { command: process.execPath, args: [path.join(context.extensionPath ?? context.extensionUri?.fsPath ?? '', 'dist', 'ats-runner.js'), configFile], env: { ELECTRON_RUN_AS_NODE: '1' }, mcpConfigFile: path.join(directory, 'mcp.json') };
+		await fs.writeFile(launch.mcpConfigFile, JSON.stringify({ mcpServers: { 'ats-runner': { type: 'stdio', command: launch.command, args: launch.args, env: launch.env } } }), { mode: 0o600 });
+		return {
+			launch, policy: createCommandPolicy(policy).describe(), ecosystems: describeEcosystems(subprojects),
+			// The configuration goes; the command logs and audit stay with the run for the report.
+			// The token dies with the channel (EC-125).
+			dispose: async () => { await Promise.all([fs.rm(configFile, { force: true }), fs.rm(launch.mcpConfigFile, { force: true }), channel.close()]); }
+		};
+	};
 	/** Every IDE agent draft: read-only unless implementing, with the model and effort chosen for its provider. */
-	const draftOf = (root: string, provider: NativeProvider, role: AgentRole, instruction: string): AgentDraft =>
-		({ schemaVersion: 1, provider, role, projectRoot: root, instruction, readOnly: role !== 'implementer', ...modelOption(modelFor(provider)), ...effortOption(effortFor(provider)) });
+	const draftOf = (root: string, provider: NativeProvider, role: AgentRole, instruction: string, extra: Pick<AgentDraft, 'maxTurns' | 'resumeSession'> = {}): AgentDraft =>
+		({ schemaVersion: 1, provider, role, projectRoot: root, instruction, readOnly: role !== 'implementer', ...modelOption(modelFor(provider)), ...effortOption(effortFor(provider)), ...(webSearchOn(root) ? { webSearch: true } : {}), ...extra });
 	/** Reported spend must be durable when a budget is enforced; otherwise it is best-effort telemetry. */
 	const recordSpend = async (folder: Host, root: string, provider: NativeProvider, fence: SharedExecutionFence, outcome: AgentOutcome): Promise<void> => {
 		try { await recordProviderSpend(metricsDirectory(root), provider, fence, outcome); }
@@ -169,10 +279,23 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 		onMessage?: (text: string) => void;
 		/** Aborting before the process exists stops the launch without spawning a provider. */
 		signal?: AbortSignal;
+		/** Runs under the fence right before the provider starts, so its observations cannot race another IDE agent. */
+		beforeLaunch?: () => Promise<void>;
+		/** The `ats-runner` command tool server for a writer. */
+		toolServer?: ToolServerLaunch;
 		afterOutcome?: (outcome: AgentOutcome, fence: SharedExecutionFence) => Promise<void>;
 	} = {}): Promise<AgentOutcome> => {
 		const root = draft.projectRoot;
 		if (!authorized(folder)) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
+		// A CLI without its own search runs without it, and says so (EC-147).
+		if (draft.webSearch) {
+			if (!searchSupport.has(draft.provider)) { searchSupport.set(draft.provider, probeWebSearch(draft.provider).catch(() => false)); }
+			if (!await searchSupport.get(draft.provider)) {
+				const { webSearch: _off, ...rest } = draft;
+				draft = rest;
+				void vscode.window.showWarningMessage(vscode.l10n.t('B\u00fasqueda web no disponible con {0}: la corrida sigue sin ella.', draft.provider));
+			}
+		}
 		const authority = await inspectHarnessAuthority(root);
 		if (authority.reason === 'project-path-unsafe') { throw Error('HARNESS_PROJECT_AUTHORITY_UNSAFE'); }
 		// A project Harness keeps writer authority over its checkout unless the user enabled coordinated writers,
@@ -202,8 +325,9 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			await assertProviderBudget(metricsDirectory(root), draft.provider, providerBudget(folder), fence);
 			if (cap > 0) { await reserveProviderInvocation(metricsDirectory(root), draft.provider, fence, cap); }
 			if (!authorized(folder)) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
+			await hooks.beforeLaunch?.();
 			await fence.assertCurrent();
-			execution = await executeReviewedAgent(reviewAgentDraft(draft), draft, undefined, hooks.onProgress && (progress => hooks.onProgress!(progress.observedBytes)), hooks.onMessage);
+			execution = await executeReviewedAgent(reviewAgentDraft(draft), draft, undefined, hooks.onProgress && (progress => hooks.onProgress!(progress.observedBytes)), hooks.onMessage, hooks.toolServer, text => devSecrets.redact(text) !== text);
 		} catch (error) {
 			await lease?.release().catch(() => undefined);
 			if (fence) { await fence.release(); }
@@ -237,10 +361,14 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 				const authority = await inspectHarnessAuthority(root);
 				const [skills, guides, verification] = await Promise.all([listProjectSkills(root), listProjectGuides(root), verificationOf(root)]);
 				// A project Harness can host IDE writers only when the user opted in and its manifest declares the lease; the engine's acknowledgement is verified at approval.
-				const coordinated = authority.engine === 'project' && coordinatedWriters() && (await readProjectCapabilities(root).catch(() => [])).includes('writer-lease');
+				// The setting is read live, so enabling it applies on the next refresh without reloading the window.
+				const capabilities = authority.engine === 'project' && coordinatedWriters() ? await readProjectCapabilities(root).catch(() => undefined) : undefined;
+				const coordinated = !!capabilities?.includes('writer-lease');
+				const writerBlock = !authorized(folder) ? 'untrusted' as const : authority.engine !== 'project' || coordinated ? undefined
+					: !coordinatedWriters() ? 'setting-off' as const : capabilities ? 'engine-no-lease' as const : 'engine-no-protocol' as const;
 				const isolation = Object.fromEntries((['codex', 'claude'] as const).map(provider => [provider, { writes: describeAgentIsolation(provider).writes, allowed: meetsWriterIsolation(provider, requiredWriterIsolation()) }])) as Record<NativeProvider, { writes: string; allowed: boolean }>;
 				return {
-					isolation, root, writer: (authority.engine === 'ide-native' || coordinated) && authorized(folder),
+					isolation, root, promptBudget: promptBudgetBytes(), ...(writerBlock ? { writerBlock } : {}), writer: (authority.engine === 'ide-native' || coordinated) && authorized(folder),
 					skills: skills.map(skill => ({ name: skill.name, source: skill.source })),
 					guides: guides.map(guide => guide.path),
 					verification: verification && {
@@ -255,7 +383,22 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 					onStarted: execution => hooks.started(() => execution.cancel()), onProgress: hooks.progress, onMessage: hooks.message, signal
 				});
 			},
-			async implement({ provider, instruction, plan, verificationRevision }, hooks, signal) {
+			async discard(diff) {
+				const root = await rootOf();
+				if (!authorized(folder)) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
+				assertIdle(root, folder);
+				// Same guarantees as a writer: the shared fence, and the engine's lease in a project with its own Harness.
+				const fence = await acquireSharedExecutionFence(root, metricsDirectory(root), 'native-agent');
+				let lease: WriterLease | undefined;
+				try {
+					if ((await inspectHarnessAuthority(root)).engine === 'project') {
+						if (!coordinatedWriters()) { throw Error('HARNESS_HYBRID_WRITER_UNAVAILABLE'); }
+						lease = await acquireWriterLease(root, true, () => authorized(folder), fence);
+					}
+					return await discardRunChanges(root, diff, new Map(Object.entries(diff.after ?? {})));
+				} finally { await lease?.release().catch(() => undefined); await fence.release(); }
+			},
+			async implement({ provider, instruction, plan, verificationRevision, resumeSession }, hooks, signal) {
 				const root = await rootOf();
 				if (signal.aborted) { throw Error('HARNESS_CANCELLED_BEFORE_START'); }
 				const available = await listProjectSkills(root);
@@ -268,12 +411,24 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 				let gates: GateSummary[] = verification?.gates.map(gate => ({ id: gate.id, status: 'pending' as const })) ?? [];
 				let verificationStatus: ChatImplementOutcome['verification']['status'] = 'skipped';
 				let verificationError: string | undefined;
-				const agent = await runGuardedAgent(folder, draftOf(root, provider, 'implementer', instruction + projectReferences(guides, skills as ProjectSkill[])), {
+				const maxTurns = implementerMaxTurns();
+				if (!await servicePreflight(root)) { throw Error('HARNESS_CANCELLED_BEFORE_START'); }
+				const server = await prepareToolServer(root, maxTurns);
+				const ecosystems = server.ecosystems.length ? '\n\nDetected subprojects and their usual commands:\n' + server.ecosystems.join('\n') : '';
+				// A resumed session already holds the references; it only receives the continuation request.
+				const prompt = resumeSession ? instruction : instruction + projectReferences(guides, skills as ProjectSkill[]) + ecosystems;
+				let before: WorkingTreeSnapshot | undefined;
+				let diff: RunDiffSummary = { available: false, files: [], count: 0 };
+				const agent = await runGuardedAgent(folder, draftOf(root, provider, 'implementer', prompt, { maxTurns, ...(resumeSession ? { resumeSession } : {}) }), {
+					toolServer: server.launch,
 					onStarted: execution => { hooks.started(() => execution.cancel()); hooks.stage('agent'); },
 					onProgress: hooks.progress,
 					onMessage: hooks.message,
 					signal,
+					beforeLaunch: async () => { before = await captureWorkingTree(root); },
 					afterOutcome: async (outcome, fence) => {
+						// Measured before verification, so build output of the gates is never attributed to the writer.
+						if (before) { diff = diffWorkingTree(before, await captureWorkingTree(root)); diff = { ...diff, after: await fingerprintFiles(root, diff.files) }; }
 						if (outcome.status !== 'passed' && verification) {
 							// Gates that never ran because the writer did not succeed are not "pending": that would suggest they still will.
 							gates = verification.gates.map(gate => ({ id: gate.id, status: 'cancelled' }));
@@ -310,12 +465,137 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 						} finally { clearInterval(poll); running.delete(folder.uri.toString()); controller.refresh(); }
 						hooks.gates(gates);
 					}
-				});
-				return { agent, verification: { status: verificationStatus, gates, ...(verificationError ? { error: verificationError } : {}) } };
+				}).finally(() => server.dispose());
+				return { agent, diff, verification: { status: verificationStatus, gates, ...(verificationError ? { error: verificationError } : {}) } };
 			}
 		};
 	};
-	controller.nativeRunning = () => running.size + runningAgents.size + pendingAgents.size + runningWorkflows.size + pendingWorkflows.size;
+	/**
+	 * Service preflight (block G): a run that needs a service that does not answer never starts blind. Starting it is the
+	 * user's click on a service declared in the project's own compose file (D3); the agent never runs Docker.
+	 * Resolves false when the user cancelled.
+	 */
+	const servicePreflight = async (root: string): Promise<boolean> => {
+		const probes = await Promise.all((await detectServiceNeeds(root, process.env)).map(probeService));
+		const missing = probes.filter(probe => probe.status !== 'up');
+		if (!missing.length) { return true; }
+		const start = vscode.l10n.t('Levantar con docker compose'), anyway = vscode.l10n.t('Ejecutar igual sin esos tests');
+		const names = missing.map(probe => probe.kind + ' (' + probe.host + ':' + probe.port + (probe.status === 'other-service' ? ', ' + vscode.l10n.t('otro programa usa el puerto') : '') + ')').join(', ');
+		const startable = missing.filter(probe => composeUpCommand(probe));
+		const choice = await vscode.window.showWarningMessage(vscode.l10n.t('Este plan necesita {0} y no responde.', names), { modal: true }, ...(startable.length ? [start] : []), anyway);
+		if (choice === anyway) { return true; }
+		if (choice !== start) { return false; }
+		for (const probe of startable) {
+			const up = composeUpCommand(probe)!;
+			const result = await runCommand({ root, cwd: '.', command: up.command, args: up.args, env: (await currentToolchainEnvironment()).env, logDirectory: path.join(metricsDirectory(root), 'services'), timeoutSec: 300 });
+			if (result.exitCode !== 0) { void vscode.window.showErrorMessage(vscode.l10n.t('No se pudo levantar {0}. Revis\u00e1 Docker con \u00abArmoTuSitio: M\u00e9dico de la m\u00e1quina\u00bb.', probe.composeService ?? probe.kind)); return false; }
+		}
+		return true;
+	};
+	/** IDE-owned system commands (doctor checks, ephemeral environments): no shell, bounded time, never run by an agent. */
+	const systemExec: Exec = async (command, args) => {
+		const resolved = await resolveNativeCommand(command, args);
+		return new Promise(resolve => execFile(resolved.executable, resolved.args, { timeout: 60_000, windowsHide: true, maxBuffer: 1024 * 1024, env: { ...process.env, ...(resolved.embeddedNode ? { ELECTRON_RUN_AS_NODE: '1' } : {}) } },
+			(error, stdout, stderr) => resolve({ code: error ? (typeof error.code === 'number' ? error.code : 1) : 0, output: stdout + stderr })));
+	};
+	const doctorFor = async (root: string): Promise<DoctorCheck[]> => {
+		const subprojects = await detectEcosystems(root);
+		const versions: Record<string, { command: string; args: string[]; label: string }> = {
+			go: { command: 'go', args: ['version'], label: 'Go' }, node: { command: 'node', args: ['--version'], label: 'Node' }, python: { command: 'python', args: ['--version'], label: 'Python' },
+			rust: { command: 'cargo', args: ['--version'], label: 'Rust' }, dotnet: { command: 'dotnet', args: ['--version'], label: '.NET' }, java: { command: 'java', args: ['-version'], label: 'Java' },
+			php: { command: 'php', args: ['--version'], label: 'PHP' }, ruby: { command: 'ruby', args: ['--version'], label: 'Ruby' }
+		};
+		const toolchains = [...new Set(subprojects.map(project => project.ecosystem))].map(ecosystem => versions[ecosystem]).filter(Boolean);
+		const ports = (await detectServiceNeeds(root, process.env)).map(need => need.port);
+		const serverDate = async () => { const response = await fetch('https://api.github.com', { method: 'HEAD', signal: AbortSignal.timeout(3000) }); const date = response.headers.get('date'); return date ? Date.parse(date) : undefined; };
+		return runDoctor({ exec: systemExec, platform: process.platform, projectRoot: root, ports, toolchains, serverDate });
+	};
+	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.machineDoctor', async () => {
+		try {
+			const folder = (vscode.workspace.workspaceFolders || [])[0];
+			const checks = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: vscode.l10n.t('Revisando la m\u00e1quina…') }, () => doctorFor(folder ? folder.uri.fsPath : process.cwd()));
+			const document = await vscode.workspace.openTextDocument({ language: 'markdown', content: doctorReport(checks) });
+			await vscode.window.showTextDocument(document);
+		} catch (error) { showError(error); }
+	}));
+	/** Environment templates of a project (block W), kept in the IDE's storage; the user edits them as JSON. */
+	const environmentTemplates = async (root: string): Promise<EnvironmentTemplate[]> => {
+		const raw = await fs.readFile(path.join(metricsDirectory(root), 'environments.json'), 'utf8').catch(() => undefined);
+		if (!raw) { return []; }
+		const value = JSON.parse(raw) as unknown;
+		return Array.isArray(value) ? value.map(item => validateTemplate(item as EnvironmentTemplate)) : [];
+	};
+	// The collector runs once per activation: no goal is active yet, so every labeled leftover is an orphan.
+	void collectOrphans(systemExec, new Set()).catch(() => undefined);
+	/** The result cache chosen once per session and project (block I); redetected only when its Redis stops answering. */
+	const caches = new Map<string, Promise<ResultCache>>();
+	const resultCache = (root: string): Promise<ResultCache> => {
+		let cache = caches.get(root);
+		if (!cache) {
+			const settings = vscode.workspace.getConfiguration('atsHarness');
+			cache = createResultCache({ directory: path.join(metricsDirectory(root), 'cache'), projectRoot: root, setting: settings.get('redisUrl', '') || undefined, environment: process.env.HARNESS_REDIS_URL, candidates: settings.get('redisCandidates', undefined) });
+			caches.set(root, cache);
+			void cache.then(value => { controller.cacheDescription = value.describe(); controller.refresh(); });
+		}
+		return cache;
+	};
+	/** Autonomous goals, deliveries, inline review, decisions and long processes live in their own module. */
+	const goalIntegration = registerGoalIntegration({
+		context, vscode, controller, metricsDirectory, ensureTrust: () => ensureTrust(), showError: error => showError(error), commandExtras,
+		providerCallsPer24h: folder => providerCallsPer24h(folder), resultCache, environmentTemplates, systemExec, doctorFor, servicePreflight,
+		launchAgent: async (folder, workRoot, { provider, readOnly, instruction, resumeSession, maxTurns }, scope) => {
+			if (readOnly) { return runGuardedAgent(folder, draftOf(workRoot, provider, 'planner', instruction)); }
+			const server = await prepareToolServer(workRoot, maxTurns, scope.inScope, scope.extraEnv);
+			const ecosystems = server.ecosystems.length ? '\n\nDetected subprojects and their usual commands:\n' + server.ecosystems.join('\n') : '';
+			try { return await runGuardedAgent(folder, draftOf(workRoot, provider, 'implementer', resumeSession ? instruction : instruction + ecosystems, { maxTurns, ...(resumeSession ? { resumeSession } : {}) }), { toolServer: server.launch }); }
+			finally { await server.dispose(); }
+		}
+	});
+	/** Web search for one project (decision D9): applies from the next run (EC-148); fetching URLs stays forbidden. */
+	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.webSearch', async (requested?: string) => {
+		try {
+			const folder = (await choose(requested, true))?.folder;
+			if (!folder) { return; }
+			const root = await fs.realpath(folder.uri.fsPath);
+			const on = vscode.l10n.t('Encender'), off = vscode.l10n.t('Apagar');
+			const picked = await vscode.window.showWarningMessage(
+				vscode.l10n.t('B\u00fasqueda web en {0}: {1}.', folder.name, webSearchOn(root) ? vscode.l10n.t('encendida') : vscode.l10n.t('apagada')),
+				{ modal: true, detail: vscode.l10n.t('Encendida, el agente puede buscar documentaci\u00f3n con el buscador de su proveedor. Las consultas llegan a ese buscador, quedan en el informe y una consulta con un secreto corta la corrida. Nunca puede abrir URLs, y los comandos siguen sin red. Aplica desde la pr\u00f3xima corrida.') },
+				on, off);
+			if (picked) { await context.globalState.update(webSearchKey(root), picked === on); }
+		} catch (error) { showError(error); }
+	}));
+	/** Manage development secrets (block V): add or rotate, remove, list with use audit; values are never shown. */
+	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.devSecrets', async (requested?: string) => {
+		try {
+			if (!ensureTrust()) { return; }
+			const folders = vscode.workspace.workspaceFolders || [];
+			const folder = folders.find((item: Host) => item.uri.fsPath === requested) ?? (folders.length === 1 ? folders[0] : await vscode.window.showWorkspaceFolderPick());
+			if (!folder) { return; }
+			const key = projectKeyOf(await fs.realpath(folder.uri.fsPath));
+			const add = vscode.l10n.t('Agregar o rotar un secreto'), remove = vscode.l10n.t('Quitar un secreto');
+			const existing = devSecrets.list(key);
+			const picked = await vscode.window.showQuickPick([
+				{ label: add }, ...(existing.length ? [{ label: remove }] : []),
+				...existing.map(meta => ({ label: meta.name, description: meta.commands.join(', '), detail: vscode.l10n.t('Usos: {0} · \u00faltimo: {1}', String(meta.uses), meta.lastUsedAt ?? '—') }))
+			], { title: vscode.l10n.t('Secretos de desarrollo de {0}', folder.name) });
+			if (picked?.label === add) {
+				const name = await vscode.window.showInputBox({ title: vscode.l10n.t('Nombre de la variable'), placeHolder: 'APP_E2E_DSN', validateInput: (value: string) => /^[A-Z][A-Z0-9_]{0,63}$/.test(value) ? undefined : vscode.l10n.t('May\u00fasculas, n\u00fameros y guiones bajos.') });
+				if (!name) { return; }
+				const value = await vscode.window.showInputBox({ title: vscode.l10n.t('Valor de {0}', name), password: true, ignoreFocusOut: true });
+				if (!value) { return; }
+				const rules = await vscode.window.showInputBox({ title: vscode.l10n.t('Comandos que pueden usarlo'), prompt: vscode.l10n.t('Separados por coma; @carpeta limita la carpeta. Ejemplo: go test @apps/api'), ignoreFocusOut: true });
+				if (!rules?.trim()) { return; }
+				await devSecrets.set(key, name, value, rules.split(',').map(rule => rule.trim()).filter(Boolean));
+				void vscode.window.showInformationMessage(vscode.l10n.t('Secreto {0} guardado en el llavero del sistema.', name));
+			}
+			if (picked?.label === remove) {
+				const target = await vscode.window.showQuickPick(existing.map(meta => meta.name), { title: remove });
+				if (target) { await devSecrets.remove(key, target); }
+			}
+		} catch (error) { showError(error); }
+	}));
+	controller.nativeRunning = () => running.size + runningAgents.size + pendingAgents.size + runningWorkflows.size + pendingWorkflows.size + goalIntegration.running();
 	controller.nativeProjects = async () => {
 		const rows = [];
 		if (!vscode.workspace.getConfiguration('atsHarness').get('enabled', true)) { return rows; }
@@ -844,6 +1124,38 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 				language: 'json',
 				content: JSON.stringify({ providers: diagnostics, note: 'Local --version and --help flag diagnostics only. Authentication, effective permissions and provider protocol still require a real opt-in smoke test.' }, null, 2)
 			}), { preview: true });
+		} catch (error) { showError(error); }
+	}));
+	/** Block J: one view of everything that decides how the Harness behaves in a project; nothing here starts an agent. */
+	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.diagnoseProject', async (requested?: string) => {
+		try {
+			if (!ensureTrust()) { return; }
+			const chosen = await choose(requested, true); if (!chosen) { return; }
+			const root = await fs.realpath(chosen.folder.uri.fsPath);
+			const report = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: vscode.l10n.t('Diagnosticando el Harness del proyecto…') }, async () => {
+				const authority = await inspectHarnessAuthority(root);
+				const capabilities = authority.engine === 'project' ? await readProjectCapabilities(root).catch((error: unknown) => harnessErrorCode(error)) : [];
+				const delegate = Array.isArray(capabilities) && capabilities.includes('command-runner');
+				const subprojects = delegate ? [] : await detectEcosystems(root);
+				const settings = vscode.workspace.getConfiguration('atsHarness');
+				const [providers, services, cache, quota] = await Promise.all([
+					Promise.all([diagnoseProvider('codex'), diagnoseProvider('claude')]),
+					detectServiceNeeds(root, process.env).then(needs => Promise.all(needs.map(probeService))),
+					resultCache(root).then(value => value.describe(), (error: unknown) => harnessErrorCode(error)),
+					readProviderInvocationQuota(metricsDirectory(root), providerCallsPer24h(chosen.folder))
+				]);
+				return {
+					project: chosen.folder.name, authority, capabilities, providers, quota,
+					settings: {
+						implementerMaxTurns: settings.get('implementerMaxTurns'), promptBudgetKiB: settings.get('promptBudgetKiB'), coordinatedWriters: coordinatedWriters(),
+						writerIsolation: requiredWriterIsolation(), agentCommandsAllow: commandExtras(), webSearch: webSearchOn(root)
+					},
+					activity: { agentRunning: runningAgents.has(root) || pendingAgents.has(root), goalsRunning: goalIntegration.running() },
+					commandPolicy: delegate ? ['Delegated to the project Harness (command-runner)'] : createCommandPolicy({ subprojects, delegate, extras: commandExtras() }).describe(),
+					ecosystems: describeEcosystems(subprojects), services, cache
+				};
+			});
+			await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({ language: 'json', content: JSON.stringify(report, null, 2) }), { preview: true });
 		} catch (error) { showError(error); }
 	}));
 	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.nativeProviderQuotaStatus', async (requested?: string) => {

@@ -58,6 +58,12 @@ async function command(file, args) {
 	catch { throw new Error(`${path.basename(file)} operation failed (${args[0] ?? 'preflight'}). Inspect that operation locally and retry; no protections were bypassed.`); }
 }
 const git = (...args) => command('git', args);
+// The IDE shows this file in Inicio while the build runs (block Y); without ATS_PROGRESS_DIR nothing is written.
+let progressFile;
+async function progress(phase, percent, state = 'running') {
+	if (!progressFile) { return; }
+	await writeFile(progressFile, JSON.stringify({ title: 'Release ' + path.basename(progressFile, '.json').slice('release-'.length), phase, percent, pid: process.pid, state, updatedAt: new Date().toISOString() })).catch(() => undefined);
+}
 const gh = (...args) => command('gh', args);
 
 async function cleanMain() {
@@ -100,7 +106,7 @@ async function releasePlan(version) {
 	const tag = `ats-v${version}-r${revision}`;
 	const matching = releases.filter(release => release.tag_name === tag);
 	if (matching.length > 1) { throw new Error('Ambiguous release tag.'); }
-	return { revision, tag, draft: matching[0] };
+	return { revision, tag, draft: matching[0], previous: maximum ? `ats-v${version}-r${maximum}` : undefined };
 }
 
 async function currentRemote(commit) {
@@ -122,6 +128,11 @@ async function recipe() {
 	const selected = await releasePlan(config.version);
 	await requireActionsDisabled();
 	console.log(`Release ${selected.tag}\nRepository: ${repository}\nSource: ${commit}\nMetadata revision: ${config.revision} -> ${selected.revision}\nMode: ${checking ? 'safe end-to-end dry-run' : planning ? 'read-only plan' : flags.includes('--no-publish') ? 'build and sign' : 'build, sign and publish'}`);
+	// What this release adds over the last published revision; a missing local tag is reported, never guessed.
+	if (selected.previous) {
+		const log = await git('log', '--oneline', '--no-decorate', `${selected.previous}..${commit}`).catch(() => undefined);
+		console.log(log === undefined ? `Commits since ${selected.previous}: tag not available locally (git fetch --tags).` : `Commits since ${selected.previous}:\n${log || '(none)'}`);
+	}
 	if (selected.draft && (selected.draft.draft !== true || selected.draft.target_commitish !== commit || config.revision !== selected.revision)) {
 		throw new Error('The selected draft belongs to different source/metadata. Inspect it before retrying; no draft was changed.');
 	}
@@ -201,22 +212,24 @@ async function recipe() {
 		config = merged;
 	}
 	await unchanged();
+	if (process.env.ATS_PROGRESS_DIR) { progressFile = path.join(process.env.ATS_PROGRESS_DIR, `release-${selected.tag}.json`); }
 	const { releaseStages } = await import(pathToFileURL(path.join(root, 'scripts/ats-release-state.mts')).href);
 	const checkpoint = flags.includes('--rebuild') ? undefined : await releaseStages(path.join(root, '.build/ats-release-recipe'), JSON.stringify([commit, config.fingerprint, process.version, process.platform, process.arch]));
 	const stage = async (name, outputs, work) => checkpoint ? checkpoint(name, outputs, work) : work();
-	console.log('Validating the selected release source...');
+	console.log('Validating the selected release source...'); await progress('validation', 5);
 	await stage('validation', [path.join(root, '.build/ats-autoupdate/validation.json')], async () => { await update(['validate']); });
 	await unchanged();
-	console.log('Building all release platforms...'); await buildAll(undefined, {}, true, !flags.includes('--rebuild'));
+	console.log('Building all release platforms...'); await progress('build', 20); await buildAll(undefined, {}, true, !flags.includes('--rebuild'));
 	await unchanged();
-	console.log('Preparing signed release artifacts...');
+	console.log('Preparing signed release artifacts...'); await progress('artifacts', 80);
 	await stage('artifacts', [path.join(root, '.build/releases'), path.join(root, '.build/ats-autoupdate/build-receipt.json')], async () => { await update(['artifacts']); });
 	await unchanged();
 	if (!flags.includes('--no-publish')) {
-		console.log(`Publishing ${selected.tag} through the existing verified publication recipe...`);
+		console.log(`Publishing ${selected.tag} through the existing verified publication recipe...`); await progress('publish', 90);
 		await update(['publish', '--approve']);
 		console.log(`Published: https://github.com/${repository}/releases/tag/${selected.tag}`);
 	} else { console.log('Signed artifacts ready in .build/releases. Smoke-test, then publish with: node scripts/ats-autoupdate.mts publish --approve'); }
+	await progress('done', 100, 'completed');
 }
 
 try {
@@ -224,6 +237,7 @@ try {
 	else { await withLock(path.join(root, '.build/ats-release-recipe'), recipe); }
 } catch (error) {
 	console.error(error instanceof Error ? error.message : 'Release recipe failed.');
+	await progress('failed', undefined, 'failed');
 	process.exitCode = 1;
 }
 NODE

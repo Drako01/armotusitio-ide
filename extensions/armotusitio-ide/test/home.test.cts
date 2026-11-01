@@ -30,7 +30,7 @@ function harness() {
 	const controller = { async getProvider() { return { label: 'Codex', supported: true }; }, jobs: new Map(), progress: [], canRepeat(job) { return ['check', 'verify', 'test'].includes(job.action) && ['passed', 'failed', 'cancelled', 'ended'].includes(job.state); }, isBusy() { return false; }, async repeat(id) { calls.push(['repeat', id]); }, getHistory() { return [...this.jobs.values()]; }, onDidChangeTreeData(fn) { update = fn; return disposable; }, refresh() { update(); }, async refreshActivity() { }, async execute(...args) { calls.push(args); } };
 	const projects = [{ profile: { name: 'RedEvent', root: '/repo', actions: ['check'] }, folder: { uri: { toString: () => 'file:///repo' } } }];
 	const module = { exports: {} };
-	vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../src/home.ts'), 'utf8'), { module, require: name => name === 'vscode' ? vscode : name === './workspace.ts' ? { createWorkspace: () => ({ views: () => [], toolResult: () => undefined, receive: async () => false, refresh: async () => { } }) } : require(name) });
+	vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../src/home.ts'), 'utf8'), { module, require: name => name === 'vscode' ? vscode : name === './home-labels.ts' ? require('../src/home-labels.ts') : name === './workspace.ts' ? { createWorkspace: () => ({ views: () => [], toolResult: () => undefined, receive: async () => false, refresh: async () => { } }) } : require(name) });
 	const context = { extensionUri: 'file:///extension', subscriptions: [] };
 	module.exports.registerHome(context, controller, () => projects);
 	commands.get('atsIde.home')();
@@ -58,7 +58,9 @@ test('home publishes actual session state, reuses one panel and excludes arbitra
 	const h = harness();
 	h.controller.jobs.set('task', { id: 'task', action: 'check', state: 'cancelled', project: '/repo', startedAt: 1000, endedAt: 2000 });
 	await h.receive({ action: 'ready' });
-	const state = h.calls[0];
+	// Inicio's control center fields (block AC) are checked on their own; the rest of the state keeps its contract.
+	const { inicio, folders, activity, ...state } = h.calls[0];
+	assert.deepEqual(JSON.parse(JSON.stringify({ ask: inicio.askTitle, folders, activity })), { ask: '¿Qué querés hacer?', folders: [], activity: [] });
 	assert.deepEqual(JSON.parse(JSON.stringify({ ...state, labels: undefined, nativeLabels: undefined })), { type: 'state', draftPersistence: false, trusted: true, projects: [{ name: 'RedEvent', root: '/repo', actions: ['check'], workflow: false, tools: [], provider: 'Codex', customProvider: false, providerSupported: true }], nativeProjects: [], workflows: [], jobs: [{ id: 'task', action: 'check', state: 'cancelled', project: '/repo', startedAt: 1000, endedAt: 2000, repeatable: true, repeatBlocked: false }], progress: [] });
 	assert.match(h.panel.webview.html, /default-src 'none'/);
 	assert.doesNotMatch(h.panel.webview.html, /unsafe-inline|command:|\/repo/);
