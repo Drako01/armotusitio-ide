@@ -50,3 +50,18 @@ test('Windows resolver keeps older npm Claude JavaScript entry working without a
 		await fs.rm(root, { recursive: true, force: true });
 	}
 });
+
+test('resolver finds the native Claude installer location even when it is missing from PATH', async () => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-claude-home-resolver-'));
+	const saved = { PATH: process.env.PATH, HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+	try {
+		const executable = path.join(root, '.local', 'bin', process.platform === 'win32' ? 'claude.exe' : 'claude');
+		await fs.mkdir(path.dirname(executable), { recursive: true });
+		await fs.writeFile(executable, 'fixture-binary', { mode: 0o755 });
+		process.env.PATH = path.join(root, 'empty'); process.env.HOME = root; process.env.USERPROFILE = root;
+		assert.deepEqual(await resolveNativeCommand('claude', ['--version']), { executable, args: ['--version'], embeddedNode: false });
+	} finally {
+		for (const [key, value] of Object.entries(saved)) { if (value === undefined) { delete process.env[key]; } else { process.env[key] = value; } }
+		await fs.rm(root, { recursive: true, force: true });
+	}
+});

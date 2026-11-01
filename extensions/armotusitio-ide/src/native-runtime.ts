@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import * as os from 'node:os';
 import { constants } from 'node:fs';
 import { spawn, type ChildProcess } from 'node:child_process';
 
@@ -52,6 +53,8 @@ export function stopProcess(child: ChildProcess): void {
 export async function resolveNativeCommand(executable: string, args: string[]): Promise<{ executable: string; args: string[]; embeddedNode: boolean }> {
 	if (executable === 'node') { return { executable: process.execPath, args, embeddedNode: true }; }
 	const directories = (process.env.PATH || process.env.Path || '').split(path.delimiter).filter(directory => path.isAbsolute(directory));
+	// Claude's native installer puts the CLI in ~/.local/bin without adding it to PATH; an IDE started with an older PATH must still find it.
+	if (executable === 'claude') { directories.push(path.join(os.homedir(), '.local', 'bin')); }
 	for (const directory of directories) {
 		if (process.platform === 'win32' && (executable === 'codex' || executable === 'claude')) {
 			// Modern Claude npm packages contain a native binary; older releases provide cli.js.
