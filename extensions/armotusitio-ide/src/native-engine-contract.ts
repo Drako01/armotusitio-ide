@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 /** Conservative v2 capability contract. A project runner is never executed merely to inspect it. */
-import { inspectHarnessAuthority } from './native-authority.ts';
+import { harnessDirectory, inspectHarnessAuthority } from './native-authority.ts';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -44,7 +44,7 @@ export function verifiedNativeCapabilities(): Capability[] { return [...VERIFIED
 export async function readProjectCapabilities(root: string): Promise<Capability[]> {
 	const canonical = await fs.realpath(root);
 	if (canonical !== root) { throw Error('HARNESS_CAPABILITIES_ROOT_CHANGED'); }
-	const projectDir = path.join(canonical, '.harness');
+	const projectDir = path.join(canonical, harnessDirectory((await inspectHarnessAuthority(canonical)).entry));
 	const directory = path.join(projectDir, 'manifests');
 	const target = path.join(directory, 'ide-capabilities.json');
 	let info;

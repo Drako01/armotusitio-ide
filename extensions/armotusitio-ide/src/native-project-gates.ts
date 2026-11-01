@@ -6,6 +6,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
+import { harnessDirectory, inspectHarnessAuthority } from './native-authority.ts';
 
 export interface ProjectGate {
 	id: string;
@@ -24,7 +25,7 @@ const MAX_BYTES = 16 * 1024;
 export async function readProjectGateCatalog(root: string): Promise<ProjectGateCatalog | undefined> {
 	const canonical = await fs.realpath(root);
 	if (canonical !== root) { throw Error('HARNESS_GATE_CATALOG_ROOT_CHANGED'); }
-	const projectDir = path.join(canonical, '.harness');
+	const projectDir = path.join(canonical, harnessDirectory((await inspectHarnessAuthority(canonical)).entry));
 	const manifestDir = path.join(projectDir, 'manifests');
 	const target = path.join(manifestDir, 'ide-gates.json');
 	let fileInfo;

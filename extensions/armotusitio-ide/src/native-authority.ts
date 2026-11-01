@@ -11,6 +11,11 @@ export interface HarnessAuthority {
 	reason: 'project-entry' | 'project-marker' | 'project-path-unsafe' | 'no-project-harness';
 }
 
+/** Folder holding a project Harness' manifests: `harness/` for the ArmoTuSitio layout, `.harness/` for every other one. */
+export function harnessDirectory(entry: HarnessAuthority['entry']): 'harness' | '.harness' {
+	return entry?.startsWith('harness/') ? 'harness' : '.harness';
+}
+
 /** Detection never executes a producer. Unknown or unsafe project Harnesses retain authority. */
 export async function inspectHarnessAuthority(root: string): Promise<HarnessAuthority> {
 	const canonical = await fs.realpath(root);
