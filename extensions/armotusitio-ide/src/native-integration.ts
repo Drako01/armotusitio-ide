@@ -6,35 +6,22 @@
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
 import { createHash, randomBytes } from 'node:crypto';
-import { currentToolchainEnvironment, pathExists } from './native-toolchain-env.ts';
+import { currentToolchainEnvironment } from './native-toolchain-env.ts';
 import { detectEcosystems, describeEcosystems } from './native-ecosystems.ts';
+import { registerGoalIntegration } from './native-goal-integration.ts';
 import { createCommandPolicy, type CommandPolicyConfig } from './native-command-policy.ts';
 import type { RunnerConfig } from './ats-runner.ts';
 import type { ActivityFeed } from './native-activity-feed.ts';
-import { inCharterScope, type GoalCharter } from './native-goal.ts';
-import { FileGoalJournal, interruptedOnLoad, type GoalState } from './native-goal-journal.ts';
-import { GoalOrchestrator, defaultCharter } from './native-orchestrator.ts';
-import { createGoalPorts, goalActivityItems, inferGoalOptions } from './native-goal-runtime.ts';
-import { proposeDefinitionOfDone } from './native-dod.ts';
 import { createResultCache, type ResultCache } from './native-result-cache.ts';
 import { composeUpCommand, detectServiceNeeds, probeService } from './native-services.ts';
 import { runCommand } from './native-command-runner.ts';
 import { openToolChannel } from './native-tool-server.ts';
 import { runEditorTool, type EditorBackend } from './native-editor-tools.ts';
 import { KeychainDevSecrets } from './native-dev-secrets.ts';
-import { doctorReport, parseExcludedPorts, runDoctor, type DoctorCheck, type Exec } from './native-machine-doctor.ts';
-import { collectOrphans, createEnvironment, validateTemplate, type EnvironmentTemplate } from './native-ephemeral-env.ts';
+import { doctorReport, runDoctor, type DoctorCheck, type Exec } from './native-machine-doctor.ts';
+import { collectOrphans, validateTemplate, type EnvironmentTemplate } from './native-ephemeral-env.ts';
 import { execFile } from 'node:child_process';
 import { resolveNativeCommand } from './native-runtime.ts';
-import { offlineEnvironment, syncCommands } from './native-dependency-sync.ts';
-import * as os from 'node:os';
-import { DecisionLog, decisionsPrompt } from './native-decisions.ts';
-import { GoalUsageHistory, estimateCalls, quotaCheck } from './native-goal-budget.ts';
-import { notifyWebhook, publishProcesses, readProcesses, type ProcessView } from './native-process-monitor.ts';
-import { integrationOrder, linkedPullRequestsSection, repoPartInstruction, type RepoDelivery } from './native-multi-repo.ts';
-import { cardKeyOf, cardObjective, commentMilestone, readCard, type CardClient, type CardContext } from './native-card-goal.ts';
-import { reviewObjective, reviewTasks, threadStates, type ReviewComment } from './native-review-comments.ts';
-import { acceptDelivery, commitMessage, commitStep, createDelivery, deliveryFiles, deliveryPackage, discardDelivery, pullRequestDescription, type Delivery } from './native-delivery.ts';
 import { NativeHarness, nativePlanRevision, type Plan } from './native-harness.ts';
 import type { ChatImplementOutcome, ChatRuntime } from './native-chat-session.ts';
 import { harnessErrorCode, type GateSummary } from './native-chat.ts';
@@ -552,254 +539,18 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 		}
 		return cache;
 	};
-	/** Phone notification through the user's webhook (block Y): title and state only, https only, never code or output. */
-	const notifyWebhookSetting = async (title: string, state: string): Promise<void> => {
-		const url: unknown = vscode.workspace.getConfiguration('atsHarness').get('notifyWebhook', '');
-		if (typeof url === 'string' && url) { await notifyWebhook(url, title, state).catch(() => undefined); }
-	};
-	/** A notification with one action; it also reaches the webhook. */
-	const notify = (title: string, state: string, detail: string, action?: () => unknown): void => {
-		void notifyWebhookSetting(title, state);
-		const label = vscode.l10n.t('Responder');
-		void vscode.window.showInformationMessage(title + ': ' + detail, ...(action ? [label] : [])).then((choice: string | undefined) => { if (choice && action) { void action(); } });
-	};
-	/** Work Management client for card goals (block U); the extension wires it when MCP is enabled. */
-	const cardClient = (): CardClient => {
-		const client = controller.mcpClient;
-		if (!client) { throw Error('HARNESS_UNSUPPORTED'); }
-		return { tools: () => client.tools(), call: (name, args) => client.call(name, args) };
-	};
-	/** Deliveries waiting for the user's decision, by worktree: Accept, Discard or an inline review cycle (block Z). */
-	const deliveries = new Map<string, { delivery: Delivery; folder: Host; charter: GoalCharter }>();
-	const reviewController = vscode.comments?.createCommentController?.('atsHarness.review', vscode.l10n.t('Revisi\u00f3n del Harness'));
-	if (reviewController) {
-		context.subscriptions.push(reviewController);
-		// Comments are allowed on any line of a delivery's files, and nowhere else.
-		reviewController.commentingRangeProvider = { provideCommentingRanges: (document: Host) => [...deliveries.keys()].some(worktree => document.uri.fsPath.startsWith(worktree + path.sep)) ? [new vscode.Range(0, 0, Math.max(0, document.lineCount - 1), 0)] : [] };
-	}
-	const reviewThreads = new Map<string, Host[]>();
-	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.reviewComment', (reply: Host) => {
-		const thread = reply.thread;
-		thread.comments = [...thread.comments, { body: new vscode.MarkdownString(reply.text), mode: vscode.CommentMode.Preview, author: { name: vscode.l10n.t('Vos') } }];
-		const worktree = [...deliveries.keys()].find(item => thread.uri.fsPath.startsWith(item + path.sep));
-		if (worktree) { reviewThreads.set(worktree, [...(reviewThreads.get(worktree) ?? []).filter(item => item !== thread), thread]); }
-	}));
-	/** Open the files of a delivery for review; comments are added with the editor's comment UI. */
-	const openInlineReview = async (delivery: Delivery, files: readonly string[]): Promise<void> => {
-		for (const file of files.slice(0, 20)) { await vscode.window.showTextDocument(vscode.Uri.file(path.join(delivery.worktree, file)), { preview: false, preserveFocus: true }).then(undefined, () => undefined); }
-		void vscode.window.showInformationMessage(vscode.l10n.t('Coment\u00e1 las l\u00edneas que quieras cambiar y us\u00e1 \u00abArmoTuSitio: Enviar revisi\u00f3n de la entrega\u00bb.'));
-	};
-	/** Send the review: one correction task per comment, run as a new cycle on the same branch; threads resolve when verified. */
-	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.submitReview', async () => {
-		try {
-			const [worktree, threads] = [...reviewThreads.entries()].find(([, items]) => items.length) ?? [];
-			const pending = worktree && deliveries.get(worktree);
-			if (!pending || !threads) { void vscode.window.showInformationMessage(vscode.l10n.t('No hay comentarios de revisi\u00f3n pendientes.')); return; }
-			const comments: ReviewComment[] = threads.map((thread, index) => ({ id: String(index), file: path.relative(worktree, thread.uri.fsPath).split(path.sep).join('/'), line: thread.range.start.line + 1, text: thread.comments.map((comment: Host) => typeof comment.body === 'string' ? comment.body : comment.body.value).join('\n') }));
-			const tasks = reviewTasks(comments);
-			const result = await runGoal(pending.folder, { ...pending.charter, objective: reviewObjective(pending.charter.objective, tasks), size: 'small' }, { delivery: pending.delivery });
-			const changed = new Set(await deliveryFiles(pending.delivery).catch(() => [] as string[]));
-			const states = threadStates(comments, changed, result?.status === 'completed', () => undefined);
-			threads.forEach((thread, index) => { if (states[String(index)] === 'resolved') { thread.state = vscode.CommentThreadState?.Resolved; } });
-			reviewThreads.set(worktree, threads.filter((_, index) => states[String(index)] !== 'resolved'));
-		} catch (error) { showError(error); }
-	}));
-	/** Long processes reported through progress files (block Y): published to the feed, stalls flagged, ends notified. */
-	const processDirectory = path.join(context.globalStorageUri?.fsPath ?? os.tmpdir(), 'processes');
-	context.environmentVariableCollection?.replace?.('ATS_PROGRESS_DIR', processDirectory);
-	const processStates = new Map<string, ProcessView['state']>();
-	const processTimer = setInterval(() => {
-		const feed: ActivityFeed | undefined = controller.activityFeed;
-		if (!feed?.publish) { return; }
-		void readProcesses(processDirectory, Number(vscode.workspace.getConfiguration('atsHarness').get('stallMinutes', 15)) || 15).then(views => {
-			for (const view of publishProcesses(feed, views, 'IDE', processStates)) {
-				notify(view.title, view.state, view.state === 'stalled' ? vscode.l10n.t('parece trabado') : view.state === 'completed' ? vscode.l10n.t('termin\u00f3') : vscode.l10n.t('se detuvo'));
-			}
-		}, () => undefined);
-	}, 5000);
-	processTimer.unref?.();
-	context.subscriptions.push({ dispose: () => clearInterval(processTimer) });
-	/** Live autonomous goals (block L): how to stop them and the pending question round, keyed by goal id. */
-	const goals = new Map<string, { control?: 'pause' | 'stop'; answer?: (answers: string[] | undefined) => void; questions?: string[]; folder: Host; root?: string; saved?: Set<string>; files?: Set<string> }>();
-	// User saves inside a goal's tree are recorded so a step that also changed the file stops in conflict (block O).
-	if (vscode.workspace.onDidSaveTextDocument) {
-		context.subscriptions.push(vscode.workspace.onDidSaveTextDocument((document: Host) => {
-			for (const goal of goals.values()) {
-				if (goal.root && goal.saved && document.uri.fsPath.startsWith(goal.root + path.sep)) { goal.saved.add(path.relative(goal.root, document.uri.fsPath).split(path.sep).join('/')); }
-			}
-		}));
-	}
-	// The explorer marks the files a goal is changing, so the user sees where the Harness works (block O).
-	const decorationsChanged = vscode.EventEmitter ? new vscode.EventEmitter() : undefined;
-	if (decorationsChanged && vscode.window.registerFileDecorationProvider) {
-		context.subscriptions.push(decorationsChanged, vscode.window.registerFileDecorationProvider({
-			onDidChangeFileDecorations: decorationsChanged.event,
-			provideFileDecoration: (uri: Host) => {
-				for (const goal of goals.values()) {
-					if (goal.root && goal.files?.has(path.relative(goal.root, uri.fsPath).split(path.sep).join('/'))) { return { badge: '●', tooltip: vscode.l10n.t('El Harness est\u00e1 trabajando en este archivo') }; }
-				}
-				return undefined;
-			}
-		}));
-	}
-	const askGoal = async (goalId: string): Promise<void> => {
-		const goal = goals.get(goalId);
-		if (!goal?.answer || !goal.questions) { return; }
-		const answers: string[] = [];
-		for (const question of goal.questions) {
-			const answer = await vscode.window.showInputBox({ title: vscode.l10n.t('El objetivo necesita tu respuesta'), prompt: question, ignoreFocusOut: true });
-			if (answer === undefined) { return; }
-			answers.push(answer);
+	/** Autonomous goals, deliveries, inline review, decisions and long processes live in their own module. */
+	const goalIntegration = registerGoalIntegration({
+		context, vscode, controller, metricsDirectory, ensureTrust: () => ensureTrust(), showError: error => showError(error), commandExtras,
+		providerCallsPer24h: folder => providerCallsPer24h(folder), resultCache, environmentTemplates, systemExec, doctorFor, servicePreflight,
+		launchAgent: async (folder, workRoot, { provider, readOnly, instruction, resumeSession, maxTurns }, scope) => {
+			if (readOnly) { return runGuardedAgent(folder, draftOf(workRoot, provider, 'planner', instruction)); }
+			const server = await prepareToolServer(workRoot, maxTurns, scope.inScope, scope.extraEnv);
+			const ecosystems = server.ecosystems.length ? '\n\nDetected subprojects and their usual commands:\n' + server.ecosystems.join('\n') : '';
+			try { return await runGuardedAgent(folder, draftOf(workRoot, provider, 'implementer', resumeSession ? instruction : instruction + ecosystems, { maxTurns, ...(resumeSession ? { resumeSession } : {}) }), { toolServer: server.launch }); }
+			finally { await server.dispose(); }
 		}
-		const resolve = goal.answer; goal.answer = undefined; goal.questions = undefined;
-		resolve(answers);
-	};
-	/** Run one approved charter to the end in the background; the feed and notifications report it. */
-	const runGoal = async (folder: Host, charter: GoalCharter, options: { delivery?: Delivery; card?: CardContext; linked?: string } = {}): Promise<{ status: string; delivery?: Delivery } | undefined> => {
-		const root = await fs.realpath(folder.uri.fsPath);
-		const goalId = Date.now().toString(36) + '-' + randomBytes(3).toString('hex');
-		goals.set(goalId, { folder });
-		const storage = path.join(metricsDirectory(root), 'goals');
-		const delivery = options.delivery ?? (charter.delivery === 'working-tree' ? undefined : await createDelivery(root, path.join(metricsDirectory(root), 'deliveries'), charter.objective));
-		const decisions = new DecisionLog(metricsDirectory(root));
-		// Decisions in force reach every agent; the analyst asks when the request contradicts one (AA).
-		charter = { ...charter, objective: charter.objective + decisionsPrompt(await decisions.relevant().catch(() => [])) };
-		const workRoot = delivery?.worktree ?? root;
-		const live = goals.get(goalId)!;
-		live.root = workRoot; live.saved = new Set(); live.files = new Set();
-		const authority = await inspectHarnessAuthority(workRoot);
-		const delegate = authority.engine === 'project' && (await readProjectCapabilities(workRoot).catch(() => [])).includes('command-runner');
-		const subprojects = await detectEcosystems(workRoot);
-		const config = authority.engine === 'ide-native' ? await loadProjectConfig(workRoot).catch(() => undefined) : undefined;
-		const feed: ActivityFeed | undefined = controller.activityFeed;
-		const template = charter.environment ? (await environmentTemplates(root)).find(item => item.name === charter.environment) : undefined;
-		const excluded = process.platform === 'win32' ? parseExcludedPorts((await systemExec('netsh', ['int', 'ipv4', 'show', 'excludedportrange', 'protocol=tcp']).catch(() => ({ code: null, output: '' }))).output) : [];
-		const environment = template ? await createEnvironment({ template, goalId, exec: systemExec, excludedPorts: excluded }) : undefined;
-		// D5: the IDE installs from the lockfiles first (only cache-filling ones in the user's own checkout); then commands go offline.
-		const baseEnv = (await currentToolchainEnvironment()).env;
-		let synced = true;
-		for (const sync of (await syncCommands(workRoot, subprojects)).filter(item => delivery || item.cacheOnly)) {
-			const result = await runCommand({ root: workRoot, cwd: sync.cwd, command: sync.command, args: sync.args, env: baseEnv, logDirectory: path.join(storage, goalId + '-sync'), timeoutSec: 900 }).catch(() => undefined);
-			if (result?.exitCode !== 0) { synced = false; }
-		}
-		const offline = synced ? offlineEnvironment() : {};
-		const ports = createGoalPorts({
-			root: workRoot, projectName: folder.name, charter, goalId, feed,
-			policy: { subprojects, delegate, extras: commandExtras() }, env: { ...baseEnv, ...offline, ...environment?.exports },
-			logDirectory: path.join(storage, goalId + '-logs'),
-			gates: (config?.plan.gates ?? []).map(gate => ({ id: gate.id, command: gate.executable, args: gate.args, cwd: gate.cwd || '.' })),
-			definitionOfDone: proposeDefinitionOfDone({ subprojects, hasMigrations: (await Promise.all(['.', ...subprojects.map(project => project.path)].map(folder => pathExists(path.join(workRoot, folder, 'migrations'))))).some(Boolean), hasApiContract: await pathExists(path.join(workRoot, 'openapi.yaml')), hasUi: subprojects.some(project => project.ecosystem === 'node') }),
-			stopRequested: () => goals.get(goalId)?.control,
-			cache: await resultCache(workRoot),
-			userSaved: live.saved,
-			ask: questions => new Promise(resolve => {
-				const goal = goals.get(goalId)!; goal.questions = questions;
-				// Each answer becomes a project decision, so the next goal does not ask it again (AA).
-				goal.answer = answers => {
-					if (answers) { for (const [index, question] of questions.entries()) { void decisions.record({ title: question.slice(0, 120), context: charter.objective.split('\n')[0].slice(0, 300), decision: answers[index] ?? '', alternatives: [], scope: [], source: 'answer' }).catch(() => undefined); } }
-					resolve(answers);
-				};
-				notify(vscode.l10n.t('El objetivo necesita tu respuesta'), 'answer', questions[0].slice(0, 120), () => askGoal(goalId));
-			}),
-			launch: async ({ provider, readOnly, instruction, resumeSession, maxTurns }) => {
-				if (readOnly) { return runGuardedAgent(folder, draftOf(workRoot, provider, 'planner', instruction)); }
-				const server = await prepareToolServer(workRoot, maxTurns, file => inCharterScope(charter, file), { ...offline, ...environment?.exports });
-				const ecosystems = server.ecosystems.length ? '\n\nDetected subprojects and their usual commands:\n' + server.ecosystems.join('\n') : '';
-				try { return await runGuardedAgent(folder, draftOf(workRoot, provider, 'implementer', resumeSession ? instruction : instruction + ecosystems, { maxTurns, ...(resumeSession ? { resumeSession } : {}) }), { toolServer: server.launch }); }
-				finally { await server.dispose(); }
-			},
-			// A branch delivery gets one commit per accepted step, made by the orchestrator (D7).
-			afterStep: async state => {
-				for (const file of state.steps.at(-1)?.outcome?.diff.files ?? []) { live.files!.add(file.path); }
-				decorationsChanged?.fire(undefined);
-				if (delivery) { await commitStep(delivery, commitMessage('test', state.steps.at(-1)!.title)).catch(() => undefined); }
-			}
-		});
-		try {
-			void decisions.record({ title: 'Carta: ' + charter.objective.split('\n')[0].slice(0, 100), context: 'Carta aprobada', decision: charter.objective.split('\n')[0].slice(0, 300) + (charter.allowProduction ? '' : ' (sin tocar producci\u00f3n)'), alternatives: [], scope: charter.scope.flatMap(rule => rule.allow ?? []), source: 'charter' }).catch(() => undefined);
-			if (options.card) { await commentMilestone(cardClient(), options.card, vscode.l10n.t('Plan aprobado: el Harness empez\u00f3 a trabajar en esta card.')).catch(() => undefined); }
-			const report = await new GoalOrchestrator(new FileGoalJournal(storage, goalId), ports, goalId).run(charter, delivery?.base);
-			await new GoalUsageHistory(metricsDirectory(root)).record({ size: charter.size, tasks: Math.max(1, report.steps), calls: report.runs, at: new Date().toISOString() }).catch(() => undefined);
-			const state = await new FileGoalJournal(storage, goalId).load(goalId);
-			const files = delivery ? await deliveryFiles(delivery).catch(() => []) : [];
-			const packageFile = path.join(storage, goalId + '-entrega.md');
-			const content = { state, spec: report.spec, done: report.done, files, ...(options.card ? { card: options.card.key } : {}) };
-			await fs.writeFile(packageFile, deliveryPackage(content) + (options.linked ? '\n' + options.linked : '') + '\n## Descripci\u00f3n de PR\n\n' + pullRequestDescription(content) + (options.linked ?? ''));
-			if (options.card && report.status === 'completed') { await commentMilestone(cardClient(), options.card, vscode.l10n.t('Entrega lista en la rama {0}.', delivery?.branch ?? '')).catch(() => undefined); }
-			if (delivery) { deliveries.set(delivery.worktree, { delivery, folder, charter }); }
-			const open = vscode.l10n.t('Abrir entrega'), accept = vscode.l10n.t('Aceptar'), discard = vscode.l10n.t('Descartar'), review = vscode.l10n.t('Revisar inline');
-			const message = report.status === 'completed' ? vscode.l10n.t('Objetivo terminado: {0}', charter.objective.split('\n')[0].slice(0, 80)) : vscode.l10n.t('El objetivo se detuvo ({0}): {1}', report.reason ?? report.status, charter.objective.split('\n')[0].slice(0, 80));
-			void notifyWebhookSetting(message, report.status);
-			if (options.linked) { return { status: report.status, delivery }; }
-			const choice = await vscode.window.showInformationMessage(message, open, ...(delivery ? [review, accept, discard] : []));
-			if (choice === open) { await vscode.window.showTextDocument(vscode.Uri.file(packageFile)); }
-			if (delivery && choice === review) { await openInlineReview(delivery, files); }
-			if (delivery && choice === accept) {
-				const result = await acceptDelivery(delivery);
-				if (!result.integrated) { void vscode.window.showWarningMessage(vscode.l10n.t('No se integr\u00f3: ten\u00e9s cambios sin guardar en {0}. La rama {1} queda lista para abrir un PR.', result.conflicts.slice(0, 3).join(', '), delivery.branch)); }
-				else { deliveries.delete(delivery.worktree); }
-			}
-			if (delivery && choice === discard) { await discardDelivery(delivery); deliveries.delete(delivery.worktree); }
-			return { status: report.status, delivery };
-		} catch (error) { showError(error); return undefined; }
-		finally { goals.delete(goalId); decorationsChanged?.fire(undefined); await environment?.destroy(); }
-	};
-	/** Goals of earlier sessions whose journal says they were still working (block N), by goal id. */
-	const interrupted = new Map<string, { folder: Host; state: GoalState }>();
-	const scanInterrupted = async (): Promise<void> => {
-		if (!ensureTrust()) { return; }
-		const feed: ActivityFeed | undefined = controller.activityFeed;
-		for (const folder of vscode.workspace.workspaceFolders || []) {
-			const root = await fs.realpath(folder.uri.fsPath).catch(() => undefined);
-			if (!root) { continue; }
-			const storage = path.join(metricsDirectory(root), 'goals');
-			for (const goalId of (await FileGoalJournal.list(storage)).slice(0, 20)) {
-				if (goals.has(goalId)) { continue; }
-				const state = interruptedOnLoad(await new FileGoalJournal(storage, goalId).load(goalId).catch(() => undefined as unknown as GoalState));
-				if (!state || state.status !== 'interrupted') { continue; }
-				interrupted.set(goalId, { folder, state });
-				for (const item of goalActivityItems(state, folder.name)) { feed?.publish?.(item); }
-			}
-		}
-	};
-	void scanInterrupted().catch(() => undefined);
-	/** Feed actions on a goal item (Inicio): answer, stop, and continue an interrupted goal. */
-	controller.goalAct = async (itemId: string, action: string): Promise<boolean> => {
-		const goalId = /^goal:(?<id>[a-z0-9-]{1,64})$/.exec(itemId)?.groups?.id;
-		if (!goalId) { return false; }
-		const goal = goals.get(goalId);
-		const previous = interrupted.get(goalId);
-		if (!goal && !previous) { return false; }
-		if (goal && action === 'answer') { await askGoal(goalId); }
-		if (goal && action === 'stop') { goal.control = 'stop'; goal.answer?.(undefined); }
-		if (!goal && previous && action === 'continue') {
-			// Resuming starts from the state the journal recorded: the applied diff stays and done steps are not repeated.
-			interrupted.delete(goalId);
-			// The old journal is closed so the next start does not offer it again.
-			const oldStorage = path.join(metricsDirectory(await fs.realpath(previous.folder.uri.fsPath)), 'goals');
-			await new FileGoalJournal(oldStorage, goalId).append({ type: 'state', at: new Date().toISOString(), status: 'cancelled', reason: 'resumed' }).catch(() => undefined);
-			const done = previous.state.steps.filter(step => step.status === 'done').map(step => '- ' + step.title);
-			const note = '\n\nThis goal was interrupted (the IDE closed). Steps already done, do not repeat them:\n' + (done.join('\n') || '- none') + '\nInspect the current state of the files before continuing.';
-			void runGoal(previous.folder, { ...previous.state.charter, objective: previous.state.charter.objective + note });
-		}
-		return true;
-	};
-	/** Project decisions (block AA): review, archive, or export them to `docs/adr/` as an explicit action. */
-	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.decisions', async () => {
-		try {
-			const folder = (vscode.workspace.workspaceFolders || [])[0];
-			if (!folder || !ensureTrust()) { return; }
-			const root = await fs.realpath(folder.uri.fsPath);
-			const log = new DecisionLog(metricsDirectory(root));
-			const active = await log.relevant();
-			const exportLabel = vscode.l10n.t('Exportar al repositorio (docs/adr)');
-			const picked = await vscode.window.showQuickPick([{ label: exportLabel, id: '' }, ...active.map(item => ({ label: item.title, description: item.source + ' · ' + item.at.slice(0, 10), detail: item.decision, id: item.id }))], { title: vscode.l10n.t('Decisiones vigentes de {0}', folder.name) });
-			if (!picked) { return; }
-			if (picked.label === exportLabel) { const written = await log.exportAdrs(path.join(root, 'docs', 'adr')); void vscode.window.showInformationMessage(vscode.l10n.t('{0} decisiones exportadas a docs/adr.', String(written.length))); return; }
-			const archive = vscode.l10n.t('Archivar');
-			if (await vscode.window.showInformationMessage(picked.detail ?? '', archive) === archive) { await log.archive(picked.id); }
-		} catch (error) { showError(error); }
-	}));
+	});
 	/** Web search for one project (decision D9): applies from the next run (EC-148); fetching URLs stays forbidden. */
 	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.webSearch', async (requested?: string) => {
 		try {
@@ -844,78 +595,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			}
 		} catch (error) { showError(error); }
 	}));
-	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.goal', async (requested?: string, objectiveArgument?: string) => {
-		try {
-			if (!ensureTrust()) { void vscode.window.showWarningMessage(vscode.l10n.t('Marc\u00e1 el workspace como confiable para iniciar un objetivo.')); return; }
-			const folders = vscode.workspace.workspaceFolders || [];
-			const folder = folders.find((item: Host) => item.uri.fsPath === requested) ?? (folders.length === 1 ? folders[0] : (await vscode.window.showWorkspaceFolderPick()));
-			if (!folder) { return; }
-			const objective = typeof objectiveArgument === 'string' && objectiveArgument.trim() ? objectiveArgument : await vscode.window.showInputBox({ title: vscode.l10n.t('Nuevo objetivo'), prompt: vscode.l10n.t('Una instrucci\u00f3n; el Harness trabaja solo hasta terminarla y s\u00f3lo pregunta lo indispensable.'), ignoreFocusOut: true });
-			if (!objective?.trim()) { return; }
-			const root = await fs.realpath(folder.uri.fsPath);
-			// A card key in the instruction brings the card's description and criteria (U); without MCP it runs as plain text.
-			const key = cardKeyOf(objective);
-			const card = key && controller.mcp?.enabled?.() ? await readCard(cardClient(), key).catch(() => undefined) : undefined;
-			const goalObjective = card ? cardObjective(objective, card) : objective;
-			// Several repositories (T): integrated in the order picked, each with its own branch.
-			const others = folders.filter((item: Host) => item.uri.toString() !== folder.uri.toString());
-			const extra = others.length ? await vscode.window.showQuickPick(others.map((item: Host) => ({ label: item.name, folder: item })), { canPickMany: true, title: vscode.l10n.t('\u00bfEl objetivo cruza otros repositorios? Eleg\u00ed en orden de integraci\u00f3n (vac\u00edo: s\u00f3lo {0})', folder.name) }) : [];
-			if (extra === undefined) { return; }
-			const subprojects = await detectEcosystems(root);
-			const inferred = inferGoalOptions(objective, subprojects);
-			const branch = vscode.l10n.t('Rama local harness/… (recomendado)'), tree = vscode.l10n.t('Cambios en mi \u00e1rbol de trabajo');
-			const isRepo = await pathExists(path.join(root, '.git'));
-			const deliveryChoice = isRepo ? await vscode.window.showQuickPick([branch, tree], { title: vscode.l10n.t('\u00bfC\u00f3mo quer\u00e9s recibir el trabajo?') }) : tree;
-			if (!deliveryChoice) { return; }
-			const provider = (vscode.workspace.getConfiguration('atsHarness').get('goalProvider', 'claude') === 'codex' ? 'codex' : 'claude') as NativeProvider;
-			const templates = await environmentTemplates(root).catch(() => []);
-			const none = vscode.l10n.t('Sin entorno ef\u00edmero');
-			const environmentChoice = templates.length ? await vscode.window.showQuickPick([none, ...templates.map(item => item.name)], { title: vscode.l10n.t('\u00bfEl objetivo necesita un entorno ef\u00edmero?') }) : none;
-			if (!environmentChoice) { return; }
-			const charter = { ...defaultCharter(goalObjective, provider, provider === 'claude' ? 'codex' : 'claude', { ...inferred, delivery: deliveryChoice === branch || extra.length ? 'local-branch' : 'working-tree' }), ...(environmentChoice !== none ? { environment: environmentChoice } : {}) };
-			// Estimate before approval, calibrated with local history, against the quota minus the manual reserve (AB).
-			const estimate = estimateCalls(charter.size, 3 * (1 + extra.length), await new GoalUsageHistory(metricsDirectory(root)).list().catch(() => []));
-			const cap = providerCallsPer24h(folder);
-			const remaining = cap > 0 ? (await readProviderInvocationQuota(metricsDirectory(root), cap)).providers[provider].remaining ?? undefined : undefined;
-			const reserve = Number(vscode.workspace.getConfiguration('atsHarness').get('goalReservePercent', 20)) || 0;
-			const quota = quotaCheck(estimate, remaining, cap > 0 ? cap : undefined, reserve);
-			controller.quotaDescription = remaining === undefined ? vscode.l10n.t('Cupo: sin l\u00edmite local configurado') : vscode.l10n.t('Cupo de {0}: {1} llamadas restantes de {2}', provider, String(remaining), String(cap));
-			// The full doctor runs before approval, so an environment problem shows now and not halfway through (X).
-			const problems = (await doctorFor(root).catch(() => [])).filter(check => check.status === 'problem' || (charter.environment && check.id === 'docker' && check.status !== 'ok'));
-			const approve = vscode.l10n.t('Aprobar carta');
-			const detail = [
-				vscode.l10n.t('Objetivo: {0}', objective),
-				inferred.target !== undefined ? vscode.l10n.t('Terminado cuando la m\u00e9trica llegue a {0}% (la mide el IDE).', String(inferred.target)) : vscode.l10n.t('Terminado cuando se cumpla la Definici\u00f3n de Terminado.'),
-				inferred.allowProduction ? vscode.l10n.t('Puede tocar c\u00f3digo de producci\u00f3n y tests.') : vscode.l10n.t('S\u00f3lo tests: el c\u00f3digo de producci\u00f3n queda prohibido.'),
-				vscode.l10n.t('Prohibido: git, dependencias nuevas, publicar.'),
-				vscode.l10n.t('Presupuesto: {0} corridas, {1} minutos, {2} turnos por corrida.', String(charter.budget.maxRuns), String(charter.budget.maxMinutes), String(charter.budget.maxTurnsPerRun)),
-				charter.delivery === 'local-branch' ? vscode.l10n.t('Entrega: rama local con commits del orquestador; push y PR quedan para vos.') : vscode.l10n.t('Entrega: cambios en tu \u00e1rbol de trabajo.'),
-				...(charter.environment ? [vscode.l10n.t('Entorno ef\u00edmero: {0}, creado y destruido por el IDE.', charter.environment)] : []),
-				vscode.l10n.t('Estimaci\u00f3n: {0}\u2013{1} llamadas al proveedor ({2}).', String(estimate.low), String(estimate.high), estimate.basis === 'history' ? vscode.l10n.t('seg\u00fan tu historial') : vscode.l10n.t('valor inicial')),
-				...(quota.fits ? [] : [vscode.l10n.t('⚠ La estimaci\u00f3n supera el cupo disponible ({0} llamadas, reservando {1}% para tu trabajo manual). Divid\u00ed el objetivo o us\u00e1 el otro proveedor.', String(quota.available ?? 0), String(reserve))]),
-				...(card ? [vscode.l10n.t('Card {0}: {1} criterios; {2}.', card.key, String(card.criteria.length), card.canComment ? vscode.l10n.t('se comentan los hitos') : vscode.l10n.t('modo lectura'))] : []),
-				...(extra.length ? [vscode.l10n.t('Repositorios en orden: {0}.', [folder.name, ...extra.map((item: Host) => item.label)].join(' → '))] : []),
-				...problems.map(check => '⚠ ' + check.title + ': ' + check.detail + (check.action ? ' ' + check.action : ''))
-			].join('\n');
-			if (await vscode.window.showWarningMessage(vscode.l10n.t('\u00bfAprob\u00e1s esta carta?'), { modal: true, detail }, approve) !== approve) { return; }
-			if (!await servicePreflight(root)) { return; }
-			if (!extra.length) { void runGoal(folder, charter, card ? { card } : {}); return; }
-			void (async () => {
-				const parts = integrationOrder([folder, ...extra.map((item: Host) => item.folder)].map((item: Host, index: number, all: Host[]) => ({ name: item.name, root: item.uri.fsPath, dependsOn: index ? [all[index - 1].name] : [] })));
-				const delivered: RepoDelivery[] = [];
-				for (const part of parts) {
-					const partFolder = folders.find((item: Host) => item.name === part.name)!;
-					const result = await runGoal(partFolder, { ...charter, objective: repoPartInstruction(goalObjective, part, parts, delivered) }, { linked: '(multi-repo)', ...(card ? { card } : {}) });
-					if (result?.delivery) { delivered.push({ name: part.name, branch: result.delivery.branch }); }
-					if (result?.status !== 'completed') { notify(vscode.l10n.t('El objetivo multi-repositorio se detuvo en {0}', part.name), 'blocked', result?.status ?? 'failed'); return; }
-				}
-				const summary = await vscode.workspace.openTextDocument({ language: 'markdown', content: '# ' + objective.split('\n')[0] + '\n\n' + linkedPullRequestsSection(delivered, '') });
-				await vscode.window.showTextDocument(summary);
-				notify(vscode.l10n.t('Objetivo multi-repositorio terminado'), 'completed', delivered.map(item => item.branch).join(', '));
-			})();
-		} catch (error) { showError(error); }
-	}));
-	controller.nativeRunning = () => running.size + runningAgents.size + pendingAgents.size + runningWorkflows.size + pendingWorkflows.size + goals.size;
+	controller.nativeRunning = () => running.size + runningAgents.size + pendingAgents.size + runningWorkflows.size + pendingWorkflows.size + goalIntegration.running();
 	controller.nativeProjects = async () => {
 		const rows = [];
 		if (!vscode.workspace.getConfiguration('atsHarness').get('enabled', true)) { return rows; }
@@ -1470,7 +1150,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 						implementerMaxTurns: settings.get('implementerMaxTurns'), promptBudgetKiB: settings.get('promptBudgetKiB'), coordinatedWriters: coordinatedWriters(),
 						writerIsolation: requiredWriterIsolation(), agentCommandsAllow: commandExtras(), webSearch: webSearchOn(root)
 					},
-					activity: { agentRunning: runningAgents.has(root) || pendingAgents.has(root), goals: [...goals.values()].filter(goal => goal.root === root).length },
+					activity: { agentRunning: runningAgents.has(root) || pendingAgents.has(root), goalsRunning: goalIntegration.running() },
 					commandPolicy: delegate ? ['Delegated to the project Harness (command-runner)'] : createCommandPolicy({ subprojects, delegate, extras: commandExtras() }).describe(),
 					ecosystems: describeEcosystems(subprojects), services, cache
 				};
