@@ -148,3 +148,20 @@ test('external handshake refuses a manifest changed by the project runner', asyn
 			/HARNESS_HANDSHAKE_CAPABILITIES_CHANGED/);
 	} finally { await fs.rm(root, { recursive: true, force: true }); }
 });
+
+test('a Harness entered through harness/scripts/ide.mjs declares its capabilities in harness/manifests', async () => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-engine-layout-'));
+	try {
+		const canonical = await fs.realpath(root);
+		await fs.mkdir(path.join(root, '.harness'));
+		await fs.mkdir(path.join(root, 'harness', 'manifests'), { recursive: true });
+		await fs.mkdir(path.join(root, 'harness', 'scripts'));
+		await fs.writeFile(path.join(root, 'harness', 'scripts', 'ide.mjs'), '');
+		await fs.writeFile(path.join(root, 'harness', 'manifests', 'ide-capabilities.json'),
+			JSON.stringify({ schemaVersion: 2, engine: 'project', capabilities: ['durable-tasks', 'writer-lease'] }));
+		assert.deepEqual((await describeEngine(canonical)).projectDeclared, ['durable-tasks', 'writer-lease']);
+		await fs.mkdir(path.join(root, '.harness', 'manifests'));
+		await fs.writeFile(path.join(root, '.harness', 'manifests', 'ide-capabilities.json'), JSON.stringify({ schemaVersion: 2, engine: 'project', capabilities: [] }));
+		assert.deepEqual((await describeEngine(canonical)).projectDeclared, ['durable-tasks', 'writer-lease']);
+	} finally { await fs.rm(root, { recursive: true, force: true }); }
+});
