@@ -7,6 +7,8 @@ import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 import { validateNativePlan, type Plan } from './native-harness.ts';
 import { inspectHarnessAuthority } from './native-authority.ts';
+import { detectEcosystems } from './native-ecosystems.ts';
+import { suggestGates } from './native-gate-suggestions.ts';
 
 export const PROJECT_CONFIG = '.ats-harness.json';
 export interface ProjectConfig {
@@ -102,7 +104,11 @@ export async function proposeProjectConfig(root: string): Promise<ProjectProposa
 	if (profile === 'custom') {
 		caveats.push('Custom fallback only checks the bundled runtime; configure project verifications explicitly');
 	}
-	const config: ProjectConfig = { schemaVersion: 1, runtime: 'ide-native', profile, plan: { schemaVersion: 1, gates: [{ id: 'verify', executable, args, cwd: '.' }] } };
+	// Monorepos get one suggested gate per subproject (block H); the single root gate stays the fallback.
+	const suggested = suggestGates(await detectEcosystems(canonical));
+	if (suggested.length > 1) { signals.push(...suggested.map(gate => gate.cwd + ': ' + gate.executable)); }
+	const gates = suggested.length > 1 ? suggested : [{ id: 'verify', executable, args, cwd: '.' }];
+	const config: ProjectConfig = { schemaVersion: 1, runtime: 'ide-native', profile, plan: { schemaVersion: 1, gates } };
 	validateProjectConfig(config);
 	return { config, signals, caveats, existing: false };
 }

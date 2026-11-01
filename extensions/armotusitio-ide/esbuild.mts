@@ -7,6 +7,6 @@ import { run } from '../esbuild-extension-common.mts';
 
 const root = import.meta.dirname;
 await Promise.all([
-	run({ platform: 'node', entryPoints: { extension: path.join(root, 'extension.ts') }, srcDir: root, outdir: path.join(root, 'dist') }, process.argv),
+	run({ platform: 'node', entryPoints: { extension: path.join(root, 'extension.ts'), 'ats-runner': path.join(root, 'src/ats-runner.ts') }, srcDir: root, outdir: path.join(root, 'dist') }, process.argv),
 	run({ platform: 'browser', entryPoints: { home: path.join(root, 'resources/home.ts'), chat: path.join(root, 'resources/chat.ts') }, srcDir: path.join(root, 'resources'), outdir: path.join(root, 'dist') }, process.argv)
 ]);

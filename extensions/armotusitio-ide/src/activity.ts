@@ -54,16 +54,52 @@ async function readProgress(profile) {
 function normalizeProgress(value) { return progressView(value); }
 
 /** Poll trusted projects with bounded subprocesses and discard obsolete responses. */
-function registerActivity(context, controller, projects, vscode, reader = readProgress) {
+/** Workflow phases of Inicio's task form, as feed states and needs. */
+const WORKFLOW_STATES = {
+	preparing: ['running'], creating: ['running'], running: ['running'], stopping: ['running'], pending: ['queued'],
+	questions: ['paused', 'answer'], review: ['queued', 'approval'], blocked: ['blocked', 'decision'],
+	completed: ['completed'], failed: ['failed'], cancelled: ['cancelled'], interrupted: ['interrupted']
+};
+
+/** Publish the task form's workflows and the project Harness progress to the feed, so Inicio reads one source. */
+function publishSources(feed, controller, progress) {
+	const workflows = controller.getWorkflowActivity?.() || [];
+	const ids = new Set();
+	for (const entry of workflows) {
+		const [state, needs] = WORKFLOW_STATES[entry.phase] || ['interrupted'];
+		const id = 'task:' + entry.id;
+		ids.add(id);
+		feed.publish({
+			id, kind: 'task', project: entry.project, title: entry.title || entry.nativeId || entry.id, state, ...(needs ? { needs } : {}),
+			startedAt: entry.startedAt || entry.checkedAt || 0, updatedAt: entry.endedAt || entry.checkedAt || entry.startedAt || 0,
+			...(entry.progress?.percent === undefined ? {} : { detail: entry.progress.percent + '%' }), ...(entry.progressError ? { stale: true } : {}),
+			actions: ['open'], origin: entry.owned ? 'this-window' : 'external', ...(entry.nativeId ? { parentId: entry.nativeId } : {})
+		});
+	}
+	for (const row of progress) {
+		if (row.error || !row.id) { continue; }
+		const id = 'external:' + row.project + ':' + row.id;
+		ids.add(id);
+		const state = row.live ? 'running' : row.outcome === 'passed' || row.outcome === 'completed' ? 'completed' : row.outcome === 'failed' ? 'failed' : row.state === 'stalled' ? 'interrupted' : 'completed';
+		feed.publish({ id, kind: 'external', project: row.project, title: row.title || row.id, state, startedAt: row.startedAt || 0, updatedAt: row.checkedAt || row.startedAt || 0, ...(row.percent === undefined ? {} : { detail: row.percent + '%' }), actions: ['open'], origin: 'external' });
+	}
+	feed.retain(item => (item.kind !== 'task' && item.kind !== 'external') || ids.has(item.id));
+}
+
+function registerActivity(context, controller, projects, vscode, reader = readProgress, feed = undefined) {
 	const t = message => vscode.l10n.t(message);
 	const bar = vscode.window.createStatusBarItem('atsHarness.activity', vscode.StatusBarAlignment.Left, 20);
 	bar.name = t('Actividad del Harness');
 	bar.command = 'atsIde.home';
 	let disposed = false, polling, trailing = false;
 	controller.progress = [];
+	if (feed) { context.subscriptions.push(feed.onDidChange(() => render())); }
 	function render() {
 		const progress = controller.readHarnessProgress?.() || controller.progress;
-		const running = [...controller.jobs.values()].filter(job => job.state === 'running').length + (controller.nativeRunning?.() || 0);
+		const items = feed?.snapshot() || [];
+		const feedRunning = items.filter(item => item.kind === 'chat-run' && item.state === 'running').length;
+		const attention = items.filter(item => item.needs).length;
+		const running = [...controller.jobs.values()].filter(job => job.state === 'running').length + (controller.nativeRunning?.() || 0) + feedRunning;
 		const workflows = controller.getWorkflowActivity?.() || [];
 		const owned = sortActivity(workflows).find(entry => (entry.owned || entry.progress?.live || ['preparing', 'creating', 'stopping'].includes(entry.phase)) && ['preparing', 'creating', 'running', 'stopping'].includes(entry.phase));
 		const live = progress.find(row => row.live);
@@ -83,7 +119,18 @@ function registerActivity(context, controller, projects, vscode, reader = readPr
 			bar.text = `${finished.phase === 'completed' ? '$(check)' : finished.phase === 'cancelled' ? '$(circle-slash)' : '$(error)'} Harness \u00b7 ${finished.phase === 'completed' ? t('Tarea completada') : finished.phase === 'cancelled' ? t('Tarea cancelada') : t('La tarea fall\u00f3')}`;
 			bar.tooltip = `${finished.title || ''}\n${finished.project}\n${finished.nativeId || ''}`;
 		}
+		// The single Harness item also tells the provider quota (AB) and the cache in use (I).
+		const extras = [controller.quotaDescription, controller.cacheDescription && t('Cach\u00e9: ') + controller.cacheDescription].filter(Boolean);
+		if (extras.length && typeof bar.tooltip === 'string') { bar.tooltip += '\n' + extras.join('\n'); }
+		// What needs the user wins over everything else: it is the reason to open Inicio now.
+		bar.backgroundColor = undefined;
+		if (attention) {
+			bar.text = `$(bell) Harness \u00b7 ${running ? running + ' ' + t('en curso') + ' \u00b7 ' : ''}${attention} ${t('atenci\u00f3n')}`;
+			bar.tooltip = t('Hay algo esperando tu decisi\u00f3n. Abr\u00ed Inicio para resolverlo.');
+			bar.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
+		}
 		if (!vscode.workspace.isTrusted) { bar.text = '$(lock) Harness'; bar.tooltip = t('Marc\u00e1 el workspace como confiable para consultar el progreso.'); }
+		if (feed) { bar.show(); }
 	}
 	async function sample(manual) {
 		try {
@@ -104,6 +151,7 @@ function registerActivity(context, controller, projects, vscode, reader = readPr
 			if (disposed) { return; }
 			const current = await projects();
 			controller.progress = vscode.workspace.isTrusted ? rows.flat().filter(row => current.some(({ profile }) => profile.root === row.project)) : [];
+			if (feed) { publishSources(feed, controller, controller.readHarnessProgress?.() || controller.progress); }
 			if (!current.length && !native.length) { bar.hide(); }
 			render(); controller.refresh();
 		} catch { if (!disposed) { render(); controller.refresh(); } }

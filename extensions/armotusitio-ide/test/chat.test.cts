@@ -172,7 +172,7 @@ async function panelFixture(replies, providerStatus = { claude: 'authenticated',
 			async implement(request, hooks) {
 				calls.push(['implement', request.provider, request.plan.version]);
 				hooks.started(() => undefined); hooks.stage('verifying'); hooks.gates([{ id: 'unit', status: 'running' }]);
-				return { agent: answer('Cre\u00e9 src/clients.ts'), verification: { status: 'passed', gates: [{ id: 'unit', status: 'passed' }] } };
+				return { agent: answer('Cre\u00e9 src/clients.ts'), verification: { status: 'passed', gates: [{ id: 'unit', status: 'passed' }] }, diff: { available: true, files: [{ path: 'src/clients.ts', change: 'added', preexisting: false }], count: 1 } };
 			}
 		})
 	};

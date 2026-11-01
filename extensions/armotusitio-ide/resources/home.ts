@@ -6,9 +6,11 @@
 const ide = acquireVsCodeApi();
 const renderWorkflow = require('./workflow.ts').workspaceUi(ide);
 const renderTools = require('./tools.ts').toolsUi(ide);
+const inicio = require('./home/feed.ts').feedUi(ide);
 document.addEventListener('click', event => {
 	const button = event.target.closest('button[data-action]');
 	if (button && !button.disabled && button.dataset.action === 'compose') {
+		inicio.openMore();
 		const composer = document.getElementById('task-composer') as HTMLDetailsElement;
 		const project = document.getElementById('task-project') as HTMLSelectElement;
 		if (![...project.options].some(option => option.value === button.dataset.root)) { return; }
@@ -20,9 +22,13 @@ document.addEventListener('click', event => {
 window.addEventListener('message', event => {
 	const state = event.data;
 	if (state.type === 'restoreDraft') { const field = document.getElementById('task-text') as HTMLTextAreaElement; const project = document.getElementById('task-project') as HTMLSelectElement; if (project.value === state.root && !field.value && !field.dataset.userEdited && typeof state.text === 'string') { field.value = state.text; } return; }
-	if (state.type === 'reveal') { require('./workflow.ts').revealTask(state.id, state.project); ide.postMessage({ action: 'refresh' }); return; }
-	if (state.type === 'draft' && typeof state.text === 'string') { const field = document.getElementById('task-text') as HTMLTextAreaElement; const composer = document.getElementById('task-composer') as HTMLDetailsElement; if (composer) { composer.open = true; } field.value = state.text; field.dataset.userEdited = 'true'; field.scrollIntoView({ block: 'center' }); field.focus(); return; }
+	if (state.type === 'reveal') { inicio.openMore(); require('./workflow.ts').revealTask(state.id, state.project); ide.postMessage({ action: 'refresh' }); return; }
+	// A prompt passed to `atsIde.home` fills the request field, which goes through the chat.
+	if (state.type === 'draft' && typeof state.text === 'string') { inicio.draft(state.text); return; }
+	if (state.type === 'feed') { inicio.feed(state.items); return; }
+	if (state.type === 'openMore') { inicio.openMore(); return; }
 	if (state.type !== 'state') { return; }
+	inicio.state(state);
 	renderWorkflow(state);
 	renderTools(state);
 	document.getElementById('trust').textContent = state.labels.restricted;

@@ -46,6 +46,15 @@ test('Claude uses plan for readers and fail-closed dontAsk for writers', () => {
 	assert.deepEqual(writer.args.slice(-3), ['--output-format', 'stream-json', '--verbose']);
 });
 
+test('web search is opt-in per project and web fetching is never allowed (D9)', () => {
+	const claude = buildAgentInvocation({ ...base, provider: 'claude', role: 'implementer', readOnly: false, webSearch: true });
+	const codex = buildAgentInvocation({ ...base, webSearch: true });
+	assert.deepEqual([claude.args[claude.args.indexOf('--allowedTools') + 1], claude.args[claude.args.indexOf('--disallowedTools') + 1]], ['Read,Glob,Grep,Edit,Write,WebSearch', 'Bash,WebFetch']);
+	assert.match(claude.stdin, /Queries are audited/);
+	assert.deepEqual(codex.args.slice(0, 5), ['--ask-for-approval', 'never', '--config', 'tools.web_search=true', 'exec']);
+	assert.throws(() => reviewAgentDraft({ ...base, webSearch: 'yes' }), /HARNESS_AGENT_DRAFT_SCHEMA/);
+});
+
 test('a chosen model is passed explicitly and can never be read as a flag', () => {
 	const claude = buildAgentInvocation({ ...base, provider: 'claude', model: 'sonnet' });
 	const codex = buildAgentInvocation({ ...base, model: 'gpt-6.1-sol' });
@@ -68,6 +77,16 @@ test('versioned Claude Opus and explicit effort reach the correct CLI arguments'
 	}
 	assert.throws(() => buildAgentInvocation({ ...base, effort: 'max' }), /HARNESS_AGENT_DRAFT_SCHEMA/);
 	assert.doesNotThrow(() => buildAgentInvocation({ ...base, provider: 'claude', effort: 'max' }));
+});
+
+test('Claude writers get the configured turn budget and a resumed session receives only the continuation', () => {
+	const session = '8b725e4b-cd27-430d-beca-a8a5e83257b3';
+	const turns = (args: string[]) => args[args.indexOf('--max-turns') + 1];
+	const reader = buildAgentInvocation({ ...base, provider: 'claude' });
+	const writer = buildAgentInvocation({ ...base, provider: 'claude', role: 'implementer', readOnly: false, maxTurns: 50 });
+	const resumed = buildAgentInvocation({ ...base, provider: 'claude', role: 'implementer', readOnly: false, maxTurns: 50, resumeSession: session, instruction: 'Continue' });
+	assert.deepEqual({ reader: turns(reader.args), writer: turns(writer.args), resume: resumed.args.slice(0, 3), stdin: resumed.stdin, fresh: writer.args.includes('--resume') },
+		{ reader: '12', writer: '50', resume: ['--print', '--resume', session], stdin: 'Continue', fresh: false });
 });
 
 test('review digest binds effort so changes require fresh authorization', () => {

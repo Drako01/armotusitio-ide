@@ -137,7 +137,7 @@ function shell(): void {
 
 	const form = el('form', 'composer') as HTMLFormElement; form.id = 'composer';
 	const box = el('div', 'composer-box');
-	const input = el('textarea') as HTMLTextAreaElement; input.id = 'prompt'; input.rows = 1; input.maxLength = 10000; input.placeholder = L.placeholder;
+	const input = el('textarea') as HTMLTextAreaElement; input.id = 'prompt'; input.rows = 1; input.placeholder = L.placeholder;
 	input.setAttribute('aria-label', L.placeholder); input.setAttribute('aria-describedby', 'composer-hint');
 	const send = el('button', 'send', L.send) as HTMLButtonElement; send.type = 'submit'; send.id = 'send';
 	const stop = el('button', 'secondary stop', L.cancel) as HTMLButtonElement; stop.type = 'button'; stop.id = 'stop'; stop.hidden = true;
@@ -179,6 +179,8 @@ function submit(value: string): void {
 	const text = value.trim();
 	if (!text || busy() || !state?.chat) { return; }
 	api.postMessage({ action: 'send', text });
+	// An oversized message is answered with how many characters to remove; the text stays so it can be trimmed.
+	if (text.length > L.maxMessageChars) { return; }
 	const input = document.getElementById('prompt') as HTMLTextAreaElement; input.value = ''; autosize();
 }
 
@@ -318,18 +320,83 @@ function updatePlanCards(): void {
 		footer.append(actions, hint);
 	}
 }
-function runSummary(run: any): HTMLElement {
+/** What the outcome means for the user, in one line; runs stored before outcomes existed show none. */
+function outcomeHint(outcome: any): string | undefined {
+	if (!outcome) { return undefined; }
+	if (outcome.kind === 'blocked') { return format(L.outcomeHint.blocked, outcome.reason + (outcome.needs ? ' (' + L.needs[outcome.needs] + ')' : '')); }
+	if (outcome.kind === 'unchanged') { return L.outcomeHint.unchanged; }
+	return outcome.reason ? L.outcomeHint[outcome.reason] : undefined;
+}
+function changedFiles(diff: any): HTMLElement | undefined {
+	if (!diff?.available || !diff.count) { return undefined; }
+	const box = el('details', 'run-files');
+	box.append(el('summary', undefined, format(L.changedFiles, String(diff.count))));
+	const list = el('ul', 'commands');
+	for (const file of diff.files) {
+		const item = el('li');
+		item.append(el('code', undefined, file.path), el('span', 'muted', ' ' + L.change[file.change] + (file.preexisting ? ' \u00b7 ' + L.preexisting : '')));
+		list.append(item);
+	}
+	if (diff.count > diff.files.length) { list.append(el('li', 'muted', format(L.changedMore, String(diff.count - diff.files.length)))); }
+	box.append(list);
+	return box;
+}
+function runSummary(run: any, messageId: string): HTMLElement {
 	const box = el('div', 'run-summary');
+	box.dataset.messageId = messageId;
 	const head = el('div', 'run-head');
-	head.append(el('span', 'status-badge ' + run.status, L.run[run.status] || run.status), el('span', 'muted', format(L.plan, String(run.planVersion)) + ' \u00b7 ' + providerName(run.provider) + ' \u00b7 ' + L.duration + ' ' + duration(run.durationMs)));
+	const kind = run.outcome?.kind;
+	const badge = kind ? el('span', 'status-badge ' + kind, L.outcome[kind] || kind) : el('span', 'status-badge ' + run.status, L.run[run.status] || run.status);
+	head.append(badge, el('span', 'muted', format(L.plan, String(run.planVersion)) + (run.continued ? ' \u00b7 ' + L.continuedRun : '') + ' \u00b7 ' + providerName(run.provider) + ' \u00b7 ' + L.duration + ' ' + duration(run.durationMs)));
 	box.append(head);
+	const hint = outcomeHint(run.outcome);
+	if (hint) { box.append(el('p', kind === 'failed' || kind === 'blocked' ? 'error-text' : 'muted', hint)); }
+	const files = changedFiles(run.outcome?.diff);
+	if (files) { box.append(files); }
+	if (run.searches?.length) {
+		const searches = el('details', 'run-files');
+		searches.append(el('summary', undefined, format(L.searches, String(run.searches.length))));
+		const list = el('ul', 'commands');
+		for (const query of run.searches) { const item = el('li'); item.append(el('code', undefined, query)); list.append(item); }
+		searches.append(list);
+		box.append(searches);
+	}
 	box.append(el('h4', undefined, L.verification));
 	if (run.verification.status === 'skipped') { box.append(el('p', 'muted', L.verificationSkipped)); }
 	else {
 		box.append(gateList(run.verification.gates));
 		if (run.verification.error) { box.append(el('p', 'error-text', run.verification.error)); }
 	}
+	box.append(el('div', 'actions run-actions'));
 	return box;
+}
+/** Only the latest run of the latest plan offers Continue or Retry, and only while the session allows it. */
+function updateRunActions(): void {
+	const current = state.chat?.run;
+	for (const box of document.querySelectorAll<HTMLElement>('.run-summary')) {
+		const actions = box.querySelector('.run-actions'); actions.textContent = '';
+		if (!current || box.dataset.messageId !== current.messageId) { continue; }
+		if (current.continuable) {
+			const resume = el('button', 'approve', L.continueRun) as HTMLButtonElement; resume.type = 'button';
+			resume.addEventListener('click', () => { resume.disabled = true; api.postMessage({ action: 'continue', messageId: current.messageId }); });
+			actions.append(resume);
+		}
+		if (current.retryable && state.chat.plan) {
+			const digest = state.chat.plan.digest;
+			const retry = el('button', current.continuable ? 'secondary' : 'approve', L.retry) as HTMLButtonElement; retry.type = 'button';
+			retry.addEventListener('click', () => { retry.disabled = true; api.postMessage({ action: 'approve', digest }); });
+			actions.append(retry);
+		}
+		if (current.discardable) {
+			const discard = el('button', 'secondary', L.discardRun) as HTMLButtonElement; discard.type = 'button';
+			discard.addEventListener('click', () => api.postMessage({ action: 'discard', messageId: current.messageId }));
+			actions.append(discard);
+		}
+		// Round trip with Inicio (AC): the same run, seen from the control center.
+		const home = el('button', 'link-button', L.openHome) as HTMLButtonElement; home.type = 'button';
+		home.addEventListener('click', () => api.postMessage({ action: 'openHome' }));
+		actions.append(home);
+	}
 }
 function gateList(gates: any[]): HTMLElement {
 	const list = el('ul', 'gates');
@@ -349,7 +416,7 @@ function messageNode(message: any): HTMLElement {
 	node.setAttribute('aria-label', who);
 	node.append(meta);
 	if (message.role === 'user') { node.append(el('div', 'bubble', message.text)); return node; }
-	if (message.run) { node.append(runSummary(message.run)); }
+	if (message.run) { node.append(runSummary(message.run, message.id)); }
 	if (message.text) { node.append(markdown(message.text)); }
 	if (message.plan) { node.append(planCard(message)); }
 	if (message.role === 'assistant' || message.run) {
@@ -367,6 +434,7 @@ function renderThread(): void {
 		const node = messageNode(message); rendered.set(message.id, node); thread.append(node);
 	}
 	updatePlanCards();
+	updateRunActions();
 }
 function renderEmpty(): void {
 	const empty = document.getElementById('empty'); empty.textContent = '';

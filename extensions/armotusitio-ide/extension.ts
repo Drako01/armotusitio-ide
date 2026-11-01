@@ -13,6 +13,7 @@ const { registerChat } = require('./src/chat.ts');
 const { readProvider, selectProvider } = require('./src/provider.ts');
 const { sortActivity } = require('./src/adapter.ts');
 const { registerNativeHarness } = require('./src/native-integration.ts');
+const { createActivityFeed } = require('./src/native-activity-feed.ts');
 const repeatActions = ['check', 'verify', 'test'];
 
 async function projects() {
@@ -40,6 +41,8 @@ class Controller {
 	harnessBusy = (_root) => false;
 	getHarnessConnection = (_root) => undefined;
 	refreshActivity = async (_manual = false) => { };
+	activityFeed;
+	mcp;
 	constructor(context) {
 		this.history = new History(context.workspaceState, () => vscode.window.showWarningMessage(vscode.l10n.t('No se pudo guardar el historial del Harness.')));
 	}
@@ -197,11 +200,17 @@ async function reviewPlan() {
 }
 function activate(context) {
 	const controller = new Controller(context);
+	// One activity feed for the whole extension: the chat, goals and Harness sources publish; Inicio and the status bar read.
+	const feed = createActivityFeed();
+	controller.activityFeed = feed;
 	registerNativeHarness(context, vscode, controller);
 	integrations.register(context, projects);
-	registerHome(context, controller, projects);
-	registerActivity(context, controller, projects, vscode);
 	const mcp = registerMcp(context, vscode);
+	// Goals from a card read Work Management through the same client the chat uses (block U).
+	controller.mcp = mcp;
+	const chat = registerChat(context, controller, projects, mcp, vscode, { feed });
+	registerHome(context, controller, projects, { feed, chat });
+	registerActivity(context, controller, projects, vscode, undefined, feed);
 	context.subscriptions.push(vscode.commands.registerCommand('atsIde.issueContext', async key => {
 		if (!mcp?.enabled() || !/^[a-z][a-z0-9-]*-\d+$/i.test(key)) { return; }
 		try { const result = await mcp.client.call('get_issue_context', { issue_key: key }); if (result.isError) { return false; } await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({ language: 'json', content: require('./src/workflow.ts').redact(JSON.stringify(result.structuredContent ?? result.content, null, 2)) })); return true; } catch { vscode.window.showErrorMessage(vscode.l10n.t('No se pudo consultar la tarjeta. Revis\u00e1 la conexi\u00f3n MCP y sus permisos.')); }
@@ -211,7 +220,6 @@ function activate(context) {
 		const selected = await vscode.window.showQuickPick(entries.map(entry => ({ label: entry.title || entry.nativeId || entry.id, description: entry.project, detail: entry.phase, entry })), { title: vscode.l10n.t('Abrir una tarea del Harness') });
 		if (selected) { await vscode.commands.executeCommand('atsIde.home', { task: selected.entry.nativeId, root: selected.entry.project }); }
 	}));
-	registerChat(context, controller, projects, mcp, vscode);
 	context.subscriptions.push(controller.events);
 	context.subscriptions.push(vscode.window.registerTreeDataProvider('atsHarness.tasks', controller));
 	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.refresh', async () => { await controller.refreshActivity(true); controller.refresh(); }));

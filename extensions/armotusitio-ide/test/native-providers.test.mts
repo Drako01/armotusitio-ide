@@ -20,7 +20,18 @@ test('provider review never creates a CLI invocation', () => {
 
 test('draft rejects unsupported provider and unbounded instruction', () => {
 	assert.throws(() => reviewAgentDraft({ ...draft, provider: 'shell' }), /HARNESS_AGENT_DRAFT_SCHEMA/);
-	assert.throws(() => reviewAgentDraft({ ...draft, instruction: 'x'.repeat(17000) }), /HARNESS_AGENT_DRAFT_SCHEMA/);
+	assert.throws(() => reviewAgentDraft({ ...draft, instruction: 'x'.repeat(321 * 1024) }), /HARNESS_AGENT_DRAFT_SCHEMA/);
+});
+
+test('draft bounds the turn budget and only lets a Claude implementer resume a well-formed session', () => {
+	const session = '8b725e4b-cd27-430d-beca-a8a5e83257b3';
+	const writer = { ...draft, provider: 'claude' as const, role: 'implementer' as const, readOnly: false };
+	assert.doesNotThrow(() => reviewAgentDraft({ ...writer, maxTurns: 150, resumeSession: session }));
+	for (const invalid of [{ maxTurns: 0 }, { maxTurns: 151 }, { maxTurns: 1.5 }, { resumeSession: 'last' }, { resumeSession: '--dangerously-skip-permissions' }]) {
+		assert.throws(() => reviewAgentDraft({ ...writer, ...invalid }), /HARNESS_AGENT_DRAFT_SCHEMA/);
+	}
+	assert.throws(() => reviewAgentDraft({ ...writer, provider: 'codex', resumeSession: session }), /HARNESS_AGENT_DRAFT_SCHEMA/);
+	assert.throws(() => reviewAgentDraft({ ...draft, provider: 'claude', resumeSession: session }), /HARNESS_AGENT_DRAFT_SCHEMA/);
 });
 
 test('multi-agent dependencies reject cycles and missing handoffs', () => {

@@ -5,24 +5,54 @@
 /* Native Harness IDE commands. Never execute project scripts merely by detecting them. */
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
+import { currentToolchainEnvironment, pathExists } from './native-toolchain-env.ts';
+import { detectEcosystems, describeEcosystems } from './native-ecosystems.ts';
+import { createCommandPolicy, type CommandPolicyConfig } from './native-command-policy.ts';
+import type { RunnerConfig } from './ats-runner.ts';
+import type { ActivityFeed } from './native-activity-feed.ts';
+import { inCharterScope, type GoalCharter } from './native-goal.ts';
+import { FileGoalJournal, interruptedOnLoad, type GoalState } from './native-goal-journal.ts';
+import { GoalOrchestrator, defaultCharter } from './native-orchestrator.ts';
+import { createGoalPorts, goalActivityItems, inferGoalOptions } from './native-goal-runtime.ts';
+import { proposeDefinitionOfDone } from './native-dod.ts';
+import { createResultCache, type ResultCache } from './native-result-cache.ts';
+import { composeUpCommand, detectServiceNeeds, probeService } from './native-services.ts';
+import { runCommand } from './native-command-runner.ts';
+import { openToolChannel } from './native-tool-server.ts';
+import { runEditorTool, type EditorBackend } from './native-editor-tools.ts';
+import { KeychainDevSecrets } from './native-dev-secrets.ts';
+import { doctorReport, parseExcludedPorts, runDoctor, type DoctorCheck, type Exec } from './native-machine-doctor.ts';
+import { collectOrphans, createEnvironment, validateTemplate, type EnvironmentTemplate } from './native-ephemeral-env.ts';
+import { execFile } from 'node:child_process';
+import { resolveNativeCommand } from './native-runtime.ts';
+import { offlineEnvironment, syncCommands } from './native-dependency-sync.ts';
+import * as os from 'node:os';
+import { DecisionLog, decisionsPrompt } from './native-decisions.ts';
+import { GoalUsageHistory, estimateCalls, quotaCheck } from './native-goal-budget.ts';
+import { notifyWebhook, publishProcesses, readProcesses, type ProcessView } from './native-process-monitor.ts';
+import { integrationOrder, linkedPullRequestsSection, repoPartInstruction, type RepoDelivery } from './native-multi-repo.ts';
+import { cardKeyOf, cardObjective, commentMilestone, readCard, type CardClient, type CardContext } from './native-card-goal.ts';
+import { reviewObjective, reviewTasks, threadStates, type ReviewComment } from './native-review-comments.ts';
+import { acceptDelivery, commitMessage, commitStep, createDelivery, deliveryFiles, deliveryPackage, discardDelivery, pullRequestDescription, type Delivery } from './native-delivery.ts';
 import { NativeHarness, nativePlanRevision, type Plan } from './native-harness.ts';
 import type { ChatImplementOutcome, ChatRuntime } from './native-chat-session.ts';
 import { harnessErrorCode, type GateSummary } from './native-chat.ts';
 import { proposeProjectConfig, loadProjectConfig, writeProjectConfig, generatedConfigDigest, removeGeneratedProjectConfig } from './native-project.ts';
-import { reviewAgentDraft, inspectAgentWorkspace, modelOption, effortOption, validModel, validEffort, type NativeProvider, type NativeEffort, type AgentRole, type AgentDraft } from './native-providers.ts';
+import { reviewAgentDraft, inspectAgentWorkspace, modelOption, effortOption, validModel, validEffort, MAX_AGENT_TURNS, type NativeProvider, type NativeEffort, type AgentRole, type AgentDraft } from './native-providers.ts';
+import { captureWorkingTree, diffWorkingTree, discardRunChanges, fingerprintFiles, type RunDiffSummary, type WorkingTreeSnapshot } from './native-run-diff.ts';
 import { buildSupportReport, exportSupportReport } from './native-support.ts';
 import { inspectHarnessAuthority } from './native-authority.ts';
 import { listProjectSkills, readProjectSkill, type ProjectSkill } from './native-project-skills.ts';
 import { listProjectGuides, validateProjectGuides, type ProjectGuide } from './native-project-guidance.ts';
 import { readProjectGateCatalog, validateProjectGateCatalog, planProjectGateWaves } from './native-project-gates.ts';
 import { assessHybridGateReadiness } from './native-hybrid-readiness.ts';
-import { buildAgentInvocation, executeReviewedAgent, type AgentExecution, type AgentOutcome } from './native-agent-execution.ts';
+import { buildAgentInvocation, executeReviewedAgent, type AgentExecution, type AgentOutcome, type ToolServerLaunch } from './native-agent-execution.ts';
 import { readAgentStatistics, recordAgentMetric } from './native-agent-metrics.ts';
 import { NativeAgentWorkflow, proposedWorkflow, workflowDigest, type WorkflowRun } from './native-agent-workflow.ts';
 import { createAgentWorktree, removeCleanAgentWorktree, listAgentWorktrees, type ManagedWorktree } from './native-agent-worktree.ts';
 import { describeEngine, probeProjectHandshake, readProjectCapabilities, compareHybridCapabilities, verifiedNativeCapabilities } from './native-engine-contract.ts';
-import { diagnoseProvider } from './native-provider-diagnostics.ts';
+import { diagnoseProvider, probeWebSearch } from './native-provider-diagnostics.ts';
 import { summarizeGatePerformance } from './native-performance.ts';
 import { acquireSharedExecutionFence, inspectSharedExecutionFence, reconcileSharedExecutionFence, type SharedExecutionFence } from './native-shared-fence.ts';
 import { createWorktreeCheckpoint, readWorktreeCheckpoint, rollbackWorktreeCheckpoint, type WorktreeCheckpoint } from './native-worktree-checkpoint.ts';
@@ -148,9 +178,102 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 		if (!validEffort(provider, effort)) { throw Error('HARNESS_PROVIDER_EFFORT_INVALID'); }
 		return effort;
 	};
+	/** Implementer turn budget (`atsHarness.implementerMaxTurns`, decision D4); out-of-range values fail loudly. */
+	const implementerMaxTurns = (): number => {
+		const turns: unknown = vscode.workspace.getConfiguration('atsHarness').get('implementerMaxTurns', 50);
+		if (!Number.isSafeInteger(turns) || (turns as number) < 10 || (turns as number) > MAX_AGENT_TURNS) { throw Error('HARNESS_AGENT_TURNS_INVALID'); }
+		return turns as number;
+	};
+	/** Prompt budget in bytes (`atsHarness.promptBudgetKiB`); the chat domain clamps it to its supported range. */
+	const promptBudgetBytes = (): number => {
+		const kib: unknown = vscode.workspace.getConfiguration('atsHarness').get('promptBudgetKiB', 64);
+		return (Number.isSafeInteger(kib) ? kib as number : 64) * 1024;
+	};
+	/** `atsHarness.agentCommands.allow`: user extras, always inside the IDE floor. */
+	const commandExtras = (): string[] => {
+		const extras: unknown = vscode.workspace.getConfiguration('atsHarness').get('agentCommands.allow', []);
+		return Array.isArray(extras) ? extras.filter((entry): entry is string => typeof entry === 'string' && entry.length <= 200).slice(0, 50) : [];
+	};
+	/** Language-server queries for agents (block S), through the VS Code providers the editor already runs. */
+	const editorBackend: EditorBackend = {
+		async locations(kind, file, line, character) {
+			const command = { definition: 'vscode.executeDefinitionProvider', references: 'vscode.executeReferenceProvider', implementations: 'vscode.executeImplementationProvider', typeDefinition: 'vscode.executeTypeDefinitionProvider' }[kind];
+			const results: Host[] = await vscode.commands.executeCommand(command, vscode.Uri.file(file), new vscode.Position(line, character)) ?? [];
+			return results.map(item => { const uri = item.uri ?? item.targetUri; const range = item.range ?? item.targetSelectionRange ?? item.targetRange; return { file: uri.fsPath, line: range.start.line, character: range.start.character }; });
+		},
+		async symbols(file, query) {
+			const results: Host[] = file ? await vscode.commands.executeCommand('vscode.executeDocumentSymbolProvider', vscode.Uri.file(file)) ?? [] : await vscode.commands.executeCommand('vscode.executeWorkspaceSymbolProvider', query) ?? [];
+			const flat = (items: Host[]): Host[] => items.flatMap(item => [item, ...flat(item.children ?? [])]);
+			return flat(results).map(item => ({ name: item.name, kind: vscode.SymbolKind[item.kind] ?? String(item.kind), file: (item.location?.uri ?? vscode.Uri.file(file!)).fsPath, line: (item.location?.range ?? item.range).start.line }));
+		},
+		async hover(file, line, character) {
+			const hovers: Host[] = await vscode.commands.executeCommand('vscode.executeHoverProvider', vscode.Uri.file(file), new vscode.Position(line, character)) ?? [];
+			return hovers.flatMap(hover => hover.contents.map((content: Host) => typeof content === 'string' ? content : content.value ?? ''));
+		},
+		async calls(direction, file, line, character) {
+			const items: Host[] = await vscode.commands.executeCommand('vscode.prepareCallHierarchy', vscode.Uri.file(file), new vscode.Position(line, character)) ?? [];
+			if (!items[0]) { return []; }
+			const calls: Host[] = await vscode.commands.executeCommand(direction === 'incoming' ? 'vscode.provideIncomingCalls' : 'vscode.provideOutgoingCalls', items[0]) ?? [];
+			return calls.map(call => { const target = call.from ?? call.to; return { file: target.uri.fsPath, line: target.range.start.line, character: target.range.start.character, preview: target.name }; });
+		},
+		async diagnostics(file) {
+			const entries: Array<[Host, Host[]]> = file ? [[vscode.Uri.file(file), vscode.languages.getDiagnostics(vscode.Uri.file(file))]] : vscode.languages.getDiagnostics();
+			return entries.flatMap(([uri, items]) => items.map(item => ({ file: uri.fsPath, line: item.range.start.line, severity: ['error', 'warning', 'info', 'hint'][item.severity] ?? 'info', message: item.message })));
+		},
+		async rename(file, line, character, name) {
+			const edit: Host = await vscode.commands.executeCommand('vscode.executeDocumentRenameProvider', vscode.Uri.file(file), new vscode.Position(line, character), name);
+			return edit && { files: edit.entries().map(([uri]: [Host]) => uri.fsPath), apply: async () => { await vscode.workspace.applyEdit(edit); await vscode.workspace.saveAll(false); } };
+		},
+		async organizeImports(file) {
+			const actions: Host[] = await vscode.commands.executeCommand('vscode.executeCodeActionProvider', vscode.Uri.file(file), new vscode.Range(0, 0, 0, 0), vscode.CodeActionKind.SourceOrganizeImports.value) ?? [];
+			const edit = actions.find(action => action.edit)?.edit;
+			return edit && { files: edit.entries().map(([uri]: [Host]) => uri.fsPath), apply: async () => { await vscode.workspace.applyEdit(edit); await vscode.workspace.saveAll(false); } };
+		}
+	};
+	/** Development secrets (block V): the OS keychain plus metadata without values. */
+	const devSecrets = new KeychainDevSecrets({
+		get: key => context.secrets.get(key), store: (key, value) => context.secrets.store(key, value), delete: key => context.secrets.delete(key),
+		metadata: () => context.globalState.get('atsHarness.devSecrets.v1', []), saveMetadata: value => context.globalState.update('atsHarness.devSecrets.v1', value)
+	});
+	const projectKeyOf = (root: string): string => createHash('sha256').update(root).digest('hex').slice(0, 16);
+	/** Web search per project (decision D9): in the IDE's storage, never in the repository (D8); off by default. */
+	const webSearchKey = (root: string): string => 'atsHarness.webSearch.' + projectKeyOf(root);
+	const webSearchOn = (root: string): boolean => context.globalState.get(webSearchKey(root), false) === true;
+	const searchSupport = new Map<NativeProvider, Promise<boolean>>();
+	/**
+	 * Per-run configuration of the `ats-runner` tool server, written in the IDE's storage (outside the project) and
+	 * removed after the run. A project Harness that declares `command-runner` runs each command itself (layer 2).
+	 * `inScope` limits editor refactors to the run's scope (a goal's charter); a chat run may edit the whole project.
+	 */
+	const prepareToolServer = async (root: string, maxTurns: number, inScope: (file: string) => boolean = () => true, extraEnv: Record<string, string> = {}): Promise<{ launch: ToolServerLaunch; policy: string[]; ecosystems: string[]; dispose(): Promise<void> }> => {
+		const authority = await inspectHarnessAuthority(root);
+		const delegate = authority.engine === 'project' && !!authority.entry && (await readProjectCapabilities(root).catch(() => [])).includes('command-runner');
+		const subprojects = delegate ? [] : await detectEcosystems(root);
+		const policy: CommandPolicyConfig = { subprojects, delegate, extras: commandExtras() };
+		const directory = path.join(metricsDirectory(root), 'runs', Date.now() + '-' + randomBytes(6).toString('hex'));
+		await fs.mkdir(directory, { recursive: true, mode: 0o700 });
+		const { env } = await currentToolchainEnvironment();
+		const channel = await openToolChannel(directory, async (method, params) => {
+			const input = (params ?? {}) as { name?: string; input?: Record<string, unknown>; command?: string; args?: string[]; cwd?: string };
+			if (method === 'editor' && typeof input.name === 'string') { return runEditorTool({ root, backend: editorBackend, inScope }, input.name, input.input ?? {}); }
+			if (method === 'secrets' && typeof input.command === 'string') { return devSecrets.forCommand(projectKeyOf(root), input.command, Array.isArray(input.args) ? input.args : [], input.cwd ?? '.'); }
+			throw Error('HARNESS_TOOL');
+		});
+		const config: RunnerConfig = { schemaVersion: 1, root, policy, env: { ...env, ...extraEnv }, logDirectory: path.join(directory, 'logs'), maxTurns, channel: { address: channel.address, token: channel.token }, ...(delegate ? { delegateEntry: path.join(root, authority.entry!) } : {}) };
+		const configFile = path.join(directory, 'runner.json');
+		await fs.writeFile(configFile, JSON.stringify(config), { mode: 0o600 });
+		const launch = { command: process.execPath, args: [path.join(context.extensionPath ?? context.extensionUri?.fsPath ?? '', 'dist', 'ats-runner.js'), configFile], env: { ELECTRON_RUN_AS_NODE: '1' }, mcpConfigFile: path.join(directory, 'mcp.json') };
+		await fs.writeFile(launch.mcpConfigFile, JSON.stringify({ mcpServers: { 'ats-runner': { type: 'stdio', command: launch.command, args: launch.args, env: launch.env } } }), { mode: 0o600 });
+		return {
+			launch, policy: createCommandPolicy(policy).describe(), ecosystems: describeEcosystems(subprojects),
+			// The configuration goes; the command logs and audit stay with the run for the report.
+			// The token dies with the channel (EC-125).
+			dispose: async () => { await Promise.all([fs.rm(configFile, { force: true }), fs.rm(launch.mcpConfigFile, { force: true }), channel.close()]); }
+		};
+	};
 	/** Every IDE agent draft: read-only unless implementing, with the model and effort chosen for its provider. */
-	const draftOf = (root: string, provider: NativeProvider, role: AgentRole, instruction: string): AgentDraft =>
-		({ schemaVersion: 1, provider, role, projectRoot: root, instruction, readOnly: role !== 'implementer', ...modelOption(modelFor(provider)), ...effortOption(effortFor(provider)) });
+	const draftOf = (root: string, provider: NativeProvider, role: AgentRole, instruction: string, extra: Pick<AgentDraft, 'maxTurns' | 'resumeSession'> = {}): AgentDraft =>
+		({ schemaVersion: 1, provider, role, projectRoot: root, instruction, readOnly: role !== 'implementer', ...modelOption(modelFor(provider)), ...effortOption(effortFor(provider)), ...(webSearchOn(root) ? { webSearch: true } : {}), ...extra });
 	/** Reported spend must be durable when a budget is enforced; otherwise it is best-effort telemetry. */
 	const recordSpend = async (folder: Host, root: string, provider: NativeProvider, fence: SharedExecutionFence, outcome: AgentOutcome): Promise<void> => {
 		try { await recordProviderSpend(metricsDirectory(root), provider, fence, outcome); }
@@ -169,10 +292,23 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 		onMessage?: (text: string) => void;
 		/** Aborting before the process exists stops the launch without spawning a provider. */
 		signal?: AbortSignal;
+		/** Runs under the fence right before the provider starts, so its observations cannot race another IDE agent. */
+		beforeLaunch?: () => Promise<void>;
+		/** The `ats-runner` command tool server for a writer. */
+		toolServer?: ToolServerLaunch;
 		afterOutcome?: (outcome: AgentOutcome, fence: SharedExecutionFence) => Promise<void>;
 	} = {}): Promise<AgentOutcome> => {
 		const root = draft.projectRoot;
 		if (!authorized(folder)) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
+		// A CLI without its own search runs without it, and says so (EC-147).
+		if (draft.webSearch) {
+			if (!searchSupport.has(draft.provider)) { searchSupport.set(draft.provider, probeWebSearch(draft.provider).catch(() => false)); }
+			if (!await searchSupport.get(draft.provider)) {
+				const { webSearch: _off, ...rest } = draft;
+				draft = rest;
+				void vscode.window.showWarningMessage(vscode.l10n.t('B\u00fasqueda web no disponible con {0}: la corrida sigue sin ella.', draft.provider));
+			}
+		}
 		const authority = await inspectHarnessAuthority(root);
 		if (authority.reason === 'project-path-unsafe') { throw Error('HARNESS_PROJECT_AUTHORITY_UNSAFE'); }
 		// A project Harness keeps writer authority over its checkout unless the user enabled coordinated writers,
@@ -202,8 +338,9 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			await assertProviderBudget(metricsDirectory(root), draft.provider, providerBudget(folder), fence);
 			if (cap > 0) { await reserveProviderInvocation(metricsDirectory(root), draft.provider, fence, cap); }
 			if (!authorized(folder)) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
+			await hooks.beforeLaunch?.();
 			await fence.assertCurrent();
-			execution = await executeReviewedAgent(reviewAgentDraft(draft), draft, undefined, hooks.onProgress && (progress => hooks.onProgress!(progress.observedBytes)), hooks.onMessage);
+			execution = await executeReviewedAgent(reviewAgentDraft(draft), draft, undefined, hooks.onProgress && (progress => hooks.onProgress!(progress.observedBytes)), hooks.onMessage, hooks.toolServer, text => devSecrets.redact(text) !== text);
 		} catch (error) {
 			await lease?.release().catch(() => undefined);
 			if (fence) { await fence.release(); }
@@ -237,10 +374,14 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 				const authority = await inspectHarnessAuthority(root);
 				const [skills, guides, verification] = await Promise.all([listProjectSkills(root), listProjectGuides(root), verificationOf(root)]);
 				// A project Harness can host IDE writers only when the user opted in and its manifest declares the lease; the engine's acknowledgement is verified at approval.
-				const coordinated = authority.engine === 'project' && coordinatedWriters() && (await readProjectCapabilities(root).catch(() => [])).includes('writer-lease');
+				// The setting is read live, so enabling it applies on the next refresh without reloading the window.
+				const capabilities = authority.engine === 'project' && coordinatedWriters() ? await readProjectCapabilities(root).catch(() => undefined) : undefined;
+				const coordinated = !!capabilities?.includes('writer-lease');
+				const writerBlock = !authorized(folder) ? 'untrusted' as const : authority.engine !== 'project' || coordinated ? undefined
+					: !coordinatedWriters() ? 'setting-off' as const : capabilities ? 'engine-no-lease' as const : 'engine-no-protocol' as const;
 				const isolation = Object.fromEntries((['codex', 'claude'] as const).map(provider => [provider, { writes: describeAgentIsolation(provider).writes, allowed: meetsWriterIsolation(provider, requiredWriterIsolation()) }])) as Record<NativeProvider, { writes: string; allowed: boolean }>;
 				return {
-					isolation, root, writer: (authority.engine === 'ide-native' || coordinated) && authorized(folder),
+					isolation, root, promptBudget: promptBudgetBytes(), ...(writerBlock ? { writerBlock } : {}), writer: (authority.engine === 'ide-native' || coordinated) && authorized(folder),
 					skills: skills.map(skill => ({ name: skill.name, source: skill.source })),
 					guides: guides.map(guide => guide.path),
 					verification: verification && {
@@ -255,7 +396,22 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 					onStarted: execution => hooks.started(() => execution.cancel()), onProgress: hooks.progress, onMessage: hooks.message, signal
 				});
 			},
-			async implement({ provider, instruction, plan, verificationRevision }, hooks, signal) {
+			async discard(diff) {
+				const root = await rootOf();
+				if (!authorized(folder)) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
+				assertIdle(root, folder);
+				// Same guarantees as a writer: the shared fence, and the engine's lease in a project with its own Harness.
+				const fence = await acquireSharedExecutionFence(root, metricsDirectory(root), 'native-agent');
+				let lease: WriterLease | undefined;
+				try {
+					if ((await inspectHarnessAuthority(root)).engine === 'project') {
+						if (!coordinatedWriters()) { throw Error('HARNESS_HYBRID_WRITER_UNAVAILABLE'); }
+						lease = await acquireWriterLease(root, true, () => authorized(folder), fence);
+					}
+					return await discardRunChanges(root, diff, new Map(Object.entries(diff.after ?? {})));
+				} finally { await lease?.release().catch(() => undefined); await fence.release(); }
+			},
+			async implement({ provider, instruction, plan, verificationRevision, resumeSession }, hooks, signal) {
 				const root = await rootOf();
 				if (signal.aborted) { throw Error('HARNESS_CANCELLED_BEFORE_START'); }
 				const available = await listProjectSkills(root);
@@ -268,12 +424,24 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 				let gates: GateSummary[] = verification?.gates.map(gate => ({ id: gate.id, status: 'pending' as const })) ?? [];
 				let verificationStatus: ChatImplementOutcome['verification']['status'] = 'skipped';
 				let verificationError: string | undefined;
-				const agent = await runGuardedAgent(folder, draftOf(root, provider, 'implementer', instruction + projectReferences(guides, skills as ProjectSkill[])), {
+				const maxTurns = implementerMaxTurns();
+				if (!await servicePreflight(root)) { throw Error('HARNESS_CANCELLED_BEFORE_START'); }
+				const server = await prepareToolServer(root, maxTurns);
+				const ecosystems = server.ecosystems.length ? '\n\nDetected subprojects and their usual commands:\n' + server.ecosystems.join('\n') : '';
+				// A resumed session already holds the references; it only receives the continuation request.
+				const prompt = resumeSession ? instruction : instruction + projectReferences(guides, skills as ProjectSkill[]) + ecosystems;
+				let before: WorkingTreeSnapshot | undefined;
+				let diff: RunDiffSummary = { available: false, files: [], count: 0 };
+				const agent = await runGuardedAgent(folder, draftOf(root, provider, 'implementer', prompt, { maxTurns, ...(resumeSession ? { resumeSession } : {}) }), {
+					toolServer: server.launch,
 					onStarted: execution => { hooks.started(() => execution.cancel()); hooks.stage('agent'); },
 					onProgress: hooks.progress,
 					onMessage: hooks.message,
 					signal,
+					beforeLaunch: async () => { before = await captureWorkingTree(root); },
 					afterOutcome: async (outcome, fence) => {
+						// Measured before verification, so build output of the gates is never attributed to the writer.
+						if (before) { diff = diffWorkingTree(before, await captureWorkingTree(root)); diff = { ...diff, after: await fingerprintFiles(root, diff.files) }; }
 						if (outcome.status !== 'passed' && verification) {
 							// Gates that never ran because the writer did not succeed are not "pending": that would suggest they still will.
 							gates = verification.gates.map(gate => ({ id: gate.id, status: 'cancelled' }));
@@ -310,12 +478,444 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 						} finally { clearInterval(poll); running.delete(folder.uri.toString()); controller.refresh(); }
 						hooks.gates(gates);
 					}
-				});
-				return { agent, verification: { status: verificationStatus, gates, ...(verificationError ? { error: verificationError } : {}) } };
+				}).finally(() => server.dispose());
+				return { agent, diff, verification: { status: verificationStatus, gates, ...(verificationError ? { error: verificationError } : {}) } };
 			}
 		};
 	};
-	controller.nativeRunning = () => running.size + runningAgents.size + pendingAgents.size + runningWorkflows.size + pendingWorkflows.size;
+	/**
+	 * Service preflight (block G): a run that needs a service that does not answer never starts blind. Starting it is the
+	 * user's click on a service declared in the project's own compose file (D3); the agent never runs Docker.
+	 * Resolves false when the user cancelled.
+	 */
+	const servicePreflight = async (root: string): Promise<boolean> => {
+		const probes = await Promise.all((await detectServiceNeeds(root, process.env)).map(probeService));
+		const missing = probes.filter(probe => probe.status !== 'up');
+		if (!missing.length) { return true; }
+		const start = vscode.l10n.t('Levantar con docker compose'), anyway = vscode.l10n.t('Ejecutar igual sin esos tests');
+		const names = missing.map(probe => probe.kind + ' (' + probe.host + ':' + probe.port + (probe.status === 'other-service' ? ', ' + vscode.l10n.t('otro programa usa el puerto') : '') + ')').join(', ');
+		const startable = missing.filter(probe => composeUpCommand(probe));
+		const choice = await vscode.window.showWarningMessage(vscode.l10n.t('Este plan necesita {0} y no responde.', names), { modal: true }, ...(startable.length ? [start] : []), anyway);
+		if (choice === anyway) { return true; }
+		if (choice !== start) { return false; }
+		for (const probe of startable) {
+			const up = composeUpCommand(probe)!;
+			const result = await runCommand({ root, cwd: '.', command: up.command, args: up.args, env: (await currentToolchainEnvironment()).env, logDirectory: path.join(metricsDirectory(root), 'services'), timeoutSec: 300 });
+			if (result.exitCode !== 0) { void vscode.window.showErrorMessage(vscode.l10n.t('No se pudo levantar {0}. Revis\u00e1 Docker con \u00abArmoTuSitio: M\u00e9dico de la m\u00e1quina\u00bb.', probe.composeService ?? probe.kind)); return false; }
+		}
+		return true;
+	};
+	/** IDE-owned system commands (doctor checks, ephemeral environments): no shell, bounded time, never run by an agent. */
+	const systemExec: Exec = async (command, args) => {
+		const resolved = await resolveNativeCommand(command, args);
+		return new Promise(resolve => execFile(resolved.executable, resolved.args, { timeout: 60_000, windowsHide: true, maxBuffer: 1024 * 1024, env: { ...process.env, ...(resolved.embeddedNode ? { ELECTRON_RUN_AS_NODE: '1' } : {}) } },
+			(error, stdout, stderr) => resolve({ code: error ? (typeof error.code === 'number' ? error.code : 1) : 0, output: stdout + stderr })));
+	};
+	const doctorFor = async (root: string): Promise<DoctorCheck[]> => {
+		const subprojects = await detectEcosystems(root);
+		const versions: Record<string, { command: string; args: string[]; label: string }> = {
+			go: { command: 'go', args: ['version'], label: 'Go' }, node: { command: 'node', args: ['--version'], label: 'Node' }, python: { command: 'python', args: ['--version'], label: 'Python' },
+			rust: { command: 'cargo', args: ['--version'], label: 'Rust' }, dotnet: { command: 'dotnet', args: ['--version'], label: '.NET' }, java: { command: 'java', args: ['-version'], label: 'Java' },
+			php: { command: 'php', args: ['--version'], label: 'PHP' }, ruby: { command: 'ruby', args: ['--version'], label: 'Ruby' }
+		};
+		const toolchains = [...new Set(subprojects.map(project => project.ecosystem))].map(ecosystem => versions[ecosystem]).filter(Boolean);
+		const ports = (await detectServiceNeeds(root, process.env)).map(need => need.port);
+		const serverDate = async () => { const response = await fetch('https://api.github.com', { method: 'HEAD', signal: AbortSignal.timeout(3000) }); const date = response.headers.get('date'); return date ? Date.parse(date) : undefined; };
+		return runDoctor({ exec: systemExec, platform: process.platform, projectRoot: root, ports, toolchains, serverDate });
+	};
+	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.machineDoctor', async () => {
+		try {
+			const folder = (vscode.workspace.workspaceFolders || [])[0];
+			const checks = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: vscode.l10n.t('Revisando la m\u00e1quina…') }, () => doctorFor(folder ? folder.uri.fsPath : process.cwd()));
+			const document = await vscode.workspace.openTextDocument({ language: 'markdown', content: doctorReport(checks) });
+			await vscode.window.showTextDocument(document);
+		} catch (error) { showError(error); }
+	}));
+	/** Environment templates of a project (block W), kept in the IDE's storage; the user edits them as JSON. */
+	const environmentTemplates = async (root: string): Promise<EnvironmentTemplate[]> => {
+		const raw = await fs.readFile(path.join(metricsDirectory(root), 'environments.json'), 'utf8').catch(() => undefined);
+		if (!raw) { return []; }
+		const value = JSON.parse(raw) as unknown;
+		return Array.isArray(value) ? value.map(item => validateTemplate(item as EnvironmentTemplate)) : [];
+	};
+	// The collector runs once per activation: no goal is active yet, so every labeled leftover is an orphan.
+	void collectOrphans(systemExec, new Set()).catch(() => undefined);
+	/** The result cache chosen once per session and project (block I); redetected only when its Redis stops answering. */
+	const caches = new Map<string, Promise<ResultCache>>();
+	const resultCache = (root: string): Promise<ResultCache> => {
+		let cache = caches.get(root);
+		if (!cache) {
+			const settings = vscode.workspace.getConfiguration('atsHarness');
+			cache = createResultCache({ directory: path.join(metricsDirectory(root), 'cache'), projectRoot: root, setting: settings.get('redisUrl', '') || undefined, environment: process.env.HARNESS_REDIS_URL, candidates: settings.get('redisCandidates', undefined) });
+			caches.set(root, cache);
+			void cache.then(value => { controller.cacheDescription = value.describe(); controller.refresh(); });
+		}
+		return cache;
+	};
+	/** Phone notification through the user's webhook (block Y): title and state only, https only, never code or output. */
+	const notifyWebhookSetting = async (title: string, state: string): Promise<void> => {
+		const url: unknown = vscode.workspace.getConfiguration('atsHarness').get('notifyWebhook', '');
+		if (typeof url === 'string' && url) { await notifyWebhook(url, title, state).catch(() => undefined); }
+	};
+	/** A notification with one action; it also reaches the webhook. */
+	const notify = (title: string, state: string, detail: string, action?: () => unknown): void => {
+		void notifyWebhookSetting(title, state);
+		const label = vscode.l10n.t('Responder');
+		void vscode.window.showInformationMessage(title + ': ' + detail, ...(action ? [label] : [])).then((choice: string | undefined) => { if (choice && action) { void action(); } });
+	};
+	/** Work Management client for card goals (block U); the extension wires it when MCP is enabled. */
+	const cardClient = (): CardClient => {
+		const client = controller.mcpClient;
+		if (!client) { throw Error('HARNESS_UNSUPPORTED'); }
+		return { tools: () => client.tools(), call: (name, args) => client.call(name, args) };
+	};
+	/** Deliveries waiting for the user's decision, by worktree: Accept, Discard or an inline review cycle (block Z). */
+	const deliveries = new Map<string, { delivery: Delivery; folder: Host; charter: GoalCharter }>();
+	const reviewController = vscode.comments?.createCommentController?.('atsHarness.review', vscode.l10n.t('Revisi\u00f3n del Harness'));
+	if (reviewController) {
+		context.subscriptions.push(reviewController);
+		// Comments are allowed on any line of a delivery's files, and nowhere else.
+		reviewController.commentingRangeProvider = { provideCommentingRanges: (document: Host) => [...deliveries.keys()].some(worktree => document.uri.fsPath.startsWith(worktree + path.sep)) ? [new vscode.Range(0, 0, Math.max(0, document.lineCount - 1), 0)] : [] };
+	}
+	const reviewThreads = new Map<string, Host[]>();
+	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.reviewComment', (reply: Host) => {
+		const thread = reply.thread;
+		thread.comments = [...thread.comments, { body: new vscode.MarkdownString(reply.text), mode: vscode.CommentMode.Preview, author: { name: vscode.l10n.t('Vos') } }];
+		const worktree = [...deliveries.keys()].find(item => thread.uri.fsPath.startsWith(item + path.sep));
+		if (worktree) { reviewThreads.set(worktree, [...(reviewThreads.get(worktree) ?? []).filter(item => item !== thread), thread]); }
+	}));
+	/** Open the files of a delivery for review; comments are added with the editor's comment UI. */
+	const openInlineReview = async (delivery: Delivery, files: readonly string[]): Promise<void> => {
+		for (const file of files.slice(0, 20)) { await vscode.window.showTextDocument(vscode.Uri.file(path.join(delivery.worktree, file)), { preview: false, preserveFocus: true }).then(undefined, () => undefined); }
+		void vscode.window.showInformationMessage(vscode.l10n.t('Coment\u00e1 las l\u00edneas que quieras cambiar y us\u00e1 \u00abArmoTuSitio: Enviar revisi\u00f3n de la entrega\u00bb.'));
+	};
+	/** Send the review: one correction task per comment, run as a new cycle on the same branch; threads resolve when verified. */
+	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.submitReview', async () => {
+		try {
+			const [worktree, threads] = [...reviewThreads.entries()].find(([, items]) => items.length) ?? [];
+			const pending = worktree && deliveries.get(worktree);
+			if (!pending || !threads) { void vscode.window.showInformationMessage(vscode.l10n.t('No hay comentarios de revisi\u00f3n pendientes.')); return; }
+			const comments: ReviewComment[] = threads.map((thread, index) => ({ id: String(index), file: path.relative(worktree, thread.uri.fsPath).split(path.sep).join('/'), line: thread.range.start.line + 1, text: thread.comments.map((comment: Host) => typeof comment.body === 'string' ? comment.body : comment.body.value).join('\n') }));
+			const tasks = reviewTasks(comments);
+			const result = await runGoal(pending.folder, { ...pending.charter, objective: reviewObjective(pending.charter.objective, tasks), size: 'small' }, { delivery: pending.delivery });
+			const changed = new Set(await deliveryFiles(pending.delivery).catch(() => [] as string[]));
+			const states = threadStates(comments, changed, result?.status === 'completed', () => undefined);
+			threads.forEach((thread, index) => { if (states[String(index)] === 'resolved') { thread.state = vscode.CommentThreadState?.Resolved; } });
+			reviewThreads.set(worktree, threads.filter((_, index) => states[String(index)] !== 'resolved'));
+		} catch (error) { showError(error); }
+	}));
+	/** Long processes reported through progress files (block Y): published to the feed, stalls flagged, ends notified. */
+	const processDirectory = path.join(context.globalStorageUri?.fsPath ?? os.tmpdir(), 'processes');
+	context.environmentVariableCollection?.replace?.('ATS_PROGRESS_DIR', processDirectory);
+	const processStates = new Map<string, ProcessView['state']>();
+	const processTimer = setInterval(() => {
+		const feed: ActivityFeed | undefined = controller.activityFeed;
+		if (!feed?.publish) { return; }
+		void readProcesses(processDirectory, Number(vscode.workspace.getConfiguration('atsHarness').get('stallMinutes', 15)) || 15).then(views => {
+			for (const view of publishProcesses(feed, views, 'IDE', processStates)) {
+				notify(view.title, view.state, view.state === 'stalled' ? vscode.l10n.t('parece trabado') : view.state === 'completed' ? vscode.l10n.t('termin\u00f3') : vscode.l10n.t('se detuvo'));
+			}
+		}, () => undefined);
+	}, 5000);
+	processTimer.unref?.();
+	context.subscriptions.push({ dispose: () => clearInterval(processTimer) });
+	/** Live autonomous goals (block L): how to stop them and the pending question round, keyed by goal id. */
+	const goals = new Map<string, { control?: 'pause' | 'stop'; answer?: (answers: string[] | undefined) => void; questions?: string[]; folder: Host; root?: string; saved?: Set<string>; files?: Set<string> }>();
+	// User saves inside a goal's tree are recorded so a step that also changed the file stops in conflict (block O).
+	if (vscode.workspace.onDidSaveTextDocument) {
+		context.subscriptions.push(vscode.workspace.onDidSaveTextDocument((document: Host) => {
+			for (const goal of goals.values()) {
+				if (goal.root && goal.saved && document.uri.fsPath.startsWith(goal.root + path.sep)) { goal.saved.add(path.relative(goal.root, document.uri.fsPath).split(path.sep).join('/')); }
+			}
+		}));
+	}
+	// The explorer marks the files a goal is changing, so the user sees where the Harness works (block O).
+	const decorationsChanged = vscode.EventEmitter ? new vscode.EventEmitter() : undefined;
+	if (decorationsChanged && vscode.window.registerFileDecorationProvider) {
+		context.subscriptions.push(decorationsChanged, vscode.window.registerFileDecorationProvider({
+			onDidChangeFileDecorations: decorationsChanged.event,
+			provideFileDecoration: (uri: Host) => {
+				for (const goal of goals.values()) {
+					if (goal.root && goal.files?.has(path.relative(goal.root, uri.fsPath).split(path.sep).join('/'))) { return { badge: '●', tooltip: vscode.l10n.t('El Harness est\u00e1 trabajando en este archivo') }; }
+				}
+				return undefined;
+			}
+		}));
+	}
+	const askGoal = async (goalId: string): Promise<void> => {
+		const goal = goals.get(goalId);
+		if (!goal?.answer || !goal.questions) { return; }
+		const answers: string[] = [];
+		for (const question of goal.questions) {
+			const answer = await vscode.window.showInputBox({ title: vscode.l10n.t('El objetivo necesita tu respuesta'), prompt: question, ignoreFocusOut: true });
+			if (answer === undefined) { return; }
+			answers.push(answer);
+		}
+		const resolve = goal.answer; goal.answer = undefined; goal.questions = undefined;
+		resolve(answers);
+	};
+	/** Run one approved charter to the end in the background; the feed and notifications report it. */
+	const runGoal = async (folder: Host, charter: GoalCharter, options: { delivery?: Delivery; card?: CardContext; linked?: string } = {}): Promise<{ status: string; delivery?: Delivery } | undefined> => {
+		const root = await fs.realpath(folder.uri.fsPath);
+		const goalId = Date.now().toString(36) + '-' + randomBytes(3).toString('hex');
+		goals.set(goalId, { folder });
+		const storage = path.join(metricsDirectory(root), 'goals');
+		const delivery = options.delivery ?? (charter.delivery === 'working-tree' ? undefined : await createDelivery(root, path.join(metricsDirectory(root), 'deliveries'), charter.objective));
+		const decisions = new DecisionLog(metricsDirectory(root));
+		// Decisions in force reach every agent; the analyst asks when the request contradicts one (AA).
+		charter = { ...charter, objective: charter.objective + decisionsPrompt(await decisions.relevant().catch(() => [])) };
+		const workRoot = delivery?.worktree ?? root;
+		const live = goals.get(goalId)!;
+		live.root = workRoot; live.saved = new Set(); live.files = new Set();
+		const authority = await inspectHarnessAuthority(workRoot);
+		const delegate = authority.engine === 'project' && (await readProjectCapabilities(workRoot).catch(() => [])).includes('command-runner');
+		const subprojects = await detectEcosystems(workRoot);
+		const config = authority.engine === 'ide-native' ? await loadProjectConfig(workRoot).catch(() => undefined) : undefined;
+		const feed: ActivityFeed | undefined = controller.activityFeed;
+		const template = charter.environment ? (await environmentTemplates(root)).find(item => item.name === charter.environment) : undefined;
+		const excluded = process.platform === 'win32' ? parseExcludedPorts((await systemExec('netsh', ['int', 'ipv4', 'show', 'excludedportrange', 'protocol=tcp']).catch(() => ({ code: null, output: '' }))).output) : [];
+		const environment = template ? await createEnvironment({ template, goalId, exec: systemExec, excludedPorts: excluded }) : undefined;
+		// D5: the IDE installs from the lockfiles first (only cache-filling ones in the user's own checkout); then commands go offline.
+		const baseEnv = (await currentToolchainEnvironment()).env;
+		let synced = true;
+		for (const sync of (await syncCommands(workRoot, subprojects)).filter(item => delivery || item.cacheOnly)) {
+			const result = await runCommand({ root: workRoot, cwd: sync.cwd, command: sync.command, args: sync.args, env: baseEnv, logDirectory: path.join(storage, goalId + '-sync'), timeoutSec: 900 }).catch(() => undefined);
+			if (result?.exitCode !== 0) { synced = false; }
+		}
+		const offline = synced ? offlineEnvironment() : {};
+		const ports = createGoalPorts({
+			root: workRoot, projectName: folder.name, charter, goalId, feed,
+			policy: { subprojects, delegate, extras: commandExtras() }, env: { ...baseEnv, ...offline, ...environment?.exports },
+			logDirectory: path.join(storage, goalId + '-logs'),
+			gates: (config?.plan.gates ?? []).map(gate => ({ id: gate.id, command: gate.executable, args: gate.args, cwd: gate.cwd || '.' })),
+			definitionOfDone: proposeDefinitionOfDone({ subprojects, hasMigrations: (await Promise.all(['.', ...subprojects.map(project => project.path)].map(folder => pathExists(path.join(workRoot, folder, 'migrations'))))).some(Boolean), hasApiContract: await pathExists(path.join(workRoot, 'openapi.yaml')), hasUi: subprojects.some(project => project.ecosystem === 'node') }),
+			stopRequested: () => goals.get(goalId)?.control,
+			cache: await resultCache(workRoot),
+			userSaved: live.saved,
+			ask: questions => new Promise(resolve => {
+				const goal = goals.get(goalId)!; goal.questions = questions;
+				// Each answer becomes a project decision, so the next goal does not ask it again (AA).
+				goal.answer = answers => {
+					if (answers) { for (const [index, question] of questions.entries()) { void decisions.record({ title: question.slice(0, 120), context: charter.objective.split('\n')[0].slice(0, 300), decision: answers[index] ?? '', alternatives: [], scope: [], source: 'answer' }).catch(() => undefined); } }
+					resolve(answers);
+				};
+				notify(vscode.l10n.t('El objetivo necesita tu respuesta'), 'answer', questions[0].slice(0, 120), () => askGoal(goalId));
+			}),
+			launch: async ({ provider, readOnly, instruction, resumeSession, maxTurns }) => {
+				if (readOnly) { return runGuardedAgent(folder, draftOf(workRoot, provider, 'planner', instruction)); }
+				const server = await prepareToolServer(workRoot, maxTurns, file => inCharterScope(charter, file), { ...offline, ...environment?.exports });
+				const ecosystems = server.ecosystems.length ? '\n\nDetected subprojects and their usual commands:\n' + server.ecosystems.join('\n') : '';
+				try { return await runGuardedAgent(folder, draftOf(workRoot, provider, 'implementer', resumeSession ? instruction : instruction + ecosystems, { maxTurns, ...(resumeSession ? { resumeSession } : {}) }), { toolServer: server.launch }); }
+				finally { await server.dispose(); }
+			},
+			// A branch delivery gets one commit per accepted step, made by the orchestrator (D7).
+			afterStep: async state => {
+				for (const file of state.steps.at(-1)?.outcome?.diff.files ?? []) { live.files!.add(file.path); }
+				decorationsChanged?.fire(undefined);
+				if (delivery) { await commitStep(delivery, commitMessage('test', state.steps.at(-1)!.title)).catch(() => undefined); }
+			}
+		});
+		try {
+			void decisions.record({ title: 'Carta: ' + charter.objective.split('\n')[0].slice(0, 100), context: 'Carta aprobada', decision: charter.objective.split('\n')[0].slice(0, 300) + (charter.allowProduction ? '' : ' (sin tocar producci\u00f3n)'), alternatives: [], scope: charter.scope.flatMap(rule => rule.allow ?? []), source: 'charter' }).catch(() => undefined);
+			if (options.card) { await commentMilestone(cardClient(), options.card, vscode.l10n.t('Plan aprobado: el Harness empez\u00f3 a trabajar en esta card.')).catch(() => undefined); }
+			const report = await new GoalOrchestrator(new FileGoalJournal(storage, goalId), ports, goalId).run(charter, delivery?.base);
+			await new GoalUsageHistory(metricsDirectory(root)).record({ size: charter.size, tasks: Math.max(1, report.steps), calls: report.runs, at: new Date().toISOString() }).catch(() => undefined);
+			const state = await new FileGoalJournal(storage, goalId).load(goalId);
+			const files = delivery ? await deliveryFiles(delivery).catch(() => []) : [];
+			const packageFile = path.join(storage, goalId + '-entrega.md');
+			const content = { state, spec: report.spec, done: report.done, files, ...(options.card ? { card: options.card.key } : {}) };
+			await fs.writeFile(packageFile, deliveryPackage(content) + (options.linked ? '\n' + options.linked : '') + '\n## Descripci\u00f3n de PR\n\n' + pullRequestDescription(content) + (options.linked ?? ''));
+			if (options.card && report.status === 'completed') { await commentMilestone(cardClient(), options.card, vscode.l10n.t('Entrega lista en la rama {0}.', delivery?.branch ?? '')).catch(() => undefined); }
+			if (delivery) { deliveries.set(delivery.worktree, { delivery, folder, charter }); }
+			const open = vscode.l10n.t('Abrir entrega'), accept = vscode.l10n.t('Aceptar'), discard = vscode.l10n.t('Descartar'), review = vscode.l10n.t('Revisar inline');
+			const message = report.status === 'completed' ? vscode.l10n.t('Objetivo terminado: {0}', charter.objective.split('\n')[0].slice(0, 80)) : vscode.l10n.t('El objetivo se detuvo ({0}): {1}', report.reason ?? report.status, charter.objective.split('\n')[0].slice(0, 80));
+			void notifyWebhookSetting(message, report.status);
+			if (options.linked) { return { status: report.status, delivery }; }
+			const choice = await vscode.window.showInformationMessage(message, open, ...(delivery ? [review, accept, discard] : []));
+			if (choice === open) { await vscode.window.showTextDocument(vscode.Uri.file(packageFile)); }
+			if (delivery && choice === review) { await openInlineReview(delivery, files); }
+			if (delivery && choice === accept) {
+				const result = await acceptDelivery(delivery);
+				if (!result.integrated) { void vscode.window.showWarningMessage(vscode.l10n.t('No se integr\u00f3: ten\u00e9s cambios sin guardar en {0}. La rama {1} queda lista para abrir un PR.', result.conflicts.slice(0, 3).join(', '), delivery.branch)); }
+				else { deliveries.delete(delivery.worktree); }
+			}
+			if (delivery && choice === discard) { await discardDelivery(delivery); deliveries.delete(delivery.worktree); }
+			return { status: report.status, delivery };
+		} catch (error) { showError(error); return undefined; }
+		finally { goals.delete(goalId); decorationsChanged?.fire(undefined); await environment?.destroy(); }
+	};
+	/** Goals of earlier sessions whose journal says they were still working (block N), by goal id. */
+	const interrupted = new Map<string, { folder: Host; state: GoalState }>();
+	const scanInterrupted = async (): Promise<void> => {
+		if (!ensureTrust()) { return; }
+		const feed: ActivityFeed | undefined = controller.activityFeed;
+		for (const folder of vscode.workspace.workspaceFolders || []) {
+			const root = await fs.realpath(folder.uri.fsPath).catch(() => undefined);
+			if (!root) { continue; }
+			const storage = path.join(metricsDirectory(root), 'goals');
+			for (const goalId of (await FileGoalJournal.list(storage)).slice(0, 20)) {
+				if (goals.has(goalId)) { continue; }
+				const state = interruptedOnLoad(await new FileGoalJournal(storage, goalId).load(goalId).catch(() => undefined as unknown as GoalState));
+				if (!state || state.status !== 'interrupted') { continue; }
+				interrupted.set(goalId, { folder, state });
+				for (const item of goalActivityItems(state, folder.name)) { feed?.publish?.(item); }
+			}
+		}
+	};
+	void scanInterrupted().catch(() => undefined);
+	/** Feed actions on a goal item (Inicio): answer, stop, and continue an interrupted goal. */
+	controller.goalAct = async (itemId: string, action: string): Promise<boolean> => {
+		const goalId = /^goal:(?<id>[a-z0-9-]{1,64})$/.exec(itemId)?.groups?.id;
+		if (!goalId) { return false; }
+		const goal = goals.get(goalId);
+		const previous = interrupted.get(goalId);
+		if (!goal && !previous) { return false; }
+		if (goal && action === 'answer') { await askGoal(goalId); }
+		if (goal && action === 'stop') { goal.control = 'stop'; goal.answer?.(undefined); }
+		if (!goal && previous && action === 'continue') {
+			// Resuming starts from the state the journal recorded: the applied diff stays and done steps are not repeated.
+			interrupted.delete(goalId);
+			// The old journal is closed so the next start does not offer it again.
+			const oldStorage = path.join(metricsDirectory(await fs.realpath(previous.folder.uri.fsPath)), 'goals');
+			await new FileGoalJournal(oldStorage, goalId).append({ type: 'state', at: new Date().toISOString(), status: 'cancelled', reason: 'resumed' }).catch(() => undefined);
+			const done = previous.state.steps.filter(step => step.status === 'done').map(step => '- ' + step.title);
+			const note = '\n\nThis goal was interrupted (the IDE closed). Steps already done, do not repeat them:\n' + (done.join('\n') || '- none') + '\nInspect the current state of the files before continuing.';
+			void runGoal(previous.folder, { ...previous.state.charter, objective: previous.state.charter.objective + note });
+		}
+		return true;
+	};
+	/** Project decisions (block AA): review, archive, or export them to `docs/adr/` as an explicit action. */
+	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.decisions', async () => {
+		try {
+			const folder = (vscode.workspace.workspaceFolders || [])[0];
+			if (!folder || !ensureTrust()) { return; }
+			const root = await fs.realpath(folder.uri.fsPath);
+			const log = new DecisionLog(metricsDirectory(root));
+			const active = await log.relevant();
+			const exportLabel = vscode.l10n.t('Exportar al repositorio (docs/adr)');
+			const picked = await vscode.window.showQuickPick([{ label: exportLabel, id: '' }, ...active.map(item => ({ label: item.title, description: item.source + ' · ' + item.at.slice(0, 10), detail: item.decision, id: item.id }))], { title: vscode.l10n.t('Decisiones vigentes de {0}', folder.name) });
+			if (!picked) { return; }
+			if (picked.label === exportLabel) { const written = await log.exportAdrs(path.join(root, 'docs', 'adr')); void vscode.window.showInformationMessage(vscode.l10n.t('{0} decisiones exportadas a docs/adr.', String(written.length))); return; }
+			const archive = vscode.l10n.t('Archivar');
+			if (await vscode.window.showInformationMessage(picked.detail ?? '', archive) === archive) { await log.archive(picked.id); }
+		} catch (error) { showError(error); }
+	}));
+	/** Web search for one project (decision D9): applies from the next run (EC-148); fetching URLs stays forbidden. */
+	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.webSearch', async (requested?: string) => {
+		try {
+			const folder = (await choose(requested, true))?.folder;
+			if (!folder) { return; }
+			const root = await fs.realpath(folder.uri.fsPath);
+			const on = vscode.l10n.t('Encender'), off = vscode.l10n.t('Apagar');
+			const picked = await vscode.window.showWarningMessage(
+				vscode.l10n.t('B\u00fasqueda web en {0}: {1}.', folder.name, webSearchOn(root) ? vscode.l10n.t('encendida') : vscode.l10n.t('apagada')),
+				{ modal: true, detail: vscode.l10n.t('Encendida, el agente puede buscar documentaci\u00f3n con el buscador de su proveedor. Las consultas llegan a ese buscador, quedan en el informe y una consulta con un secreto corta la corrida. Nunca puede abrir URLs, y los comandos siguen sin red. Aplica desde la pr\u00f3xima corrida.') },
+				on, off);
+			if (picked) { await context.globalState.update(webSearchKey(root), picked === on); }
+		} catch (error) { showError(error); }
+	}));
+	/** Manage development secrets (block V): add or rotate, remove, list with use audit; values are never shown. */
+	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.devSecrets', async (requested?: string) => {
+		try {
+			if (!ensureTrust()) { return; }
+			const folders = vscode.workspace.workspaceFolders || [];
+			const folder = folders.find((item: Host) => item.uri.fsPath === requested) ?? (folders.length === 1 ? folders[0] : await vscode.window.showWorkspaceFolderPick());
+			if (!folder) { return; }
+			const key = projectKeyOf(await fs.realpath(folder.uri.fsPath));
+			const add = vscode.l10n.t('Agregar o rotar un secreto'), remove = vscode.l10n.t('Quitar un secreto');
+			const existing = devSecrets.list(key);
+			const picked = await vscode.window.showQuickPick([
+				{ label: add }, ...(existing.length ? [{ label: remove }] : []),
+				...existing.map(meta => ({ label: meta.name, description: meta.commands.join(', '), detail: vscode.l10n.t('Usos: {0} · \u00faltimo: {1}', String(meta.uses), meta.lastUsedAt ?? '—') }))
+			], { title: vscode.l10n.t('Secretos de desarrollo de {0}', folder.name) });
+			if (picked?.label === add) {
+				const name = await vscode.window.showInputBox({ title: vscode.l10n.t('Nombre de la variable'), placeHolder: 'APP_E2E_DSN', validateInput: (value: string) => /^[A-Z][A-Z0-9_]{0,63}$/.test(value) ? undefined : vscode.l10n.t('May\u00fasculas, n\u00fameros y guiones bajos.') });
+				if (!name) { return; }
+				const value = await vscode.window.showInputBox({ title: vscode.l10n.t('Valor de {0}', name), password: true, ignoreFocusOut: true });
+				if (!value) { return; }
+				const rules = await vscode.window.showInputBox({ title: vscode.l10n.t('Comandos que pueden usarlo'), prompt: vscode.l10n.t('Separados por coma; @carpeta limita la carpeta. Ejemplo: go test @apps/api'), ignoreFocusOut: true });
+				if (!rules?.trim()) { return; }
+				await devSecrets.set(key, name, value, rules.split(',').map(rule => rule.trim()).filter(Boolean));
+				void vscode.window.showInformationMessage(vscode.l10n.t('Secreto {0} guardado en el llavero del sistema.', name));
+			}
+			if (picked?.label === remove) {
+				const target = await vscode.window.showQuickPick(existing.map(meta => meta.name), { title: remove });
+				if (target) { await devSecrets.remove(key, target); }
+			}
+		} catch (error) { showError(error); }
+	}));
+	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.goal', async (requested?: string, objectiveArgument?: string) => {
+		try {
+			if (!ensureTrust()) { void vscode.window.showWarningMessage(vscode.l10n.t('Marc\u00e1 el workspace como confiable para iniciar un objetivo.')); return; }
+			const folders = vscode.workspace.workspaceFolders || [];
+			const folder = folders.find((item: Host) => item.uri.fsPath === requested) ?? (folders.length === 1 ? folders[0] : (await vscode.window.showWorkspaceFolderPick()));
+			if (!folder) { return; }
+			const objective = typeof objectiveArgument === 'string' && objectiveArgument.trim() ? objectiveArgument : await vscode.window.showInputBox({ title: vscode.l10n.t('Nuevo objetivo'), prompt: vscode.l10n.t('Una instrucci\u00f3n; el Harness trabaja solo hasta terminarla y s\u00f3lo pregunta lo indispensable.'), ignoreFocusOut: true });
+			if (!objective?.trim()) { return; }
+			const root = await fs.realpath(folder.uri.fsPath);
+			// A card key in the instruction brings the card's description and criteria (U); without MCP it runs as plain text.
+			const key = cardKeyOf(objective);
+			const card = key && controller.mcp?.enabled?.() ? await readCard(cardClient(), key).catch(() => undefined) : undefined;
+			const goalObjective = card ? cardObjective(objective, card) : objective;
+			// Several repositories (T): integrated in the order picked, each with its own branch.
+			const others = folders.filter((item: Host) => item.uri.toString() !== folder.uri.toString());
+			const extra = others.length ? await vscode.window.showQuickPick(others.map((item: Host) => ({ label: item.name, folder: item })), { canPickMany: true, title: vscode.l10n.t('\u00bfEl objetivo cruza otros repositorios? Eleg\u00ed en orden de integraci\u00f3n (vac\u00edo: s\u00f3lo {0})', folder.name) }) : [];
+			if (extra === undefined) { return; }
+			const subprojects = await detectEcosystems(root);
+			const inferred = inferGoalOptions(objective, subprojects);
+			const branch = vscode.l10n.t('Rama local harness/… (recomendado)'), tree = vscode.l10n.t('Cambios en mi \u00e1rbol de trabajo');
+			const isRepo = await pathExists(path.join(root, '.git'));
+			const deliveryChoice = isRepo ? await vscode.window.showQuickPick([branch, tree], { title: vscode.l10n.t('\u00bfC\u00f3mo quer\u00e9s recibir el trabajo?') }) : tree;
+			if (!deliveryChoice) { return; }
+			const provider = (vscode.workspace.getConfiguration('atsHarness').get('goalProvider', 'claude') === 'codex' ? 'codex' : 'claude') as NativeProvider;
+			const templates = await environmentTemplates(root).catch(() => []);
+			const none = vscode.l10n.t('Sin entorno ef\u00edmero');
+			const environmentChoice = templates.length ? await vscode.window.showQuickPick([none, ...templates.map(item => item.name)], { title: vscode.l10n.t('\u00bfEl objetivo necesita un entorno ef\u00edmero?') }) : none;
+			if (!environmentChoice) { return; }
+			const charter = { ...defaultCharter(goalObjective, provider, provider === 'claude' ? 'codex' : 'claude', { ...inferred, delivery: deliveryChoice === branch || extra.length ? 'local-branch' : 'working-tree' }), ...(environmentChoice !== none ? { environment: environmentChoice } : {}) };
+			// Estimate before approval, calibrated with local history, against the quota minus the manual reserve (AB).
+			const estimate = estimateCalls(charter.size, 3 * (1 + extra.length), await new GoalUsageHistory(metricsDirectory(root)).list().catch(() => []));
+			const cap = providerCallsPer24h(folder);
+			const remaining = cap > 0 ? (await readProviderInvocationQuota(metricsDirectory(root), cap)).providers[provider].remaining ?? undefined : undefined;
+			const reserve = Number(vscode.workspace.getConfiguration('atsHarness').get('goalReservePercent', 20)) || 0;
+			const quota = quotaCheck(estimate, remaining, cap > 0 ? cap : undefined, reserve);
+			controller.quotaDescription = remaining === undefined ? vscode.l10n.t('Cupo: sin l\u00edmite local configurado') : vscode.l10n.t('Cupo de {0}: {1} llamadas restantes de {2}', provider, String(remaining), String(cap));
+			// The full doctor runs before approval, so an environment problem shows now and not halfway through (X).
+			const problems = (await doctorFor(root).catch(() => [])).filter(check => check.status === 'problem' || (charter.environment && check.id === 'docker' && check.status !== 'ok'));
+			const approve = vscode.l10n.t('Aprobar carta');
+			const detail = [
+				vscode.l10n.t('Objetivo: {0}', objective),
+				inferred.target !== undefined ? vscode.l10n.t('Terminado cuando la m\u00e9trica llegue a {0}% (la mide el IDE).', String(inferred.target)) : vscode.l10n.t('Terminado cuando se cumpla la Definici\u00f3n de Terminado.'),
+				inferred.allowProduction ? vscode.l10n.t('Puede tocar c\u00f3digo de producci\u00f3n y tests.') : vscode.l10n.t('S\u00f3lo tests: el c\u00f3digo de producci\u00f3n queda prohibido.'),
+				vscode.l10n.t('Prohibido: git, dependencias nuevas, publicar.'),
+				vscode.l10n.t('Presupuesto: {0} corridas, {1} minutos, {2} turnos por corrida.', String(charter.budget.maxRuns), String(charter.budget.maxMinutes), String(charter.budget.maxTurnsPerRun)),
+				charter.delivery === 'local-branch' ? vscode.l10n.t('Entrega: rama local con commits del orquestador; push y PR quedan para vos.') : vscode.l10n.t('Entrega: cambios en tu \u00e1rbol de trabajo.'),
+				...(charter.environment ? [vscode.l10n.t('Entorno ef\u00edmero: {0}, creado y destruido por el IDE.', charter.environment)] : []),
+				vscode.l10n.t('Estimaci\u00f3n: {0}\u2013{1} llamadas al proveedor ({2}).', String(estimate.low), String(estimate.high), estimate.basis === 'history' ? vscode.l10n.t('seg\u00fan tu historial') : vscode.l10n.t('valor inicial')),
+				...(quota.fits ? [] : [vscode.l10n.t('⚠ La estimaci\u00f3n supera el cupo disponible ({0} llamadas, reservando {1}% para tu trabajo manual). Divid\u00ed el objetivo o us\u00e1 el otro proveedor.', String(quota.available ?? 0), String(reserve))]),
+				...(card ? [vscode.l10n.t('Card {0}: {1} criterios; {2}.', card.key, String(card.criteria.length), card.canComment ? vscode.l10n.t('se comentan los hitos') : vscode.l10n.t('modo lectura'))] : []),
+				...(extra.length ? [vscode.l10n.t('Repositorios en orden: {0}.', [folder.name, ...extra.map((item: Host) => item.label)].join(' → '))] : []),
+				...problems.map(check => '⚠ ' + check.title + ': ' + check.detail + (check.action ? ' ' + check.action : ''))
+			].join('\n');
+			if (await vscode.window.showWarningMessage(vscode.l10n.t('\u00bfAprob\u00e1s esta carta?'), { modal: true, detail }, approve) !== approve) { return; }
+			if (!await servicePreflight(root)) { return; }
+			if (!extra.length) { void runGoal(folder, charter, card ? { card } : {}); return; }
+			void (async () => {
+				const parts = integrationOrder([folder, ...extra.map((item: Host) => item.folder)].map((item: Host, index: number, all: Host[]) => ({ name: item.name, root: item.uri.fsPath, dependsOn: index ? [all[index - 1].name] : [] })));
+				const delivered: RepoDelivery[] = [];
+				for (const part of parts) {
+					const partFolder = folders.find((item: Host) => item.name === part.name)!;
+					const result = await runGoal(partFolder, { ...charter, objective: repoPartInstruction(goalObjective, part, parts, delivered) }, { linked: '(multi-repo)', ...(card ? { card } : {}) });
+					if (result?.delivery) { delivered.push({ name: part.name, branch: result.delivery.branch }); }
+					if (result?.status !== 'completed') { notify(vscode.l10n.t('El objetivo multi-repositorio se detuvo en {0}', part.name), 'blocked', result?.status ?? 'failed'); return; }
+				}
+				const summary = await vscode.workspace.openTextDocument({ language: 'markdown', content: '# ' + objective.split('\n')[0] + '\n\n' + linkedPullRequestsSection(delivered, '') });
+				await vscode.window.showTextDocument(summary);
+				notify(vscode.l10n.t('Objetivo multi-repositorio terminado'), 'completed', delivered.map(item => item.branch).join(', '));
+			})();
+		} catch (error) { showError(error); }
+	}));
+	controller.nativeRunning = () => running.size + runningAgents.size + pendingAgents.size + runningWorkflows.size + pendingWorkflows.size + goals.size;
 	controller.nativeProjects = async () => {
 		const rows = [];
 		if (!vscode.workspace.getConfiguration('atsHarness').get('enabled', true)) { return rows; }
@@ -844,6 +1444,38 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 				language: 'json',
 				content: JSON.stringify({ providers: diagnostics, note: 'Local --version and --help flag diagnostics only. Authentication, effective permissions and provider protocol still require a real opt-in smoke test.' }, null, 2)
 			}), { preview: true });
+		} catch (error) { showError(error); }
+	}));
+	/** Block J: one view of everything that decides how the Harness behaves in a project; nothing here starts an agent. */
+	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.diagnoseProject', async (requested?: string) => {
+		try {
+			if (!ensureTrust()) { return; }
+			const chosen = await choose(requested, true); if (!chosen) { return; }
+			const root = await fs.realpath(chosen.folder.uri.fsPath);
+			const report = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: vscode.l10n.t('Diagnosticando el Harness del proyecto…') }, async () => {
+				const authority = await inspectHarnessAuthority(root);
+				const capabilities = authority.engine === 'project' ? await readProjectCapabilities(root).catch((error: unknown) => harnessErrorCode(error)) : [];
+				const delegate = Array.isArray(capabilities) && capabilities.includes('command-runner');
+				const subprojects = delegate ? [] : await detectEcosystems(root);
+				const settings = vscode.workspace.getConfiguration('atsHarness');
+				const [providers, services, cache, quota] = await Promise.all([
+					Promise.all([diagnoseProvider('codex'), diagnoseProvider('claude')]),
+					detectServiceNeeds(root, process.env).then(needs => Promise.all(needs.map(probeService))),
+					resultCache(root).then(value => value.describe(), (error: unknown) => harnessErrorCode(error)),
+					readProviderInvocationQuota(metricsDirectory(root), providerCallsPer24h(chosen.folder))
+				]);
+				return {
+					project: chosen.folder.name, authority, capabilities, providers, quota,
+					settings: {
+						implementerMaxTurns: settings.get('implementerMaxTurns'), promptBudgetKiB: settings.get('promptBudgetKiB'), coordinatedWriters: coordinatedWriters(),
+						writerIsolation: requiredWriterIsolation(), agentCommandsAllow: commandExtras(), webSearch: webSearchOn(root)
+					},
+					activity: { agentRunning: runningAgents.has(root) || pendingAgents.has(root), goals: [...goals.values()].filter(goal => goal.root === root).length },
+					commandPolicy: delegate ? ['Delegated to the project Harness (command-runner)'] : createCommandPolicy({ subprojects, delegate, extras: commandExtras() }).describe(),
+					ecosystems: describeEcosystems(subprojects), services, cache
+				};
+			});
+			await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({ language: 'json', content: JSON.stringify(report, null, 2) }), { preview: true });
 		} catch (error) { showError(error); }
 	}));
 	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.nativeProviderQuotaStatus', async (requested?: string) => {

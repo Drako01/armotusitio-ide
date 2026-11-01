@@ -14,7 +14,7 @@ export type Capability =
 	| 'verification-gates' | 'durable-tasks' | 'durable-workflows' | 'provider-execution'
 	| 'agent-handoffs' | 'reconciliation' | 'bounded-processes' | 'parallel-gates'
 	| 'worktree-isolation' | 'os-sandbox' | 'network-policy' | 'token-accounting'
-	| 'cost-accounting' | 'autonomous-repair' | 'writer-lease';
+	| 'cost-accounting' | 'autonomous-repair' | 'writer-lease' | 'command-runner';
 export interface EngineCapabilities {
 	schemaVersion: typeof ENGINE_CONTRACT_VERSION;
 	engine: 'ide-native' | 'project';
@@ -30,7 +30,7 @@ const ALL: Capability[] = [
 	'verification-gates', 'durable-tasks', 'durable-workflows', 'provider-execution',
 	'agent-handoffs', 'reconciliation', 'bounded-processes', 'parallel-gates',
 	'worktree-isolation', 'os-sandbox', 'network-policy', 'token-accounting',
-	'cost-accounting', 'autonomous-repair', 'writer-lease'
+	'cost-accounting', 'autonomous-repair', 'writer-lease', 'command-runner'
 ];
 const VERIFIED_NATIVE: Capability[] = [
 	'verification-gates', 'durable-tasks', 'durable-workflows', 'provider-execution',

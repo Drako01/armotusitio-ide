@@ -5,6 +5,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { constants } from 'node:fs';
+import { spawn, type ChildProcess } from 'node:child_process';
 
 /** True while `pid` exists on this host (EPERM means it exists but belongs to another user). */
 export function processAlive(pid: number): boolean {
@@ -24,6 +25,30 @@ export function windowsNpmProviderCandidates(directory: string, executable: 'cod
 }
 
 /** Resolve tools without starting them or involving a shell. Node uses the extension host runtime. */
+/** Node entry scripts behind the Windows shims of npm, npx, pnpm and yarn (global npm install or corepack). */
+const WINDOWS_NODE_SCRIPTS: Record<string, string[][]> = {
+	npm: [['node_modules', 'npm', 'bin', 'npm-cli.js']],
+	npx: [['node_modules', 'npm', 'bin', 'npx-cli.js']],
+	pnpm: [['node_modules', 'pnpm', 'bin', 'pnpm.cjs'], ['node_modules', 'corepack', 'dist', 'pnpm.js']],
+	yarn: [['node_modules', 'yarn', 'bin', 'yarn.js'], ['node_modules', 'corepack', 'dist', 'yarn.js']]
+};
+
+/** Stop a process and its whole tree: `taskkill /T` on Windows, the process group elsewhere (spawned `detached`). */
+export function stopProcess(child: ChildProcess): void {
+	if (!child.pid) { return; }
+	if (process.platform === 'win32') {
+		const killer = spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+		killer.on('error', () => { /* Cannot terminate unavailable process. */ });
+	} else {
+		try { process.kill(-child.pid, 'SIGTERM'); } catch { try { child.kill('SIGTERM'); } catch { /* exited */ } }
+		const timer = setTimeout(() => {
+			try { process.kill(-child.pid!, 'SIGKILL'); } catch { /* exited */ }
+		}, 1500);
+		timer.unref();
+		child.once('close', () => clearTimeout(timer));
+	}
+}
+
 export async function resolveNativeCommand(executable: string, args: string[]): Promise<{ executable: string; args: string[]; embeddedNode: boolean }> {
 	if (executable === 'node') { return { executable: process.execPath, args, embeddedNode: true }; }
 	const directories = (process.env.PATH || process.env.Path || '').split(path.delimiter).filter(directory => path.isAbsolute(directory));
@@ -39,8 +64,10 @@ export async function resolveNativeCommand(executable: string, args: string[]): 
 				return { executable: process.execPath, args: [candidate.script, ...args], embeddedNode: true };
 			}
 		}
-		if (process.platform === 'win32' && executable === 'npm') {
-			const cli = path.join(directory, 'node_modules', 'npm', 'bin', 'npm-cli.js');
+		// npm-installed CLIs are `.cmd` shims on Windows (a shell); run their Node script directly instead.
+		const scripts = process.platform === 'win32' ? WINDOWS_NODE_SCRIPTS[executable] ?? [] : [];
+		for (const script of scripts) {
+			const cli = path.join(directory, ...script);
 			if (await fs.stat(cli).then(info => info.isFile()).catch(() => false)) { return { executable: process.execPath, args: [cli, ...args], embeddedNode: true }; }
 		}
 		for (const name of process.platform === 'win32' && !executable.endsWith('.exe') ? [executable + '.exe', executable + '.com'] : [executable]) {
