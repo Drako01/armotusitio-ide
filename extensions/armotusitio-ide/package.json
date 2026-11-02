@@ -1,596 +1,687 @@
 {
-  "name": "armotusitio-ide",
-  "displayName": "ArmotuSitio IDE",
-  "description": "Project-aware harness control for RedEvent and ArmoTuSitio 2.0",
-  "version": "0.6.0",
-  "publisher": "armotusitio",
-  "license": "MIT",
-  "engines": {
-    "vscode": "^1.144.0"
-  },
-  "main": "./dist/extension.js",
-  "activationEvents": [
-    "onView:atsHarness.tasks",
-    "onCommand:atsHarness.execute",
-    "onCommand:atsHarness.cancelTask",
-    "onCommand:atsHarness.reviewPlan",
-    "onCommand:atsIde.worktrees",
-    "onCommand:atsIde.createWorktree",
-    "onCommand:atsIde.context",
-    "onCommand:atsIde.github",
-    "onCommand:atsIde.n8n",
-    "onCommand:atsIde.agent",
-    "onStartupFinished"
-  ],
-  "contributes": {
-    "chatParticipants": [
-      {
-        "id": "atsIde.harness",
-        "name": "harness",
-        "fullName": "ArmotuSitio Harness",
-        "description": "Harness local y Work Management de ArmotuSitio, sin llamadas a modelos de IA.",
-        "commands": [
-          {
-            "name": "estado",
-            "description": "Consultar el progreso y el historial del Harness"
-          },
-          {
-            "name": "comandos",
-            "description": "Listar comandos de los proyectos abiertos"
-          },
-          {
-            "name": "check",
-            "description": "Confirmar e iniciar check [armotusitio o redevent]"
-          },
-          {
-            "name": "verify",
-            "description": "Confirmar e iniciar verify [armotusitio o redevent]"
-          },
-          {
-            "name": "test",
-            "description": "Confirmar e iniciar test [armotusitio o redevent]"
-          },
-          {
-            "name": "mcp",
-            "description": "Consultar la conexión y las herramientas del MCP"
-          },
-          {
-            "name": "proyectos",
-            "description": "Listar proyectos de Work Management"
-          },
-          {
-            "name": "tareas",
-            "description": "Listar tareas de un proyecto"
-          },
-          {
-            "name": "tarea",
-            "description": "Obtener contexto de una tarea por su clave"
-          },
-          {
-            "name": "crear",
-            "description": "Crear una tarea con confirmación"
-          },
-          {
-            "name": "mover",
-            "description": "Cambiar de columna una tarea con confirmación"
-          },
-          {
-            "name": "comentar",
-            "description": "Agregar un comentario con confirmación"
-          }
-        ]
-      }
-    ],
-    "mcpServerDefinitionProviders": [
-      {
-        "id": "atsIde.armotusitioMcp",
-        "label": "ArmotuSitio Work Management"
-      }
-    ],
-    "configuration": {
-      "title": "ArmoTuSitio Harness",
-      "properties": {
-        "atsHarness.mcp.enabled": {
-          "type": "boolean",
-          "default": false,
-          "scope": "window",
-          "description": "Conectar el MCP de Work Management de ArmotuSitio. Requiere workspace confiable y clave de agente."
-        },
-        "atsHarness.enabled": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enable workspace-local harness detection."
-        },
-        "atsHarness.codexModel": {
-          "type": "string",
-          "default": "",
-          "pattern": "^$|^[A-Za-z0-9][A-Za-z0-9._:\\[\\]-]{0,63}$",
-          "description": "Modelo de Codex para el Chat Harness y los agentes nativos. Vacio usa el predeterminado de la configuracion de Codex."
-        },
-        "atsHarness.claudeModel": {
-          "type": "string",
-          "default": "",
-          "pattern": "^$|^[A-Za-z0-9][A-Za-z0-9._:\\[\\]-]{0,63}$",
-          "description": "Modelo o alias de Claude Code (opus, sonnet, haiku) para el Chat Harness y los agentes nativos. Vacio usa el predeterminado de Claude Code."
-        },
-        "atsHarness.codexEffort": {
-          "type": "string",
-          "enum": ["", "low", "medium", "high", "xhigh"],
-          "default": "",
-          "description": "Nivel de razonamiento de Codex para el chat y agentes nativos. Vacío respeta la configuración predeterminada del CLI; la compatibilidad depende del modelo."
-        },
-        "atsHarness.claudeEffort": {
-          "type": "string",
-          "enum": ["", "low", "medium", "high", "xhigh", "max"],
-          "default": "",
-          "description": "Nivel de esfuerzo de Claude Code para el chat y agentes nativos. Vacío respeta la configuración predeterminada del CLI; la compatibilidad depende del modelo."
-        },
-        "atsHarness.writerIsolation": {
-          "type": "string",
-          "enum": ["tool-allowlist", "provider-sandbox", "os-kernel"],
-          "default": "tool-allowlist",
-          "scope": "application",
-          "description": "Aislamiento minimo exigido a un agente que modifica archivos. tool-allowlist: solo permisos de herramientas del proveedor. provider-sandbox: exige el sandbox del sistema operativo del propio proveedor (hoy solo Codex). os-kernel: exige un sandbox del kernel aplicado por el IDE, que ningun proveedor de modelos ofrece todavia, por lo que bloquea toda escritura."
-        },
-        "atsHarness.otlpEndpoint": {
-          "type": "string",
-          "default": "",
-          "scope": "application",
-          "pattern": "^$|^https?://",
-          "description": "Endpoint OTLP/HTTP (por ejemplo https://colector.local:4318/v1/traces) para exportar trazas del Harness de forma opcional. Solo https, o http hacia esta maquina; nunca se envian prompts, salida de la IA, rutas ni credenciales, y cada exportacion requiere confirmacion."
-        },
-        "atsHarness.coordinatedProjectWriters": {
-          "type": "boolean",
-          "default": false,
-          "scope": "application",
-          "description": "Permite que el Chat Harness modifique proyectos con Harness propio solo mientras el motor del proyecto confirme un lease exclusivo de escritura (protocolo v2). Si el motor no lo declara, lo ignora o crea tareas durante la ejecucion, la escritura se rechaza o se informa como violacion. Desactivado por defecto."
-        },
-        "atsHarness.implementerMaxTurns": {
-          "type": "integer",
-          "default": 50,
-          "minimum": 10,
-          "maximum": 150,
-          "scope": "application",
-          "description": "Turnos maximos de Claude Code al ejecutar un plan aprobado. El tope de 30 minutos por ejecucion es fijo; si una ejecucion se corta por turnos o por tiempo queda como Parcial y se puede Continuar sin volver a aprobar."
-        },
-        "atsHarness.redisUrl": {
-          "type": "string",
-          "default": "",
-          "scope": "application",
-          "description": "Redis opcional para la cache de verificaciones (solo loopback, sin credenciales), por ejemplo redis://127.0.0.1:16379. Vacio: se usa HARNESS_REDIS_URL o el primer Redis local que responda; sin Redis, la cache usa disco."
-        },
-        "atsHarness.redisCandidates": {
-          "type": "array",
-          "items": { "type": "string" },
-          "default": ["127.0.0.1:6379", "127.0.0.1:16379", "127.0.0.1:56379"],
-          "scope": "application",
-          "description": "Puertos locales donde buscar Redis, en orden. Se usa el primero que responda PING sin pedir contrasena."
-        },
-        "atsHarness.notifyWebhook": {
-          "type": "string",
-          "default": "",
-          "scope": "application",
-          "description": "Webhook https opcional para recibir avisos en el celular (objetivo terminado, necesita una respuesta, proceso trabado). Solo se envian titulo y estado, nunca codigo, rutas ni salida."
-        },
-        "atsHarness.stallMinutes": {
-          "type": "integer",
-          "default": 15,
-          "minimum": 1,
-          "maximum": 240,
-          "scope": "application",
-          "description": "Minutos sin salida ni progreso tras los cuales un proceso largo se marca como trabado en Inicio."
-        },
-        "atsHarness.goalReservePercent": {
-          "type": "integer",
-          "default": 20,
-          "minimum": 0,
-          "maximum": 90,
-          "scope": "application",
-          "description": "Porcentaje del cupo local de llamadas que los objetivos autonomos nunca consumen, para que puedas seguir trabajando a mano."
-        },
-        "atsHarness.goalProvider": {
-          "type": "string",
-          "enum": ["claude", "codex"],
-          "default": "claude",
-          "scope": "application",
-          "description": "Proveedor principal de los objetivos autonomos. El revisor usa el otro proveedor cuando esta disponible."
-        },
-        "atsHarness.agentCommands.allow": {
-          "type": "array",
-          "items": { "type": "string" },
-          "default": [],
-          "maxItems": 50,
-          "scope": "application",
-          "description": "Comandos extra que el agente puede ejecutar ademas de los presets por ecosistema, como \"make test\" o \"just\". Siempre dentro del piso del IDE: nunca habilita shell, codigo inline, git que modifique, publicar, red ni borrados. Solo en la configuracion de Usuario, para que un repositorio no pueda ampliarlo."
-        },
-        "atsHarness.promptBudgetKiB": {
-          "type": "integer",
-          "default": 64,
-          "minimum": 13,
-          "maximum": 256,
-          "scope": "application",
-          "description": "Tamano maximo, en KiB, de la instruccion que el Chat Harness envia a la IA. Tu mensaje actual siempre se envia completo; el historial antiguo y el detalle de skills y guias se resumen para entrar en este presupuesto."
-        },
-        "atsHarness.providerCallsPer24h": {
-          "type": "integer",
-          "default": 0,
-          "minimum": 0,
-          "maximum": 1000,
-          "scope": "resource",
-          "description": "Limite opcional de invocaciones por proveedor y proyecto en una ventana movil de 24 horas. 0 deshabilita el limite. Se reserva antes de llamar al CLI y no equivale a presupuesto en USD."
-        },
-        "atsHarness.providerTokensPer24h": {
-          "type": "integer",
-          "default": 0,
-          "minimum": 0,
-          "maximum": 1000000000,
-          "scope": "resource",
-          "description": "Tope rigido de tokens (entrada + salida) REPORTADOS por el proveedor, por proyecto, en 24 horas. 0 lo deshabilita. Con el tope activo, una invocacion sin uso reportado bloquea las siguientes, y un rate limit detectado aplica 15 minutos de espera."
-        },
-        "atsHarness.providerCostUsdPer24h": {
-          "type": "number",
-          "default": 0,
-          "minimum": 0,
-          "maximum": 100000,
-          "scope": "resource",
-          "description": "Tope rigido del costo estimado REPORTADO por el proveedor (USD), por proyecto, en 24 horas. 0 lo deshabilita. No es facturacion; un proveedor que no reporta costo queda bloqueado tras su primera invocacion."
-        },
-        "atsHarness.notifications": {
-          "type": "string",
-          "enum": [
-            "always",
-            "errors",
-            "never"
-          ],
-          "enumDescriptions": [
-            "Avisar cuando una tarea del IDE termina, falla o se cancela.",
-            "Avisar solo ante errores o cuando no se conoce el código de salida.",
-            "No mostrar notificaciones al finalizar tareas del IDE."
-          ],
-          "default": "errors",
-          "scope": "resource",
-          "description": "Notificaciones al finalizar tareas del Harness iniciadas desde el IDE. Incluyen la duración y acceso al historial."
-        },
-        "atsHarness.n8nUrl": {
-          "type": "string",
-          "default": "http://127.0.0.1:5678",
-          "description": "The URL of your trusted n8n dashboard. Credentials must not be embedded in this setting."
-        },
-        "atsHarness.showWelcome": {
-          "type": "boolean",
-          "default": true,
-          "description": "Mostrar el inicio de ArmotuSitio IDE al abrir una ventana sin editores."
-        }
-      }
-    },
-    "viewsContainers": {
-      "activitybar": [
-        {
-          "id": "atsHarness",
-          "title": "ArmoTuSitio",
-          "icon": "resources/ats.svg"
-        }
-      ]
-    },
-    "views": {
-      "atsHarness": [
-        {
-          "id": "atsHarness.tasks",
-          "name": "Harness & Agents"
-        }
-      ]
-    },
-    "commands": [
-      {
-        "command": "atsHarness.nativeRemoveConfiguration",
-        "title": "ArmoTuSitio: Retirar Configuración Generada del Harness"
-      },
-      {
-        "command": "atsHarness.nativeSupport",
-        "title": "ArmoTuSitio: Diagnósticos y evidencias del Harness nativo"
-      },
-      {
-        "command": "atsHarness.nativeAgentReview",
-        "title": "ArmoTuSitio: Revisar propuesta de agente nativo"
-      },
-      {
-        "command": "atsHarness.nativeAgentExecute",
-        "title": "ArmoTuSitio: Ejecutar agente IA con autorización"
-      },
-      {
-        "command": "atsHarness.goal",
-        "title": "ArmoTuSitio: Iniciar objetivo autónomo"
-      },
-      {
-        "command": "atsHarness.devSecrets",
-        "title": "ArmoTuSitio: Secretos de desarrollo para tests"
-      },
-      {
-        "command": "atsHarness.webSearch",
-        "title": "ArmoTuSitio: Búsqueda web del agente en este proyecto"
-      },
-      {
-        "command": "atsHarness.diagnoseProject",
-        "title": "ArmoTuSitio: Diagnosticar Harness del proyecto"
-      },
-      {
-        "command": "atsHarness.machineDoctor",
-        "title": "ArmoTuSitio: Médico de la máquina"
-      },
-      {
-        "command": "atsHarness.decisions",
-        "title": "ArmoTuSitio: Decisiones del proyecto"
-      },
-      {
-        "command": "atsHarness.submitReview",
-        "title": "ArmoTuSitio: Enviar revisión de la entrega"
-      },
-      {
-        "command": "atsHarness.reviewComment",
-        "title": "Comentar"
-      },
-      {
-        "command": "atsHarness.nativeAgentWorkflow",
-        "title": "ArmoTuSitio: Ejecutar workflow multiagente nativo"
-      },
-      {
-        "command": "atsHarness.nativeWorkflowHistory",
-        "title": "ArmoTuSitio: Historial de workflows multiagente"
-      },
-      {
-        "command": "atsHarness.nativeTraceExport",
-        "title": "ArmoTuSitio: Exportar trazas del Harness por OTLP (opcional)"
-      },
-      {
-        "command": "atsHarness.nativeTrace",
-        "title": "ArmoTuSitio: Trazas estructuradas de workflows y gates"
-      },
-      {
-        "command": "atsHarness.nativeWorkflowReconcile",
-        "title": "ArmoTuSitio: Reconciliar workflows interrumpidos"
-      },
-      {
-        "command": "atsHarness.nativeSharedFenceReconcile",
-        "title": "ArmoTuSitio: Reconciliar lock compartido obsoleto (confirmacion requerida)"
-      },
-      {
-        "command": "atsHarness.nativeWorktreeCleanup",
-        "title": "ArmoTuSitio: Retirar Git worktree limpio del Harness"
-      },
-      {
-        "command": "atsHarness.nativeWorktreeRollback",
-        "title": "ArmoTuSitio: Revertir worktree a checkpoint (confirmación requerida)"
-      },
-      {
-        "command": "atsHarness.nativeWorktreeIntegrate",
-        "title": "ArmoTuSitio: Integrar cambios del worktree en el checkout principal (confirmación requerida)"
-      },
-      {
-        "command": "atsHarness.nativeWorktreeIntegrationRollback",
-        "title": "ArmoTuSitio: Revertir o recuperar integración de worktree (confirmación requerida)"
-      },
-      {
-        "command": "atsHarness.nativeAgentMetrics",
-        "title": "ArmoTuSitio: Métricas locales de agentes IA"
-      },
-      {
-        "command": "atsHarness.nativeProviderQuotaStatus",
-        "title": "ArmoTuSitio: Consultar cupo local de llamadas de IA"
-      },
-      {
-        "command": "atsHarness.nativeProjectHandshake",
-        "title": "ArmoTuSitio: Negociar capacidades del Harness externo (autorización explícita)"
-      },
-      {
-        "command": "atsHarness.nativeProjectStatus",
-        "title": "ArmoTuSitio: Consultar estado del Harness externo (consentimiento explícito)"
-      },
-      {
-        "command": "atsHarness.nativeProjectGateDelegate",
-        "title": "ArmoTuSitio: Delegar gate al Harness externo bajo lock compartido (consentimiento explícito)"
-      },
-      {
-        "command": "atsHarness.nativeProviderDiagnostics",
-        "title": "ArmoTuSitio: Diagnosticar Codex y Claude locales"
-      },
-      {
-        "command": "atsHarness.nativeConfigure",
-        "title": "ArmoTuSitio: Configurar Harness nativo del proyecto"
-      },
-      {
-        "command": "atsHarness.nativeDoctor",
-        "title": "ArmoTuSitio: Diagnóstico del Harness nativo"
-      },
-      {
-        "command": "atsHarness.nativeNewTask",
-        "title": "ArmoTuSitio: Crear tarea nativa"
-      },
-      {
-        "command": "atsHarness.nativeRunTask",
-        "title": "ArmoTuSitio: Ejecutar tarea nativa"
-      },
-      {
-        "command": "atsHarness.nativeStatus",
-        "title": "ArmoTuSitio: Estado de tareas nativas"
-      },
-      {
-        "command": "atsHarness.nativeReconcile",
-        "title": "ArmoTuSitio: Reconciliar estado nativo"
-      },
-      {
-        "command": "atsHarness.nativeCancel",
-        "title": "ArmoTuSitio: Cancelar tarea nativa"
-      },
-      {
-        "command": "atsHarness.selectProvider",
-        "title": "ArmotuSitio: Elegir IA del Harness",
-        "icon": "$(hubot)"
-      },
-      {
-        "command": "atsIde.chat",
-        "title": "ArmotuSitio: Chat Harness",
-        "icon": "$(comment-discussion)"
-      },
-      {
-        "command": "atsIde.mcpConfigure",
-        "title": "ArmotuSitio: Configurar clave MCP"
-      },
-      {
-        "command": "atsIde.mcpClearKey",
-        "title": "ArmotuSitio: Borrar clave MCP guardada"
-      },
-      {
-        "command": "atsHarness.history",
-        "title": "ArmotuSitio: Historial del Harness"
-      },
-      {
-        "command": "atsHarness.clearHistory",
-        "title": "ArmotuSitio: Borrar historial del Harness"
-      },
-      {
-        "command": "atsHarness.taskActions",
-        "title": "ArmotuSitio: Abrir Tarea del Harness"
-      },
-      {
-        "command": "atsIde.home",
-        "title": "ArmotuSitio: Inicio",
-        "icon": "$(home)"
-      },
-      {
-        "command": "atsHarness.refresh",
-        "title": "ArmoTuSitio: Refresh Projects"
-      },
-      {
-        "command": "atsHarness.execute",
-        "title": "ArmoTuSitio: Execute Harness Command"
-      },
-      {
-        "command": "atsHarness.cancelTask",
-        "title": "ArmoTuSitio: Cancel Running Task"
-      },
-      {
-        "command": "atsHarness.reviewPlan",
-        "title": "ArmoTuSitio: Validate Agent Plan"
-      },
-      {
-        "command": "atsHarness.check",
-        "title": "ArmoTuSitio: check"
-      },
-      {
-        "command": "atsHarness.status",
-        "title": "ArmoTuSitio: status"
-      },
-      {
-        "command": "atsHarness.run",
-        "title": "ArmoTuSitio: run"
-      },
-      {
-        "command": "atsIde.worktrees",
-        "title": "ArmoTuSitio: Inspect Git Worktrees"
-      },
-      {
-        "command": "atsIde.createWorktree",
-        "title": "ArmoTuSitio: Create Git Worktree"
-      },
-      {
-        "command": "atsIde.context",
-        "title": "ArmoTuSitio: Inspect Project Context"
-      },
-      {
-        "command": "atsIde.github",
-        "title": "ArmoTuSitio: GitHub Actions and PRs"
-      },
-      {
-        "command": "atsIde.n8n",
-        "title": "ArmoTuSitio: Open n8n Dashboard"
-      },
-      {
-        "command": "atsIde.agent",
-        "title": "ArmoTuSitio: Run Claude or Codex"
-      }
-    ],
-    "menus": {
-      "comments/commentThread/context": [
-        {
-          "command": "atsHarness.reviewComment",
-          "group": "inline",
-          "when": "commentController == atsHarness.review"
-        }
-      ],
-      "view/title": [
-        {
-          "command": "atsHarness.selectProvider",
-          "when": "view == atsHarness.tasks",
-          "group": "navigation@2"
-        },
-        {
-          "command": "atsIde.chat",
-          "when": "view == atsHarness.tasks",
-          "group": "navigation@1"
-        },
-        {
-          "command": "atsIde.home",
-          "when": "view == atsHarness.tasks",
-          "group": "navigation@0"
-        },
-        {
-          "command": "atsHarness.refresh",
-          "when": "view == atsHarness.tasks",
-          "group": "navigation"
-        },
-        {
-          "command": "atsHarness.cancelTask",
-          "when": "view == atsHarness.tasks",
-          "group": "navigation"
-        },
-        {
-          "command": "atsHarness.reviewPlan",
-          "when": "view == atsHarness.tasks",
-          "group": "navigation"
-        }
-      ],
-      "view/item/context": [
-        {
-          "command": "atsHarness.selectProvider",
-          "when": "view == atsHarness.tasks && viewItem == atsHarness.project",
-          "group": "inline"
-        }
-      ]
-    },
-    "themes": [
-      {
-        "label": "ArmoTuSitio Dark",
-        "uiTheme": "vs-dark",
-        "path": "./themes/armotusitio-dark-color-theme.json"
-      },
-      {
-        "label": "ArmoTuSitio Light",
-        "uiTheme": "vs",
-        "path": "./themes/armotusitio-light-color-theme.json"
-      }
-    ],
-    "viewsWelcome": [
-      {
-        "view": "atsHarness.tasks",
-        "contents": "[Abrir inicio de ArmotuSitio IDE](command:atsIde.home)"
-      }
-    ],
-    "configurationDefaults": {
-      "workbench.colorTheme": "ArmoTuSitio Dark"
-    }
-  },
-  "scripts": {
-    "compile": "node esbuild.mts",
-    "test": "node --test test/*.test.cts test/native-*.test.mts",
-    "check": "node ../../node_modules/@typescript/native/bin/tsc --project tsconfig.json && node check-resources.mts",
-    "vscode:prepublish": "npm run compile",
-    "check:native-package": "node check-native-package.mts"
-  },
-  "icon": "resources/logo.png",
-  "capabilities": {
-    "untrustedWorkspaces": {
-      "supported": "limited",
-      "description": "La ejecución de comandos requiere un workspace confiable."
-    }
-  }
+	"name": "armotusitio-ide",
+	"displayName": "ArmotuSitio IDE",
+	"description": "Project-aware harness control for RedEvent and ArmoTuSitio 2.0",
+	"version": "0.6.0",
+	"publisher": "armotusitio",
+	"license": "MIT",
+	"engines": {
+		"vscode": "^1.144.0"
+	},
+	"main": "./dist/extension.js",
+	"activationEvents": [
+		"onView:atsHarness.tasks",
+		"onCommand:atsHarness.execute",
+		"onCommand:atsHarness.cancelTask",
+		"onCommand:atsHarness.reviewPlan",
+		"onCommand:atsIde.worktrees",
+		"onCommand:atsIde.createWorktree",
+		"onCommand:atsIde.context",
+		"onCommand:atsIde.github",
+		"onCommand:atsIde.n8n",
+		"onCommand:atsIde.agent",
+		"onCommand:atsIde.setupCheck",
+		"onStartupFinished"
+	],
+	"contributes": {
+		"jsonValidation": [
+			{
+				"fileMatch": "**/.armotusitio/permissions.json",
+				"url": "./resources/permissions.schema.json"
+			}
+		],
+		"chatParticipants": [
+			{
+				"id": "atsIde.harness",
+				"name": "harness",
+				"fullName": "ArmotuSitio Harness",
+				"description": "Harness local y Work Management de ArmotuSitio, sin llamadas a modelos de IA.",
+				"commands": [
+					{
+						"name": "estado",
+						"description": "Consultar el progreso y el historial del Harness"
+					},
+					{
+						"name": "comandos",
+						"description": "Listar comandos de los proyectos abiertos"
+					},
+					{
+						"name": "check",
+						"description": "Confirmar e iniciar check [armotusitio o redevent]"
+					},
+					{
+						"name": "verify",
+						"description": "Confirmar e iniciar verify [armotusitio o redevent]"
+					},
+					{
+						"name": "test",
+						"description": "Confirmar e iniciar test [armotusitio o redevent]"
+					},
+					{
+						"name": "mcp",
+						"description": "Consultar la conexión y las herramientas del MCP"
+					},
+					{
+						"name": "proyectos",
+						"description": "Listar proyectos de Work Management"
+					},
+					{
+						"name": "tareas",
+						"description": "Listar tareas de un proyecto"
+					},
+					{
+						"name": "tarea",
+						"description": "Obtener contexto de una tarea por su clave"
+					},
+					{
+						"name": "crear",
+						"description": "Crear una tarea con confirmación"
+					},
+					{
+						"name": "mover",
+						"description": "Cambiar de columna una tarea con confirmación"
+					},
+					{
+						"name": "comentar",
+						"description": "Agregar un comentario con confirmación"
+					}
+				]
+			}
+		],
+		"mcpServerDefinitionProviders": [
+			{
+				"id": "atsIde.armotusitioMcp",
+				"label": "ArmotuSitio Work Management"
+			}
+		],
+		"configuration": {
+			"title": "ArmoTuSitio Harness",
+			"properties": {
+				"atsHarness.mcp.enabled": {
+					"type": "boolean",
+					"default": false,
+					"scope": "window",
+					"description": "Conectar el MCP de Work Management de ArmotuSitio. Requiere workspace confiable y clave de agente."
+				},
+				"atsHarness.enabled": {
+					"type": "boolean",
+					"default": true,
+					"description": "Enable workspace-local harness detection."
+				},
+				"atsHarness.codexModel": {
+					"type": "string",
+					"default": "",
+					"pattern": "^$|^[A-Za-z0-9][A-Za-z0-9._:\\[\\]-]{0,63}$",
+					"description": "Modelo de Codex para el Chat Harness y los agentes nativos. Vacio usa el predeterminado de la configuracion de Codex."
+				},
+				"atsHarness.claudeModel": {
+					"type": "string",
+					"default": "",
+					"pattern": "^$|^[A-Za-z0-9][A-Za-z0-9._:\\[\\]-]{0,63}$",
+					"description": "Modelo o alias de Claude Code (opus, sonnet, haiku) para el Chat Harness y los agentes nativos. Vacio usa el predeterminado de Claude Code."
+				},
+				"atsHarness.chatMode": {
+					"type": "string",
+					"enum": [
+						"act",
+						"ask"
+					],
+					"default": "act",
+					"description": "Modo del Chat Harness. «act» (Actuar): la IA cambia el código directamente, sin plan previo, dentro de la política de comandos del IDE. «ask» (Preguntar): solo conversa y propone planes que aprobás antes de ejecutar."
+				},
+				"atsHarness.codexEffort": {
+					"type": "string",
+					"enum": [
+						"",
+						"low",
+						"medium",
+						"high",
+						"xhigh"
+					],
+					"default": "",
+					"description": "Nivel de razonamiento de Codex para el chat y agentes nativos. Vacío respeta la configuración predeterminada del CLI; la compatibilidad depende del modelo."
+				},
+				"atsHarness.claudeEffort": {
+					"type": "string",
+					"enum": [
+						"",
+						"low",
+						"medium",
+						"high",
+						"xhigh",
+						"max"
+					],
+					"default": "",
+					"description": "Nivel de esfuerzo de Claude Code para el chat y agentes nativos. Vacío respeta la configuración predeterminada del CLI; la compatibilidad depende del modelo."
+				},
+				"atsHarness.writerIsolation": {
+					"type": "string",
+					"enum": [
+						"tool-allowlist",
+						"provider-sandbox",
+						"os-kernel"
+					],
+					"default": "tool-allowlist",
+					"scope": "application",
+					"description": "Aislamiento minimo exigido a un agente que modifica archivos. tool-allowlist: solo permisos de herramientas del proveedor. provider-sandbox: exige el sandbox del sistema operativo del propio proveedor (hoy solo Codex). os-kernel: exige un sandbox del kernel aplicado por el IDE, que ningun proveedor de modelos ofrece todavia, por lo que bloquea toda escritura."
+				},
+				"atsHarness.otlpEndpoint": {
+					"type": "string",
+					"default": "",
+					"scope": "application",
+					"pattern": "^$|^https?://",
+					"description": "Endpoint OTLP/HTTP (por ejemplo https://colector.local:4318/v1/traces) para exportar trazas del Harness de forma opcional. Solo https, o http hacia esta maquina; nunca se envian prompts, salida de la IA, rutas ni credenciales, y cada exportacion requiere confirmacion."
+				},
+				"atsHarness.coordinatedProjectWriters": {
+					"type": "boolean",
+					"default": false,
+					"scope": "application",
+					"description": "Permite que el Chat Harness modifique proyectos con Harness propio solo mientras el motor del proyecto confirme un lease exclusivo de escritura (protocolo v2). Si el motor no lo declara, lo ignora o crea tareas durante la ejecucion, la escritura se rechaza o se informa como violacion. Desactivado por defecto."
+				},
+				"atsHarness.detectProjectCommands": {
+					"type": "boolean",
+					"default": true,
+					"scope": "application",
+					"description": "En proyectos sin Harness propio, detecta los comandos de verificacion (test, lint, typecheck) y las instrucciones del repositorio (AGENTS.md, CLAUDE.md, CONTRIBUTING.md, etc.) para el Chat Harness. Solo lee archivos; nunca ejecuta nada al detectar, y cada comando pasa por la politica de comandos del IDE."
+				},
+				"atsHarness.implementerMaxTurns": {
+					"type": "integer",
+					"default": 50,
+					"minimum": 10,
+					"maximum": 150,
+					"scope": "application",
+					"description": "Turnos maximos de Claude Code al ejecutar un plan aprobado. El tope de 30 minutos por ejecucion es fijo; si una ejecucion se corta por turnos o por tiempo queda como Parcial y se puede Continuar sin volver a aprobar."
+				},
+				"atsHarness.redisUrl": {
+					"type": "string",
+					"default": "",
+					"scope": "application",
+					"description": "Redis opcional para la cache de verificaciones (solo loopback, sin credenciales), por ejemplo redis://127.0.0.1:16379. Vacio: se usa HARNESS_REDIS_URL o el primer Redis local que responda; sin Redis, la cache usa disco."
+				},
+				"atsHarness.redisCandidates": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					},
+					"default": [
+						"127.0.0.1:6379",
+						"127.0.0.1:16379",
+						"127.0.0.1:56379"
+					],
+					"scope": "application",
+					"description": "Puertos locales donde buscar Redis, en orden. Se usa el primero que responda PING sin pedir contrasena."
+				},
+				"atsHarness.notifyWebhook": {
+					"type": "string",
+					"default": "",
+					"scope": "application",
+					"description": "Webhook https opcional para recibir avisos en el celular (objetivo terminado, necesita una respuesta, proceso trabado). Solo se envian titulo y estado, nunca codigo, rutas ni salida."
+				},
+				"atsHarness.stallMinutes": {
+					"type": "integer",
+					"default": 15,
+					"minimum": 1,
+					"maximum": 240,
+					"scope": "application",
+					"description": "Minutos sin salida ni progreso tras los cuales un proceso largo se marca como trabado en Inicio."
+				},
+				"atsHarness.goalReservePercent": {
+					"type": "integer",
+					"default": 20,
+					"minimum": 0,
+					"maximum": 90,
+					"scope": "application",
+					"description": "Porcentaje del cupo local de llamadas que los objetivos autonomos nunca consumen, para que puedas seguir trabajando a mano."
+				},
+				"atsHarness.goalProvider": {
+					"type": "string",
+					"enum": [
+						"claude",
+						"codex"
+					],
+					"default": "claude",
+					"scope": "application",
+					"description": "Proveedor principal de los objetivos autonomos. El revisor usa el otro proveedor cuando esta disponible."
+				},
+				"atsHarness.agentCommands.allow": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					},
+					"default": [],
+					"maxItems": 50,
+					"scope": "application",
+					"description": "Comandos extra que el agente puede ejecutar ademas de los presets por ecosistema, como \"make test\" o \"just\". Siempre dentro del piso del IDE (una barrera de buena fe, no un sandbox): no habilita shell, codigo inline, git que modifique ni publicar. Solo en la configuracion de Usuario, para que un repositorio no pueda ampliarlo."
+				},
+				"atsHarness.permissionsPreset": {
+					"type": "string",
+					"enum": [
+						"readonly",
+						"dev",
+						"trusted"
+					],
+					"enumDescriptions": [
+						"Solo lectura: permite comandos de consulta; rechaza otros comandos y las herramientas git de escritura. Las ediciones las controla el proveedor.",
+						"Desarrollo: ejecuta comandos del proyecto; pide confirmación para commit, push e instalar dependencias.",
+						"Confiable: ejecuta comandos y hace commit sin preguntar; instalar dependencias y hacer push piden confirmación."
+					],
+					"default": "dev",
+					"scope": "application",
+					"description": "Perfil de permisos del agente. Las reglas de ~/.armotusitio/permissions.json y de .armotusitio/permissions.json del proyecto lo refinan. Nunca supera el piso de seguridad del IDE, que es una barrera de buena fe y no un sandbox del sistema operativo."
+				},
+				"atsHarness.promptBudgetKiB": {
+					"type": "integer",
+					"default": 64,
+					"minimum": 13,
+					"maximum": 256,
+					"scope": "application",
+					"description": "Tamano maximo, en KiB, de la instruccion que el Chat Harness envia a la IA. Tu mensaje actual siempre se envia completo; el historial antiguo y el detalle de skills y guias se resumen para entrar en este presupuesto."
+				},
+				"atsHarness.providerCallsPer24h": {
+					"type": "integer",
+					"default": 0,
+					"minimum": 0,
+					"maximum": 1000,
+					"scope": "resource",
+					"description": "Limite opcional de invocaciones por proveedor y proyecto en una ventana movil de 24 horas. 0 deshabilita el limite. Se reserva antes de llamar al CLI y no equivale a presupuesto en USD."
+				},
+				"atsHarness.providerTokensPer24h": {
+					"type": "integer",
+					"default": 0,
+					"minimum": 0,
+					"maximum": 1000000000,
+					"scope": "resource",
+					"description": "Tope rigido de tokens (entrada + salida) REPORTADOS por el proveedor, por proyecto, en 24 horas. 0 lo deshabilita. Con el tope activo, una invocacion sin uso reportado bloquea las siguientes, y un rate limit detectado aplica 15 minutos de espera."
+				},
+				"atsHarness.providerCostUsdPer24h": {
+					"type": "number",
+					"default": 0,
+					"minimum": 0,
+					"maximum": 100000,
+					"scope": "resource",
+					"description": "Tope rigido del costo estimado REPORTADO por el proveedor (USD), por proyecto, en 24 horas. 0 lo deshabilita. No es facturacion; un proveedor que no reporta costo queda bloqueado tras su primera invocacion."
+				},
+				"atsHarness.notifications": {
+					"type": "string",
+					"enum": [
+						"always",
+						"errors",
+						"never"
+					],
+					"enumDescriptions": [
+						"Avisar cuando una tarea del IDE termina, falla o se cancela.",
+						"Avisar solo ante errores o cuando no se conoce el código de salida.",
+						"No mostrar notificaciones al finalizar tareas del IDE."
+					],
+					"default": "errors",
+					"scope": "resource",
+					"description": "Notificaciones al finalizar tareas del Harness iniciadas desde el IDE. Incluyen la duración y acceso al historial."
+				},
+				"atsHarness.n8nUrl": {
+					"type": "string",
+					"default": "http://127.0.0.1:5678",
+					"description": "The URL of your trusted n8n dashboard. Credentials must not be embedded in this setting."
+				},
+				"atsHarness.showWelcome": {
+					"type": "boolean",
+					"default": true,
+					"description": "Mostrar el inicio de ArmotuSitio IDE al abrir una ventana sin editores."
+				},
+				"atsHarness.protectedBranches": {
+					"type": "array",
+					"items": {
+						"type": "string",
+						"maxLength": 200
+					},
+					"maxItems": 50,
+					"default": [],
+					"scope": "application",
+					"description": "Patrones adicionales de ramas a las que git_push no puede publicar (por ejemplo release/* o prod*). Se suman a las ramas protegidas del IDE; git_commit puede crear commits en la rama actual."
+				}
+			}
+		},
+		"viewsContainers": {
+			"activitybar": [
+				{
+					"id": "atsHarness",
+					"title": "ArmoTuSitio",
+					"icon": "resources/ats.svg"
+				}
+			]
+		},
+		"views": {
+			"atsHarness": [
+				{
+					"id": "atsHarness.tasks",
+					"name": "Harness & Agents"
+				}
+			]
+		},
+		"commands": [
+			{
+				"command": "atsHarness.nativeRemoveConfiguration",
+				"title": "ArmoTuSitio: Retirar Configuración Generada del Harness"
+			},
+			{
+				"command": "atsHarness.nativeSupport",
+				"title": "ArmoTuSitio: Diagnósticos y evidencias del Harness nativo"
+			},
+			{
+				"command": "atsHarness.nativeAgentReview",
+				"title": "ArmoTuSitio: Revisar propuesta de agente nativo"
+			},
+			{
+				"command": "atsHarness.nativeAgentExecute",
+				"title": "ArmoTuSitio: Ejecutar agente IA con autorización"
+			},
+			{
+				"command": "atsHarness.goal",
+				"title": "ArmoTuSitio: Iniciar objetivo autónomo"
+			},
+			{
+				"command": "atsHarness.devSecrets",
+				"title": "ArmoTuSitio: Secretos de desarrollo para tests"
+			},
+			{
+				"command": "atsHarness.webSearch",
+				"title": "ArmoTuSitio: Búsqueda web del agente en este proyecto"
+			},
+			{
+				"command": "atsHarness.diagnoseProject",
+				"title": "ArmoTuSitio: Diagnosticar Harness del proyecto"
+			},
+			{
+				"command": "atsHarness.machineDoctor",
+				"title": "ArmoTuSitio: Médico de la máquina"
+			},
+			{
+				"command": "atsHarness.decisions",
+				"title": "ArmoTuSitio: Decisiones del proyecto"
+			},
+			{
+				"command": "atsHarness.submitReview",
+				"title": "ArmoTuSitio: Enviar revisión de la entrega"
+			},
+			{
+				"command": "atsHarness.reviewComment",
+				"title": "Comentar"
+			},
+			{
+				"command": "atsHarness.nativeAgentWorkflow",
+				"title": "ArmoTuSitio: Ejecutar workflow multiagente nativo"
+			},
+			{
+				"command": "atsHarness.nativeWorkflowHistory",
+				"title": "ArmoTuSitio: Historial de workflows multiagente"
+			},
+			{
+				"command": "atsHarness.nativeTraceExport",
+				"title": "ArmoTuSitio: Exportar trazas del Harness por OTLP (opcional)"
+			},
+			{
+				"command": "atsHarness.nativeTrace",
+				"title": "ArmoTuSitio: Trazas estructuradas de workflows y gates"
+			},
+			{
+				"command": "atsHarness.nativeWorkflowReconcile",
+				"title": "ArmoTuSitio: Reconciliar workflows interrumpidos"
+			},
+			{
+				"command": "atsHarness.nativeSharedFenceReconcile",
+				"title": "ArmoTuSitio: Reconciliar lock compartido obsoleto (confirmacion requerida)"
+			},
+			{
+				"command": "atsHarness.nativeWorktreeCleanup",
+				"title": "ArmoTuSitio: Retirar Git worktree limpio del Harness"
+			},
+			{
+				"command": "atsHarness.nativeWorktreeRollback",
+				"title": "ArmoTuSitio: Revertir worktree a checkpoint (confirmación requerida)"
+			},
+			{
+				"command": "atsHarness.nativeWorktreeIntegrate",
+				"title": "ArmoTuSitio: Integrar cambios del worktree en el checkout principal (confirmación requerida)"
+			},
+			{
+				"command": "atsHarness.nativeWorktreeIntegrationRollback",
+				"title": "ArmoTuSitio: Revertir o recuperar integración de worktree (confirmación requerida)"
+			},
+			{
+				"command": "atsHarness.nativeAgentMetrics",
+				"title": "ArmoTuSitio: Métricas locales de agentes IA"
+			},
+			{
+				"command": "atsHarness.nativeProviderQuotaStatus",
+				"title": "ArmoTuSitio: Consultar cupo local de llamadas de IA"
+			},
+			{
+				"command": "atsHarness.nativeProjectHandshake",
+				"title": "ArmoTuSitio: Negociar capacidades del Harness externo (autorización explícita)"
+			},
+			{
+				"command": "atsHarness.nativeProjectStatus",
+				"title": "ArmoTuSitio: Consultar estado del Harness externo (consentimiento explícito)"
+			},
+			{
+				"command": "atsHarness.nativeProjectGateDelegate",
+				"title": "ArmoTuSitio: Delegar gate al Harness externo bajo lock compartido (consentimiento explícito)"
+			},
+			{
+				"command": "atsHarness.nativeProviderDiagnostics",
+				"title": "ArmoTuSitio: Diagnosticar Codex y Claude locales"
+			},
+			{
+				"command": "atsHarness.nativeConfigure",
+				"title": "ArmoTuSitio: Configurar Harness nativo del proyecto"
+			},
+			{
+				"command": "atsHarness.nativeDoctor",
+				"title": "ArmoTuSitio: Diagnóstico del Harness nativo"
+			},
+			{
+				"command": "atsHarness.nativeNewTask",
+				"title": "ArmoTuSitio: Crear tarea nativa"
+			},
+			{
+				"command": "atsHarness.nativeRunTask",
+				"title": "ArmoTuSitio: Ejecutar tarea nativa"
+			},
+			{
+				"command": "atsHarness.nativeStatus",
+				"title": "ArmoTuSitio: Estado de tareas nativas"
+			},
+			{
+				"command": "atsHarness.nativeReconcile",
+				"title": "ArmoTuSitio: Reconciliar estado nativo"
+			},
+			{
+				"command": "atsHarness.nativeCancel",
+				"title": "ArmoTuSitio: Cancelar tarea nativa"
+			},
+			{
+				"command": "atsHarness.selectProvider",
+				"title": "ArmotuSitio: Elegir IA del Harness",
+				"icon": "$(hubot)"
+			},
+			{
+				"command": "atsIde.chat",
+				"title": "ArmotuSitio: Chat Harness",
+				"icon": "$(comment-discussion)"
+			},
+			{
+				"command": "atsIde.setupCheck",
+				"title": "ArmoTuSitio: Revisar mi entorno"
+			},
+			{
+				"command": "atsIde.openRunDiff",
+				"title": "ArmoTuSitio: Ver cambios de una ejecución"
+			},
+			{
+				"command": "atsIde.mcpConfigure",
+				"title": "ArmotuSitio: Configurar clave MCP"
+			},
+			{
+				"command": "atsIde.mcpClearKey",
+				"title": "ArmotuSitio: Borrar clave MCP guardada"
+			},
+			{
+				"command": "atsHarness.history",
+				"title": "ArmotuSitio: Historial del Harness"
+			},
+			{
+				"command": "atsHarness.clearHistory",
+				"title": "ArmotuSitio: Borrar historial del Harness"
+			},
+			{
+				"command": "atsHarness.taskActions",
+				"title": "ArmotuSitio: Abrir Tarea del Harness"
+			},
+			{
+				"command": "atsIde.home",
+				"title": "ArmotuSitio: Inicio",
+				"icon": "$(home)"
+			},
+			{
+				"command": "atsHarness.refresh",
+				"title": "ArmoTuSitio: Refresh Projects"
+			},
+			{
+				"command": "atsHarness.execute",
+				"title": "ArmoTuSitio: Execute Harness Command"
+			},
+			{
+				"command": "atsHarness.cancelTask",
+				"title": "ArmoTuSitio: Cancel Running Task"
+			},
+			{
+				"command": "atsHarness.reviewPlan",
+				"title": "ArmoTuSitio: Validate Agent Plan"
+			},
+			{
+				"command": "atsHarness.check",
+				"title": "ArmoTuSitio: check"
+			},
+			{
+				"command": "atsHarness.status",
+				"title": "ArmoTuSitio: status"
+			},
+			{
+				"command": "atsHarness.run",
+				"title": "ArmoTuSitio: run"
+			},
+			{
+				"command": "atsIde.worktrees",
+				"title": "ArmoTuSitio: Inspect Git Worktrees"
+			},
+			{
+				"command": "atsIde.createWorktree",
+				"title": "ArmoTuSitio: Create Git Worktree"
+			},
+			{
+				"command": "atsIde.context",
+				"title": "ArmoTuSitio: Inspect Project Context"
+			},
+			{
+				"command": "atsIde.github",
+				"title": "ArmoTuSitio: GitHub Actions and PRs"
+			},
+			{
+				"command": "atsIde.n8n",
+				"title": "ArmoTuSitio: Open n8n Dashboard"
+			},
+			{
+				"command": "atsIde.agent",
+				"title": "ArmoTuSitio: Run Claude or Codex"
+			}
+		],
+		"menus": {
+			"commandPalette": [
+				{
+					"command": "atsIde.openRunDiff",
+					"when": "false"
+				}
+			],
+			"comments/commentThread/context": [
+				{
+					"command": "atsHarness.reviewComment",
+					"group": "inline",
+					"when": "commentController == atsHarness.review"
+				}
+			],
+			"view/title": [
+				{
+					"command": "atsHarness.selectProvider",
+					"when": "view == atsHarness.tasks",
+					"group": "navigation@2"
+				},
+				{
+					"command": "atsIde.chat",
+					"when": "view == atsHarness.tasks",
+					"group": "navigation@1"
+				},
+				{
+					"command": "atsIde.home",
+					"when": "view == atsHarness.tasks",
+					"group": "navigation@0"
+				},
+				{
+					"command": "atsHarness.refresh",
+					"when": "view == atsHarness.tasks",
+					"group": "navigation"
+				},
+				{
+					"command": "atsHarness.cancelTask",
+					"when": "view == atsHarness.tasks",
+					"group": "navigation"
+				},
+				{
+					"command": "atsHarness.reviewPlan",
+					"when": "view == atsHarness.tasks",
+					"group": "navigation"
+				}
+			],
+			"view/item/context": [
+				{
+					"command": "atsHarness.selectProvider",
+					"when": "view == atsHarness.tasks && viewItem == atsHarness.project",
+					"group": "inline"
+				}
+			]
+		},
+		"themes": [
+			{
+				"label": "ArmoTuSitio Dark",
+				"uiTheme": "vs-dark",
+				"path": "./themes/armotusitio-dark-color-theme.json"
+			},
+			{
+				"label": "ArmoTuSitio Light",
+				"uiTheme": "vs",
+				"path": "./themes/armotusitio-light-color-theme.json"
+			}
+		],
+		"viewsWelcome": [
+			{
+				"view": "atsHarness.tasks",
+				"contents": "[Abrir inicio de ArmotuSitio IDE](command:atsIde.home)"
+			}
+		],
+		"configurationDefaults": {
+			"workbench.colorTheme": "ArmoTuSitio Dark"
+		}
+	},
+	"scripts": {
+		"compile": "node esbuild.mts",
+		"test": "node --test test/*.test.cts test/native-*.test.mts",
+		"check": "node ../../node_modules/@typescript/native/bin/tsc --project tsconfig.json && node check-resources.mts",
+		"vscode:prepublish": "npm run compile",
+		"check:native-package": "node check-native-package.mts"
+	},
+	"icon": "resources/logo.png",
+	"capabilities": {
+		"untrustedWorkspaces": {
+			"supported": "limited",
+			"description": "La ejecución de comandos requiere un workspace confiable."
+		}
+	}
 }

@@ -9,15 +9,30 @@ const { randomBytes, createHash } = require('node:crypto');
 const { ChatStore, harnessErrorCode, MAX_USER_MESSAGE_CHARS } = require('./native-chat.ts');
 const { HarnessChatSession, describeFailure, chatActivityItems } = require('./native-chat-session.ts');
 import type { ActivityFeed } from './native-activity-feed.ts';
+import type { ChatMode } from './native-chat.ts';
 const { diagnoseProvider } = require('./native-provider-diagnostics.ts');
 const { listProviderModels } = require('./native-provider-models.ts');
 const { validModel, validEffort } = require('./native-providers.ts');
 const { endpoint } = require('./mcp.ts');
+const { TtlCache } = require('./native-ttl-cache.ts');
+const { chatCommands, commandHelp, runSessionCommand } = require('./native-chat-commands.ts');
+const { resolveMentions, mentionNotice, suggestMentionFiles } = require('./native-chat-mentions.ts');
+const { configuredPreset } = require('./native-permissions.ts');
+const { indexProject, IGNORED } = require('./context.ts');
+
+/** The project file list for `@` autocomplete changes slowly; typing must not rescan the tree on every key. */
+const MENTION_INDEX_TTL_MS = 30 * 1000;
+const { buildSetupItems, setupIcon } = require('./native-setup-check.ts');
+const { runDoctor } = require('./native-machine-doctor.ts');
+const { registerRunDiffView, validRunPath, RUN_DIFF_COMMAND } = require('./native-run-diff-view.ts');
+
+/** Provider CLI evidence changes rarely; the explicit "verify providers" action always bypasses it. */
+const PROVIDER_CACHE_TTL_MS = 5 * 60 * 1000;
 
 /** Dispatch explicit slash commands without an LLM, shell interpolation or arbitrary MCP tool names. */
 function createHandler(vscode, controller, projects, mcp) {
 	const t = (message, ...args) => vscode.l10n.t(message, ...args);
-	const help = () => t('Comandos: estado, comandos, check [proyecto], verify [proyecto], test [proyecto], mcp, proyectos, proyecto CLAVE, tareas CLAVE, tarea CLAVE-123, tablero CLAVE, buscar texto, crear CLAVE t\u00edtulo, mover CLAVE-123 columnaId, comentar CLAVE-123 texto. Pod\u00e9s anteponer @harness o usar /comando.');
+	const help = () => commandHelp(t);
 	return async function handle(input, token) {
 		if (token?.isCancellationRequested) { return t('Consulta cancelada.'); }
 		const text = input.trim().replace(/^@harness(?:\s+|$)/i, '').replace(/^\//, '');
@@ -49,7 +64,10 @@ function createHandler(vscode, controller, projects, mcp) {
 				const id = await controller.execute(project.folder.uri.toString(), action, token);
 				return id ? t('Tarea iniciada. Pod\u00e9s seguir el resultado en la barra de estado y en el historial.') : t('No se inici\u00f3 una tarea nueva. Revis\u00e1 la confirmaci\u00f3n o si ya est\u00e1 activa.');
 			}
-			const localCommands = ['check', 'verify', 'test', 'mcp', 'proyectos', 'proyecto', 'tareas', 'tarea', 'tablero', 'buscar', 'crear', 'mover', 'comentar', 'estado', 'comandos'];
+			const commands = chatCommands(t);
+			// These need the open conversation, which only Chat Harness has.
+			if (commands.some(command => command.session && command.name === action)) { return t('El comando /{0} funciona solo dentro de Chat Harness (ArmoTuSitio: Chat Harness).', action); }
+			const localCommands = commands.filter(command => command.name !== 'ayuda').map(command => command.name);
 			// Free text is a conversation with the selected AI; only Chat Harness hosts that flow.
 			if (!localCommands.includes(action)) { return t('Para conversar con la IA, planificar y ejecutar cambios abr\u00ed Chat Harness (ArmoTuSitio: Chat Harness). Ac\u00e1 solo se aceptan comandos.') + '\n' + help(); }
 			if (!mcp.enabled()) { return t('Work Management es opcional y est\u00e1 desactivado en este workspace. Pod\u00e9s conversar y ejecutar tareas sin conectarlo. Para usar tarjetas y tableros, habilit\u00e1 ArmotuSitio MCP desde el indicador del chat.'); }
@@ -132,6 +150,10 @@ function labels(t) {
 		model: t('Modelo de {0}', '{0}'), modelDefault: t('Predeterminado: {0}', '{0}'), modelCliDefault: t('Predeterminado del CLI'),
 		effort: t('Razonamiento de {0}', '{0}'), effortShort: t('Esfuerzo'), effortDefault: t('Esfuerzo: predeterminado'), effortLevels: { low: t('Bajo'), medium: t('Medio'), high: t('Alto'), xhigh: t('Extra alto'), max: t('M\u00e1ximo') },
 		effortHint: t('La disponibilidad del nivel depende del modelo y del CLI instalado.'),
+		mode: t('Modo del chat'), modeAct: t('Modo: Actuar'), modeAsk: t('Modo: Preguntar'), directRun: t('Ejecuci\u00f3n directa'), executingDirect: t('Ejecutando directo con {0}'),
+		modeHint: t('Actuar: la IA cambia el c\u00f3digo directamente. Preguntar: solo conversa y propone planes que aprob\u00e1s antes de ejecutar.'),
+		quotaWindow: { session: t('Sesi\u00f3n'), weekly: t('Semanal') }, quotaFree: t('{0} {1}% libre', '{0}', '{1}'), quotaResets: t('reinicia {0}', '{0}'),
+		quotaTitle: t('Cuota de {0} (informada por el proveedor)\n{1}', '{0}', '{1}'), quotaLevel: { warn: t('Queda poco cupo.'), critical: t('Cupo casi agotado.') },
 		providerStatus: { ready: t('Autenticado'), unauthenticated: t('Sin sesi\u00f3n iniciada'), unavailable: t('No instalado'), incompatible: t('Versi\u00f3n incompatible'), unknown: t('Estado desconocido'), checking: t('Verificando\u2026') },
 		mcp: t('ArmotuSitio MCP'), mcpState: { connected: t('Conectado'), disconnected: t('Desconectado'), checking: t('Verificando'), error: t('Error') },
 		mcpReason: { untrusted: t('El workspace no es confiable.'), disabled: t('La integraci\u00f3n est\u00e1 desactivada en este workspace.'), 'missing-key': t('No hay una clave configurada.'), auth: t('La clave fue rechazada o no tiene permisos.'), http: t('El servidor respondi\u00f3 con un error.'), protocol: t('La respuesta no cumple el protocolo MCP.'), network: t('No se pudo establecer la conexi\u00f3n.'), cancelled: t('Verificaci\u00f3n cancelada.') },
@@ -139,7 +161,7 @@ function labels(t) {
 		mcpCheck: t('Verificar ahora'), mcpConfigure: t('Configurar clave'), mcpEnable: t('Habilitar en este workspace'), mcpChangeKey: t('Cambiar clave'), mcpSettings: t('Abrir configuraci\u00f3n'),
 		emptyTitle: t('\u00bfEn qu\u00e9 trabajamos hoy?'), emptyBody: t('Convers\u00e1 con la IA sobre tu proyecto. Cuando haya un plan concreto, vas a poder revisarlo y aprobarlo ac\u00e1 mismo. Enviar nunca modifica c\u00f3digo.'),
 		suggestions: [t('Quiero agregar un CRUD de clientes'), t('Explicame la arquitectura de este proyecto'), t('\u00bfQu\u00e9 pruebas faltan?')],
-		placeholder: t('Escrib\u00ed tu mensaje\u2026 (/ para comandos)'), keyboard: t('Enter env\u00eda \u00b7 Shift+Enter nueva l\u00ednea \u00b7 Enviar solo conversa'), send: t('Enviar'), cancel: t('Detener'),
+		placeholder: t('Escrib\u00ed tu mensaje\u2026 (/ para comandos)'), keyboard: t('Enter env\u00eda \u00b7 Shift+Enter nueva l\u00ednea '), send: t('Enviar'), cancel: t('Detener'),
 		you: t('Vos'), notice: t('Harness'), thinking: t('{0} est\u00e1 pensando\u2026', '{0}'), executing: t('Ejecutando plan v{0} con {1}', '{0}', '{1}'),
 		stage: { preparing: t('Preparando ejecuci\u00f3n segura'), agent: t('Agente implementador trabajando'), verifying: t('Ejecutando verificaciones') },
 		observed: t('{0} KB de actividad', '{0}'), elapsed: t('Tiempo'),
@@ -162,15 +184,25 @@ function labels(t) {
 		changedFiles: t('Archivos que cambi\u00f3 esta ejecuci\u00f3n ({0})', '{0}'), changedMore: t('y {0} m\u00e1s', '{0}'), preexisting: t('ya ten\u00eda cambios tuyos'),
 		change: { added: t('nuevo'), modified: t('modificado'), deleted: t('borrado') },
 		continueRun: t('Continuar'), retry: t('Reintentar'), continuedRun: t('Continuaci\u00f3n'), maxMessageChars: MAX_USER_MESSAGE_CHARS,
-		discardRun: t('Descartar cambios de esta ejecuci\u00f3n'), openHome: t('Ver en Inicio'),
+		discardRun: t('Deshacer esta ejecuci\u00f3n'), openHome: t('Ver en Inicio'),
+		approvals: t('Aprobaciones pendientes'), allowOnce: t('Permitir una vez'), allowAlways: t('Permitir siempre'), denyApproval: t('Denegar'),
+		alwaysRule: t('Permitir siempre guarda la regla \u00ab{0}\u00bb en {1}.', '{0}', '{1}'), permissionsFile: '~/.armotusitio/permissions.json',
 		gate: { pending: t('Pendiente'), running: t('En curso'), passed: t('Pas\u00f3'), failed: t('Fall\u00f3'), cancelled: t('Cancelada') },
 		verification: t('Verificaciones'), verificationSkipped: t('Sin verificaciones configuradas'), duration: t('Duraci\u00f3n'), copy: t('Copiar'), copied: t('Copiado'),
 		copyMessage: t('Copiar respuesta'), partial: t('Respuesta en curso'), copyCode: t('Copiar c\u00f3digo'), activity: t('Actividad en curso'), idle: t('Sin actividad en curso'), cancelling: t('Deteniendo\u2026'),
+		setupCheck: t('Revisar mi entorno'),
 		menu: t('M\u00e1s opciones'), newChat: t('Nueva conversaci\u00f3n'), openTasks: t('Abrir panel de tareas'), refreshProviders: t('Verificar proveedores'), commands: t('Ver comandos'),
 		noProject: t('Abr\u00ed una carpeta para empezar a conversar sobre su c\u00f3digo.'), untrusted: t('Este workspace no es confiable. Marcalo como confiable para conversar y ejecutar.'), hybrid: t('Este proyecto tiene su propio Harness: pod\u00e9s conversar y planificar, pero la ejecuci\u00f3n con escritura requiere habilitar \u00abatsHarness.coordinatedProjectWriters\u00bb y un motor con lease de escritura.'),
 		isolation: t('Aislamiento de escritura: {0}.', '{0}'),
 		isolationLevel: { 'os-kernel': t('kernel del sistema'), 'provider-sandbox': t('sandbox del proveedor; las lecturas fuera del proyecto no est\u00e1n confinadas'), 'tool-allowlist': t('solo permisos de herramientas del proveedor, sin sandbox del sistema operativo'), none: t('sin aislamiento') },
-		log: t('Conversaci\u00f3n')
+		log: t('Conversaci\u00f3n'),
+		steps: t('Pasos del agente'), stepsSummary: t('Pasos de la ejecuci\u00f3n ({0})', '{0}'),
+		stepKind: { read: t('Lee'), edit: t('Edita'), command: t('Comando'), search: t('Busca'), tool: t('Herramienta'), message: t('Mensaje') },
+		stepStatus: { running: t('en curso'), ok: t('listo'), error: t('fall\u00f3') },
+		queued: t('En cola ({0})', '{0}'), queueSend: t('Encolar'), unqueue: t('Quitar de la cola'), queueHint: t('Se env\u00eda cuando termine la tarea actual. Si se cancela o falla, la cola se descarta.'),
+		viewChanges: t('Ver cambios'), revertFile: t('Revertir'), reverted: t('revertido'), stopHint: t('Detiene la tarea de la IA ahora mismo'),
+		commandList: chatCommands(t).map(({ name, usage, description }) => ({ name, usage: usage ?? '', description })),
+		commandsLabel: t('Comandos'), filesLabel: t('Archivos del proyecto')
 	};
 }
 
@@ -189,6 +221,8 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 	const models = { codex: { options: [] }, claude: { options: [] } };
 	const modelSetting = provider => provider + 'Model';
 	const effortSetting = provider => provider + 'Effort';
+	const chatMode = (): ChatMode => vscode.workspace.getConfiguration('atsHarness').get('chatMode', 'act') === 'ask' ? 'ask' : 'act';
+	const mentionIndex = new TtlCache(MENTION_INDEX_TTL_MS);
 	const chosenEfforts = () => Object.fromEntries(['codex', 'claude'].map(provider => [provider, vscode.workspace.getConfiguration('atsHarness').get(effortSetting(provider), '')]));
 	const chosenModels = () => Object.fromEntries(Object.entries(models).map(([provider, found]) => [provider, { ...found, selected: vscode.workspace.getConfiguration('atsHarness').get(modelSetting(provider), '') }]));
 	let mcpStatus: { state: string; reason?: string; tools?: number; checkedAt?: string } = { state: 'checking' };
@@ -211,6 +245,7 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 		context.subscriptions.push(participant);
 	}
 	const folders = () => vscode.workspace.workspaceFolders || [];
+	if (vscode.workspace.registerTextDocumentContentProvider) { registerRunDiffView(vscode, context, folders, t); }
 	/** Short, colon-free key of a folder for feed item ids (`chat:<key>:<suffix>`). */
 	const feedKeyOf = (uri: string): string => createHash('sha256').update(uri).digest('hex').slice(0, 16);
 	const selectedFolder = () => {
@@ -228,7 +263,7 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 		// The webview drops its history whenever it receives no chat, so the next one must be complete.
 		else { posted = chat ? { key, revision: chat.revision } : { key: undefined, revision: -1 }; }
 		post({
-			type: 'state', trusted: !!vscode.workspace.isTrusted, providers, models: chosenModels(), efforts: chosenEfforts(), mcp: { ...mcpStatus, endpoint: new URL(endpoint).host, enabled: !!mcp.enabled?.() },
+			type: 'state', trusted: !!vscode.workspace.isTrusted, providers, models: chosenModels(), efforts: chosenEfforts(), chatMode: chatMode(), mcp: { ...mcpStatus, endpoint: new URL(endpoint).host, enabled: !!mcp.enabled?.() },
 			project: folder ? { name: folder.name, id: key } : null,
 			projects: folders().map(item => ({ name: item.name, id: item.uri.toString() })),
 			chat
@@ -268,13 +303,37 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 		}
 		return entry.ready;
 	};
-	const refreshProviders = async () => {
+	// An unknown status is a failed probe: do not keep it for minutes.
+	const providerCache = new TtlCache(PROVIDER_CACHE_TTL_MS, Date.now, probed => probed.status.status !== 'unknown');
+	// Model discovery is display-only: an unreadable CLI configuration leaves just the CLI default.
+	const inspectProvider = (provider, force) => providerCache.get(provider, async () => ({ status: await probeProvider(provider, diagnose), models: await listModels(provider).catch(() => ({ options: [] })) }), force);
+	const refreshProviders = async (force = false) => {
 		providers.codex = { status: 'checking' }; providers.claude = { status: 'checking' }; publish();
-		// Model discovery is display-only: an unreadable CLI configuration leaves just the CLI default.
-		const discover = provider => listModels(provider).catch(() => ({ options: [] }));
-		const [codex, claude, codexModels, claudeModels] = await Promise.all([probeProvider('codex', diagnose), probeProvider('claude', diagnose), discover('codex'), discover('claude')]);
-		providers.codex = codex; providers.claude = claude; models.codex = codexModels; models.claude = claudeModels; publish();
+		const [codex, claude] = await Promise.all([inspectProvider('codex', force), inspectProvider('claude', force)]);
+		providers.codex = codex.status; providers.claude = claude.status; models.codex = codex.models; models.claude = claude.models; publish();
 	};
+	/** Run the one fix of a setup item; every kind reuses an existing VS Code surface. */
+	const applySetupFix = async fix => {
+		if (fix.kind === 'settings') { await vscode.commands.executeCommand('workbench.action.openSettings', fix.setting); }
+		else if (fix.kind === 'command') { await vscode.commands.executeCommand(fix.command); }
+		else if (fix.kind === 'docs') { await vscode.env.openExternal(vscode.Uri.parse(fix.url)); }
+		else { await vscode.env.clipboard.writeText(fix.text); void vscode.window.showInformationMessage(t('Comando copiado: {0}', fix.text)); }
+	};
+	const setupCheck = async () => {
+		const root = folders()[0]?.uri.fsPath ?? process.cwd();
+		const items = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: t('Revisando tu entorno\u2026') }, async () => {
+			// Only the cheap probes: no ports, toolchains or network clock, which the full machine doctor adds.
+			const [codex, claude, doctor] = await Promise.all([inspectProvider('codex', false), inspectProvider('claude', false), controller.systemExec ? runDoctor({ exec: controller.systemExec, platform: process.platform, projectRoot: root }) : []]);
+			const settings = vscode.workspace.getConfiguration('atsHarness');
+			return buildSetupItems({
+				providers: { codex: codex.status, claude: claude.status }, doctor, mcp: await probeMcpConnection(vscode, mcp), trusted: !!vscode.workspace.isTrusted,
+				coordinatedProjectWriters: !!settings.get('coordinatedProjectWriters', false), chatMode: chatMode()
+			}, t);
+		});
+		const picked = await vscode.window.showQuickPick(items.map(item => ({ label: setupIcon(item.status) + ' ' + item.title, description: item.detail, detail: item.fix?.label, item })), { title: t('Revisar mi entorno'), placeHolder: t('Eleg\u00ed un \u00edtem para aplicar su arreglo') });
+		if (picked?.item.fix) { await applySetupFix(picked.item.fix); }
+	};
+	context.subscriptions.push(vscode.commands.registerCommand('atsIde.setupCheck', () => setupCheck().catch(error => report(undefined, error))));
 	const refreshMcp = async () => {
 		mcpCheck?.cancel();
 		const source = new vscode.CancellationTokenSource(); mcpCheck = source;
@@ -283,6 +342,25 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 			const result = await probeMcpConnection(vscode, mcp, source.token);
 			if (mcpCheck === source) { mcpStatus = result; publish(); }
 		} finally { if (mcpCheck === source) { mcpCheck = undefined; } source.dispose(); }
+	};
+	// Personal choice, like the model: user settings, not a project policy.
+	const setChatMode = async (mode: ChatMode) => {
+		await vscode.workspace.getConfiguration('atsHarness').update('chatMode', mode, true);
+		publish();
+	};
+	const confirmDiscard = async () => {
+		const confirm = t('Descartar cambios');
+		return await vscode.window.showWarningMessage(t('\u00bfDescartar los archivos que cambi\u00f3 esta ejecuci\u00f3n? Los que ten\u00edan cambios tuyos no se tocan.'), { modal: true }, confirm) === confirm;
+	};
+	const sessionCommands = {
+		t, chatMode, setChatMode, confirmDiscard,
+		permissionsPreset: () => configuredPreset(vscode.workspace.getConfiguration('atsHarness').get('permissionsPreset')),
+		openFile: file => vscode.commands.executeCommand('vscode.open', vscode.Uri.file(file))
+	};
+	/** Project files matching what the user typed after `@`; the webview asks on every keystroke. */
+	const suggestFiles = async (folder, query: string) => {
+		const files = await mentionIndex.get(folder.uri.toString(), async () => (await indexProject(folder.uri.fsPath)).files);
+		return suggestMentionFiles(files, query);
 	};
 	const report = (folder, error) => {
 		const entry = folder && sessions.get(folder.uri.toString());
@@ -308,13 +386,18 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 			return;
 		}
 		if (action === 'mcpCheck') { await refreshMcp(); return; }
-		if (action === 'providerCheck') { await refreshProviders(); return; }
+		if (action === 'providerCheck') { await refreshProviders(true); return; }
 		if (['mcpConfigure', 'mcpChangeKey', 'mcpEnable'].includes(action)) {
 			await vscode.commands.executeCommand({ mcpConfigure: 'atsIde.mcpConfigure', mcpChangeKey: 'atsIde.mcpChangeKey', mcpEnable: 'atsIde.mcpEnable' }[action]);
 			await refreshMcp(); return;
 		}
 		if (action === 'mcpSettings') { await vscode.commands.executeCommand('workbench.action.openSettings', 'atsHarness.mcp'); return; }
 		if (action === 'openTasks') { await vscode.commands.executeCommand('atsIde.home'); return; }
+		if (action === 'setupCheck') { await vscode.commands.executeCommand('atsIde.setupCheck'); return; }
+		if (action === 'complete' && message.kind === 'mention' && typeof message.query === 'string' && message.query.length <= 300 && Number.isSafeInteger(message.seq)) {
+			if (folder && vscode.workspace.isTrusted) { post({ type: 'completions', kind: 'mention', seq: message.seq, items: await suggestFiles(folder, message.query).catch(() => []) }); }
+			return;
+		}
 		if (!folder) { return; }
 		if (!vscode.workspace.isTrusted) { publish(folder); return; }
 		const entry = await sessionFor(folder).catch(error => { report(folder, error); return undefined; });
@@ -331,7 +414,11 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 				if (text.startsWith('/')) {
 					const source = new vscode.CancellationTokenSource();
 					// A four-backtick fence keeps triple backticks inside command output inert.
-					try { await session.note('`' + text.slice(0, 200).replace(/`/g, '') + '`\n\n````text\n' + await handle(text, source.token) + '\n````'); }
+					try {
+						const [name = '', ...words] = text.slice(1).trim().split(/\s+/);
+						const output = await runSessionCommand(sessionCommands, name.toLowerCase(), words, folder.uri.fsPath, session) ?? await handle(text, source.token);
+						await session.note('`' + text.slice(0, 200).replace(/`/g, '') + '`\n\n````text\n' + output + '\n````');
+					}
 					finally { source.dispose(); }
 					return;
 				}
@@ -341,14 +428,23 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 					await session.note(t('{0} no est\u00e1 instalado en este equipo. Eleg\u00ed el otro proveedor y reenvi\u00e1 tu mensaje: {1}', selected === 'claude' ? 'Claude Code' : 'Codex', '\u00ab' + text.slice(0, 500) + '\u00bb'), 'error');
 					return;
 				}
-				await session.send(text);
+				const mentions = await resolveMentions(folder.uri.fsPath, text, IGNORED);
+				await session.send(text, chatMode(), { context: mentions.context, notice: mentionNotice(mentions, t) });
 			}
 			if (action === 'approve' && typeof message.digest === 'string' && /^[a-f0-9]{64}$/.test(message.digest)) { await session.approve(message.digest); }
 			if (action === 'continue' && typeof message.messageId === 'string' && message.messageId.length <= 64) { await session.continueRun(message.messageId); }
 			if (action === 'discard' && typeof message.messageId === 'string' && message.messageId.length <= 64) {
-				const confirm = t('Descartar cambios');
-				if (await vscode.window.showWarningMessage(t('\u00bfDescartar los archivos que cambi\u00f3 esta ejecuci\u00f3n? Los que ten\u00edan cambios tuyos no se tocan.'), { modal: true }, confirm) === confirm) { await session.discardRun(message.messageId); }
+				if (await confirmDiscard()) { await session.discardRun(message.messageId); }
 			}
+			if (action === 'approval' && typeof message.id === 'string' && message.id.length <= 64 && ['once', 'always', 'deny'].includes(message.answer)) { await session.resolveApproval(message.id, message.answer); }
+			// Per-file requests name a file of a run the session knows; anything else is ignored, never trusted.
+			const runFile = typeof message.messageId === 'string' && message.messageId.length <= 64 && validRunPath(message.path) ? session.runFile(message.messageId, message.path) : undefined;
+			if (action === 'openDiff' && runFile) { await vscode.commands.executeCommand(RUN_DIFF_COMMAND, folder.uri.toString(), runFile.path, runFile.change, runFile.preexisting); }
+			if (action === 'revertFile' && runFile) {
+				const confirm = t('Revertir archivo');
+				if (await vscode.window.showWarningMessage(t('\u00bfRevertir {0} al contenido anterior a esta ejecuci\u00f3n? Si lo editaste despu\u00e9s, no se toca.', runFile.path), { modal: true }, confirm) === confirm) { await session.discardRun(message.messageId, [runFile.path]); }
+			}
+			if (action === 'unqueue' && typeof message.id === 'string' && message.id.length <= 64) { session.unqueue(message.id); }
 			if (action === 'openHome') { await vscode.commands.executeCommand('atsIde.home'); }
 			if (action === 'cancel') { session.cancel(); }
 			if (action === 'provider' && ['codex', 'claude'].includes(message.provider)) { await session.selectProvider(message.provider); }
@@ -356,6 +452,9 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 				// `true` targets user settings: the model is a personal choice, not a project policy.
 				await vscode.workspace.getConfiguration('atsHarness').update(modelSetting(message.provider), message.model, true);
 				publish(folder);
+			}
+			if (action === 'mode' && ['act', 'ask'].includes(message.mode)) {
+				await setChatMode(message.mode);
 			}
 			if (action === 'effort' && ['codex', 'claude'].includes(message.provider) && (message.effort === '' || validEffort(message.provider, message.effort))) {
 				await vscode.workspace.getConfiguration('atsHarness').update(effortSetting(message.provider), message.effort, true);
@@ -387,6 +486,8 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 	}));
 	if (vscode.workspace.onDidChangeConfiguration) {
 		context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
+			if (['codex', 'claude'].some(provider => event.affectsConfiguration('atsHarness.' + modelSetting(provider)))) { providerCache.invalidate(); }
+			if (panel && event.affectsConfiguration('atsHarness.chatMode')) { publish(); }
 			if (panel && ['codex', 'claude'].some(provider => event.affectsConfiguration('atsHarness.' + modelSetting(provider)) || event.affectsConfiguration('atsHarness.' + effortSetting(provider)))) { publish(); }
 			// Writer settings apply immediately: the plan card re-reads the project facts instead of asking for a reload.
 			if (['atsHarness.coordinatedProjectWriters', 'atsHarness.writerIsolation', 'atsHarness.promptBudgetKiB'].some(setting => event.affectsConfiguration(setting))) {

@@ -25,6 +25,7 @@ const EXACT: Record<string, Hint> = {
 	HARNESS_PROJECT_SKILLS_TOO_MANY: t => t('El plan usa demasiadas skills a la vez. Pedile a la IA que elija las imprescindibles.'),
 	HARNESS_CHAT_MESSAGE_TOO_LARGE: t => t('Tu mensaje no entra junto con el contexto del proyecto. Sub\u00ed \u00abatsHarness.promptBudgetKiB\u00bb o guard\u00e1 el detalle en un archivo del proyecto y mencion\u00e1 su ruta.'),
 	HARNESS_CHAT_CONTEXT_TOO_LARGE: t => t('Tu mensaje no entra junto con el contexto del proyecto. Sub\u00ed \u00abatsHarness.promptBudgetKiB\u00bb o guard\u00e1 el detalle en un archivo del proyecto y mencion\u00e1 su ruta.'),
+	HARNESS_CHAT_QUEUE_FULL: t => t('Ya hay 5 mensajes en cola. Esper\u00e1 a que avance la tarea o quit\u00e1 alguno.'),
 	HARNESS_CHAT_MESSAGE_INVALID: t => t('Escrib\u00ed un mensaje de hasta 10.000 caracteres.'),
 	HARNESS_CHAT_RUN_NOT_CONTINUABLE: t => t('Esa ejecuci\u00f3n ya no se puede continuar (hay una m\u00e1s nueva, el plan cambi\u00f3 o escribiste despu\u00e9s). Aprob\u00e1 el plan actual para ejecutarlo.'),
 	HARNESS_CHAT_PLAN_CHANGED: t => t('El plan cambi\u00f3 mientras lo aprobabas. Revis\u00e1 la versi\u00f3n m\u00e1s nueva y aprobala.'),

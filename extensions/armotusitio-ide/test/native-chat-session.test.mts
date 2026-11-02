@@ -84,6 +84,31 @@ test('Send converses, revises the plan and never implements; Approve runs only t
 	} finally { await s.cleanup(); }
 });
 
+test('a queued message keeps its mention context and notice until it runs', async () => {
+	const s = await session([]);
+	try {
+		let release: () => void = () => undefined;
+		let entered: () => void = () => undefined;
+		const inside = new Promise<void>(resolve => { entered = resolve; });
+		s.runtime.converse = async (provider, instruction, hooks) => {
+			s.calls.push({ kind: 'converse', provider, instruction });
+			const done = new Promise<void>(resolve => { release = resolve; });
+			hooks.started(() => release());
+			entered();
+			await done;
+			return outcome('respuesta');
+		};
+		const pending = s.chat.send('hola');
+		await inside;
+		await s.chat.send('mira @a.ts', 'ask', { context: 'MENTION-BLOCK a.ts', notice: 'Adjunte a.ts' });
+		release();
+		while (s.calls.length < 2) { await new Promise(resolve => setTimeout(resolve, 1)); }
+		release();
+		await pending;
+		assert.deepEqual({ context: /MENTION-BLOCK a\.ts$/.test(s.calls[1].instruction), notice: s.chat.snapshot().messages.some(message => message.role === 'notice' && message.text === 'Adjunte a.ts') }, { context: true, notice: true });
+	} finally { await s.cleanup(); }
+});
+
 test('provider choice persists per project and a running turn keeps the provider it started with', async () => {
 	let release: () => void = () => undefined;
 	const s = await session([]);
@@ -102,11 +127,17 @@ test('provider choice persists per project and a running turn keeps the provider
 		const pending = s.chat.send('hola');
 		await inside;
 		await s.chat.selectProvider('claude');
-		await assert.rejects(s.chat.send('otra'), /HARNESS_ALREADY_RUNNING/);
+		// A message sent while a turn runs waits in the queue instead of failing.
+		await s.chat.send('otra');
+		assert.deepEqual(s.chat.snapshot().queue?.map(item => item.text), ['otra']);
+		release();
+		while (s.calls.length < 2) { await new Promise(resolve => setTimeout(resolve, 1)); }
 		release();
 		await pending;
+		// The queued message ran after the first turn, with the provider selected by then.
+		assert.deepEqual({ started: s.calls[0].provider, queued: s.calls[1].provider, next: s.chat.snapshot().provider, queue: s.chat.snapshot().queue }, { started: 'codex', queued: 'claude', next: 'claude', queue: undefined });
 		const reply = s.chat.snapshot().messages.at(-1)!;
-		assert.deepEqual({ started: s.calls[0].provider, reply: reply.provider, next: s.chat.snapshot().provider }, { started: 'codex', reply: 'codex', next: 'claude' });
+		assert.equal(reply.provider, 'claude');
 		const reloaded = new HarnessChatSession(s.store, s.runtime, () => undefined, t, 'codex');
 		await reloaded.open();
 		assert.equal(reloaded.snapshot().provider, 'claude');
@@ -385,4 +416,203 @@ test('review #5: a live operation of another window is neither reported as inter
 		other.kill();
 		await fs.rm(directory, { recursive: true, force: true });
 	}
+});
+
+test('Act mode runs the request directly as a writer, with no plan card; Ask mode and a blocked writer still only converse', async () => {
+	const s = await session(['Es solo una pregunta.', 'Perfecto.\n' + plan('Ajuste del modal', ['Foco'])]);
+	try {
+		await s.chat.send('Correg\u00ed el foco del modal', 'act');
+		const run = s.chat.snapshot().messages.at(-1)!;
+		assert.deepEqual({ kinds: s.calls.map(call => call.kind), plan: s.chat.snapshot().plan, role: run.role, status: run.run?.status, version: run.run?.planVersion, busy: s.chat.busy },
+			{ kinds: ['implement'], plan: undefined, role: 'run', status: 'passed', version: 0, busy: false });
+		assert.match(s.calls[0].instruction, /Do what the latest user message asks/);
+		assert.match(s.calls[0].instruction, /Correg\u00ed el foco del modal/);
+		// Ask never writes, and a later proposed plan does not collide with the direct run (version 0).
+		await s.chat.send('Y los botones?', 'ask');
+		await s.chat.send('Hagamos el ajuste', 'ask');
+		assert.deepEqual({ kinds: s.calls.map(call => call.kind), version: s.chat.snapshot().plan?.version, approvable: s.chat.snapshot().plan?.approvable },
+			{ kinds: ['implement', 'converse', 'converse'], version: 1, approvable: true });
+		// Without writer authority Act degrades to a conversation instead of failing the message.
+		s.setWriter(false);
+		await s.chat.send('Hacelo directo', 'act');
+		assert.equal(s.calls.at(-1)?.kind, 'converse');
+	} finally { await s.cleanup(); }
+});
+
+/** A converse() that blocks until the test releases it, so messages can be sent while a turn runs. */
+function blocking(s: Awaited<ReturnType<typeof session>>, results: AgentOutcome[] = []) {
+	const gates: Array<() => void> = [];
+	s.runtime.converse = async (provider, instruction, hooks, signal) => {
+		s.calls.push({ kind: 'converse', provider, instruction });
+		await new Promise<void>(resolve => { gates.push(resolve); hooks.started(() => undefined); });
+		if (signal.aborted) { return outcome('', 'cancelled'); }
+		return results.shift() ?? outcome('respuesta ' + s.calls.length);
+	};
+	const waitFor = async (count: number) => { while (gates.length < count) { await new Promise(resolve => setTimeout(resolve, 1)); } };
+	return { gates, waitFor };
+}
+
+test('messages sent while a turn runs are queued, visible, cancellable and sent in order when the turn ends cleanly', async () => {
+	const s = await session([]);
+	try {
+		const turn = blocking(s);
+		const first = s.chat.send('primero');
+		await turn.waitFor(1);
+		await s.chat.send('segundo'); await s.chat.send('tercero'); await s.chat.send('cuarto');
+		const queued = s.chat.snapshot().queue!;
+		assert.deepEqual(queued.map(item => item.text), ['segundo', 'tercero', 'cuarto']);
+		s.chat.unqueue(queued[1].id);
+		s.chat.unqueue('no-such-id');
+		assert.deepEqual(s.chat.snapshot().queue?.map(item => item.text), ['segundo', 'cuarto']);
+		assert.deepEqual(s.chat.snapshot().messages.filter(message => message.role === 'user').map(message => message.text), ['primero']);
+		turn.gates[0](); await turn.waitFor(2);
+		turn.gates[1](); await turn.waitFor(3);
+		turn.gates[2](); await first;
+		assert.deepEqual(s.chat.snapshot().messages.filter(message => message.role === 'user').map(message => message.text), ['primero', 'segundo', 'cuarto']);
+		assert.deepEqual({ queue: s.chat.snapshot().queue, busy: s.chat.busy, turns: s.calls.length }, { queue: undefined, busy: false, turns: 3 });
+	} finally { await s.cleanup(); }
+});
+
+test('the queue holds at most five messages and a secret typed into a queued message is redacted', async () => {
+	const s = await session([]);
+	try {
+		const turn = blocking(s);
+		const first = s.chat.send('uno');
+		await turn.waitFor(1);
+		for (let index = 0; index < 5; index++) { await s.chat.send('en cola ' + index + (index === 0 ? ' sk-' + 'a1B2c3D4'.repeat(6) : '')); }
+		await assert.rejects(s.chat.send('de mas'), /HARNESS_CHAT_QUEUE_FULL/);
+		assert.equal(s.chat.snapshot().queue!.length, 5);
+		assert.ok(!JSON.stringify(s.chat.snapshot().queue).includes('a1B2c3D4'));
+		await s.chat.reset().catch(error => assert.match(String(error), /HARNESS_ALREADY_RUNNING/));
+		s.chat.cancel(); turn.gates[0](); await first;
+	} finally { await s.cleanup(); }
+});
+
+test('cancelling or failing a turn discards the queue with a notice instead of sending stale messages', async () => {
+	const s = await session([]);
+	try {
+		const turn = blocking(s, [outcome('', 'failed')]);
+		const first = s.chat.send('falla');
+		await turn.waitFor(1);
+		await s.chat.send('siguiente 1'); await s.chat.send('siguiente 2');
+		turn.gates[0](); await first;
+		const notice = s.chat.snapshot().messages.at(-1)!;
+		assert.deepEqual({ turns: s.calls.length, queue: s.chat.snapshot().queue, busy: s.chat.busy, tone: notice.tone, mentions: /2 mensajes en cola/.test(notice.text) && /siguiente 1/.test(notice.text) && /siguiente 2/.test(notice.text) },
+			{ turns: 1, queue: undefined, busy: false, tone: 'info', mentions: true });
+		// Cancelling: the aborted turn ends as cancelled, so what was waiting behind it is dropped too.
+		const again = blocking(s, [outcome('', 'cancelled')]);
+		const second = s.chat.send('otra');
+		await again.waitFor(1);
+		await s.chat.send('queda esperando');
+		s.chat.cancel(); again.gates[0](); await second;
+		assert.deepEqual({ queue: s.chat.snapshot().queue, turns: s.calls.length, last: /1 mensajes en cola/.test(s.chat.snapshot().messages.at(-1)!.text) }, { queue: undefined, turns: 2, last: true });
+	} finally { await s.cleanup(); }
+});
+
+test('steps stream into the activity, and a finished run keeps only a short summary without detail', async () => {
+	const s = await session([]);
+	try {
+		let during: ChatSnapshot['activity'];
+		s.runtime.implement = async (_request, hooks) => {
+			hooks.started(() => undefined);
+			hooks.step?.({ id: 't1', kind: 'read', label: 'src/a.ts', status: 'running' });
+			hooks.step?.({ id: 't1', kind: 'read', label: 'src/a.ts', status: 'ok' });
+			hooks.step?.({ id: 't2', kind: 'command', label: 'npm test', status: 'error', detail: 'exit 1' });
+			hooks.step?.({ id: 't3', kind: 'edit', label: 'src/a.ts', status: 'running' });
+			during = s.chat.snapshot().activity;
+			return { agent: outcome('Listo'), verification: { status: 'skipped', gates: [] }, diff: changed('src/a.ts') };
+		};
+		await s.chat.send('Cambi\u00e1 a.ts', 'act');
+		assert.deepEqual(during?.steps?.map(step => step.id + ':' + step.status), ['t1:ok', 't2:error', 't3:running']);
+		const stored = (await s.store.load('claude')).conversation.messages.at(-1)!;
+		assert.deepEqual({ steps: stored.run?.steps, activity: s.chat.snapshot().activity }, {
+			steps: [{ id: 't1', kind: 'read', label: 'src/a.ts', status: 'ok' }, { id: 't2', kind: 'command', label: 'npm test', status: 'error' }, { id: 't3', kind: 'edit', label: 'src/a.ts', status: 'error' }],
+			activity: undefined
+		});
+	} finally { await s.cleanup(); }
+});
+
+test('reverting one file reuses the guarded discard for just that file; the rest stays revertible and the notice names both', async () => {
+	const s = await session([]);
+	try {
+		const discarded: string[][] = [];
+		s.runtime.discard = async diff => { discarded.push(diff.files.map(file => file.path)); return { discarded: diff.files.filter(file => file.path !== 'mine.ts').map(file => file.path), skipped: diff.files.filter(file => file.path === 'mine.ts').map(file => file.path) }; };
+		s.runtime.implement = async (_request, hooks) => {
+			hooks.started(() => undefined);
+			return { agent: outcome('Listo'), verification: { status: 'skipped', gates: [] }, diff: changed('a.ts', 'b.ts', 'mine.ts') };
+		};
+		await s.chat.send('Cambi\u00e1 todo', 'act');
+		const runId = s.chat.snapshot().messages.at(-1)!.id;
+		assert.deepEqual({ known: s.chat.runFile(runId, 'b.ts')?.change, unknown: s.chat.runFile(runId, 'zzz.ts'), wrongMessage: s.chat.runFile('nope', 'b.ts') }, { known: 'modified', unknown: undefined, wrongMessage: undefined });
+		await s.chat.discardRun(runId, ['a.ts']);
+		await assert.rejects(s.chat.discardRun(runId, ['zzz.ts']), /HARNESS_CHAT_RUN_NOT_CONTINUABLE/);
+		await assert.rejects(s.chat.discardRun(runId, ['a.ts']), /HARNESS_CHAT_RUN_NOT_CONTINUABLE/);
+		let run = s.chat.snapshot().messages.find(message => message.id === runId)!.run!;
+		assert.deepEqual({ discarded, reverted: run.reverted, all: run.discarded }, { discarded: [['a.ts']], reverted: ['a.ts'], all: false });
+		assert.match(s.chat.snapshot().messages.at(-1)!.text, /1 archivos.*Revertidos: a\.ts/);
+		// Undo of the whole run only offers what is left; a file the user touched is reported as skipped.
+		await s.chat.discardRun(runId);
+		run = s.chat.snapshot().messages.find(message => message.id === runId)!.run!;
+		assert.deepEqual({ discarded, reverted: run.reverted, all: run.discarded }, { discarded: [['a.ts'], ['b.ts', 'mine.ts']], reverted: ['a.ts', 'b.ts'], all: true });
+		assert.match(s.chat.snapshot().messages.at(-1)!.text, /Revertidos: b\.ts.*mine\.ts/);
+		// What was reverted survives a restart (the stored summary validates).
+		assert.deepEqual((await s.store.load('claude')).conversation.messages.find(message => message.id === runId)?.run?.reverted, ['a.ts', 'b.ts']);
+	} finally { await s.cleanup(); }
+});
+
+test('quota: a stream reading is kept per provider, a stale window is dropped and Codex falls back to its own files', async () => {
+	const future = Math.floor(Date.now() / 1000) + 3600;
+	const claudeQuota = { provider: 'claude' as const, asOf: Date.now(), source: 'stream' as const, windows: [{ id: 'session', label: '5h', usedPercent: 72, resetsAt: future }, { id: 'weekly', label: '7d', usedPercent: 94, resetsAt: 1_600_000_000 }] };
+	const s = await session([{ ...outcome('listo'), quota: claudeQuota }, 'otra']);
+	let reads = 0;
+	s.runtime.readQuota = async provider => {
+		reads++;
+		return provider === 'codex' ? { provider: 'codex', asOf: Date.now(), source: 'rollout', windows: [{ id: 'session', label: '5h', usedPercent: 5, resetsAt: future }] } : undefined;
+	};
+	try {
+		assert.equal(s.chat.snapshot().quota, undefined);
+		await s.chat.send('hola');
+		// The weekly window already reset at its recorded time, so only the session window is reported.
+		assert.deepEqual(s.chat.snapshot().quota?.claude?.windows.map(window => [window.id, window.usedPercent]), [['session', 72]]);
+		assert.equal(s.chat.snapshot().quota?.codex, undefined);
+		// A provider that reports nothing in its stream is asked for its own files once the turn ends.
+		await s.chat.selectProvider('codex');
+		await s.chat.send('otra');
+		assert.deepEqual({ reads, codex: s.chat.snapshot().quota?.codex?.windows[0].usedPercent, claude: s.chat.snapshot().quota?.claude?.windows.length }, { reads: 1, codex: 5, claude: 1 });
+		// A failing reader never breaks the turn.
+		s.runtime.readQuota = async () => { throw Error('EPERM'); };
+		await s.chat.send('y otra');
+		assert.equal(s.chat.snapshot().messages.at(-1)?.role, 'assistant');
+	} finally { await s.cleanup(); }
+});
+
+
+test('Act cancellation during context refresh never starts a writer', async () => {
+	const s = await session([]);
+	let refreshed!: () => void;
+	const waiting = new Promise<void>(resolve => { refreshed = resolve; });
+	const original = s.runtime.context;
+	s.runtime.context = async () => { await waiting; return original(); };
+	try {
+		const running = s.chat.send('change a file', 'act');
+		while (!s.chat.busy) { await new Promise(resolve => setImmediate(resolve)); }
+		s.chat.cancel(); refreshed(); await running;
+		assert.equal(s.calls.length, 0);
+	} finally { refreshed(); await s.cleanup(); }
+});
+
+test('a failed verification drops queued requests instead of starting another writer', async () => {
+	const s = await session([]);
+	let finish!: () => void;
+	const waiting = new Promise<void>(resolve => { finish = resolve; });
+	s.runtime.implement = async () => {
+		await waiting;
+		return { agent: outcome('done'), verification: { status: 'failed', gates: [] }, diff: changed('a.ts') };
+	};
+	try {
+		const running = s.chat.send('change a file', 'act');
+		while (s.chat.snapshot().activity?.kind !== 'executing') { await new Promise(resolve => setImmediate(resolve)); }
+		await s.chat.send('next change', 'act'); finish(); await running;
+		assert.deepEqual({ queue: s.chat.snapshot().queue, dropped: /mensajes en cola/.test(s.chat.snapshot().messages.at(-1)!.text) }, { queue: undefined, dropped: true });
+	} finally { finish(); await s.cleanup(); }
 });
