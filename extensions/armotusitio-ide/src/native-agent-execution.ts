@@ -9,6 +9,8 @@ import { spawn } from 'node:child_process';
 import { resolveNativeCommand, stopProcess } from './native-runtime.ts';
 import { captureAgentScope, scopeChanged } from './native-agent-scope.ts';
 import { parseProviderOutput, ClaudeEventAccumulator, CodexEventAccumulator, type ProviderUsage } from './native-provider-output.ts';
+import type { ProviderQuota } from './native-quota.ts';
+import type { ChatStep } from './native-run-steps.ts';
 import { StringDecoder } from 'node:string_decoder';
 import { redactSecrets } from './native-redact.ts';
 import { currentToolchainEnvironment } from './native-toolchain-env.ts';
@@ -45,6 +47,8 @@ export interface AgentOutcome {
 	sessionId?: string;
 	/** Redacted web search queries of the run (decision D9), for the report. */
 	searches?: string[];
+	/** Usage windows (session, weekly) the provider reported during the run. */
+	quota?: ProviderQuota;
 	/** A web search query carried a secret: the run was stopped (EC-145). The query already reached the provider's search engine. */
 	searchLeak?: true;
 }
@@ -65,6 +69,8 @@ export interface ToolServerLaunch {
 	env: Record<string, string>;
 	/** Claude `--mcp-config` file holding the same launch. */
 	mcpConfigFile: string;
+	/** The server also offers `git_commit` / `git_push` (chat runs that can ask the user). */
+	git?: boolean;
 }
 /** Every tool of the IDE's own server (commands and editor), and no other MCP server. */
 const RUNNER_TOOL = 'mcp__ats-runner';
@@ -80,7 +86,7 @@ export function buildAgentInvocation(draft: AgentDraft, writableRoots: readonly 
 	if (draft.role !== 'implementer' && !draft.readOnly) { throw Error('HARNESS_READ_ONLY_ROLE_REQUIRED'); }
 	if (draft.role === 'implementer' && draft.readOnly) { throw Error('HARNESS_IMPLEMENTER_MODE_MISMATCH'); }
 	const runner = !draft.readOnly && !!toolServer;
-	const instruction = agentContract({ provider: draft.provider, role: draft.role, maxTurns: draft.maxTurns, runner, webSearch: draft.webSearch }) + '\n\n' + draft.instruction;
+	const instruction = agentContract({ provider: draft.provider, role: draft.role, maxTurns: draft.maxTurns, runner, webSearch: draft.webSearch, git: runner && !!toolServer?.git }) + '\n\n' + draft.instruction;
 	const model = draft.model ? ['--model', draft.model] : [];
 	// Keep effort as a reviewed, per-invocation override. Never modify CLI config files.
 	const effort = draft.effort ? draft.provider === 'codex'
@@ -122,7 +128,7 @@ export function buildAgentInvocation(draft: AgentDraft, writableRoots: readonly 
  * Caller MUST verify Workspace Trust, project authority and consent immediately before invoking.
  * `onMessage` receives redacted intermediate assistant messages as the provider streams them (Codex JSONL, Claude stream-json).
  */
-export async function executeReviewedAgent(review: AgentReview, current: AgentDraft, durationMs = MAX_DURATION_MS, onProgress?: (progress: Readonly<AgentProgress>) => void, onMessage?: (text: string) => void, toolServer?: ToolServerLaunch, sensitive?: (text: string) => boolean): Promise<AgentExecution> {
+export async function executeReviewedAgent(review: AgentReview, current: AgentDraft, durationMs = MAX_DURATION_MS, onProgress?: (progress: Readonly<AgentProgress>) => void, onMessage?: (text: string) => void, toolServer?: ToolServerLaunch, sensitive?: (text: string) => boolean, onStep?: (step: ChatStep) => void): Promise<AgentExecution> {
 	validateReviewedAgent(review, current);
 	if (!Number.isSafeInteger(durationMs) || durationMs < 1000 || durationMs > MAX_DURATION_MS) { throw Error('HARNESS_AGENT_TIMEOUT_INVALID'); }
 	const canonical = await fs.realpath(current.projectRoot);
@@ -144,7 +150,8 @@ export async function executeReviewedAgent(review: AgentReview, current: AgentDr
 	// A query is checked as soon as it is reported: the run stops, but what was sent cannot be recalled (EC-145).
 	const leaks = (query: string): boolean => redactSecrets(query) !== query || !!sensitive?.(query);
 	const onSearch = (query: string): void => { if (!searchLeak && leaks(query)) { searchLeak = true; cancel(); } };
-	const events = current.provider === 'codex' ? new CodexEventAccumulator(observe, onSearch) : new ClaudeEventAccumulator(observe, onSearch);
+	const stepSink = onStep && { root: canonical, emit: onStep };
+	const events = current.provider === 'codex' ? new CodexEventAccumulator(observe, onSearch, stepSink) : new ClaudeEventAccumulator(observe, onSearch, stepSink);
 	const stdoutDecoder = new StringDecoder('utf8');
 	const child = spawn(command.executable, command.args, {
 		cwd: canonical, env, shell: false, windowsHide: true, detached: process.platform !== 'win32',
@@ -207,6 +214,7 @@ export async function executeReviewedAgent(review: AgentReview, current: AgentDr
 					...(parsed.stopReason ? { stopReason: parsed.stopReason } : {}),
 					...(parsed.sessionId ? { sessionId: parsed.sessionId } : {}),
 					...(parsed.searches?.length ? { searches: parsed.searches.map(redactSecrets) } : {}),
+					...(parsed.quota ? { quota: parsed.quota } : {}),
 					...(searchLeak ? { searchLeak: true as const } : {})
 				});
 			})();
