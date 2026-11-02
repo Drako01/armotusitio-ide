@@ -5,6 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { agentContract } from '../src/native-agent-contract.ts';
+import { buildDirectInstruction, chatMessage } from '../src/native-chat.ts';
 import { buildAgentInvocation } from '../src/native-agent-execution.ts';
 import { parseRunBlock } from '../src/native-run-outcome.ts';
 
@@ -31,4 +32,18 @@ test('every agent prompt carries the contract that matches its provider and role
 	// The block format the contract teaches is exactly the one the outcome classifier reads.
 	const taught = writer.stdin.split('\n').find(line => line.startsWith('harness-blocked:'))!;
 	assert.equal(parseRunBlock(taught.replace('<what is missing, in the user\'s language>', 'Falta PostgreSQL').replace('service|credential|policy|decision|toolchain|disk', 'service'))?.needs, 'service');
+});
+
+test('the git tools are described only to writers that have them, and publishing stays forbidden', () => {
+	const chatWriter = buildAgentInvocation({ schemaVersion: 1, provider: 'claude', role: 'implementer', projectRoot: '/repo', instruction: 'x', readOnly: false },
+		[], { command: 'node', args: ['ats-runner.js', 'runner.json'], env: {}, mcpConfigFile: '/storage/mcp.json', git: true });
+	const plain = agentContract({ provider: 'claude', role: 'implementer', runner: true });
+	const planner = agentContract({ provider: 'claude', role: 'planner', runner: true, git: true });
+	const direct = buildDirectInstruction([chatMessage('user', 'sube los cambios')]);
+	assert.deepEqual({
+		withTools: chatWriter.stdin.includes('other than through the `git_commit` and `git_push` tools') && chatWriter.stdin.includes('open pull requests') && chatWriter.stdin.includes('publish packages'),
+		withoutTools: plain.includes('Never: modify git state (commit, branch, checkout, reset, stash, push'), readOnlyNever: planner.includes('git_commit'),
+		direct: ['`git_commit`', '`git_push`', 'never force-push', 'never push the default branch', 'cannot publish packages or create releases', 'a `DENIED` answer is final'].every(text => direct.includes(text)),
+		oldPhrase: direct.includes('You cannot commit, push or publish')
+	}, { withTools: true, withoutTools: true, readOnlyNever: false, direct: true, oldPhrase: false });
 });

@@ -7,7 +7,13 @@ import type { AgentRole, NativeProvider } from './native-providers.ts';
 
 /** Run duration limit of every agent process; see MAX_DURATION_MS in native-agent-execution.ts. */
 export const RUN_MINUTES = 30;
-const FORBIDDEN = 'Never: modify git state (commit, branch, checkout, reset, stash, push, merge, rebase, tag), open pull requests, publish packages or deploy, install global tools, start or stop services or containers, change global configuration, modify secrets or touch files outside the project. Delivery commits are made by the IDE orchestrator; push and pull requests are the user\'s action.';
+const NEVER_COMMON = 'open pull requests, publish packages or deploy, install global tools, start or stop services or containers, change global configuration, modify secrets or touch files outside the project.';
+const FORBIDDEN = 'Never: modify git state (commit, branch, checkout, reset, stash, push, merge, rebase, tag), ' + NEVER_COMMON + ' Delivery commits are made by the IDE orchestrator; push and pull requests are the user\'s action.';
+const FORBIDDEN_WITH_GIT = 'Never: modify git state other than through the `git_commit` and `git_push` tools (their descriptions say what they refuse), ' + NEVER_COMMON;
+/** What the chat agent may do with git; the single wording of the direct-run instruction. */
+export const GIT_TOOLS_CONTRACT = 'You can commit and push only through the `git_commit` (explicit project-relative files and a message) and `git_push` (the current branch) tools, and only when the user asks for it. ' +
+	'Both ask the user for approval; a `DENIED` answer is final, never retry it in another form. They never force-push, never push the default branch (main, master, develop, trunk), never skip hooks and refuse credential files. ' +
+	'You cannot publish packages or create releases, and no other git state change (branch, checkout, reset, stash, merge, rebase, tag) is available.';
 const BLOCKED = 'If something you cannot resolve blocks the work (a service that does not respond, a missing credential, a policy denial, a decision only the user can make, a missing toolchain, no disk space), stop and end your answer with exactly one line:\nharness-blocked: {"reason":"<what is missing, in the user\'s language>","needs":"service|credential|policy|decision|toolchain|disk","detail":"<optional detail>"}';
 
 /** Decision D9: search results are data, and every query is audited; one with a secret ends the run. */
@@ -26,11 +32,13 @@ function tools(provider: NativeProvider, role: AgentRole, runner: boolean): stri
 }
 
 /** Contract for an agent process; `maxTurns` applies to Claude only; `runner` says the `ats-runner` tool is available. */
-export function agentContract(input: { provider: NativeProvider; role: AgentRole; maxTurns?: number; runner?: boolean; webSearch?: boolean }): string {
+export function agentContract(input: { provider: NativeProvider; role: AgentRole; maxTurns?: number; runner?: boolean; webSearch?: boolean; git?: boolean }): string {
+	// Read-only roles never get the git tools, whatever the caller passes.
+	const git = !!input.git && input.role === 'implementer';
 	const lines = [
 		'You are a scoped software engineering agent launched by the ArmoTuSitio IDE. Operate only in the supplied project root.',
 		tools(input.provider, input.role, !!input.runner),
-		FORBIDDEN
+		git ? FORBIDDEN_WITH_GIT : FORBIDDEN
 	];
 	if (input.webSearch) { lines.push(WEB_SEARCH); }
 	if (input.role === 'implementer') {
