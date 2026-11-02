@@ -13,11 +13,24 @@ export function processAlive(pid: number): boolean {
 	try { process.kill(pid, 0); return true; } catch (error) { return (error as NodeJS.ErrnoException).code === 'EPERM'; }
 }
 
+/** Codex's platform packages: its npm wrapper (`codex.js`) only forwards to this binary. */
+const CODEX_WINDOWS_TARGETS: Record<string, { pkg: string; triple: string }> = {
+	x64: { pkg: 'codex-win32-x64', triple: 'x86_64-pc-windows-msvc' },
+	arm64: { pkg: 'codex-win32-arm64', triple: 'aarch64-pc-windows-msvc' }
+};
+
 /** Well-known npm layouts only; never execute .cmd, .ps1 or shell shims. */
 export function windowsNpmProviderCandidates(directory: string, executable: 'codex' | 'claude'): { native?: string; script: string } {
 	const moduleRoot = path.join(directory, 'node_modules');
 	if (executable === 'codex') {
-		return { script: path.join(moduleRoot, '@openai', 'codex', 'bin', 'codex.js') };
+		const codexRoot = path.join(moduleRoot, '@openai', 'codex');
+		const target = CODEX_WINDOWS_TARGETS[process.arch];
+		// The wrapper spawns the binary without hiding its console, so running it from a console-less process makes Windows
+		// open a visible window for every probe. Starting the binary ourselves, hidden, avoids that.
+		return {
+			...(target ? { native: path.join(codexRoot, 'node_modules', '@openai', target.pkg, 'vendor', target.triple, 'bin', 'codex.exe') } : {}),
+			script: path.join(codexRoot, 'bin', 'codex.js')
+		};
 	}
 	return {
 		native: path.join(moduleRoot, '@anthropic-ai', 'claude-code', 'bin', 'claude.exe'),
