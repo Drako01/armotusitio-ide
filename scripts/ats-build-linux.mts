@@ -7,10 +7,10 @@ import { spawn } from 'node:child_process';
 import { mkdir, readFile, stat } from 'node:fs/promises';
 import { fileDigest, run, withLock } from './ats-autoupdate.mts';
 
-/** Stream local Docker output; do not inject host credentials or reuse host native modules. */
-async function execute(args: string[], cwd: string): Promise<void> {
+/** Stream local Docker output; host credentials are never injected unless a caller passes `env` explicitly. */
+async function execute(args: string[], cwd: string, env?: NodeJS.ProcessEnv): Promise<void> {
 	await new Promise<void>((resolve, reject) => {
-		const child = spawn('docker', args, { cwd, stdio: 'inherit', windowsHide: true });
+		const child = spawn('docker', args, { cwd, env, stdio: 'inherit', windowsHide: true });
 		child.once('error', reject);
 		child.once('close', code => code === 0 ? resolve() : reject(new Error(`Docker build stage failed (${code}).`)));
 	});
@@ -26,7 +26,7 @@ export async function archiveLinuxSources(root: string, commit: string, destinat
  * One work volume per architecture: the container refreshes its sources from the archive and reinstalls
  * dependencies only when their fingerprint changes. Logs are written next to the archive of the commit.
  */
-export function linuxRunArgs(arch: string, commit: string, paths: { source: string; output: string; logs: string; cache?: string }, image: string): string[] {
+export function linuxRunArgs(arch: string, commit: string, paths: { source: string; output: string; logs: string; cache?: string }, image: string, sysrootToken = false): string[] {
 	const platform = arch === 'x64' ? 'linux/amd64' : 'linux/arm64';
 	return ['run', '--rm', '--platform', platform,
 		'--mount', `type=bind,source=${paths.source},target=/input/source.tar.gz,readonly`,
@@ -34,7 +34,9 @@ export function linuxRunArgs(arch: string, commit: string, paths: { source: stri
 		'--mount', `type=bind,source=${paths.logs},target=/logs`,
 		'--mount', `type=volume,source=ats-linux-${arch}-${commit.slice(0, 16)},target=/work`,
 		'--mount', paths.cache ? `type=bind,source=${paths.cache},target=/cache` : `type=volume,source=ats-linux-cache-${arch},target=/cache`,
-		'-e', `BUILD_SOURCEVERSION=${commit}`, '-e', `ATS_LINUX_ARCH=${arch}`, image];
+		'-e', `BUILD_SOURCEVERSION=${commit}`, '-e', `ATS_LINUX_ARCH=${arch}`,
+		// Name only: the value travels through the Docker client's environment, never the command line.
+		...(sysrootToken ? ['-e', 'GITHUB_TOKEN'] : []), image];
 }
 
 /** Reuse only complete, hash-verified receipts for the requested immutable source. */
@@ -70,6 +72,8 @@ export async function buildLinux(architectures = ['x64', 'arm64'], root = path.r
 		const source = path.join(directory, 'source.tar.gz');
 		await archiveLinuxSources(root, commit, source);
 		const { version } = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
+		// Opt-in, for the unauthenticated GitHub API limit hit while downloading the VS Code sysroot. Use a token WITHOUT scopes: every dependency install script in the container can read it.
+		const sysrootToken = process.env.ATS_LINUX_SYSROOT_TOKEN;
 		for (const arch of architectures) {
 			if (resume && await reusableLinux(output, commit, version, arch)) { console.log(`Reusing verified Linux ${arch} artifacts at ${commit}`); continue; }
 			const platform = arch === 'x64' ? 'linux/amd64' : 'linux/arm64';
@@ -77,7 +81,7 @@ export async function buildLinux(architectures = ['x64', 'arm64'], root = path.r
 			await execute(['build', '--platform', platform, '--build-arg', `NODE_VERSION=${nodeVersion}`, '-f', 'build/armotusitio/Dockerfile.linux', '-t', image, 'build/armotusitio'], root);
 			const cache = process.env.ATS_LINUX_BIND_CACHE === '1' ? path.join(root, '.build', 'cache', 'linux', arch) : undefined;
 			if (cache) { await mkdir(cache, { recursive: true }); }
-			await execute(linuxRunArgs(arch, commit, { source, output, logs: directory, cache }, image), root);
+			await execute(linuxRunArgs(arch, commit, { source, output, logs: directory, cache }, image, !!sysrootToken), root, sysrootToken ? { ...process.env, GITHUB_TOKEN: sysrootToken } : undefined);
 			console.log(`Linux ${arch} build log: ${path.join(directory, `linux-${arch}.log`)}`);
 			const receipt = JSON.parse(await readFile(path.join(output, `linux-${arch}-receipt.json`), 'utf8'));
 			if (receipt.commit !== commit || receipt.arch !== arch || receipt.quality !== 'stable' || receipt.serverHelp !== true) { throw new Error(`Linux ${arch} receipt does not match this build.`); }

@@ -51,6 +51,14 @@ test('Linux builds isolate work volumes by architecture and immutable commit', (
 	assert.notEqual(args.find(x => x.includes('target=/work')), different.find(x => x.includes('target=/work')));
 });
 
+test('Linux builds forward a GitHub token to the container by name only, and only when asked', () => {
+	const paths = { source: '/in/source.tar.gz', output: '/out', logs: '/logs-host' };
+	assert.ok(!linuxRunArgs('arm64', 'a'.repeat(40), paths, 'image').includes('GITHUB_TOKEN'));
+	const args = linuxRunArgs('arm64', 'a'.repeat(40), paths, 'image', true);
+	assert.deepEqual(args.slice(-3), ['-e', 'GITHUB_TOKEN', 'image']);
+	assert.ok(!args.some(arg => arg.startsWith('GITHUB_TOKEN=')));
+});
+
 test('Linux bootstrap extracts immutable source and installs dependencies on first use', async () => {
 	const script = await readFile(path.join(root, 'build/armotusitio/linux-build.sh'), 'utf8');
 	assert.match(script, /tar -xzf \/input\/source\.tar\.gz/);
