@@ -90,8 +90,9 @@ export function buildAgentInvocation(draft: AgentDraft, writableRoots: readonly 
 		const caches = draft.readOnly ? [] : writableRoots.flatMap(root => ['--add-dir', root]);
 		// Codex's native search tool; it is off unless the project enabled web search (D9).
 		const search = draft.webSearch ? ['--config', 'tools.web_search=true'] : [];
-		// Codex keeps its sandboxed shell (D1) and also gets the runner as the recommended path.
-		const server = runner ? ['--config', 'mcp_servers.ats-runner.command=' + toml(toolServer!.command), '--config', 'mcp_servers.ats-runner.args=[' + toolServer!.args.map(toml).join(',') + ']',
+		// Codex keeps its sandboxed shell (D1) and also gets the runner as the recommended path. Under `--ask-for-approval never`
+		// Codex cancels MCP tool calls that need approval, so the runner is pre-approved: its own policy floor still decides every command.
+		const server = runner ? ['--config', 'mcp_servers.ats-runner.default_tools_approval_mode="approve"', '--config', 'mcp_servers.ats-runner.command=' + toml(toolServer!.command), '--config', 'mcp_servers.ats-runner.args=[' + toolServer!.args.map(toml).join(',') + ']',
 			'--config', 'mcp_servers.ats-runner.env={' + Object.entries(toolServer!.env).map(([key, value]) => key + '=' + toml(value)).join(',') + '}'] : [];
 		return {
 			executable: 'codex',

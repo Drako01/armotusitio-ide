@@ -26,7 +26,7 @@ test('every agent prompt carries the contract that matches its provider and role
 		codex: codex.args.filter(arg => arg.startsWith('mcp_servers.')), reader: buildAgentInvocation({ schemaVersion: 1, provider: 'claude', role: 'planner', projectRoot: '/repo', instruction: 'x', readOnly: true }, [], launch).args.includes('--mcp-config')
 	}, {
 		mcp: ['--mcp-config', '/storage/mcp.json', '--strict-mcp-config'], tools: 'Read,Glob,Grep,Edit,Write,mcp__ats-runner', shell: 'Bash,WebFetch,WebSearch',
-		codex: ['mcp_servers.ats-runner.command="node"', 'mcp_servers.ats-runner.args=["ats-runner.js","runner.json"]', 'mcp_servers.ats-runner.env={ELECTRON_RUN_AS_NODE="1"}'], reader: false
+		codex: ['mcp_servers.ats-runner.default_tools_approval_mode="approve"', 'mcp_servers.ats-runner.command="node"', 'mcp_servers.ats-runner.args=["ats-runner.js","runner.json"]', 'mcp_servers.ats-runner.env={ELECTRON_RUN_AS_NODE="1"}'], reader: false
 	});
 	// The block format the contract teaches is exactly the one the outcome classifier reads.
 	const taught = writer.stdin.split('\n').find(line => line.startsWith('harness-blocked:'))!;
