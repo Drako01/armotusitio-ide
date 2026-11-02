@@ -8,10 +8,14 @@
  * Pure: no I/O, so the same decision is made in the extension and in the tool server process.
  */
 import type { Subproject } from './native-ecosystems.ts';
+import { commandName, dependencyDecision, suggestRule, type PermissionSet } from './native-permissions.ts';
 
 /** Machine-readable denial returned to the agent as `POLICY_DENIED: <category>`. */
-export type PolicyDenial = 'shell-operator' | 'inline-code' | 'git-mutation' | 'publish' | 'network' | 'destructive' | 'privilege' | 'global-config' | 'dependency-change' | 'not-allowed' | 'cwd-outside-project' | 'invalid';
-export type PolicyDecision = { allowed: true; executable: string; cwd: string; delegate: boolean } | { allowed: false; reason: PolicyDenial };
+export type PolicyDenial = 'shell-operator' | 'inline-code' | 'git-mutation' | 'publish' | 'network' | 'destructive' | 'privilege' | 'global-config' | 'dependency-change' | 'not-allowed' | 'cwd-outside-project' | 'invalid' | 'needs-approval';
+/** `needs-approval` is a permission `ask`: still `allowed: false`, so a consumer that only reads `allowed` treats it as denied. */
+export type PolicyDecision = { allowed: true; executable: string; cwd: string; delegate: boolean }
+	| { allowed: false; reason: Exclude<PolicyDenial, 'needs-approval'> }
+	| { allowed: false; reason: 'needs-approval'; rule: string; executable: string; cwd: string; delegate: boolean };
 export interface CommandPolicy {
 	/** Pure decision for one command; `cwd` is project-relative. */
 	decide(command: string, args: readonly string[], cwd: string): PolicyDecision;
@@ -25,6 +29,8 @@ export interface CommandPolicyConfig {
 	delegate: boolean;
 	/** `atsHarness.agentCommands.allow`: extra executables (optionally `executable subcommand`), always inside the floor. */
 	extras: string[];
+	/** Declarative allow/ask/deny rules and preset; they decide only inside the floor. Without it `dependency-change` stays denied. */
+	permissions?: PermissionSet;
 }
 
 const OPERATOR = /^(&&|\|\||\||;|>|>>|<|&)$|`|\$\(/;
@@ -37,7 +43,7 @@ const PUBLISH_TOOLS = new Set(['gh', 'docker', 'podman', 'kubectl', 'helm', 'ter
 const GIT_READ = new Set(['status', 'diff', 'log', 'show', 'rev-parse', 'ls-files', 'blame', 'grep', 'describe', 'shortlog', 'cat-file', 'merge-base', 'name-rev', 'ls-tree']);
 const PACKAGE_MANAGERS = new Set(['npm', 'pnpm', 'yarn', 'bun']);
 
-const base = (command: string): string => command.toLowerCase().replace(/\.(exe|cmd|bat|ps1)$/, '');
+const base = commandName;
 const hasFlag = (args: readonly string[], ...flags: string[]): boolean => args.some(arg => flags.includes(arg) || flags.some(flag => flag.startsWith('--') && arg.startsWith(flag + '=')));
 
 /** The immovable floor: what no project, preset or user setting can allow. */
@@ -109,6 +115,30 @@ function validCwd(cwd: string): string | undefined {
 
 const inside = (cwd: string, folder: string): boolean => folder === '.' || cwd === folder || cwd.startsWith(folder + '/');
 
+/** The permission layer's verdict for one run request (`allow` when no permissions are configured and the floor did not object). */
+function permit(permissions: PermissionSet | undefined, command: string, args: readonly string[], cwd: string, dependency: boolean): 'allow' | 'ask' | 'deny' {
+	if (!permissions) { return 'allow'; }
+	const verdict = permissions.decide({ kind: 'run', command, args: [...args], cwd });
+	// A package install is `ask` by default; only an explicit rule overrides the preset's answer for it.
+	return dependency && !verdict.rule ? dependencyDecision(permissions.preset) : verdict.decision;
+}
+
+/** Whether the project's Harness, the ecosystem presets or the user extras let this command through (after the floor). */
+function allowlisted(config: CommandPolicyConfig, extras: string[][], command: string, args: readonly string[], folder: string): Extract<PolicyDecision, { allowed: true }> | { allowed: false; reason: 'not-allowed' } {
+	const name = base(command);
+	// The project's Harness applies its own, possibly stricter, policy after the floor.
+	if (config.delegate) { return { allowed: true, executable: command, cwd: folder, delegate: true }; }
+	if (name === 'git') { return { allowed: true, executable: command, cwd: folder, delegate: false }; }
+	const sub = args[0];
+	const presetAllows = config.subprojects.some(project => {
+		if (!inside(folder, project.path)) { return false; }
+		const allowed = presets(project)[name];
+		return allowed === true || (!!allowed && !!sub && allowed.includes(sub));
+	});
+	const extraAllows = extras.some(([executable, subcommand]) => base(executable) === name && (!subcommand || subcommand === sub));
+	return presetAllows || extraAllows ? { allowed: true, executable: command, cwd: folder, delegate: false } : { allowed: false, reason: 'not-allowed' };
+}
+
 export function createCommandPolicy(config: CommandPolicyConfig): CommandPolicy {
 	const extras = config.extras.map(entry => entry.trim().split(/\s+/)).filter(parts => parts[0]);
 	return {
@@ -116,19 +146,14 @@ export function createCommandPolicy(config: CommandPolicyConfig): CommandPolicy 
 			const folder = validCwd(cwd);
 			if (!folder) { return { allowed: false, reason: 'cwd-outside-project' }; }
 			const denied = floor(command, args);
-			if (denied) { return { allowed: false, reason: denied }; }
-			const name = base(command);
-			// The project's Harness applies its own, possibly stricter, policy after the floor.
-			if (config.delegate) { return { allowed: true, executable: command, cwd: folder, delegate: true }; }
-			if (name === 'git') { return { allowed: true, executable: command, cwd: folder, delegate: false }; }
-			const sub = args[0];
-			const presetAllows = config.subprojects.some(project => {
-				if (!inside(folder, project.path)) { return false; }
-				const allowed = presets(project)[name];
-				return allowed === true || (!!allowed && !!sub && allowed.includes(sub));
-			});
-			const extraAllows = extras.some(([executable, subcommand]) => base(executable) === name && (!subcommand || subcommand === sub));
-			return presetAllows || extraAllows ? { allowed: true, executable: command, cwd: folder, delegate: false } : { allowed: false, reason: 'not-allowed' };
+			const dependency = denied === 'dependency-change' && !!config.permissions;
+			if (denied && !dependency) { return { allowed: false, reason: denied as Exclude<PolicyDenial, 'needs-approval'> }; }
+			const permitted = permit(config.permissions, command, args, folder, dependency);
+			if (permitted === 'deny') { return { allowed: false, reason: dependency ? 'dependency-change' : 'not-allowed' }; }
+			// A dependency change is never in the ecosystem lists: it is decided by the permission layer alone (ask unless an explicit user rule allows it).
+			const decision = dependency ? { allowed: true as const, executable: command, cwd: folder, delegate: config.delegate } : allowlisted(config, extras, command, args, folder);
+			if (!decision.allowed || permitted === 'allow') { return decision; }
+			return { allowed: false, reason: 'needs-approval', rule: suggestRule({ kind: 'run', command, args: [...args], cwd: folder }), executable: decision.executable, cwd: decision.cwd, delegate: decision.delegate };
 		},
 		describe() {
 			if (config.delegate) { return ['El Harness del proyecto decide qu\u00e9 comandos se ejecutan, dentro del piso del IDE.']; }

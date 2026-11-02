@@ -8,6 +8,8 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { createCommandPolicy } from '../src/native-command-policy.ts';
+import { loadPermissions, type PermissionSet } from '../src/native-permissions.ts';
+import type { PermissionPreset } from '../src/native-permissions-types.ts';
 import { detectEcosystems } from '../src/native-ecosystems.ts';
 import { runCommand } from '../src/native-command-runner.ts';
 import { handleRun, type RunnerConfig } from '../src/ats-runner.ts';
@@ -75,4 +77,48 @@ test('the runner executes without a shell, bounds time and output, and the tool 
 		assert.deepEqual({ denied, ranExit: ran.text.startsWith('exit 3'), budget: /about 1 turns left/.test(ran.text), audit: audit.map(entry => entry.denied ?? entry.exitCode) },
 			{ denied: { isError: true, text: 'POLICY_DENIED: git-mutation' }, ranExit: true, budget: true, audit: ['git-mutation', 3] });
 	} finally { await fs.rm(root, { recursive: true, force: true }); await fs.rm(logs, { recursive: true, force: true }); }
+});
+
+async function permissionsFor(preset: PermissionPreset, files: { user?: unknown; project?: unknown } = {}): Promise<{ set: PermissionSet; cleanup: () => Promise<void> }> {
+	const base = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'ats-policy-permissions-')));
+	for (const [folder, content] of [['home', files.user], ['project', files.project]] as const) {
+		if (content !== undefined) {
+			await fs.mkdir(path.join(base, folder, '.armotusitio'), { recursive: true });
+			await fs.writeFile(path.join(base, folder, '.armotusitio', 'permissions.json'), JSON.stringify(content));
+		}
+	}
+	return { set: await loadPermissions(path.join(base, 'project'), path.join(base, 'home'), undefined, { preset }), cleanup: () => fs.rm(base, { recursive: true, force: true }) };
+}
+
+test('permissions move dependency-change out of the floor: ask in dev and trusted, deny in readonly, denied without permissions', async () => {
+	const answer = async (preset: PermissionPreset | undefined, command: string, args: string[], files?: { user?: unknown; project?: unknown }) => {
+		const loaded = preset ? await permissionsFor(preset, files) : undefined;
+		try {
+			const decision = createCommandPolicy({ subprojects: monorepo, delegate: false, extras: [], permissions: loaded?.set }).decide(command, args, 'apps/web');
+			return decision.allowed ? 'allowed' : decision.reason;
+		} finally { await loaded?.cleanup(); }
+	};
+	assert.deepEqual({
+		none: await answer(undefined, 'pnpm', ['install', 'left-pad']), dev: await answer('dev', 'pnpm', ['install', 'left-pad']), trusted: await answer('trusted', 'pnpm', ['install', 'left-pad']), projectAllow: await answer('dev', 'pnpm', ['add', 'x'], { project: { version: 1, allow: ['run:pnpm add*'] } }),
+		readonly: await answer('readonly', 'pnpm', ['install', 'left-pad']), notListed: await answer('trusted', 'pnpm', ['add', 'left-pad']), userAllowAdd: await answer('dev', 'pnpm', ['add', 'x'], { user: { version: 1, allow: ['run:pnpm add*'] } }),
+		userAllow: await answer('dev', 'pnpm', ['install', 'left-pad'], { user: { version: 1, allow: ['run:pnpm install*'] } }),
+		projectAsk: await answer('trusted', 'pnpm', ['install', 'left-pad'], { project: { version: 1, ask: ['run:pnpm install*'] } }),
+		floorStays: await answer('trusted', 'pnpm', ['publish']), floorShell: await answer('trusted', 'bash', ['-c', 'ls']), floorGlobal: await answer('trusted', 'pnpm', ['add', '-g', 'x'])
+	}, {
+		none: 'dependency-change', dev: 'needs-approval', trusted: 'needs-approval', projectAllow: 'needs-approval', userAllowAdd: 'allowed', readonly: 'dependency-change', notListed: 'needs-approval', userAllow: 'allowed', projectAsk: 'needs-approval',
+		floorStays: 'publish', floorShell: 'shell-operator', floorGlobal: 'global-config'
+	});
+});
+
+test('a permission ask is a denial for consumers that only read allowed, and carries the rule and the resolved command', async () => {
+	const loaded = await permissionsFor('dev', { project: { version: 1, ask: ['run:go test*'], deny: ['run:go vet*'] }, user: { version: 1, allow: ['run:go vet*'] } });
+	try {
+		const policy = createCommandPolicy({ subprojects: monorepo, delegate: false, extras: [], permissions: loaded.set });
+		const asked = policy.decide('go.exe', ['test', './...'], 'apps/api\\');
+		assert.deepEqual({ asked, denied: policy.decide('go', ['vet'], 'apps/api'), outside: policy.decide('go', ['build'], 'apps/web'), allowed: policy.decide('go', ['build'], 'apps/api').allowed },
+			{ asked: { allowed: false, reason: 'needs-approval', rule: 'run:go test*', executable: 'go.exe', cwd: 'apps/api', delegate: false }, denied: { allowed: false, reason: 'not-allowed' }, outside: { allowed: false, reason: 'not-allowed' }, allowed: true });
+		const delegated = createCommandPolicy({ subprojects: [], delegate: true, extras: [], permissions: await permissionsFor('readonly').then(({ set }) => set) });
+		assert.equal((createCommandPolicy({ subprojects: monorepo, delegate: false, extras: [], permissions: loaded.set }).decide('pnpm', ['add', 'x'], 'apps/web') as { rule?: string }).rule, 'run:pnpm add*');
+		assert.deepEqual([delegated.decide('git', ['status'], '.').allowed, delegated.decide('just', ['test'], '.')], [true, { allowed: false, reason: 'not-allowed' }]);
+	} finally { await loaded.cleanup(); }
 });
