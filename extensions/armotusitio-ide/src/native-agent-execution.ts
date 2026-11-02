@@ -16,6 +16,7 @@ import { redactSecrets } from './native-redact.ts';
 import { currentToolchainEnvironment } from './native-toolchain-env.ts';
 import { agentContract, RUN_MINUTES } from './native-agent-contract.ts';
 import { reviewAgentDraft, validateReviewedAgent, type AgentDraft, type AgentReview } from './native-providers.ts';
+import { APPROVAL_TIMEOUT_MS } from './native-approval.ts';
 
 const MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 const MAX_STDOUT_RETAINED = 512 * 1024;
@@ -98,7 +99,7 @@ export function buildAgentInvocation(draft: AgentDraft, writableRoots: readonly 
 		const search = draft.webSearch ? ['--config', 'tools.web_search=true'] : [];
 		// Codex keeps its sandboxed shell (D1) and also gets the runner as the recommended path. Under `--ask-for-approval never`
 		// Codex cancels MCP tool calls that need approval, so the runner is pre-approved: its own policy floor still decides every command.
-		const server = runner ? ['--config', 'mcp_servers.ats-runner.default_tools_approval_mode="approve"', '--config', 'mcp_servers.ats-runner.command=' + toml(toolServer!.command), '--config', 'mcp_servers.ats-runner.args=[' + toolServer!.args.map(toml).join(',') + ']',
+		const server = runner ? ['--config', 'mcp_servers.ats-runner.default_tools_approval_mode="approve"', '--config', 'mcp_servers.ats-runner.tool_timeout_sec=' + String(Math.ceil(APPROVAL_TIMEOUT_MS / 1000) + MAX_DURATION_MS / 1000 + 60), '--config', 'mcp_servers.ats-runner.command=' + toml(toolServer!.command), '--config', 'mcp_servers.ats-runner.args=[' + toolServer!.args.map(toml).join(',') + ']',
 			'--config', 'mcp_servers.ats-runner.env={' + Object.entries(toolServer!.env).map(([key, value]) => key + '=' + toml(value)).join(',') + '}'] : [];
 		return {
 			executable: 'codex',

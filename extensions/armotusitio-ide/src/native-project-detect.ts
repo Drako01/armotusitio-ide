@@ -124,8 +124,10 @@ async function phpCommands(root: string, project: Subproject): Promise<DetectedC
 
 async function dotnetCommands(root: string, project: Subproject): Promise<DetectedCommand[]> {
 	const names = await fs.readdir(path.join(root, project.path)).catch(() => [] as string[]);
-	const solutions = names.filter(name => name.endsWith('.sln'));
-	const projects = names.filter(name => name.endsWith('.csproj'));
+	// A name starting with `-` would reach `dotnet` as an option, so it is never a candidate.
+	const candidates = names.filter(name => !name.startsWith('-'));
+	const solutions = candidates.filter(name => name.endsWith('.sln'));
+	const projects = candidates.filter(name => name.endsWith('.csproj'));
 	// `dotnet` refuses a folder with several candidates, so an ambiguous one is left out rather than guessed.
 	const target = solutions.length === 1 ? solutions : solutions.length === 0 && projects.length === 1 ? [] : undefined;
 	if (!target) { return []; }

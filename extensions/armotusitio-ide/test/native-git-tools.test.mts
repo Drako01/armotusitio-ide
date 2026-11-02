@@ -8,7 +8,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { execFileSync } from 'node:child_process';
-import { GIT_TOOLS, handleGitTool, isSensitiveGitPath, type GitToolsContext } from '../src/native-git-tools.ts';
+import { GIT_TOOLS, handleGitTool, isSensitiveGitPath, repoFingerprint, type GitToolsContext } from '../src/native-git-tools.ts';
 import type { ApprovalAnswer, PermissionDecision, PermissionRequest } from '../src/native-permissions-types.ts';
 import type { ApprovalDraft } from '../src/native-approval.ts';
 
@@ -55,7 +55,7 @@ test('the tools are described to the model with their immovable rules', () => {
 test('sensitive paths are recognized wherever they sit', () => {
 	const table: Array<[string, boolean]> = [
 		['.env', true], ['apps/api/.env.production', true], ['id_rsa', true], ['certs/server.pem', true], ['k/private.KEY', true], ['.npmrc', true], ['.git/config', true],
-		['pkg/.git/hooks/pre-commit', true], ['.armotusitio/permissions.json', true], ['.ssh/config', true], ['src/environment.ts', false], ['docs/env.md', false], ['src/[id]/page.tsx', false]
+		['pkg/.git/hooks/pre-commit', true], ['.armotusitio/permissions.json', true], ['.ssh/config', true], ['.git-credentials', true], ['.htpasswd', true], ['cert.jks', true], ['cert.keystore', true], ['terraform.tfstate', true], ['prod.tfvars', true], ['kubeconfig', true], ['src/environment.ts', false], ['docs/env.md', false], ['src/[id]/page.tsx', false]
 	];
 	assert.deepEqual(table.map(([file]) => isSensitiveGitPath(file)), table.map(([, expected]) => expected));
 });
@@ -140,9 +140,9 @@ test('permissions decide git_commit: deny refuses, ask needs the user, allow run
 		const noUi = await handleGitTool({ ...context, ask: undefined }, 'git_commit', { paths: ['a.txt'], message: 'm' });
 		assert.deepEqual({ denied: denied.text.startsWith('POLICY_DENIED: '), refused: refused.text, noUi: noUi.text, unchanged: head(root) === before, card: asked.map(card => [card.kind, card.title, card.detail, card.rule]) }, {
 			denied: true, refused: 'DENIED: the user did not allow it', noUi: 'DENIED: this run has no way to ask the user', unchanged: true,
-			card: [['git_commit', 'Commit', ['branch: feat/work', 'files: a.txt', 'message: refuse me'], 'git_commit']]
+			card: [['git_commit', 'Commit', ['branch: feat/work', 'files: a.txt', 'message: refuse me'], '']]
 		});
-		set('ask', 'always');
+		set('ask', 'once');
 		assert.equal((await handleGitTool(context, 'git_commit', { paths: ['a.txt'], message: 'now' })).isError, false);
 		assert.notEqual(head(root), before);
 	});
@@ -227,5 +227,42 @@ test('unknown tools and malformed input are rejected', async () => {
 	await withRepo(async ({ context }) => {
 		assert.equal((await handleGitTool(context, 'git_reset', {})).text, 'Unknown tool');
 		assert.match((await handleGitTool(context, 'git_commit', null)).text, /^POLICY_DENIED: invalid-paths/);
+	});
+});
+
+test('git tools refuse modified hooks and config, including changes while approval is pending', async () => {
+	await withRepo(async ({ root, context, set }) => {
+		await fs.writeFile(path.join(root, 'a.txt'), 'a\n');
+		const baseline = await repoFingerprint(root);
+		const guarded = { ...context, repoBaseline: baseline };
+		await fs.writeFile(path.join(root, '.git', 'hooks', 'pre-commit'), '#!/bin/sh\nexit 0\n');
+		assert.equal((await handleGitTool(guarded, 'git_commit', { paths: ['a.txt'], message: 'm' })).text, 'POLICY_DENIED: repo-config-changed');
+		await fs.rm(path.join(root, '.git', 'hooks', 'pre-commit'));
+		set('ask');
+		guarded.ask = async () => { git(root, 'config', 'core.hooksPath', '.githooks'); return 'once'; };
+		assert.equal((await handleGitTool(guarded, 'git_commit', { paths: ['a.txt'], message: 'm' })).text, 'POLICY_DENIED: repo-config-changed');
+		assert.equal(git(root, 'log', '-1', '--format=%s'), 'seed');
+	});
+});
+
+test('tracked hook directories cannot be committed or executed with uncommitted changes', async () => {
+	await withRepo(async ({ root, context }) => {
+		git(root, 'config', 'core.hooksPath', '.githooks');
+		await fs.mkdir(path.join(root, '.githooks'));
+		await fs.writeFile(path.join(root, '.githooks', 'pre-commit'), '#!/bin/sh\nexit 0\n');
+		await fs.writeFile(path.join(root, 'a.txt'), 'a\n');
+		const guarded = { ...context, repoBaseline: await repoFingerprint(root) };
+		assert.equal((await handleGitTool(guarded, 'git_commit', { paths: ['a.txt'], message: 'm' })).text, 'POLICY_DENIED: hooks-modified');
+		assert.equal((await handleGitTool(guarded, 'git_commit', { paths: ['.githooks/pre-commit'], message: 'm' })).text, 'POLICY_DENIED: hooks-modified');
+	});
+});
+
+test('push protects configured patterns and init.defaultBranch without a remote HEAD', async () => {
+	await withRepo(async ({ root, context }) => {
+		git(root, 'checkout', '-q', '-B', 'production');
+		git(root, 'config', 'init.defaultBranch', 'production');
+		assert.equal((await handleGitTool(context, 'git_push', {})).text, 'POLICY_DENIED: protected-branch');
+		git(root, 'checkout', '-q', '-B', 'release/next');
+		assert.equal((await handleGitTool({ ...context, protectedBranches: ['release/*'] }, 'git_push', {})).text, 'POLICY_DENIED: protected-branch');
 	});
 });

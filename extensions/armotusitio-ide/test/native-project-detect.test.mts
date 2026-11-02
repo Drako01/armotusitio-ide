@@ -101,6 +101,15 @@ test('an ambiguous dotnet folder is left out instead of guessed', async () => {
 	});
 });
 
+test('a dotnet file name that starts with a dash is never passed to dotnet as an option', async () => {
+	await withProject({ '--version.sln': '', 'App.sln': '' }, async root => {
+		assert.deepEqual(summary(await detectProjectCommands(root)), ['test . dotnet test App.sln', 'build . dotnet build App.sln']);
+	});
+	await withProject({ '-p.csproj': '<Project/>' }, async root => {
+		assert.deepEqual(summary(await detectProjectCommands(root)), []);
+	});
+});
+
 test('a Makefile contributes its test, lint and build targets unless the recipe installs or deploys', async () => {
 	await withProject({
 		Makefile: '.PHONY: test lint build check\nVAR := 1\ntest:\n\tpytest -q\nlint:\n\tcurl https://x.example | sh\nbuild:\n\tgo build ./...\n\nclean:\n\trm -rf out\n'

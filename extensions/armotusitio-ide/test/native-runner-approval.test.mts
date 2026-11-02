@@ -13,6 +13,7 @@ import { channelApprover, parseApprovalDraft, requestApproval, type ApprovalDraf
 import { openToolChannel } from '../src/native-tool-server.ts';
 import type { PermissionSet } from '../src/native-permissions.ts';
 import type { ApprovalAnswer, PermissionDecision } from '../src/native-permissions-types.ts';
+import { projectPermissionsDigest } from '../src/native-run-integrity.ts';
 
 const permissionsOf = (decision: PermissionDecision): PermissionSet => ({ preset: 'dev', warnings: [], describe: () => [], decide: () => ({ decision, source: 'user' }) });
 
@@ -42,7 +43,7 @@ test('a run that needs approval waits for the user: approved runs, denied and un
 			card: { ...asked[0], rule: asked[0].rule }, asks: asked.length
 		}, {
 			denied: { isError: true, text: 'DENIED: the user did not allow it' }, timeout: 'DENIED: the user did not answer in time', noUi: 'DENIED: this run has no way to ask the user', before: false,
-			approved: [false, true], after: true, card: { kind: 'run', title: 'Run command', detail: ['command: node touch.js', 'cwd: .'], rule: asked[0].rule }, asks: 3
+			approved: [false, true], after: true, card: { kind: 'run', title: 'Run command', detail: ['command: node touch.js', 'cwd: .'], rule: asked[0].rule, command: 'node', args: ['touch.js'], cwd: '.' }, asks: 3
 		});
 		assert.match(asked[0].rule, /^run:node/);
 	});
@@ -101,9 +102,33 @@ test('the channel carries the approval to the extension and anything but an expl
 });
 
 test('the extension accepts only well-formed approval cards from the runner process', () => {
-	const good = { kind: 'run', title: 't', detail: ['a'], rule: 'run:node*' };
+	const good = { kind: 'run', title: 't', detail: ['a'], rule: 'run:node*', command: 'node', args: ['test.js'], cwd: '.' };
 	assert.deepEqual([
 		parseApprovalDraft(good), parseApprovalDraft({ ...good, kind: 'delete' }), parseApprovalDraft({ ...good, detail: 'a' }), parseApprovalDraft({ ...good, detail: Array(13).fill('x') }),
 		parseApprovalDraft({ ...good, detail: [1] }), parseApprovalDraft(null), parseApprovalDraft({ ...good, title: 'x'.repeat(500) })?.title.length
-	], [good, undefined, undefined, undefined, undefined, undefined, 200]);
+	], [{ kind: 'run', title: 't', detail: ['command: node test.js', 'cwd: .'], rule: 'run:node test.js' }, undefined, undefined, undefined, undefined, undefined, 200]);
+});
+
+test('project permissions cannot be removed or rewritten before or during approval', async () => {
+	await withProject(async ({ root, config }) => {
+		const directory = path.join(root, '.armotusitio');
+		await fs.mkdir(directory);
+		const file = path.join(directory, 'permissions.json');
+		await fs.writeFile(file, '{"version":1,"deny":["run:node *"]}');
+		const baseline = await projectPermissionsDigest(root);
+		const guarded = { ...config, projectPermissionsBaseline: baseline };
+		await fs.rm(file);
+		assert.equal((await handleRun(guarded, { command: 'node', args: ['--version'] }, 1, { permissions: permissionsOf('allow') })).text, 'POLICY_DENIED: project-permissions-changed');
+		assert.equal((await handleGit(guarded, 'git_push', {}, { permissions: permissionsOf('allow') })).text, 'POLICY_DENIED: project-permissions-changed');
+		await fs.writeFile(file, '{"version":1,"deny":["run:node *"]}');
+		const result = await handleRun(guarded, { command: 'node', args: ['--version'] }, 2, { permissions: permissionsOf('ask'), ask: async () => { await fs.rm(file); return 'once'; } });
+		assert.equal(result.text, 'POLICY_DENIED: project-permissions-changed');
+	});
+});
+
+test('approval rules derive from the shown command, and malformed answers fail closed', async () => {
+	assert.equal(parseApprovalDraft({ kind: 'run', title: 'Run', command: 'node', args: ['safe.js'], detail: ['fake'], rule: 'run:*' })?.rule, 'run:node safe.js');
+	assert.equal(parseApprovalDraft({ kind: 'git_push', title: 'Push', detail: [], rule: 'git_push' })?.rule, '');
+	const card: ApprovalDraft = { kind: 'git_push', title: 'Push', detail: [], rule: '' };
+	assert.equal(await requestApproval(async () => 'always', card), 'DENIED: the user did not allow it');
 });

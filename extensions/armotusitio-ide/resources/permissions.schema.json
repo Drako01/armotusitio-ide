@@ -18,7 +18,7 @@
 				"dev",
 				"trusted"
 			],
-			"description": "Perfil base (solo en el archivo de usuario; el setting atsHarness.permissionsPreset tiene prioridad)."
+			"description": "Perfil base (solo en el archivo de usuario; el setting atsHarness.permissionsPreset tiene prioridad). readonly: permite comandos de consulta y rechaza otras ejecuciones y git de escritura; las ediciones las controla el proveedor."
 		},
 		"allow": {
 			"$ref": "#/definitions/rules",
@@ -41,9 +41,9 @@
 				"type": "string",
 				"maxLength": 300,
 				"pattern": "^(git_commit|git_push|(run|edit):[^\u0000-\u001f\u007f]+)$",
+				"description": "run:<glob>, git_commit o git_push. edit:<glob> esta reservado y todavia no se aplica (las ediciones las hace el proveedor).",
 				"examples": [
 					"run:pnpm test*",
-					"edit:src/**",
 					"git_commit",
 					"git_push"
 				]

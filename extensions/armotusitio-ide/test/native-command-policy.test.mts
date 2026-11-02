@@ -103,10 +103,11 @@ test('permissions move dependency-change out of the floor: ask in dev and truste
 		readonly: await answer('readonly', 'pnpm', ['install', 'left-pad']), notListed: await answer('trusted', 'pnpm', ['add', 'left-pad']), userAllowAdd: await answer('dev', 'pnpm', ['add', 'x'], { user: { version: 1, allow: ['run:pnpm add*'] } }),
 		userAllow: await answer('dev', 'pnpm', ['install', 'left-pad'], { user: { version: 1, allow: ['run:pnpm install*'] } }),
 		projectAsk: await answer('trusted', 'pnpm', ['install', 'left-pad'], { project: { version: 1, ask: ['run:pnpm install*'] } }),
+		corruptFile: await answer('trusted', 'pnpm', ['add', 'x'], { user: { version: 2 } }),
 		floorStays: await answer('trusted', 'pnpm', ['publish']), floorShell: await answer('trusted', 'bash', ['-c', 'ls']), floorGlobal: await answer('trusted', 'pnpm', ['add', '-g', 'x'])
 	}, {
 		none: 'dependency-change', dev: 'needs-approval', trusted: 'needs-approval', projectAllow: 'needs-approval', userAllowAdd: 'allowed', readonly: 'dependency-change', notListed: 'needs-approval', userAllow: 'allowed', projectAsk: 'needs-approval',
-		floorStays: 'publish', floorShell: 'shell-operator', floorGlobal: 'global-config'
+		corruptFile: 'dependency-change', floorStays: 'publish', floorShell: 'shell-operator', floorGlobal: 'global-config'
 	});
 });
 
@@ -116,9 +117,32 @@ test('a permission ask is a denial for consumers that only read allowed, and car
 		const policy = createCommandPolicy({ subprojects: monorepo, delegate: false, extras: [], permissions: loaded.set });
 		const asked = policy.decide('go.exe', ['test', './...'], 'apps/api\\');
 		assert.deepEqual({ asked, denied: policy.decide('go', ['vet'], 'apps/api'), outside: policy.decide('go', ['build'], 'apps/web'), allowed: policy.decide('go', ['build'], 'apps/api').allowed },
-			{ asked: { allowed: false, reason: 'needs-approval', rule: 'run:go test*', executable: 'go.exe', cwd: 'apps/api', delegate: false }, denied: { allowed: false, reason: 'not-allowed' }, outside: { allowed: false, reason: 'not-allowed' }, allowed: true });
+			{ asked: { allowed: false, reason: 'needs-approval', rule: 'run:go test ./...', executable: 'go.exe', cwd: 'apps/api', delegate: false }, denied: { allowed: false, reason: 'not-allowed' }, outside: { allowed: false, reason: 'not-allowed' }, allowed: true });
 		const delegated = createCommandPolicy({ subprojects: [], delegate: true, extras: [], permissions: await permissionsFor('readonly').then(({ set }) => set) });
-		assert.equal((createCommandPolicy({ subprojects: monorepo, delegate: false, extras: [], permissions: loaded.set }).decide('pnpm', ['add', 'x'], 'apps/web') as { rule?: string }).rule, 'run:pnpm add*');
+		assert.equal((createCommandPolicy({ subprojects: monorepo, delegate: false, extras: [], permissions: loaded.set }).decide('pnpm', ['add', 'x'], 'apps/web') as { rule?: string }).rule, '');
 		assert.deepEqual([delegated.decide('git', ['status'], '.').allowed, delegated.decide('just', ['test'], '.')], [true, { allowed: false, reason: 'not-allowed' }]);
+	} finally { await loaded.cleanup(); }
+});
+
+
+test('the floor checks executable paths, inline flag variants and nested launcher payloads before permissions or delegation', async () => {
+	const loaded = await permissionsFor('trusted', { user: { version: 1, allow: ['run:*'] } });
+	try {
+		const cases: Array<[string, string[]]> = [
+			['git', ['grep', '-Osh', 'x']], ['git', ['grep', '--open-files-in-pager=sh', 'x']], ['git', ['log', '--paginate']],
+			['node', ['--eval=1']], ['node', ['-pe', '1']], ['node', ['--require=./evil.js']], ['node', ['--import=./evil.js']],
+			['python', ['-Ic', 'print(1)']], ['python', ['-ic', 'print(1)']],
+			['pnpm', ['exec', 'sh', '-c', 'x']], ['pnpm', ['exec', 'curl', 'https://x']], ['uv', ['run', 'python', '-c', 'x']],
+			['poetry', ['run', 'curl', 'https://x']], ['bundle', ['exec', 'ruby', '-e', 'x']], ['npx', ['sh', '-c', 'x']], ['npx', ['-y', 'curl', 'https://x']],
+			['/usr/bin/curl', ['https://x']], ['C:\\Windows\\System32\\curl.exe', ['https://x']], ['/bin/rm', ['file']], ['./bash', ['-c', 'x']], ['/usr/bin/node', ['file.js']],
+			['pnpm', ['--dir', '.', 'exec', 'sh', '-c', 'x']], ['uv', ['--project', '.', 'run', 'python', '-c', 'x']],
+			['pnpm', ['exec', 'npx', 'sh', '-c', 'x']], ['uv', ['run', '--project', '.', 'python', '-c', 'x']]
+		];
+		for (const delegate of [false, true]) {
+			const policy = createCommandPolicy({ subprojects: monorepo, delegate, extras: ['curl', 'sh'], permissions: loaded.set });
+			assert.deepEqual(cases.map(([command, args]) => policy.decide(command, args, 'apps/web').allowed), cases.map(() => false));
+		}
+		const policy = createCommandPolicy({ subprojects: monorepo, delegate: false, extras: [], permissions: loaded.set });
+		assert.equal(policy.decide('pnpm', ['exec', 'tsc', '--noEmit'], 'apps/web').allowed, true);
 	} finally { await loaded.cleanup(); }
 });

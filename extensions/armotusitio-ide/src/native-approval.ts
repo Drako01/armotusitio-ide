@@ -8,7 +8,9 @@
  * an explicit yes (no channel, no UI, timeout, cancellation, error) is a denial: this module fails closed.
  */
 import { callToolChannel } from './native-tool-server.ts';
-import type { ApprovalAnswer, ApprovalRequest } from './native-permissions-types.ts';
+import { suggestRule } from './native-permissions.ts';
+import { redactSecrets } from './native-redact.ts';
+import type { ApprovalAnswer, ApprovalRequest, PermissionRequest } from './native-permissions-types.ts';
 
 /** Without an answer the request is denied after this long. */
 export const APPROVAL_TIMEOUT_MS = 10 * 60 * 1000;
@@ -16,14 +18,43 @@ const ANSWERS: readonly ApprovalAnswer[] = ['once', 'always', 'deny'];
 
 /** What the tool server asks; the extension assigns the id. */
 export type ApprovalDraft = Omit<ApprovalRequest, 'id'>;
-export type ApprovalAsk = (request: ApprovalDraft) => Promise<ApprovalAnswer>;
+/** The structured fields the extension derives the "always" rule from; the runner's own `rule` is only a hint and is never trusted. */
+export interface ApprovalSubject { command?: string; args?: string[]; cwd?: string; path?: string }
+export type ApprovalAsk = (request: ApprovalDraft & ApprovalSubject) => Promise<ApprovalAnswer>;
 
-/** True for a value that can be shown as an approval card; the extension validates what the runner process sends. */
+const MAX_PENDING_ARGS = 100;
+
+/** The permission request an approval is about, rebuilt from structured fields; `undefined` when they are missing or malformed. */
+function subjectRequest(draft: Partial<ApprovalDraft> & ApprovalSubject): PermissionRequest | undefined {
+	switch (draft.kind) {
+		case 'run': {
+			const { command, args, cwd } = draft;
+			if (typeof command !== 'string' || !command || command.length > 300 || (cwd !== undefined && typeof cwd !== 'string') ||
+				!Array.isArray(args) || args.length > MAX_PENDING_ARGS || !args.every(arg => typeof arg === 'string' && arg.length <= 1000)) { return undefined; }
+			return { kind: 'run', command, args, cwd: cwd ?? '.' };
+		}
+		case 'edit': return typeof draft.path === 'string' && draft.path ? { kind: 'edit', path: draft.path } : undefined;
+		case 'git_commit': return { kind: 'git_commit', branch: '', files: [], message: '' };
+		case 'git_push': return { kind: 'git_push', branch: '', remote: '' };
+		default: return undefined;
+	}
+}
+
+/**
+ * A value that can be shown as an approval card, or `undefined`. The extension validates what the runner process sends and
+ * computes the "always" rule itself from the structured subject (a runner could otherwise show one thing and persist another).
+ * An empty `rule` means the action cannot be remembered. A command's lines are rebuilt from the same subject so card and rule agree.
+ */
 export function parseApprovalDraft(value: unknown): ApprovalDraft | undefined {
-	const draft = (value ?? {}) as Partial<ApprovalDraft>;
-	if (!['run', 'edit', 'git_commit', 'git_push'].includes(draft.kind as string) || typeof draft.title !== 'string' || typeof draft.rule !== 'string' ||
-		!Array.isArray(draft.detail) || draft.detail.length > 12 || !draft.detail.every(line => typeof line === 'string')) { return undefined; }
-	return { kind: draft.kind!, title: draft.title.slice(0, 200), rule: draft.rule.slice(0, 300), detail: draft.detail.map(line => line.slice(0, 400)) };
+	const draft = (value ?? {}) as Partial<ApprovalDraft> & ApprovalSubject;
+	if (typeof draft.title !== 'string' || !Array.isArray(draft.detail) || draft.detail.length > 12 || !draft.detail.every(line => typeof line === 'string')) { return undefined; }
+	const request = subjectRequest(draft);
+	if (!request) { return undefined; }
+	const detail = request.kind === 'run'
+		? ['command: ' + [request.command, ...request.args].join(' ').slice(0, 300), 'cwd: ' + request.cwd.slice(0, 300)]
+		: draft.detail.map(line => line.slice(0, 400));
+	const rule = suggestRule(request);
+	return { kind: request.kind, title: redactSecrets(draft.title.slice(0, 200)), rule: redactSecrets(rule) === rule ? rule : '', detail: detail.map(redactSecrets) };
 }
 
 /** Asks through the run's channel. The client waits slightly longer than the extension, which answers `deny` on its own timeout. */
@@ -35,10 +66,11 @@ export function channelApprover(channel: { address: string; token: string }, tim
 }
 
 /** `undefined` when the user approved; otherwise the `DENIED: <reason>` text the model receives. */
-export async function requestApproval(ask: ApprovalAsk | undefined, request: ApprovalDraft): Promise<string | undefined> {
+export async function requestApproval(ask: ApprovalAsk | undefined, request: ApprovalDraft & ApprovalSubject): Promise<string | undefined> {
 	if (!ask) { return 'DENIED: this run has no way to ask the user'; }
 	try {
-		return (await ask(request)) === 'deny' ? 'DENIED: the user did not allow it' : undefined;
+		const answer = await ask(request);
+		return answer === 'once' || (answer === 'always' && !!request.rule) ? undefined : 'DENIED: the user did not allow it';
 	} catch (error) {
 		return (error as Error).message === 'HARNESS_TIMEOUT' ? 'DENIED: the user did not answer in time' : 'DENIED: the approval could not be requested';
 	}

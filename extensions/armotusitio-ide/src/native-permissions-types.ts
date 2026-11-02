@@ -3,12 +3,13 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 /**
- * Shared contract of the permission system (plan r6). Declarative rules (`allow` / `ask` / `deny`) sit ABOVE the immovable
- * policy floor of `native-command-policy.ts`: a rule can never allow what the floor denies.
+ * Shared contract of the permission system (plan r6). Declarative rules (`allow` / `ask` / `deny`) sit INSIDE the
+ * policy floor of `native-command-policy.ts`: a rule can never allow what the floor denies. The floor is a good-faith barrier, not
+ * an OS sandbox.
  *
  * Rule grammar (case-sensitive, `*` matches any run of characters, no other wildcard):
  *   run:<glob>        a command line, `command arg1 arg2` joined by single spaces   e.g. `run:pnpm test*`
- *   edit:<glob>       a project-relative path the agent edits, with `/` separators  e.g. `edit:src/**`
+ *   edit:<glob>       RESERVED, not enforced yet: edits are made by the provider's native tools, which nothing here intercepts
  *   git_commit        the structured commit tool
  *   git_push          the structured push tool
  * Precedence inside one layer: deny, then ask, then allow. Across layers: floor > project > user > preset; a project file can

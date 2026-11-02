@@ -4,8 +4,8 @@
  *--------------------------------------------------------------------------------------------*/
 /**
  * Declarative permissions (plan r6): `allow` / `ask` / `deny` rules from the user file, the project file and a preset.
- * They only ever decide INSIDE the immovable floor of `native-command-policy.ts`. Anything invalid fails closed: it is ignored
- * (never widens) and reported in `warnings`. No `vscode` dependency, so the tool server process can load it too.
+ * They only ever decide INSIDE the immovable floor of `native-command-policy.ts`. Invalid files fail closed: requests are denied
+ * until the file is repaired, and the problem is reported in `warnings`. No `vscode` dependency, so the tool server process can load it too.
  */
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
@@ -24,7 +24,7 @@ const MAX_FILE_BYTES = 16 * 1024;
 const MAX_RULES = 200;
 const MAX_RULE_LENGTH = 300;
 /** Longest subject matched; a longer one is denied outright, because a truncated match could skip a deny rule. */
-const MAX_SUBJECT_LENGTH = 8192;
+const MAX_SUBJECT_LENGTH = 2048;
 const FILE_KEYS = new Set(['version', 'preset', 'allow', 'ask', 'deny']);
 const DECISIONS: readonly PermissionDecision[] = ['deny', 'ask', 'allow'];
 const PRESETS: readonly PermissionPreset[] = ['readonly', 'dev', 'trusted'];
@@ -39,7 +39,7 @@ const emptyLayer = (): Layer => ({ allow: [], ask: [], deny: [] });
 
 /** Lowercase executable name without Windows launcher extensions; shared with the command policy floor. */
 export function commandName(command: string): string {
-	return command.toLowerCase().replace(/\.(exe|cmd|bat|ps1)$/, '');
+	return command.replace(/\\/g, '/').split('/').pop()!.toLowerCase().replace(/\.(exe|cmd|bat|ps1)$/, '');
 }
 
 /** `*` matches any run of characters (including `/`); everything else is literal. Iterative with a single backtrack point: O(n*m), no RegExp. */
@@ -103,26 +103,27 @@ function parseFile(raw: string, allowAllow: boolean, label: string, t: Translato
 }
 
 /** Reads one permissions file without following symlinks and within the size bound; missing file means no rules. */
-async function readLayer(file: string, allowAllow: boolean, label: string, t: Translator, warnings: string[]): Promise<{ layer?: Layer; preset?: PermissionPreset }> {
+async function readLayer(file: string, allowAllow: boolean, label: string, t: Translator, warnings: string[]): Promise<{ layer?: Layer; preset?: PermissionPreset; invalid?: boolean }> {
 	let handle: fs.FileHandle | undefined;
 	try {
 		for (const target of [path.dirname(file), file]) {
 			const stat = await fs.lstat(target);
-			if (stat.isSymbolicLink()) { warnings.push(t('El archivo de permisos {0} se ignor\u00f3: es un enlace simb\u00f3lico.', label)); return {}; }
+			if (stat.isSymbolicLink()) { warnings.push(t('El archivo de permisos {0} se ignor\u00f3: es un enlace simb\u00f3lico.', label)); return { invalid: true }; }
 		}
 		const stat = await fs.lstat(file);
-		if (!stat.isFile() || stat.size > MAX_FILE_BYTES) { warnings.push(t('El archivo de permisos {0} se ignor\u00f3: no es un archivo regular o supera los 16 KiB.', label)); return {}; }
+		if (!stat.isFile() || stat.size > MAX_FILE_BYTES) { warnings.push(t('El archivo de permisos {0} se ignor\u00f3: no es un archivo regular o supera los 16 KiB.', label)); return { invalid: true }; }
 		handle = await fs.open(file, 'r');
 		const buffer = Buffer.alloc(MAX_FILE_BYTES + 1);
 		const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-		if (bytesRead > MAX_FILE_BYTES) { warnings.push(t('El archivo de permisos {0} se ignor\u00f3: supera los 16 KiB.', label)); return {}; }
+		if (bytesRead > MAX_FILE_BYTES) { warnings.push(t('El archivo de permisos {0} se ignor\u00f3: supera los 16 KiB.', label)); return { invalid: true }; }
 		const raw = buffer.subarray(0, bytesRead).toString('utf8');
 		const layer = parseFile(raw, allowAllow, label, t, warnings);
 		const preset = layer ? (JSON.parse(raw) as { preset?: PermissionPreset }).preset : undefined;
-		return { layer, preset };
+		return { layer, preset, invalid: !layer };
 	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code !== 'ENOENT') { warnings.push(t('El archivo de permisos {0} no se pudo leer.', label)); }
-		return {};
+		if ((error as NodeJS.ErrnoException).code === 'ENOENT') { return {}; }
+		warnings.push(t('El archivo de permisos {0} no se pudo leer.', label));
+		return { invalid: true };
 	} finally { await handle?.close(); }
 }
 
@@ -145,7 +146,7 @@ export function dependencyDecision(preset: PermissionPreset): PermissionDecision
 	return preset === 'readonly' ? 'deny' : 'ask';
 }
 
-function createPermissionSet(preset: PermissionPreset, project: Layer, user: Layer, warnings: string[]): PermissionSet {
+function createPermissionSet(preset: PermissionPreset, project: Layer, user: Layer, warnings: string[], invalid = false): PermissionSet {
 	const layers: Array<{ source: PermissionSource; layer: Layer }> = [{ source: 'project', layer: project }, { source: 'user', layer: user }];
 	const find = (decision: PermissionDecision, kind: PermissionRequest['kind'], subject: string) => {
 		for (const { source, layer } of layers) {
@@ -158,6 +159,7 @@ function createPermissionSet(preset: PermissionPreset, project: Layer, user: Lay
 		preset,
 		warnings,
 		decide(request) {
+			if (invalid) { return { decision: 'deny', source: 'default' }; }
 			const { kind, subject } = subjectOf(request);
 			if (subject.length > MAX_SUBJECT_LENGTH) { return { decision: 'deny', source: 'default' }; }
 			// A deny anywhere wins first, so a weaker layer can never turn a stronger deny into an ask.
@@ -178,7 +180,8 @@ export async function loadPermissions(root: string, home: string = os.homedir(),
 	const warnings: string[] = [];
 	const user = await readLayer(path.join(home, '.armotusitio', 'permissions.json'), true, '~/.armotusitio/permissions.json', t, warnings);
 	const project = await readLayer(path.join(root, '.armotusitio', 'permissions.json'), false, '.armotusitio/permissions.json', t, warnings);
-	return createPermissionSet(options.preset ?? user.preset ?? 'dev', project.layer ?? emptyLayer(), user.layer ?? emptyLayer(), warnings);
+	if (user.invalid || project.invalid) { warnings.push(t('Se denegaron las acciones hasta que se repare el archivo de permisos.')); }
+	return createPermissionSet(options.preset ?? user.preset ?? 'dev', project.layer ?? emptyLayer(), user.layer ?? emptyLayer(), warnings, user.invalid || project.invalid);
 }
 
 /** Appends a rule to the USER file (never the project one): atomic replace, no duplicates, the rest of the JSON preserved. */
@@ -214,16 +217,22 @@ export async function addUserRule(rule: string, decision: PermissionDecision, ho
 	}
 }
 
-/** Rule persisted when the user answers "always" for this request. */
+/** Exact rule for a repeatable command; an empty value means "always" must not be offered. */
 export function suggestRule(request: PermissionRequest): string {
-	switch (request.kind) {
-		case 'run': return 'run:' + commandName(request.command) + (request.args[0] ? ' ' + request.args[0] : '') + '*';
-		case 'edit': {
-			const folder = normalizePath(request.path).split('/').slice(0, -1).join('/');
-			return 'edit:' + (folder ? folder + '/' : '') + '**';
-		}
-		default: return request.kind;
-	}
+	if (request.kind !== 'run' || request.args.length === 0) { return ''; }
+	const name = commandName(request.command);
+	const sub = request.args[0].toLowerCase();
+	// Package managers and launchers can install dependencies or run another executable. Their approvals are per action.
+	if (['npm', 'pnpm', 'yarn', 'bun', 'npx', 'pnpx', 'bunx', 'pip', 'pip3', 'pipx', 'uv', 'poetry', 'conda', 'composer', 'gem', 'bundle'].includes(name) &&
+		!(['npm', 'pnpm', 'yarn', 'bun'].includes(name) && ['test', 'run', 'lint', 'typecheck'].includes(sub))) { return ''; }
+	if (['python', 'python3', 'py'].includes(name) && sub === '-m' && ['pip', 'twine', 'ensurepip', 'http.server', 'venv'].includes(request.args[1])) { return ''; }
+	if ((name === 'go' && ['get', 'install'].includes(sub)) || (name === 'cargo' && ['install', 'add', 'remove', 'update'].includes(sub)) ||
+		(name === 'dotnet' && ['add', 'remove', 'tool', 'nuget'].includes(sub))) { return ''; }
+	// No escaping syntax exists in the glob grammar. Refuse metacharacters, empty arguments and argument-boundary ambiguity.
+	const parts = [name, ...request.args];
+	if (parts.some(part => !part || /[\s*?\u0000-\u001f\u007f]/.test(part))) { return ''; }
+	const rule = 'run:' + parts.join(' ');
+	return rule.length <= MAX_RULE_LENGTH ? rule : '';
 }
 
 /** Validates the raw `atsHarness.permissionsPreset` setting; `undefined` lets the permission files decide. */
