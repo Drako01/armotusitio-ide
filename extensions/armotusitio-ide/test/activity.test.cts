@@ -152,3 +152,9 @@ test('manual refresh during a poll waits for a trailing native reading instead o
 		assert.deepEqual([reads, h.controller.progress], [2, []]);
 	} finally { h.dispose(); }
 });
+
+test('polling cadence: 3 s while active, 60 s idle, doubling per failure up to five minutes', () => {
+	const { POLL, nextDelay } = require('../src/activity.ts');
+	assert.deepEqual([nextDelay(true, 0), nextDelay(false, 0), nextDelay(true, 2), nextDelay(false, 1), nextDelay(true, 20)], [POLL.activeMs, POLL.idleMs, 12000, 120000, POLL.maxBackoffMs]);
+	assert.deepEqual([POLL.activeMs, POLL.idleMs, POLL.maxBackoffMs], [3000, 60000, 300000]);
+});
