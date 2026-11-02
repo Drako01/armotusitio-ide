@@ -3,7 +3,10 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 /** Provider-specific accounting from structured output; no estimated tokens fabricated from text. */
+import { asObject as object } from './native-json.ts';
 import type { NativeProvider } from './native-providers.ts';
+import { RunStepExtractor, type ChatStep } from './native-run-steps.ts';
+import { mergeQuota, parseQuotaEvent, type ProviderQuota } from './native-quota.ts';
 
 export interface ProviderUsage {
 	inputTokens: number;
@@ -24,6 +27,8 @@ export interface ParsedProviderOutput {
 	sessionId?: string;
 	/** Web search queries the provider made (decision D9), in order; empty when search was off or unused. */
 	searches?: string[];
+	/** Usage windows the provider reported in its stream, when it reported any. */
+	quota?: ProviderQuota;
 }
 const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** A provider session id that is safe to pass back as a CLI argument. */
@@ -44,9 +49,6 @@ function amount(value: unknown): number | undefined {
 }
 function cost(value: unknown): number | undefined {
 	return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value < 1_000_000 ? value : undefined;
-}
-function object(value: unknown): Record<string, unknown> | undefined {
-	return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 }
 
 const MAX_RETAINED_MESSAGE = 64 * 1024;
@@ -115,12 +117,22 @@ abstract class ProviderEventAccumulator {
 	protected stopReason: ParsedProviderOutput['stopReason'];
 	protected sessionId: string | undefined;
 	protected usage: ProviderUsage | undefined;
+	private quota: ProviderQuota | undefined;
 	private readonly searches: string[] = [];
 	private readonly onMessage?: (text: string) => void;
 	private readonly onSearch?: (query: string) => void;
+	private readonly stepSink?: { root: string; emit: (step: ChatStep) => void };
+	private steps?: RunStepExtractor;
 
-	/** `onSearch` sees every web search query as soon as the stream reports it, so a leak can stop the run. */
-	constructor(onMessage?: (text: string) => void, onSearch?: (query: string) => void) { this.onMessage = onMessage; this.onSearch = onSearch; }
+	/**
+	 * `onSearch` sees every web search query as soon as the stream reports it, so a leak can stop the run.
+	 * `stepSink` receives what the agent is doing (reads, edits, commands) with paths relative to its `root`.
+	 */
+	constructor(onMessage?: (text: string) => void, onSearch?: (query: string) => void, stepSink?: { root: string; emit: (step: ChatStep) => void }) {
+		this.onMessage = onMessage; this.onSearch = onSearch; this.stepSink = stepSink;
+	}
+
+	protected abstract readonly provider: NativeProvider;
 
 	push(text: string): void {
 		if (this.invalid) { return; }
@@ -144,7 +156,8 @@ abstract class ProviderEventAccumulator {
 			...(this.rateLimited ? { rateLimited: true as const } : {}),
 			...(this.stopReason ? { stopReason: this.stopReason } : {}),
 			...(this.sessionId ? { sessionId: this.sessionId } : {}),
-			...(this.searches.length ? { searches: [...this.searches] } : {})
+			...(this.searches.length ? { searches: [...this.searches] } : {}),
+			...(this.quota ? { quota: this.quota } : {})
 		};
 	}
 
@@ -177,12 +190,16 @@ abstract class ProviderEventAccumulator {
 			if (!event || typeof event.type !== 'string') { this.invalid = true; return; }
 			this.seen++;
 			this.accept(event);
+			this.quota = mergeQuota(this.quota, parseQuotaEvent(this.provider, event));
+			// Built on first use: `provider` is a subclass field, not yet set while this constructor runs.
+			if (this.stepSink) { (this.steps ??= new RunStepExtractor(this.provider, this.stepSink.root, this.stepSink.emit)).accept(event); }
 		} catch { this.invalid = true; }
 	}
 }
 
 /** `codex exec --json`: completed agent messages, turn usage and error events. */
 export class CodexEventAccumulator extends ProviderEventAccumulator {
+	protected readonly provider = 'codex';
 	protected accept(event: Record<string, unknown>): void {
 		if (event.type === 'error' || event.type === 'turn.failed') { this.fail(event); }
 		if (event.type === 'item.completed') {
@@ -202,6 +219,7 @@ export class CodexEventAccumulator extends ProviderEventAccumulator {
 
 /** `claude --output-format stream-json`: assistant text blocks as they arrive, then one `result` event. */
 export class ClaudeEventAccumulator extends ProviderEventAccumulator {
+	protected readonly provider = 'claude';
 	protected accept(event: Record<string, unknown>): void {
 		// Every event names the session, so a run stopped by the IDE (timeout, cancel) can still be resumed.
 		if (validSessionId(event.session_id)) { this.sessionId = event.session_id; }

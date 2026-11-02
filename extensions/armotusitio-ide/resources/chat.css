@@ -35,7 +35,7 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, .log:focus-v
 .brand-text { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
 .brand h1 { margin: 0; font-size: 1.15em; font-weight: 600; white-space: nowrap; }
 .project-name { color: var(--chat-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.project-select, .model-select, .effort-select { min-height: 24px; font: inherit; color: var(--vscode-dropdown-foreground); background: var(--vscode-dropdown-background); border: 1px solid var(--vscode-dropdown-border, transparent); border-radius: var(--chat-radius); padding: 2px 6px; max-width: 220px; }
+.project-select, .model-select, .effort-select, .mode-select { min-height: 24px; font: inherit; color: var(--vscode-dropdown-foreground); background: var(--vscode-dropdown-background); border: 1px solid var(--vscode-dropdown-border, transparent); border-radius: var(--chat-radius); padding: 2px 6px; max-width: 220px; }
 .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .provider-switch { display: inline-flex; padding: 2px; border: 1px solid var(--chat-border); border-radius: var(--chat-radius-large); background: var(--vscode-input-background); }
 .provider-option { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 8px; color: var(--vscode-foreground); background: transparent; }
@@ -47,6 +47,10 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, .log:focus-v
 [data-status="unauthenticated"] .dot, [data-status="incompatible"] .dot, [data-status="unknown"] .dot { background: var(--chat-warning); }
 [data-status="unavailable"] .dot, [data-state="error"] .dot { background: var(--chat-error); }
 [data-status="checking"] .dot, [data-state="checking"] .dot { background: var(--chat-accent); animation: pulse 1.2s ease-in-out infinite; }
+.quota { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border: 1px solid var(--chat-border); border-radius: 999px; font-size: .9em; white-space: nowrap; color: var(--chat-muted); }
+.quota[hidden] { display: none; }
+.quota[data-level="warn"] { color: var(--chat-warning); border-color: var(--chat-warning); }
+.quota[data-level="critical"] { color: var(--chat-error); border-color: var(--chat-error); font-weight: 600; }
 .mcp-pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; color: var(--vscode-foreground); background: transparent; border-color: var(--chat-border); }
 .mcp-pill:hover { background: var(--vscode-toolbar-hoverBackground) !important; }
 .icon-button { padding: 2px 10px; color: var(--vscode-foreground); background: transparent; font-size: 1.2em; line-height: 1.2; }
@@ -120,10 +124,31 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, .log:focus-v
 .status-badge.partial { background: var(--chat-warning); color: var(--vscode-editor-background); }
 .run-files { margin: 8px 0; }
 .run-files summary { cursor: pointer; color: var(--chat-muted); }
+.run-file { display: flex; flex-wrap: wrap; gap: 2px 8px; align-items: baseline; }
+.file-actions { display: flex; gap: 12px; margin-left: auto; }
+.steps { list-style: none; margin: 8px 0 0; padding: 0; max-height: 160px; overflow-y: auto; }
+.run-files .steps { max-height: 240px; }
+.step { display: flex; gap: 8px; align-items: baseline; min-width: 0; padding: 2px 0; }
+.step-icon::before { content: '\25CB'; color: var(--chat-muted); }
+.step.running .step-icon::before { content: '\25CF'; color: var(--chat-accent); }
+.step.ok .step-icon::before { content: '\2713'; color: var(--chat-ok); }
+.step.error .step-icon::before { content: '\2715'; color: var(--chat-error); }
+.step-kind { flex: none; min-width: 72px; color: var(--chat-muted); }
+.step-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--vscode-editor-font-family); }
+.queue { margin-top: 8px; }
+.queued { display: flex; gap: 8px; align-items: baseline; justify-content: space-between; }
+.queued-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .run-actions:empty { display: none; }
 .run-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .run-summary { margin-bottom: 10px; }
 .error-text { color: var(--chat-error); }
+
+/* Pending tool approvals */
+.approvals { box-sizing: border-box; width: calc(100% - 32px); max-height: 40vh; overflow-y: auto; margin: 0 auto 10px; }
+.approval { padding: 12px 14px; margin-bottom: 8px; border: 1px solid var(--chat-accent); border-radius: var(--chat-radius-large); }
+.approval-detail { margin: 6px 0; padding-left: 18px; overflow-wrap: anywhere; }
+.approval-rule { margin: 6px 0; overflow-wrap: anywhere; }
+.approval-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 
 /* Live activity */
 .activity { box-sizing: border-box; width: calc(100% - 32px); max-height: 40vh; overflow-y: auto; padding: 12px 14px; margin: 0 auto 10px; border: 1px dashed var(--chat-border); border-radius: var(--chat-radius-large); }
@@ -148,8 +173,14 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, .log:focus-v
 .gate.failed .gate-icon::before, .gate.cancelled .gate-icon::before { content: '\2715'; color: var(--chat-error); }
 
 /* Composer */
-.composer { padding: 10px 16px 12px; border-top: 1px solid var(--chat-border); background: var(--chat-surface); }
+.composer { position: relative; padding: 10px 16px 12px; border-top: 1px solid var(--chat-border); background: var(--chat-surface); }
 .composer-box { display: flex; align-items: flex-end; gap: 8px; max-width: 860px; margin: 0 auto; padding: 6px 6px 6px 12px; border: 1px solid var(--vscode-input-border, var(--chat-border)); border-radius: var(--chat-radius-large); background: var(--vscode-input-background); }
+.suggest { position: absolute; left: 16px; right: 16px; bottom: calc(100% - 4px); z-index: 5; max-width: 860px; max-height: 240px; margin: 0 auto; padding: 4px; overflow-y: auto; list-style: none; border: 1px solid var(--chat-border); border-radius: var(--chat-radius-large); background: var(--vscode-editorWidget-background, var(--chat-surface)); color: var(--vscode-editorWidget-foreground, inherit); box-shadow: 0 2px 8px var(--vscode-widget-shadow, transparent); }
+.suggest[hidden] { display: none; }
+.suggest li { display: flex; gap: 12px; align-items: baseline; padding: 4px 8px; border-radius: var(--chat-radius); cursor: pointer; }
+.suggest li[aria-selected="true"] { background: var(--vscode-list-activeSelectionBackground); color: var(--vscode-list-activeSelectionForeground); }
+.suggest-label { flex: none; font-weight: 600; }
+.suggest-detail { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .75; }
 .composer-box:focus-within { border-color: var(--chat-accent); }
 .composer textarea { flex: 1; min-height: 24px; max-height: 240px; padding: 4px 0; resize: none; border: 0; outline: none; font: inherit; color: var(--vscode-input-foreground); background: transparent; }
 .composer textarea:focus-visible { outline: none; }

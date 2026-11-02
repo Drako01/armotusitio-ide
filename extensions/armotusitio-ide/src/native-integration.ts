@@ -8,6 +8,8 @@ import * as fs from 'node:fs/promises';
 import { createHash, randomBytes } from 'node:crypto';
 import { currentToolchainEnvironment } from './native-toolchain-env.ts';
 import { detectEcosystems, describeEcosystems } from './native-ecosystems.ts';
+import { detectProjectCommands, detectedVerificationPlan } from './native-project-detect.ts';
+import { readProjectInstructions } from './native-project-instructions.ts';
 import { registerGoalIntegration } from './native-goal-integration.ts';
 import { createCommandPolicy, type CommandPolicyConfig } from './native-command-policy.ts';
 import type { RunnerConfig } from './ats-runner.ts';
@@ -16,6 +18,11 @@ import { createResultCache, type ResultCache } from './native-result-cache.ts';
 import { composeUpCommand, detectServiceNeeds, probeService } from './native-services.ts';
 import { runCommand } from './native-command-runner.ts';
 import { openToolChannel } from './native-tool-server.ts';
+import { parseApprovalDraft, type ApprovalAsk } from './native-approval.ts';
+import { addUserRule, configuredPreset, loadPermissions } from './native-permissions.ts';
+import { repoFingerprint } from './native-git-tools.ts';
+import { projectPermissionsDigest } from './native-run-integrity.ts';
+import type { PermissionPreset } from './native-permissions-types.ts';
 import { runEditorTool, type EditorBackend } from './native-editor-tools.ts';
 import { KeychainDevSecrets } from './native-dev-secrets.ts';
 import { doctorReport, runDoctor, type DoctorCheck, type Exec } from './native-machine-doctor.ts';
@@ -24,6 +31,7 @@ import { execFile } from 'node:child_process';
 import { resolveNativeCommand } from './native-runtime.ts';
 import { NativeHarness, nativePlanRevision, type Plan } from './native-harness.ts';
 import type { ChatImplementOutcome, ChatRuntime } from './native-chat-session.ts';
+import type { ChatStep } from './native-run-steps.ts';
 import { harnessErrorCode, type GateSummary } from './native-chat.ts';
 import { proposeProjectConfig, loadProjectConfig, writeProjectConfig, generatedConfigDigest, removeGeneratedProjectConfig } from './native-project.ts';
 import { reviewAgentDraft, inspectAgentWorkspace, modelOption, effortOption, validModel, validEffort, MAX_AGENT_TURNS, type NativeProvider, type NativeEffort, type AgentRole, type AgentDraft } from './native-providers.ts';
@@ -48,6 +56,7 @@ import { delegateProjectGate, queryProjectEngineStatus } from './native-engine-i
 import { assessWorkflowRecovery } from './native-workflow-recovery.ts';
 import { exportOtlp, validateOtlpEndpoint } from './native-otlp.ts';
 import { buildAdaptiveWorkflow, type ProviderAvailability } from './native-agent-planner.ts';
+import { readLatestCodexQuota } from './native-quota.ts';
 import { acquireWriterLease, type WriterLease } from './native-hybrid-writer.ts';
 import { describeAgentIsolation, meetsWriterIsolation, parseWriterIsolation } from './native-isolation.ts';
 import { describeTrace, taskTrace, traceparent, workflowTrace, type TraceSpan } from './native-trace.ts';
@@ -151,6 +160,8 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 	};
 	/** Opt-in, user-level: a repository cannot enable external writers for itself. */
 	const coordinatedWriters = (): boolean => vscode.workspace.getConfiguration('atsHarness').get('coordinatedProjectWriters', false) === true;
+	/** `atsHarness.detectProjectCommands`: verification gates and instructions inferred for projects without their own Harness. */
+	const detectProjectCommandsEnabled = (): boolean => vscode.workspace.getConfiguration('atsHarness').get('detectProjectCommands', true) === true;
 	/** Model chosen for a provider (`atsHarness.<provider>Model`); empty keeps the CLI default. */
 	const modelFor = (provider: NativeProvider): string | undefined => {
 		const model: unknown = vscode.workspace.getConfiguration('atsHarness').get(provider + 'Model', '');
@@ -181,6 +192,8 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 		const extras: unknown = vscode.workspace.getConfiguration('atsHarness').get('agentCommands.allow', []);
 		return Array.isArray(extras) ? extras.filter((entry): entry is string => typeof entry === 'string' && entry.length <= 200).slice(0, 50) : [];
 	};
+	/** `atsHarness.permissionsPreset` (user scope); `undefined` lets the permission files decide. */
+	const permissionsPreset = (): PermissionPreset | undefined => configuredPreset(vscode.workspace.getConfiguration('atsHarness').get('permissionsPreset'));
 	/** Language-server queries for agents (block S), through the VS Code providers the editor already runs. */
 	const editorBackend: EditorBackend = {
 		async locations(kind, file, line, character) {
@@ -232,7 +245,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 	 * removed after the run. A project Harness that declares `command-runner` runs each command itself (layer 2).
 	 * `inScope` limits editor refactors to the run's scope (a goal's charter); a chat run may edit the whole project.
 	 */
-	const prepareToolServer = async (root: string, maxTurns: number, inScope: (file: string) => boolean = () => true, extraEnv: Record<string, string> = {}): Promise<{ launch: ToolServerLaunch; policy: string[]; ecosystems: string[]; dispose(): Promise<void> }> => {
+	const prepareToolServer = async (root: string, maxTurns: number, inScope: (file: string) => boolean = () => true, extraEnv: Record<string, string> = {}, approve?: ApprovalAsk): Promise<{ launch: ToolServerLaunch; policy: string[]; ecosystems: string[]; dispose(): Promise<void> }> => {
 		const authority = await inspectHarnessAuthority(root);
 		const delegate = authority.engine === 'project' && !!authority.entry && (await readProjectCapabilities(root).catch(() => [])).includes('command-runner');
 		const subprojects = delegate ? [] : await detectEcosystems(root);
@@ -243,16 +256,27 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 		const channel = await openToolChannel(directory, async (method, params) => {
 			const input = (params ?? {}) as { name?: string; input?: Record<string, unknown>; command?: string; args?: string[]; cwd?: string };
 			if (method === 'editor' && typeof input.name === 'string') { return runEditorTool({ root, backend: editorBackend, inScope }, input.name, input.input ?? {}); }
+			// Only a run that can ask the user (the chat) has an approver; any other run is denied.
+			if (method === 'approval') { const draft = parseApprovalDraft(params); return draft && approve ? approve(draft) : 'deny'; }
 			if (method === 'secrets' && typeof input.command === 'string') { return devSecrets.forCommand(projectKeyOf(root), input.command, Array.isArray(input.args) ? input.args : [], input.cwd ?? '.'); }
 			throw Error('HARNESS_TOOL');
 		});
-		const config: RunnerConfig = { schemaVersion: 1, root, policy, env: { ...env, ...extraEnv }, logDirectory: path.join(directory, 'logs'), maxTurns, channel: { address: channel.address, token: channel.token }, ...(delegate ? { delegateEntry: path.join(root, authority.entry!) } : {}) };
+		const config: RunnerConfig = {
+			schemaVersion: 1, root, policy, env: { ...env, ...extraEnv }, logDirectory: path.join(directory, 'logs'), maxTurns,
+			channel: { address: channel.address, token: channel.token },
+			...(approve ? {
+				git: true, permissions: { preset: permissionsPreset() },
+				projectPermissionsBaseline: await projectPermissionsDigest(root), repoBaseline: await repoFingerprint(root),
+				protectedBranches: vscode.workspace.getConfiguration('atsHarness').get('protectedBranches', [])
+			} : {}),
+			...(delegate ? { delegateEntry: path.join(root, authority.entry!) } : {})
+		};
 		const configFile = path.join(directory, 'runner.json');
 		await fs.writeFile(configFile, JSON.stringify(config), { mode: 0o600 });
-		const launch = { command: process.execPath, args: [path.join(context.extensionPath ?? context.extensionUri?.fsPath ?? '', 'dist', 'ats-runner.js'), configFile], env: { ELECTRON_RUN_AS_NODE: '1' }, mcpConfigFile: path.join(directory, 'mcp.json') };
+		const launch = { command: process.execPath, args: [path.join(context.extensionPath ?? context.extensionUri?.fsPath ?? '', 'dist', 'ats-runner.js'), configFile], env: { ELECTRON_RUN_AS_NODE: '1' }, mcpConfigFile: path.join(directory, 'mcp.json'), ...(approve ? { git: true } : {}) };
 		await fs.writeFile(launch.mcpConfigFile, JSON.stringify({ mcpServers: { 'ats-runner': { type: 'stdio', command: launch.command, args: launch.args, env: launch.env } } }), { mode: 0o600 });
 		return {
-			launch, policy: createCommandPolicy(policy).describe(), ecosystems: describeEcosystems(subprojects),
+			launch, policy: createCommandPolicy(approve ? { ...policy, permissions: await loadPermissions(root, undefined, vscode.l10n.t, { preset: permissionsPreset() }) } : policy).describe(), ecosystems: describeEcosystems(subprojects),
 			// The configuration goes; the command logs and audit stay with the run for the report.
 			// The token dies with the channel (EC-125).
 			dispose: async () => { await Promise.all([fs.rm(configFile, { force: true }), fs.rm(launch.mcpConfigFile, { force: true }), channel.close()]); }
@@ -277,6 +301,8 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 		onStarted?: (execution: AgentExecution) => void;
 		onProgress?: (observedBytes: number) => void;
 		onMessage?: (text: string) => void;
+		/** What the agent is doing, step by step (paths relative to the project, secrets redacted). */
+		onStep?: (step: ChatStep) => void;
 		/** Aborting before the process exists stops the launch without spawning a provider. */
 		signal?: AbortSignal;
 		/** Runs under the fence right before the provider starts, so its observations cannot race another IDE agent. */
@@ -327,7 +353,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			if (!authorized(folder)) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
 			await hooks.beforeLaunch?.();
 			await fence.assertCurrent();
-			execution = await executeReviewedAgent(reviewAgentDraft(draft), draft, undefined, hooks.onProgress && (progress => hooks.onProgress!(progress.observedBytes)), hooks.onMessage, hooks.toolServer, text => devSecrets.redact(text) !== text);
+			execution = await executeReviewedAgent(reviewAgentDraft(draft), draft, undefined, hooks.onProgress && (progress => hooks.onProgress!(progress.observedBytes)), hooks.onMessage, hooks.toolServer, text => devSecrets.redact(text) !== text, hooks.onStep);
 		} catch (error) {
 			await lease?.release().catch(() => undefined);
 			if (fence) { await fence.release(); }
@@ -354,12 +380,27 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 	/** Engine boundary for the conversational chat of one workspace folder. */
 	controller.nativeChatRuntime = (folder: Host): ChatRuntime => {
 		const rootOf = (): Promise<string> => fs.realpath(folder.uri.fsPath);
-		const verificationOf = async (root: string): Promise<Plan | undefined> => (await inspectHarnessAuthority(root)).engine === 'ide-native' ? (await loadProjectConfig(root))?.plan : undefined;
+		/** Detected gates go through the same command policy the agent runs under, extras included; the project's own Harness is never replaced. */
+		const detectedVerification = async (root: string): Promise<Plan | undefined> => {
+			const detected = await detectProjectCommands(root);
+			const policy = createCommandPolicy({ subprojects: detected.subprojects, delegate: false, extras: commandExtras() });
+			return detectedVerificationPlan(detected, (command, args, cwd) => policy.decide(command, args, cwd));
+		};
+		const verificationOf = async (root: string): Promise<Plan | undefined> => {
+			if ((await inspectHarnessAuthority(root)).engine !== 'ide-native') { return undefined; }
+			return (await loadProjectConfig(root))?.plan ?? (detectProjectCommandsEnabled() ? await detectedVerification(root) : undefined);
+		};
+		/** Repository instruction files beyond the known guides, as prompt text (data, not authority); empty for projects with their own Harness. */
+		const detectedInstructions = async (root: string, guides: ProjectGuide[]): Promise<{ files: string[]; text: string }> =>
+			detectProjectCommandsEnabled() && (await inspectHarnessAuthority(root)).engine === 'ide-native'
+				? readProjectInstructions(root, 12 * 1024, guides.map(guide => guide.path))
+				: { files: [], text: '' };
 		return {
 			async context() {
 				const root = await rootOf();
 				const authority = await inspectHarnessAuthority(root);
 				const [skills, guides, verification] = await Promise.all([listProjectSkills(root), listProjectGuides(root), verificationOf(root)]);
+				const extraGuides = (await detectedInstructions(root, guides)).files.filter(file => !guides.some(guide => guide.path === file));
 				// A project Harness can host IDE writers only when the user opted in and its manifest declares the lease; the engine's acknowledgement is verified at approval.
 				// The setting is read live, so enabling it applies on the next refresh without reloading the window.
 				const capabilities = authority.engine === 'project' && coordinatedWriters() ? await readProjectCapabilities(root).catch(() => undefined) : undefined;
@@ -370,7 +411,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 				return {
 					isolation, root, promptBudget: promptBudgetBytes(), ...(writerBlock ? { writerBlock } : {}), writer: (authority.engine === 'ide-native' || coordinated) && authorized(folder),
 					skills: skills.map(skill => ({ name: skill.name, source: skill.source })),
-					guides: guides.map(guide => guide.path),
+					guides: [...guides.map(guide => guide.path), ...extraGuides],
 					verification: verification && {
 						revision: nativePlanRevision(verification),
 						gates: verification.gates.map(gate => ({ id: gate.id, command: [gate.executable, ...gate.args].join(' ') + (gate.cwd && gate.cwd !== '.' ? ' (' + gate.cwd + ')' : '') }))
@@ -379,10 +420,13 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			},
 			async converse(provider, instruction, hooks, signal) {
 				const root = await rootOf();
-				return runGuardedAgent(folder, draftOf(root, provider, 'planner', instruction), {
-					onStarted: execution => hooks.started(() => execution.cancel()), onProgress: hooks.progress, onMessage: hooks.message, signal
+				const instructions = (await detectedInstructions(root, await listProjectGuides(root))).text;
+				return runGuardedAgent(folder, draftOf(root, provider, 'planner', instructions ? instruction + '\n\n' + instructions : instruction), {
+					onStarted: execution => hooks.started(() => execution.cancel()), onProgress: hooks.progress, onMessage: hooks.message, onStep: hooks.step, signal
 				});
 			},
+			rememberApproval: rule => addUserRule(rule, 'allow'),
+			readQuota: async provider => provider === 'codex' ? readLatestCodexQuota() : undefined,
 			async discard(diff) {
 				const root = await rootOf();
 				if (!authorized(folder)) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
@@ -413,10 +457,11 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 				let verificationError: string | undefined;
 				const maxTurns = implementerMaxTurns();
 				if (!await servicePreflight(root)) { throw Error('HARNESS_CANCELLED_BEFORE_START'); }
-				const server = await prepareToolServer(root, maxTurns);
+				const server = await prepareToolServer(root, maxTurns, undefined, undefined, hooks.approval);
 				const ecosystems = server.ecosystems.length ? '\n\nDetected subprojects and their usual commands:\n' + server.ecosystems.join('\n') : '';
 				// A resumed session already holds the references; it only receives the continuation request.
-				const prompt = resumeSession ? instruction : instruction + projectReferences(guides, skills as ProjectSkill[]) + ecosystems;
+				const instructions = resumeSession ? '' : (await detectedInstructions(root, guides)).text;
+				const prompt = resumeSession ? instruction : instruction + projectReferences(guides, skills as ProjectSkill[]) + ecosystems + (instructions ? '\n\n' + instructions : '');
 				let before: WorkingTreeSnapshot | undefined;
 				let diff: RunDiffSummary = { available: false, files: [], count: 0 };
 				const agent = await runGuardedAgent(folder, draftOf(root, provider, 'implementer', prompt, { maxTurns, ...(resumeSession ? { resumeSession } : {}) }), {
@@ -424,6 +469,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 					onStarted: execution => { hooks.started(() => execution.cancel()); hooks.stage('agent'); },
 					onProgress: hooks.progress,
 					onMessage: hooks.message,
+					onStep: hooks.step,
 					signal,
 					beforeLaunch: async () => { before = await captureWorkingTree(root); },
 					afterOutcome: async (outcome, fence) => {
@@ -498,6 +544,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 		return new Promise(resolve => execFile(resolved.executable, resolved.args, { timeout: 60_000, windowsHide: true, maxBuffer: 1024 * 1024, env: { ...process.env, ...(resolved.embeddedNode ? { ELECTRON_RUN_AS_NODE: '1' } : {}) } },
 			(error, stdout, stderr) => resolve({ code: error ? (typeof error.code === 'number' ? error.code : 1) : 0, output: stdout + stderr })));
 	};
+	controller.systemExec = systemExec;
 	const doctorFor = async (root: string): Promise<DoctorCheck[]> => {
 		const subprojects = await detectEcosystems(root);
 		const versions: Record<string, { command: string; args: string[]; label: string }> = {
@@ -513,7 +560,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.machineDoctor', async () => {
 		try {
 			const folder = (vscode.workspace.workspaceFolders || [])[0];
-			const checks = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: vscode.l10n.t('Revisando la m\u00e1quina…') }, () => doctorFor(folder ? folder.uri.fsPath : process.cwd()));
+			const checks = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: vscode.l10n.t('Revisando la m\u00e1quina\u2026') }, () => doctorFor(folder ? folder.uri.fsPath : process.cwd()));
 			const document = await vscode.workspace.openTextDocument({ language: 'markdown', content: doctorReport(checks) });
 			await vscode.window.showTextDocument(document);
 		} catch (error) { showError(error); }
@@ -577,7 +624,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			const existing = devSecrets.list(key);
 			const picked = await vscode.window.showQuickPick([
 				{ label: add }, ...(existing.length ? [{ label: remove }] : []),
-				...existing.map(meta => ({ label: meta.name, description: meta.commands.join(', '), detail: vscode.l10n.t('Usos: {0} · \u00faltimo: {1}', String(meta.uses), meta.lastUsedAt ?? '—') }))
+				...existing.map(meta => ({ label: meta.name, description: meta.commands.join(', '), detail: vscode.l10n.t('Usos: {0} \u00b7 \u00faltimo: {1}', String(meta.uses), meta.lastUsedAt ?? '\u2014') }))
 			], { title: vscode.l10n.t('Secretos de desarrollo de {0}', folder.name) });
 			if (picked?.label === add) {
 				const name = await vscode.window.showInputBox({ title: vscode.l10n.t('Nombre de la variable'), placeHolder: 'APP_E2E_DSN', validateInput: (value: string) => /^[A-Z][A-Z0-9_]{0,63}$/.test(value) ? undefined : vscode.l10n.t('May\u00fasculas, n\u00fameros y guiones bajos.') });
@@ -1132,7 +1179,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			if (!ensureTrust()) { return; }
 			const chosen = await choose(requested, true); if (!chosen) { return; }
 			const root = await fs.realpath(chosen.folder.uri.fsPath);
-			const report = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: vscode.l10n.t('Diagnosticando el Harness del proyecto…') }, async () => {
+			const report = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: vscode.l10n.t('Diagnosticando el Harness del proyecto\u2026') }, async () => {
 				const authority = await inspectHarnessAuthority(root);
 				const capabilities = authority.engine === 'project' ? await readProjectCapabilities(root).catch((error: unknown) => harnessErrorCode(error)) : [];
 				const delegate = Array.isArray(capabilities) && capabilities.includes('command-runner');

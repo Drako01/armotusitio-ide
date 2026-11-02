@@ -10,7 +10,7 @@ const { randomUUID, createHash } = require('node:crypto');
 const { HarnessWorkflow, nativeRun, redact } = require('./workflow.ts');
 const { readEvidence } = require('./evidence.ts');
 const { toolArgs } = require('./catalog.ts');
-const { capabilities, sortActivity } = require('./adapter.ts');
+const { capabilities, nativeEntry, sortActivity } = require('./adapter.ts');
 
 /** Connect the webview to native lifecycle actions; never accept commands or filesystem paths from it. */
 function createWorkspace(context, controller, projects) {
@@ -68,16 +68,27 @@ function createWorkspace(context, controller, projects) {
 	const invalidate = () => { generation++; contracts.clear(); discoveries.clear(); projectConnections.clear(); };
 	for (const event of [vscode.workspace.onDidChangeWorkspaceFolders, vscode.workspace.onDidGrantWorkspaceTrust]) { if (event) { context.subscriptions.push(event(invalidate)); } }
 	if (vscode.workspace.onDidChangeConfiguration) { context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => { if (event.affectsConfiguration('atsHarness')) { invalidate(); } })); }
+	/** Identity of the native entry file (path, size, mtime): in-process, so checking it never spawns anything. */
+	async function entryStamp(profile) {
+		try {
+			const { entry } = await nativeEntry(profile);
+			const stat = await fs.stat(entry);
+			return entry + ':' + stat.size + ':' + stat.mtimeMs;
+		} catch { return undefined; }
+	}
 	async function negotiate(profile) {
 		if (!allowed(profile)) { throw new Error('HARNESS_WORKSPACE'); }
 		if (profile.id === 'redevent') { return { operations: (profile.tools || []).map(tool => tool.id), hosts: ['project', 'codex', 'claude'] }; }
 		const old = contracts.get(profile.root);
-		if (old && Date.now() - old.at < 60000) { if (old.error) { throw new Error(old.error); } return old.value; }
+		// Capabilities only change with the entry file: a good answer lives for the session, a failure is retried after a minute.
+		const stamp = await entryStamp(profile);
+		if (old?.value && old.stamp === stamp) { return old.value; }
+		if (old?.error && Date.now() - old.at < 60000) { throw new Error(old.error); }
 		try {
 			const result = await nativeRun(profile, ['capabilities'], { timeout: 15000, authorize: () => allowed(profile) });
 			if (result.code !== 0) { throw new Error('HARNESS_CONTRACT'); }
 			const value = capabilities(result.value);
-			contracts.set(profile.root, { at: Date.now(), value }); return value;
+			contracts.set(profile.root, { at: Date.now(), value, stamp }); return value;
 		} catch (error) { contracts.set(profile.root, { at: Date.now(), error: error.message }); throw error; }
 	}
 	controller.clearWorkflowHistory = () => { for (const entry of workflow.all()) { if (['completed', 'failed', 'cancelled'].includes(entry.phase) && !workflow.children.has(entry.id)) { workflow.entries.delete(entry.id); } } workflow.changed(); };

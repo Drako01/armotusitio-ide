@@ -14,6 +14,11 @@ import { runCommand, MAX_COMMAND_TIMEOUT_SEC } from './native-command-runner.ts'
 import { callToolChannel } from './native-tool-server.ts';
 import { EDITOR_TOOLS } from './native-editor-tools.ts';
 import { secretVariants } from './native-dev-secrets.ts';
+import { channelApprover, requestApproval, type ApprovalAsk } from './native-approval.ts';
+import { GIT_TOOLS, handleGitTool } from './native-git-tools.ts';
+import { loadPermissions, type PermissionSet } from './native-permissions.ts';
+import type { PermissionPreset } from './native-permissions-types.ts';
+import { projectPermissionsDigest } from './native-run-integrity.ts';
 
 export interface RunnerConfig {
 	schemaVersion: 1;
@@ -26,7 +31,25 @@ export interface RunnerConfig {
 	maxTurns?: number;
 	/** Channel to the extension for editor tools (S) and development secrets (V); secrets never go in this file. */
 	channel?: { address: string; token: string };
+	/** Permission rules are read from their files by this process on every call, so an "always" answer applies at once; only the preset travels here. */
+	permissions?: { preset?: PermissionPreset };
+	/** Offers `git_commit` / `git_push`; set only for runs that can ask the user (the chat). */
+	git?: boolean;
+	/** Integrity snapshots captured by the extension before the provider starts. */
+	projectPermissionsBaseline?: string;
+	repoBaseline?: string;
+	protectedBranches?: string[];
 }
+
+/** Seams for tests; in production the permissions come from the files and approvals from the channel. */
+export interface RunnerDeps { permissions?: PermissionSet; ask?: ApprovalAsk }
+
+const loadRunnerPermissions = (config: RunnerConfig, deps: RunnerDeps): Promise<PermissionSet> =>
+	deps.permissions ? Promise.resolve(deps.permissions) : loadPermissions(config.root, undefined, undefined, { preset: config.permissions?.preset });
+const approverOf = (config: RunnerConfig, deps: RunnerDeps): ApprovalAsk | undefined => deps.ask ?? (config.channel ? channelApprover(config.channel) : undefined);
+
+const permissionsUntouched = async (config: RunnerConfig): Promise<boolean> => config.projectPermissionsBaseline === undefined ||
+	(config.projectPermissionsBaseline !== 'unreadable' && await projectPermissionsDigest(config.root) === config.projectPermissionsBaseline);
 
 const TOOL = {
 	name: 'run',
@@ -47,21 +70,33 @@ const TOOL = {
 };
 
 /** Answer one `tools/call`; exported for tests. */
-export async function handleRun(config: RunnerConfig, input: unknown, calls: number): Promise<{ isError: boolean; text: string }> {
+export async function handleRun(config: RunnerConfig, input: unknown, calls: number, deps: RunnerDeps = {}): Promise<{ isError: boolean; text: string }> {
+	if (!await permissionsUntouched(config)) { return { isError: true, text: 'POLICY_DENIED: project-permissions-changed' }; }
 	const value = (input ?? {}) as { command?: unknown; args?: unknown; cwd?: unknown; timeoutSec?: unknown };
 	const args = value.args ?? [];
 	if (typeof value.command !== 'string' || !value.command.trim() || !Array.isArray(args) || !args.every(arg => typeof arg === 'string') ||
 		(value.cwd !== undefined && typeof value.cwd !== 'string') || (value.timeoutSec !== undefined && !Number.isSafeInteger(value.timeoutSec))) {
 		return { isError: true, text: 'Invalid input: { command: string, args?: string[], cwd?: string, timeoutSec?: integer }' };
 	}
-	const decision = createCommandPolicy(config.policy).decide(value.command, args as string[], (value.cwd as string | undefined) ?? '.');
+	const permissions = config.permissions || deps.permissions ? await loadRunnerPermissions(config, deps) : undefined;
+	let decision = createCommandPolicy({ ...config.policy, ...(permissions ? { permissions } : {}) }).decide(value.command, args as string[], (value.cwd as string | undefined) ?? '.');
 	const audit = { at: new Date().toISOString(), command: value.command, args, cwd: value.cwd ?? '.' };
+	if (decision.allowed === false && decision.reason === 'needs-approval') {
+		// A permission rule said `ask`: the user decides; an unanswered or refused request is a denial the agent must not retry.
+		const denial = await requestApproval(approverOf(config, deps), { kind: 'run', title: 'Run command', rule: decision.rule, command: value.command, args: args as string[], cwd: decision.cwd, detail: ['command: ' + [value.command, ...(args as string[])].join(' ').slice(0, 300), 'cwd: ' + decision.cwd] });
+		if (denial) {
+			await fs.appendFile(config.logDirectory + '/commands.jsonl', JSON.stringify({ ...audit, denied: 'not-approved' }) + '\n').catch(() => undefined);
+			return { isError: true, text: denial };
+		}
+		decision = { allowed: true, executable: decision.executable, cwd: decision.cwd, delegate: decision.delegate };
+	}
 	if (decision.allowed === false) {
 		await fs.appendFile(config.logDirectory + '/commands.jsonl', JSON.stringify({ ...audit, denied: decision.reason }) + '\n').catch(() => undefined);
 		return { isError: true, text: 'POLICY_DENIED: ' + decision.reason };
 	}
 	// Secrets allowed for this exact command come from the keychain through the channel, only into this process.
 	const secrets = config.channel ? await callToolChannel(config.channel.address, config.channel.token, 'secrets', { command: value.command, args, cwd: decision.cwd }).catch(() => ({})) as Record<string, string> : {};
+	if (!await permissionsUntouched(config)) { return { isError: true, text: 'POLICY_DENIED: project-permissions-changed' }; }
 	const result = await runCommand({
 		root: config.root, cwd: decision.cwd, command: value.command, args: args as string[], timeoutSec: value.timeoutSec as number | undefined,
 		env: { ...config.env, ...secrets }, logDirectory: config.logDirectory, ...(decision.delegate && config.delegateEntry ? { delegateEntry: config.delegateEntry } : {})
@@ -78,13 +113,24 @@ export async function handleRun(config: RunnerConfig, input: unknown, calls: num
 		? '\n[ats-runner] Budget: about ' + Math.max(0, config.maxTurns - calls) + ' turns left. Leave the work consistent and write the report now.' : '';
 	return {
 		isError: result.exitCode !== 0,
-		text: status + ' · ' + (result.durationMs / 1000).toFixed(1) + ' s' + (result.truncated ? ' · output truncated, full log: ' + result.logFile : '') + '\n' + (result.output || '(no output)') + budget
+		text: status + ' \u00b7 ' + (result.durationMs / 1000).toFixed(1) + ' s' + (result.truncated ? ' \u00b7 output truncated, full log: ' + result.logFile : '') + '\n' + (result.output || '(no output)') + budget
 	};
+}
+
+/** Answer one git tool call (`git_commit` / `git_push`); exported for tests. */
+export async function handleGit(config: RunnerConfig, name: string, input: unknown, deps: RunnerDeps = {}): Promise<{ isError: boolean; text: string }> {
+	if (!config.git) { return { isError: true, text: 'Unknown tool' }; }
+	if (!await permissionsUntouched(config)) { return { isError: true, text: 'POLICY_DENIED: project-permissions-changed' }; }
+	const permissions = await loadRunnerPermissions(config, deps);
+	const result = await handleGitTool({ root: config.root, env: config.env, logDirectory: config.logDirectory, permissions, ask: approverOf(config, deps), repoBaseline: config.repoBaseline, protectedBranches: config.protectedBranches, checkPermissions: () => permissionsUntouched(config) }, name, input);
+	await fs.appendFile(config.logDirectory + '/commands.jsonl', JSON.stringify({ at: new Date().toISOString(), tool: name, isError: result.isError }) + '\n').catch(() => undefined);
+	return result;
 }
 
 async function main(): Promise<void> {
 	const config = JSON.parse(await fs.readFile(process.argv[2], 'utf8')) as RunnerConfig;
 	if (config.schemaVersion !== 1 || typeof config.root !== 'string') { throw Error('HARNESS_CONFIG_SCHEMA'); }
+	if ((config.permissions && typeof config.projectPermissionsBaseline !== 'string') || (config.git && typeof config.repoBaseline !== 'string')) { throw Error('HARNESS_CONFIG_SCHEMA'); }
 	let calls = 0;
 	const send = (message: unknown): void => { process.stdout.write(JSON.stringify(message) + '\n'); };
 	readline.createInterface({ input: process.stdin }).on('line', async line => {
@@ -93,10 +139,15 @@ async function main(): Promise<void> {
 		if (request.id === undefined) { return; }
 		const reply = (result: unknown): void => send({ jsonrpc: '2.0', id: request.id, result });
 		if (request.method === 'initialize') { return reply({ protocolVersion: request.params?.protocolVersion ?? '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'ats-runner', version: '1.0.0' } }); }
-		if (request.method === 'tools/list') { return reply({ tools: config.channel ? [TOOL, ...EDITOR_TOOLS] : [TOOL] }); }
+		if (request.method === 'tools/list') { return reply({ tools: [TOOL, ...(config.git ? GIT_TOOLS : []), ...(config.channel ? EDITOR_TOOLS : [])] }); }
 		if (request.method === 'ping') { return reply({}); }
 		if (request.method === 'tools/call' && request.params?.name === TOOL.name) {
 			const result = await handleRun(config, request.params.arguments, ++calls);
+			return reply({ isError: result.isError, content: [{ type: 'text', text: result.text }] });
+		}
+		if (request.method === 'tools/call' && config.git && GIT_TOOLS.some(tool => tool.name === request.params?.name)) {
+			calls++;
+			const result = await handleGit(config, request.params!.name!, request.params!.arguments);
 			return reply({ isError: result.isError, content: [{ type: 'text', text: result.text }] });
 		}
 		const editor = EDITOR_TOOLS.find(tool => tool.name === request.params?.name);

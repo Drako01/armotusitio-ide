@@ -1,0 +1,53 @@
+{
+	"$schema": "http://json-schema.org/draft-07/schema#",
+	"title": "ArmoTuSitio permissions",
+	"description": "Reglas allow/ask/deny del agente. Un archivo de proyecto solo puede agregar ask y deny; sus allow se ignoran.",
+	"type": "object",
+	"additionalProperties": false,
+	"required": [
+		"version"
+	],
+	"properties": {
+		"version": {
+			"const": 1,
+			"description": "Version del formato."
+		},
+		"preset": {
+			"enum": [
+				"readonly",
+				"dev",
+				"trusted"
+			],
+			"description": "Perfil base (solo en el archivo de usuario; el setting atsHarness.permissionsPreset tiene prioridad). readonly: permite comandos de consulta y rechaza otras ejecuciones y git de escritura; las ediciones las controla el proveedor."
+		},
+		"allow": {
+			"$ref": "#/definitions/rules",
+			"description": "Se ejecuta sin preguntar (solo archivo de usuario)."
+		},
+		"ask": {
+			"$ref": "#/definitions/rules",
+			"description": "Pide confirmacion en el chat."
+		},
+		"deny": {
+			"$ref": "#/definitions/rules",
+			"description": "Se rechaza siempre; gana sobre ask y allow."
+		}
+	},
+	"definitions": {
+		"rules": {
+			"type": "array",
+			"maxItems": 200,
+			"items": {
+				"type": "string",
+				"maxLength": 300,
+				"pattern": "^(git_commit|git_push|(run|edit):[^\u0000-\u001f\u007f]+)$",
+				"description": "run:<glob>, git_commit o git_push. edit:<glob> esta reservado y todavia no se aplica (las ediciones las hace el proveedor).",
+				"examples": [
+					"run:pnpm test*",
+					"git_commit",
+					"git_push"
+				]
+			}
+		}
+	}
+}

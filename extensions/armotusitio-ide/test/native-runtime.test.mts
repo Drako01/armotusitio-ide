@@ -14,7 +14,11 @@ test('Windows npm Claude layout includes native executable and legacy JS fallbac
 	const claude = windowsNpmProviderCandidates(prefix, 'claude');
 	assert.equal(claude.native, path.join(prefix, 'node_modules', '@anthropic-ai', 'claude-code', 'bin', 'claude.exe'));
 	assert.equal(claude.script, path.join(prefix, 'node_modules', '@anthropic-ai', 'claude-code', 'cli.js'));
-	assert.equal(windowsNpmProviderCandidates(prefix, 'codex').script, path.join(prefix, 'node_modules', '@openai', 'codex', 'bin', 'codex.js'));
+	const codex = windowsNpmProviderCandidates(prefix, 'codex');
+	assert.equal(codex.script, path.join(prefix, 'node_modules', '@openai', 'codex', 'bin', 'codex.js'));
+	assert.deepEqual(codex.native?.split(path.sep).slice(-5), process.arch === 'arm64'
+		? ['codex-win32-arm64', 'vendor', 'aarch64-pc-windows-msvc', 'bin', 'codex.exe']
+		: process.arch === 'x64' ? ['codex-win32-x64', 'vendor', 'x86_64-pc-windows-msvc', 'bin', 'codex.exe'] : undefined);
 	assert.ok(!Object.values(claude).some(candidate => /\.(?:cmd|ps1)$/i.test(candidate)));
 });
 
@@ -29,6 +33,26 @@ test('Windows resolver chooses npm native Claude executable before deprecated JS
 		process.env.PATH = root;
 		const result = await resolveNativeCommand('claude', ['--version']);
 		assert.deepEqual(result, { executable: candidate.native, args: ['--version'], embeddedNode: false });
+	} finally {
+		if (oldPath === undefined) { delete process.env.PATH; } else { process.env.PATH = oldPath; }
+		await fs.rm(root, { recursive: true, force: true });
+	}
+});
+
+test('Windows resolver starts the native Codex binary itself so its wrapper cannot open a console window', { skip: process.platform !== 'win32' || !['x64', 'arm64'].includes(process.arch) }, async () => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-codex-native-resolver-'));
+	const oldPath = process.env.PATH;
+	try {
+		const candidate = windowsNpmProviderCandidates(root, 'codex');
+		await fs.mkdir(path.dirname(candidate.native!), { recursive: true });
+		await fs.mkdir(path.dirname(candidate.script), { recursive: true });
+		await fs.writeFile(candidate.native!, 'fixture-binary');
+		await fs.writeFile(candidate.script, 'fixture-script');
+		process.env.PATH = root;
+		assert.deepEqual(await resolveNativeCommand('codex', ['--version']), { executable: candidate.native, args: ['--version'], embeddedNode: false });
+		// Without the platform package (older layouts) the wrapper still works.
+		await fs.rm(candidate.native!);
+		assert.deepEqual(await resolveNativeCommand('codex', ['--version']), { executable: process.execPath, args: [candidate.script, '--version'], embeddedNode: true });
 	} finally {
 		if (oldPath === undefined) { delete process.env.PATH; } else { process.env.PATH = oldPath; }
 		await fs.rm(root, { recursive: true, force: true });

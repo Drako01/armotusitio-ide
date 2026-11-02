@@ -269,6 +269,83 @@ Quien use VS Code común con el Harness propio del proyecto no ve ningún cambio
 
 Los tests automáticos nunca consumen cuota. La prueba de punta a punta con un proveedor autenticado existe pero está apagada: `ATS_E2E_PROVIDER=codex|claude`, `ATS_E2E_ACKNOWLEDGE_REAL_MODEL_CALLS=1` y, opcionalmente, `ATS_E2E_MAX_CALLS` (2 a 5, por defecto 3) corren el flujo completo en un proyecto descartable. `ATS_REAL_SANDBOX=1` ejecuta en Windows la medición del sandbox de Codex sin llamar a ningún modelo. La matriz manual para lectores de pantalla está en `docs/CHAT_HARNESS_ACCESSIBILITY_MATRIX.md`.
 
+## Chat Harness: modos, permisos y comandos
+
+### Modo Actuar y modo Preguntar
+
+El selector de la cabecera (o `/modo`) elige cómo responde el chat. La preferencia es personal (`atsHarness.chatMode`, ajustes de usuario).
+
+- **Actuar** (predeterminado): la IA cambia el código directamente, sin tarjeta de plan, por el mismo camino protegido de siempre (lock de escritura, diff de la corrida, verificaciones del proyecto y política de comandos). Si el proyecto no puede escribir en ese momento, el chat cae a conversar y lo dice.
+- **Preguntar**: solo conversa y propone planes versionados que aprobás con un clic antes de ejecutar.
+
+### Permisos
+
+Las herramientas del IDE aplican un **piso de comandos** (`native-command-policy.ts`): ninguna regla permite lo que ese filtro deniega. El piso es una barrera de buena fe, no un sandbox: en Claude no hay aislamiento del sistema operativo, así que no lo trates como garantía contra código hostil. Por encima del piso, las reglas deciden entre `allow` (sin preguntar), `ask` (tarjeta de aprobación en el chat) y `deny` (siempre rechazado). Dentro de una capa gana `deny`, después `ask`, después `allow`. Las capas, de mayor a menor prioridad, son: piso, archivo del proyecto, archivo de usuario y preset.
+
+- **Presets** (`atsHarness.permissionsPreset`): `readonly` (permite comandos de consulta; rechaza otras ejecuciones y las herramientas git de escritura; las ediciones las hace el proveedor con sus propias herramientas), `dev` (predeterminado: ejecuta comandos del proyecto; commit, push e instalar dependencias piden aprobación) y `trusted` (hace commit sin preguntar; instalar dependencias y hacer push piden aprobación salvo una regla explícita de usuario).
+- **Archivos**: `~/.armotusitio/permissions.json` (usuario) y `<proyecto>/.armotusitio/permissions.json` (proyecto). Un archivo de proyecto **solo puede agregar `ask` y `deny`**: un repositorio clonado no puede darse permisos a sí mismo, y sus `allow` se ignoran con un aviso. Un archivo inválido bloquea las acciones de las herramientas hasta corregirlo; el aviso aparece en `/permisos`. La capa del proyecto se fija al iniciar la corrida: si cambia, las herramientas rechazan nuevas acciones. Tienen un esquema (`resources/permissions.schema.json`) que el editor usa para autocompletar y validar.
+- **Gramática de reglas**: `run:<glob>` (línea de comando, `comando arg1 arg2`), `git_commit` y `git_push`. `edit:<glob>` está reservado: se acepta en los archivos pero **todavía no se aplica**, porque las ediciones las hace el proveedor con sus herramientas nativas y el IDE no las intercepta. En los globs `*` reemplaza cualquier tramo de texto. Hasta 200 reglas por archivo y 16 KiB.
+- **Aprobaciones**: cuando una acción cae en `ask`, el chat muestra una tarjeta con lo que se va a hacer (comando, archivos, rama, mensaje) y las respuestas una vez o denegar. Para comandos que admiten una regla exacta y segura, también ofrece «Siempre»: agrega esa regla al archivo de **usuario**, nunca al del proyecto. No se ofrece para instalar dependencias, commit ni push.
+- **Git**: el agente puede hacer commit y push con las herramientas estructuradas `git_commit` y `git_push`, siempre sujetas a los permisos y con su propio piso: sin `git add -A`, sin `--no-verify`, sin force-push, sin `reset --hard`, sin borrar ramas y sin push a la rama por defecto (`main`, `master`, `develop`, `trunk`), la rama indicada por `init.defaultBranch` ni los patrones de `atsHarness.protectedBranches`. `git_commit` sí puede crear commits en la rama actual, incluso en main. Las herramientas rechazan cambios en la configuración y los hooks respecto del inicio de la corrida, y hooks del árbol de trabajo con cambios pendientes. `git_commit` y `git_push` ejecutan los hooks del proyecto (`pre-commit`, `pre-push`, `core.hooksPath`), así que un hook del repositorio corre con tus permisos; en Codex, además, la shell nativa del proveedor puede tener git propio fuera de estas herramientas.
+- **Alcance de la seguridad**: el piso y las reglas filtran lo que el agente pide ejecutar, pero no aíslan el proceso. Para código no confiable usá un contenedor o una VM.
+
+Ejemplo completo de `~/.armotusitio/permissions.json`:
+
+```json
+{
+  "version": 1,
+  "preset": "dev",
+  "allow": [
+    "run:pnpm test*",
+    "run:pnpm lint*",
+    "run:go test*"
+  ],
+  "ask": [
+    "run:pnpm add*",
+    "run:pnpm install*",
+    "git_commit",
+    "git_push"
+  ],
+  "deny": [
+    "run:rm *",
+    "run:curl*"
+  ]
+}
+```
+
+Y un `.armotusitio/permissions.json` de proyecto, que solo endurece:
+
+```json
+{
+  "version": 1,
+  "ask": ["run:docker compose*"],
+  "deny": ["run:docker run*"]
+}
+```
+
+JSON no admite comentarios: `/permisos usuario` y `/permisos proyecto` crean el archivo con un esqueleto vacío y válido (`{ "version": 1, "allow": [], "ask": [], "deny": [] }`) y lo abren; nunca pisan uno existente.
+
+### Comandos del chat
+
+Escribí `/` en el compositor para ver la lista con autocompletado (flechas, Enter o Tab para elegir, Escape para cerrar). `/ayuda` muestra la misma tabla, generada desde el código, así que no queda desactualizada.
+
+- `/permisos [usuario|proyecto]`: preset y reglas efectivas, avisos de archivos inválidos y si cada archivo existe; con `usuario` o `proyecto` abre (o crea) el JSON.
+- `/modo [actuar|preguntar]`: muestra o cambia el modo.
+- `/deshacer`: descarta los cambios de la última ejecución con la misma confirmación y las mismas garantías que el botón «Descartar cambios» (solo lo que tocó el agente, sin pisar lo que editaste después). Si no se puede, explica por qué: no hubo ejecuciones, hay una tarea en curso, ya se descartó, no dejó cambios medibles o el proyecto no puede escribir.
+- `/costo`: tokens de entrada y salida (y de caché y costo, si vienen) que **el proveedor informó** en el último turno. Si no los informó, o todavía no hubo turnos desde que abriste la ventana, lo dice; el IDE nunca estima tokens a partir del texto.
+- `/ayuda`, y los comandos de siempre: `/estado`, `/comandos`, `/check`, `/verify`, `/test`, `/mcp` y los de Work Management. Los comandos que necesitan la conversación (`/permisos`, `/modo`, `/deshacer`, `/costo`) solo funcionan en Chat Harness, no en el participante `@harness` del chat de VS Code.
+
+### Menciones `@archivo`
+
+Al escribir `@` el compositor sugiere archivos del proyecto (hasta 50, los que coinciden con el nombre primero). Los nombres con espacios se escriben `@"carpeta/mi archivo.md"`. Al enviar, cada mención válida se adjunta como contexto de **ese turno**:
+
+- hasta 5 archivos por mensaje y 8 KiB por archivo (si el archivo es más largo se adjuntan los primeros 8 KiB y se marca como recortado);
+- el contenido pasa por el redactor de secretos y llega al modelo marcado como **dato** del repositorio, no como instrucciones;
+- se rechazan, con un aviso en el chat, las rutas con `..` o absolutas, los enlaces simbólicos que salen del proyecto, los archivos sensibles (`.env*`, claves, `id_rsa`, `.npmrc`…), las carpetas ignoradas (`node_modules`, `dist`, `.git`…), los binarios, los directorios y los archivos inexistentes;
+- el historial guarda el texto con `@ruta`, no el contenido del archivo: en un turno posterior hay que volver a mencionarlo.
+
+**Imágenes**: pegar una imagen en el compositor no está soportado. Hacerlo sin riesgo exige guardarla fuera del proyecto y que el proveedor pueda leer esa ruta, y eso depende de los permisos de lectura del CLI de cada proveedor, que no se pueden comprobar sin una corrida real. Hasta verificarlo, guardá la imagen dentro del proyecto y pedile a la IA que la lea por su ruta.
+
 ## Chat @harness y Work Management
 
 También se registra `@harness` en el chat nativo cuando ese chat tiene un proveedor predeterminado disponible.

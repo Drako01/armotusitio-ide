@@ -8,7 +8,7 @@
 function inicioLabels(t) {
 	return {
 		askTitle: t('\u00bfQu\u00e9 quer\u00e9s hacer?'), askPlaceholder: t('Describ\u00ed el cambio. La IA lo conversa con vos y te propone un plan para aprobar.'), ask: t('Enviar al chat'),
-		askProject: t('Proyecto'), askHint: t('Enviar solo conversa: nada cambia hasta que apruebes un plan.'),
+		askProject: t('Proyecto'), askHint: t('Enviar abre el Chat Harness; la IA act\u00faa o solo conversa seg\u00fan el modo que elegiste.'),
 		attention: t('Necesita tu atenci\u00f3n'), now: t('Ahora'), recent: t('Recientes'), projects: t('Proyectos'), more: t('M\u00e1s'),
 		idle: t('Nada en curso.'), noRecent: t('Todav\u00eda no hay actividad en este workspace.'), stale: t('Desactualizado'), filter: t('Filtrar'),
 		states: { queued: t('En espera'), running: t('En curso'), paused: t('Esperando'), completed: t('Completada'), partial: t('Parcial'), blocked: t('Bloqueada'), unchanged: t('Sin cambios'), failed: t('Fallida'), cancelled: t('Cancelada'), interrupted: t('Interrumpida') },

@@ -3,17 +3,23 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 /* One conversation per project. Sending only converses; code changes require approving the latest plan. */
+import { randomBytes } from 'node:crypto';
 import type { AgentOutcome } from './native-agent-execution.ts';
+import { APPROVAL_TIMEOUT_MS, type ApprovalDraft } from './native-approval.ts';
+import type { ApprovalAnswer, ApprovalRequest } from './native-permissions-types.ts';
 import type { NativeProvider } from './native-providers.ts';
+import type { ProviderUsage } from './native-provider-output.ts';
+import { liveQuota, mergeQuota, type ProviderQuota } from './native-quota.ts';
 import { redactSecrets } from './native-redact.ts';
 import { absorbMessages, compactionSplit } from './native-chat-memory.ts';
 import { classifyRun } from './native-run-outcome.ts';
 import { recoveryHint } from './native-error-catalog.ts';
 import type { ActivityActionId, ActivityItem } from './native-activity-feed.ts';
-import type { RunDiffSummary } from './native-run-diff.ts';
+import type { RunDiffSummary, RunFileChange } from './native-run-diff.ts';
+import { summarizeSteps, upsertStep, type ChatStep } from './native-run-steps.ts';
 import {
-	buildContinuationInstruction, buildConversationInstruction, buildImplementationInstruction, chatMessage, extractChatPlan, harnessErrorCode, latestPlanMessage, MAX_USER_MESSAGE_CHARS, pendingAlive, samePlanContent,
-	type ChatConversation, type ChatMessage, type ChatPlan, type ChatProjectContext, type ChatRunSummary, type ChatStore, type GateSummary, type RunStatus
+	buildContinuationInstruction, buildConversationInstruction, buildDirectInstruction, buildImplementationInstruction, chatMessage, DIRECT_PLAN_VERSION, directPlan, extractChatPlan, harnessErrorCode, latestPlanMessage, MAX_USER_MESSAGE_CHARS, pendingAlive, samePlanContent,
+	type ChatConversation, type ChatMessage, type ChatMode, type ChatPlan, type ChatProjectContext, type ChatRunSummary, type ChatStore, type GateSummary, type RunStatus
 } from './native-chat.ts';
 
 export type ImplementStage = 'preparing' | 'agent' | 'verifying';
@@ -23,6 +29,10 @@ export interface ChatRunHooks {
 	progress(observedBytes: number): void;
 	/** Intermediate assistant message, already redacted, when the provider streams them. */
 	message?(text: string): void;
+	/** What the agent is doing now: a step starts, or an earlier one (same id) changes status. */
+	step?(step: ChatStep): void;
+	/** A tool needs the user's approval: resolves with the answer, or `deny` when the turn ends, is cancelled or nobody answers. */
+	approval?(request: ApprovalDraft): Promise<ApprovalAnswer>;
 }
 export interface ChatImplementHooks extends ChatRunHooks {
 	stage(stage: ImplementStage): void;
@@ -42,6 +52,10 @@ export interface ChatRuntime {
 	implement(request: { provider: NativeProvider; instruction: string; plan: ChatPlan; verificationRevision?: string; resumeSession?: string }, hooks: ChatImplementHooks, signal: AbortSignal): Promise<ChatImplementOutcome>;
 	/** Undo the files a run changed, under the same fence and lease as a writer; files the user touched are skipped. */
 	discard?(diff: RunDiffSummary): Promise<{ discarded: string[]; skipped: string[] }>;
+	/** Persists the rule of an "always allow" answer in the USER permissions file. */
+	rememberApproval?(rule: string): Promise<void>;
+	/** Limits a provider keeps outside its run output (Codex rollouts); bounded and silent on failure. */
+	readQuota?(provider: NativeProvider): Promise<ProviderQuota | undefined>;
 }
 export interface ChatActivity {
 	kind: 'thinking' | 'executing';
@@ -52,6 +66,8 @@ export interface ChatActivity {
 	cancelling?: boolean;
 	/** Latest streamed assistant message of this turn; never persisted, replaced by the final answer. */
 	partial?: string;
+	/** Live timeline of this turn (at most 200 steps); only a short summary is kept once the run ends. */
+	steps?: ChatStep[];
 	stage?: ImplementStage;
 	planVersion?: number;
 	gates?: GateSummary[];
@@ -60,11 +76,17 @@ export interface ChatSnapshot {
 	provider: NativeProvider;
 	/** Increments whenever `messages` changes, so hosts can skip resending an unchanged history. */
 	revision: number;
+	/** Session and weekly usage the providers reported; absent for a provider that reported none (never a guessed zero). */
+	quota?: Partial<Record<NativeProvider, ProviderQuota>>;
 	messages: ChatMessage[];
 	activity?: ChatActivity;
+	/** Messages sent while a turn was running; each starts when the previous turn ends cleanly. */
+	queue?: Array<{ id: string; text: string }>;
 	plan?: { messageId: string; version: number; digest: string; approvable: boolean; blockedReason?: string };
 	/** Latest run of the latest plan and what can be done with it right now. */
 	run?: { messageId: string; continuable: boolean; retryable: boolean; discardable: boolean };
+	/** Tool calls waiting for the user's answer; dropped (denied) when the turn ends or is cancelled. */
+	approvals?: ApprovalRequest[];
 	writer: boolean;
 	/** Isolation of the selected provider's writer, for display next to the approval. */
 	isolation?: { writes: string; allowed: boolean };
@@ -104,7 +126,16 @@ function writerBlockReason(t: Translate, block: ChatProjectContext['writerBlock'
 	return t('Este proyecto tiene su propio Harness. El IDE no aplica cambios sin coordinaci\u00f3n verificable con ese motor.');
 }
 
+/** Messages that can wait behind the running turn. */
+export const MAX_QUEUED_MESSAGES = 5;
+
 const providerLabel = (provider: NativeProvider): string => provider === 'claude' ? 'Claude Code' : 'Codex';
+
+interface PendingApproval { request: ApprovalRequest; resolving?: boolean; settle(answer: ApprovalAnswer): void }
+/** Turn-only extras of a message (mentioned file content and its notice); a queued message keeps them until it runs. */
+interface SendAttachments { context?: string; notice?: string }
+
+const APPROVAL_ANSWERS: readonly ApprovalAnswer[] = ['once', 'always', 'deny'];
 
 const cancelledBeforeStart = (error: unknown): boolean => harnessErrorCode(error) === 'HARNESS_CANCELLED_BEFORE_START';
 
@@ -130,7 +161,7 @@ export function chatActivityItems(snapshot: ChatSnapshot, project: { key: string
 		const started = Date.parse(activity.startedAt);
 		items.push({
 			...base, id: 'chat:' + project.key + ':now', state: 'running', provider: activity.provider, startedAt: started, updatedAt: Date.now(),
-			title: activity.kind === 'thinking' ? t('Respondiendo en el chat') : t('Plan v{0}: {1}', String(activity.planVersion), plans.get(activity.planVersion ?? -1) ?? ''),
+			title: activity.kind === 'thinking' ? t('Respondiendo en el chat') : activity.planVersion === DIRECT_PLAN_VERSION ? t('Ejecuci\u00f3n directa') : t('Plan v{0}: {1}', String(activity.planVersion), plans.get(activity.planVersion ?? -1) ?? ''),
 			...(activity.stage ? { step: { index: ['preparing', 'agent', 'verifying'].indexOf(activity.stage) + 1, total: 3, label: activity.stage } } : {}),
 			// The last line the agent wrote is the live "what it is doing now".
 			...(activity.partial?.trim() ? { detail: activity.partial.trim().split('\n').at(-1)!.slice(0, 200) } : {}),
@@ -154,7 +185,7 @@ export function chatActivityItems(snapshot: ChatSnapshot, project: { key: string
 		const at = Date.parse(message.at);
 		items.push({
 			...base, id: 'chat:' + project.key + ':' + message.id, state: kind, provider: run.provider, startedAt: at - run.durationMs, updatedAt: at,
-			title: t('Plan v{0}: {1}', String(run.planVersion), plans.get(run.planVersion) ?? ''),
+			title: run.planVersion === DIRECT_PLAN_VERSION ? t('Ejecuci\u00f3n directa') : t('Plan v{0}: {1}', String(run.planVersion), plans.get(run.planVersion) ?? ''),
 			...(kind === 'blocked' && run.outcome?.needs ? { needs: run.outcome.needs } : {}),
 			...(run.outcome?.diff.available ? { detail: t('{0} archivos cambiados', String(run.outcome.diff.count)) } : {}),
 			actions
@@ -170,6 +201,10 @@ export class HarnessChatSession {
 	private context?: ChatProjectContext;
 	private loaded?: Promise<void>;
 	private revision = 0;
+	private readonly approvals = new Map<string, PendingApproval>();
+	private readonly queue: Array<{ id: string; text: string; mode: ChatMode; attachments: SendAttachments }> = [];
+	/** The turn that just ended finished cleanly, so the queue may continue. */
+	private turnOk = false;
 
 	private readonly store: ChatStore;
 	private readonly runtime: ChatRuntime;
@@ -197,11 +232,61 @@ export class HarnessChatSession {
 			}
 			if (recovered || interrupted.length) { await this.persist(); }
 			await this.refreshContext();
+			// Claude reports its limits only inside a run; Codex keeps them in its rollout files, readable right away.
+			await this.noteQuota('codex', undefined);
 		})();
 		return this.loaded;
 	}
 
 	get busy(): boolean { return !!this.activity; }
+
+	/** Usage the provider reported for the latest turn of this window; memory only and never estimated. */
+	private reportedUsage?: { provider: NativeProvider; at: string; usage: ProviderUsage };
+
+	lastUsage(): { provider: NativeProvider; at: string; usage: ProviderUsage } | undefined { return this.reportedUsage; }
+
+	private noteUsage(provider: NativeProvider, usage: ProviderUsage | undefined): void {
+		this.reportedUsage = usage ? { provider, at: new Date().toISOString(), usage } : undefined;
+	}
+
+	/** Latest limits known per provider, from the streams of this window or the provider's own files. */
+	private readonly quotas: Partial<Record<NativeProvider, ProviderQuota>> = {};
+
+	/** Known limits of every provider whose window has not reset yet. */
+	quotaStatus(): Partial<Record<NativeProvider, ProviderQuota>> {
+		const known: Partial<Record<NativeProvider, ProviderQuota>> = {};
+		for (const provider of ['claude', 'codex'] as const) {
+			const quota = liveQuota(this.quotas[provider]);
+			if (quota) { known[provider] = quota; }
+		}
+		return known;
+	}
+
+	/** `reported` came from the run's stream; without it the runtime may know better (a finished Codex turn updates its rollout). */
+	private async noteQuota(provider: NativeProvider, reported: ProviderQuota | undefined): Promise<void> {
+		let found = reported;
+		if (!found && this.runtime.readQuota) {
+			try { found = await this.runtime.readQuota(provider); }
+			catch { /* The indicator is optional: an unreadable file just leaves it as it was. */ }
+		}
+		this.quotas[provider] = mergeQuota(this.quotas[provider], found);
+	}
+
+	/**
+	 * Whether the newest run of the conversation (planned or direct) can be discarded, and the user-facing reason when it
+	 * cannot. `discardRun` enforces the same rule, so "/deshacer" and the discard button never disagree.
+	 */
+	undoStatus(): { messageId?: string; discardable: boolean; reason?: string } {
+		const message = [...this.conversation.messages].reverse().find(item => item.run);
+		const diff = message?.run?.outcome?.diff;
+		if (!message?.run) { return { discardable: false, reason: this.t('Todav\u00eda no hay ninguna ejecuci\u00f3n para deshacer.') }; }
+		const messageId = message.id;
+		if (this.activity) { return { messageId, discardable: false, reason: this.t('Hay una tarea en curso: esper\u00e1 a que termine o detenela.') }; }
+		if (message.run.discarded) { return { messageId, discardable: false, reason: this.t('Los cambios de la \u00faltima ejecuci\u00f3n ya se descartaron.') }; }
+		if (!diff?.available || diff.count === 0) { return { messageId, discardable: false, reason: this.t('La \u00faltima ejecuci\u00f3n no dej\u00f3 cambios medibles para deshacer.') }; }
+		if (!this.context?.writer || !this.runtime.discard) { return { messageId, discardable: false, reason: this.t('Este proyecto no puede escribir ahora, as\u00ed que tampoco deshacer desde el chat.') }; }
+		return { messageId, discardable: true };
+	}
 
 	/** Re-read project facts (writer authority, verification gates, skills) so the plan card never shows stale permissions. */
 	async refreshContext(): Promise<void> {
@@ -216,10 +301,12 @@ export class HarnessChatSession {
 		const blockedReason = current && this.blockedReason(current, writer);
 		const approvable = !!current && !this.activity && !blockedReason;
 		const run = current && this.latestRun(current.plan);
+		const quota = this.quotaStatus();
 		return {
 			provider: this.conversation.provider,
 			revision: this.revision,
 			messages: this.conversation.messages,
+			...(Object.keys(quota).length ? { quota } : {}),
 			activity: this.activity ? { ...this.activity } : undefined,
 			plan: current ? { messageId: current.id, version: current.plan.version, digest: current.plan.digest, approvable, blockedReason } : undefined,
 			// Continue reuses the approval of a partial run; Retry runs the same approved plan again.
@@ -227,18 +314,27 @@ export class HarnessChatSession {
 				messageId: run.id, continuable: approvable && run.run.outcome?.kind === 'partial', retryable: approvable,
 				discardable: !this.activity && writer && !!this.runtime.discard && !!run.run.outcome?.diff.available && (run.run.outcome?.diff.count ?? 0) > 0 && !run.run.discarded
 			} : undefined,
+			...(this.queue.length ? { queue: this.queue.map(({ id, text }) => ({ id, text: text.slice(0, 200) })) } : {}),
+			...(this.approvals.size ? { approvals: [...this.approvals.values()].map(pending => pending.request) } : {}),
 			writer,
 			isolation: this.context?.isolation?.[this.conversation.provider],
 			verification: this.context?.verification?.gates ?? []
 		};
 	}
 
-	/** Why the latest plan cannot be approved right now, if anything blocks it. */
-	private blockedReason(current: ChatMessage & { plan: ChatPlan }, writer: boolean): string | undefined {
+	/** Why this project cannot host a writer right now (state unreadable, no writer authority, isolation not offered), if anything does. */
+	private writerBlockedReason(writer: boolean): string | undefined {
 		if (!this.context) { return this.t('No se pudo leer el estado del proyecto. Reintent\u00e1 en unos segundos.'); }
 		if (!writer) { return writerBlockReason(this.t, this.context.writerBlock); }
 		const isolation = this.context.isolation?.[this.conversation.provider];
 		if (isolation && !isolation.allowed) { return this.t('Tu configuraci\u00f3n exige un aislamiento de escritura que {0} no ofrece. Eleg\u00ed el otro proveedor o ajust\u00e1 \u00abatsHarness.writerIsolation\u00bb.', providerLabel(this.conversation.provider)); }
+		return undefined;
+	}
+
+	/** Why the latest plan cannot be approved right now, if anything blocks it. */
+	private blockedReason(current: ChatMessage & { plan: ChatPlan }, writer: boolean): string | undefined {
+		const blocked = this.writerBlockedReason(writer);
+		if (blocked) { return blocked; }
 		const position = this.conversation.messages.indexOf(current);
 		// New requirements suspend the plan until the assistant confirms or revises it.
 		if (this.conversation.messages.slice(position + 1).some(message => message.role === 'user')) { return this.t('Escribiste despu\u00e9s de este plan. Esper\u00e1 a que la IA lo confirme o lo actualice antes de aprobarlo.'); }
@@ -267,12 +363,50 @@ export class HarnessChatSession {
 
 	async reset(): Promise<void> {
 		if (this.activity) { throw Error('HARNESS_ALREADY_RUNNING'); }
+		this.queue.length = 0;
 		this.conversation.messages = [];
 		this.conversation.memory = undefined;
 		await this.persist({ replace: true });
 	}
 
-	cancel(): void { this.cancelActive?.(); }
+	cancel(): void { this.denyApprovals(); this.cancelActive?.(); }
+
+	/** The user's answer to a pending approval card. A stale id (the turn already ended) is ignored. */
+	async resolveApproval(id: string, answer: ApprovalAnswer): Promise<void> {
+		const pending = this.approvals.get(id);
+		if (!pending || pending.resolving || !APPROVAL_ANSWERS.includes(answer)) { return; }
+		if (answer === 'always' && (!pending.request.rule || !this.runtime.rememberApproval)) { return; }
+		// Claim this card before asynchronous persistence; cancellation and timeout can still deny it.
+		pending.resolving = true;
+		let final = answer;
+		if (answer === 'always') {
+			try {
+				await this.runtime.rememberApproval?.(pending.request.rule);
+				this.conversation.messages.push(chatMessage('notice', this.t('Se guard\u00f3 la regla \u00ab{0}\u00bb en tu archivo de permisos (~/.armotusitio/permissions.json). Pod\u00e9s quitarla desde ah\u00ed.', redactSecrets(pending.request.rule)), { tone: 'info' }));
+			} catch {
+				final = 'once';
+				this.conversation.messages.push(chatMessage('notice', this.t('No se pudo guardar la regla \u00ab{0}\u00bb; se permiti\u00f3 solo esta vez.', redactSecrets(pending.request.rule)), { tone: 'error' }));
+			}
+		}
+		if (this.approvals.get(id) === pending) { pending.settle(final); }
+		await this.persist();
+	}
+
+	private requestApproval(draft: ApprovalDraft): Promise<ApprovalAnswer> {
+		if (!this.activity || this.activity.cancelling || this.approvals.size >= 8) { return Promise.resolve('deny'); }
+		const id = 'ap-' + randomBytes(8).toString('hex');
+		const title = { run: this.t('Ejecutar un comando'), edit: this.t('Editar un archivo'), git_commit: this.t('Hacer commit'), git_push: this.t('Hacer push') }[draft.kind];
+		return new Promise<ApprovalAnswer>(resolve => {
+			const timer = setTimeout(() => this.settleApproval(id, 'deny'), APPROVAL_TIMEOUT_MS);
+			timer.unref();
+			this.approvals.set(id, { request: { ...draft, id, title }, settle: answer => { clearTimeout(timer); this.approvals.delete(id); resolve(answer); this.emit(); } });
+			this.emit();
+		});
+	}
+
+	private settleApproval(id: string, answer: ApprovalAnswer): void { this.approvals.get(id)?.settle(answer); }
+
+	private denyApprovals(): void { for (const id of [...this.approvals.keys()]) { this.settleApproval(id, 'deny'); } }
 
 	/** Local, non-AI entries (slash command results, environment warnings) shown in the same timeline. */
 	async note(body: string, tone: 'info' | 'error' = 'info'): Promise<void> {
@@ -280,14 +414,29 @@ export class HarnessChatSession {
 		await this.persist();
 	}
 
-	/** Send = converse. This path can only launch a read-only provider turn. */
-	async send(input: string): Promise<void> {
+	/**
+	 * Send = converse, or act when `mode` is 'act' and the project can host a writer. A direct run has no plan card:
+	 * it goes through the same guarded writer pipeline (fence, lease, diff, verification) as an approved plan.
+	 */
+	async send(input: string, mode: ChatMode = 'ask', attachments: SendAttachments = {}): Promise<void> {
 		const body = typeof input === 'string' ? input.trim() : '';
 		if (!body || body.length > MAX_USER_MESSAGE_CHARS) { throw Error('HARNESS_CHAT_MESSAGE_INVALID'); }
-		if (this.activity) { throw Error('HARNESS_ALREADY_RUNNING'); }
+		if (this.activity) {
+			if (this.queue.length >= MAX_QUEUED_MESSAGES) { throw Error('HARNESS_CHAT_QUEUE_FULL'); }
+			this.queue.push({ id: randomBytes(6).toString('hex'), text: redactSecrets(body), mode, attachments });
+			this.emit();
+			return;
+		}
+		this.turnOk = false;
 		const provider = this.conversation.provider;
 		// Credentials pasted by mistake are neither stored nor sent to the provider.
 		this.conversation.messages.push(chatMessage('user', redactSecrets(body)));
+		// Mentioned file content is for this turn only: the history keeps the `@path` text, not the file. The notice is recorded
+		// after the instruction exists because the instruction builders require the user message to be the last one.
+		const withAttachments = (instruction: string): string => {
+			if (attachments.notice) { this.conversation.messages.push(chatMessage('notice', attachments.notice, { tone: 'info' })); }
+			return attachments.context ? instruction + '\n\n' + attachments.context : instruction;
+		};
 		this.activity = { kind: 'thinking', provider, startedAt: new Date().toISOString(), observedBytes: 0 };
 		this.conversation.pending = [{ kind: 'thinking', startedAt: this.activity.startedAt, pid: process.pid }];
 		const controller = new AbortController();
@@ -297,10 +446,19 @@ export class HarnessChatSession {
 			await this.persist();
 			await this.refreshContext();
 			if (!this.context) { throw Error('HARNESS_CHAT_CONTEXT_UNAVAILABLE'); }
+			if (controller.signal.aborted) { throw Error('HARNESS_CANCELLED_BEFORE_START'); }
+			if (mode === 'act' && !this.writerBlockedReason(this.context.writer)) {
+				this.finish();
+				await this.execute(directPlan(body), provider, withAttachments(buildDirectInstruction(this.conversation.messages, this.context)));
+				return;
+			}
 			const current = latestPlanMessage(this.conversation.messages)?.plan;
-			const instruction = buildConversationInstruction(this.conversation.messages, this.context, current, this.conversation.memory);
+			const instruction = withAttachments(buildConversationInstruction(this.conversation.messages, this.context, current, this.conversation.memory));
 			if (controller.signal.aborted) { throw Error('HARNESS_CANCELLED_BEFORE_START'); }
 			const outcome = await this.runtime.converse(provider, instruction, hooks, controller.signal);
+			this.noteUsage(provider, outcome.usage);
+			await this.noteQuota(provider, outcome.quota);
+			this.turnOk = outcome.status === 'passed' && !!outcome.output.trim();
 			if (outcome.status !== 'passed' || !outcome.output.trim()) {
 				this.conversation.messages.push(chatMessage('notice', failureNotice(this.t, outcome), { tone: outcome.status === 'cancelled' ? 'info' : 'error', provider }));
 				return;
@@ -315,7 +473,35 @@ export class HarnessChatSession {
 		} finally {
 			this.finish();
 			await this.persist();
+			await this.drainQueue();
 		}
+	}
+
+	/** Take a queued message back before it starts. */
+	unqueue(id: string): void {
+		const index = this.queue.findIndex(item => item.id === id);
+		if (index !== -1) { this.queue.splice(index, 1); this.emit(); }
+	}
+
+	/**
+	 * Start the next queued message once the turn ended cleanly; after a cancellation or a failure the queue is dropped with
+	 * a notice, because those messages were written for a different state of the project.
+	 */
+	private async drainQueue(): Promise<void> {
+		if (this.activity || !this.queue.length) { return; }
+		if (!this.turnOk) {
+			const dropped = this.queue.splice(0);
+			this.conversation.messages.push(chatMessage('notice', this.t('Se descartaron {0} mensajes en cola porque la tarea anterior no termin\u00f3 bien: {1}', String(dropped.length), dropped.map(item => '\u00ab' + item.text.slice(0, 80) + '\u00bb').join(' ')), { tone: 'info' }));
+			await this.persist();
+			return;
+		}
+		const next = this.queue.shift()!;
+		await this.send(next.text, next.mode, next.attachments);
+	}
+
+	/** The listed file of a run, if that run changed it; hosts validate a webview request against it before touching the file. */
+	runFile(messageId: string, file: string): RunFileChange | undefined {
+		return this.conversation.messages.find(item => item.id === messageId)?.run?.outcome?.diff.files.find(item => item.path === file);
 	}
 
 	/** Approve and run = change code. Only the latest plan, by exact digest, in a writer-enabled project. */
@@ -349,16 +535,22 @@ export class HarnessChatSession {
 	}
 
 	/** "Descartar cambios de esta corrida": only the files the run changed and nobody touched since; reported file by file. */
-	async discardRun(messageId: string): Promise<void> {
+	async discardRun(messageId: string, paths?: readonly string[]): Promise<void> {
 		if (this.activity) { throw Error('HARNESS_ALREADY_RUNNING'); }
 		await this.refreshContext();
-		const state = this.snapshot();
+		const status = this.undoStatus();
 		const message = this.conversation.messages.find(item => item.id === messageId);
 		const diff = message?.run?.outcome?.diff;
-		if (!message?.run || !diff || state.run?.messageId !== messageId || !state.run.discardable || !this.runtime.discard) { throw Error('HARNESS_CHAT_RUN_NOT_CONTINUABLE'); }
-		const result = await this.runtime.discard(diff);
-		message.run.discarded = true;
+		if (!message?.run || !diff || status.messageId !== messageId || !status.discardable || !this.runtime.discard) { throw Error('HARNESS_CHAT_RUN_NOT_CONTINUABLE'); }
+		// A subset ("Revertir" on one file) reuses the same guarded path; files already reverted are not offered again.
+		const reverted = message.run.reverted ?? [];
+		const chosen = diff.files.filter(file => !reverted.includes(file.path) && (!paths || paths.includes(file.path)));
+		if (!chosen.length) { throw Error('HARNESS_CHAT_RUN_NOT_CONTINUABLE'); }
+		const result = await this.runtime.discard({ ...diff, files: chosen });
+		message.run.reverted = [...reverted, ...result.discarded];
+		message.run.discarded = !paths || diff.files.every(file => message.run!.reverted!.includes(file.path));
 		this.conversation.messages.push(chatMessage('notice', this.t('Se descartaron {0} archivos de esta ejecuci\u00f3n.', String(result.discarded.length)) +
+			(result.discarded.length ? ' ' + this.t('Revertidos: {0}', result.discarded.slice(0, 10).join(', ')) : '') +
 			(result.skipped.length ? ' ' + this.t('No se tocaron (ten\u00edan cambios tuyos): {0}', result.skipped.slice(0, 10).join(', ')) : ''), { tone: 'info' }));
 		await this.persist();
 	}
@@ -369,6 +561,7 @@ export class HarnessChatSession {
 		const controller = new AbortController();
 		this.activity = { kind: 'executing', provider, startedAt: new Date().toISOString(), observedBytes: 0, stage: 'preparing', planVersion: plan.version, gates: context.verification?.gates.map(gate => ({ id: gate.id, status: 'pending' as const })) ?? [] };
 		this.conversation.pending = [{ kind: 'executing', startedAt: this.activity.startedAt, planVersion: plan.version, pid: process.pid }];
+		this.turnOk = false;
 		const started = Date.now();
 		const runHooks = this.hooks(() => controller.abort());
 		try {
@@ -379,19 +572,24 @@ export class HarnessChatSession {
 				gates: gates => { if (this.activity) { this.activity.gates = gates; this.emit(); } }
 			};
 			const result = await this.runtime.implement({ provider, instruction, plan, verificationRevision: context.verification?.revision, ...(options.resumeSession ? { resumeSession: options.resumeSession } : {}) }, hooks, controller.signal);
+			this.noteUsage(provider, result.agent.usage);
+			await this.noteQuota(provider, result.agent.quota);
 			// The agent result decides first; a passing agent is only as good as its verification.
 			let status: RunStatus = result.agent.status;
 			if (status === 'passed' && result.verification.status !== 'skipped') { status = result.verification.status; }
 			const outcome = classifyRun({ agent: result.agent, verification: result.verification.status, diff: result.diff });
+			this.turnOk = status === 'passed' && !controller.signal.aborted;
+			const steps = this.activity?.steps?.length ? summarizeSteps(this.activity.steps) : undefined;
 			this.conversation.messages.push(chatMessage('run', result.agent.output.trim() || this.t('El agente no devolvi\u00f3 un informe.'), {
 				provider, tone: outcome.kind === 'failed' || outcome.kind === 'blocked' ? 'error' : 'info',
-				run: { planVersion: plan.version, provider, status, agentStatus: result.agent.status, durationMs: Date.now() - started, verification: result.verification, outcome, ...(options.continued ? { continued: true } : {}), ...(result.agent.searches?.length ? { searches: result.agent.searches } : {}) }
+				run: { planVersion: plan.version, provider, status, agentStatus: result.agent.status, durationMs: Date.now() - started, verification: result.verification, outcome, ...(options.continued ? { continued: true } : {}), ...(steps ? { steps } : {}), ...(result.agent.searches?.length ? { searches: result.agent.searches } : {}) }
 			}));
 		} catch (error) {
 			this.conversation.messages.push(chatMessage('notice', this.errorNotice(error), { tone: cancelledBeforeStart(error) ? 'info' : 'error', provider }));
 		} finally {
 			this.finish();
 			await this.persist();
+			await this.drainQueue();
 		}
 	}
 
@@ -412,11 +610,14 @@ export class HarnessChatSession {
 				this.emit();
 			},
 			progress: observedBytes => { if (this.activity) { this.activity.observedBytes = observedBytes; this.emit(); } },
-			message: text => { if (this.activity) { this.activity.partial = text.length > 8000 ? text.slice(-8000) : text; this.emit(); } }
+			message: text => { if (this.activity) { this.activity.partial = text.length > 8000 ? text.slice(-8000) : text; this.emit(); } },
+			step: step => { if (this.activity) { this.activity.steps = upsertStep(this.activity.steps ?? [], step); this.emit(); } },
+			approval: request => this.requestApproval(request)
 		};
 	}
 
 	private finish(): void {
+		this.denyApprovals();
 		this.activity = undefined; this.cancelActive = undefined; this.conversation.pending = undefined;
 	}
 

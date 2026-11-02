@@ -6,12 +6,14 @@
 'use strict';
 const api = acquireVsCodeApi();
 const { parseMarkdown, parseInline } = require('./markdown.ts');
+const { createSuggest } = require('./composer-suggest.ts');
 
 const app = document.getElementById('app');
 let L: any = null;
 let state: any = null;
 const rendered = new Map<string, HTMLElement>();
 let ticker: number | undefined;
+let suggest: ReturnType<typeof createSuggest> | undefined;
 
 function el(tag: string, className?: string, text?: string): HTMLElement {
 	const node = document.createElement(tag);
@@ -104,6 +106,10 @@ function shell(): void {
 	model.addEventListener('change', () => api.postMessage({ action: 'model', provider: state?.chat?.provider, model: model.value }));
 	const effort = el('select', 'effort-select') as HTMLSelectElement; effort.id = 'effort';
 	effort.addEventListener('change', () => api.postMessage({ action: 'effort', provider: state?.chat?.provider, effort: effort.value }));
+	const mode = el('select', 'mode-select') as HTMLSelectElement; mode.id = 'mode';
+	for (const [value, label] of [['act', L.modeAct], ['ask', L.modeAsk]]) { const item = el('option', '', label) as HTMLOptionElement; item.value = value; mode.append(item); }
+	mode.setAttribute('aria-label', L.mode); mode.title = L.modeHint;
+	mode.addEventListener('change', () => api.postMessage({ action: 'mode', mode: mode.value }));
 	const mcp = el('button', 'mcp-pill') as HTMLButtonElement; mcp.type = 'button'; mcp.id = 'mcp-pill';
 	mcp.setAttribute('aria-expanded', 'false'); mcp.setAttribute('aria-controls', 'mcp-details');
 	mcp.append(el('span', 'dot'), el('span', 'mcp-label'));
@@ -111,12 +117,14 @@ function shell(): void {
 	const more = el('button', 'icon-button', '\u22ef') as HTMLButtonElement; more.type = 'button'; more.id = 'menu-button';
 	more.setAttribute('aria-label', L.menu); more.setAttribute('aria-expanded', 'false'); more.setAttribute('aria-controls', 'menu');
 	more.addEventListener('click', () => toggle('menu', more));
-	controls.append(switcher, model, effort, mcp, more);
+	const quota = el('span', 'quota'); quota.id = 'quota'; quota.hidden = true; quota.setAttribute('role', 'group'); quota.tabIndex = 0;
+	quota.append(el('span', 'quota-icon'), el('span', 'quota-text'));
+	controls.append(switcher, quota, model, effort, mode, mcp, more);
 	header.append(brand, controls);
 
 	const details = el('section', 'popover mcp-details'); details.id = 'mcp-details'; details.hidden = true; details.setAttribute('aria-label', L.mcp);
 	const menu = el('div', 'popover menu'); menu.id = 'menu'; menu.hidden = true; menu.setAttribute('role', 'group'); menu.setAttribute('aria-label', L.menu);
-	for (const [action, label] of [['reset', L.newChat], ['commands', L.commands], ['providerCheck', L.refreshProviders], ['openTasks', L.openTasks]]) {
+	for (const [action, label] of [['reset', L.newChat], ['commands', L.commands], ['providerCheck', L.refreshProviders], ['setupCheck', L.setupCheck], ['openTasks', L.openTasks]]) {
 		const item = el('button', 'menu-item', label) as HTMLButtonElement; item.type = 'button';
 		item.addEventListener('click', () => {
 			closePopovers();
@@ -130,6 +138,7 @@ function shell(): void {
 	const thread = el('div', 'thread'); thread.id = 'thread';
 	// Live activity sits outside the log region: its clock would otherwise be announced every second.
 	const activity = el('section', 'activity'); activity.id = 'activity'; activity.setAttribute('aria-label', L.activity);
+	const approvals = el('section', 'approvals'); approvals.id = 'approvals'; approvals.setAttribute('aria-label', L.approvals); approvals.hidden = true;
 	const empty = el('section', 'empty'); empty.id = 'empty';
 	const announcer = el('div', 'visually-hidden'); announcer.id = 'announcer'; announcer.setAttribute('role', 'status');
 	const conversation = el('div', 'conversation'); conversation.append(thread);
@@ -146,9 +155,15 @@ function shell(): void {
 	form.append(box, el('p', 'hint', L.keyboard));
 	(form.lastElementChild as HTMLElement).id = 'composer-hint';
 	form.addEventListener('submit', event => { event.preventDefault(); submit(input.value); });
-	input.addEventListener('keydown', event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); form.requestSubmit(); } });
+	suggest = createSuggest(input, form, message => api.postMessage(message), { commands: L.commandsLabel, files: L.filesLabel, commandList: L.commandList });
+	input.addEventListener('keydown', event => {
+		if (suggest.key(event)) { event.preventDefault(); return; }
+		if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); form.requestSubmit(); }
+	});
 	input.addEventListener('input', autosize);
-	app.append(header, details, menu, banner, log, activity, announcer, form);
+	input.addEventListener('input', () => suggest.update());
+	input.addEventListener('blur', () => suggest.close());
+	app.append(header, details, menu, banner, log, approvals, activity, announcer, form);
 }
 // Registered once: `shell()` runs again whenever the host re-sends labels.
 document.addEventListener('keydown', event => {
@@ -177,11 +192,38 @@ function closePopovers(): void {
 function busy(): boolean { return !!state?.chat?.activity; }
 function submit(value: string): void {
 	const text = value.trim();
-	if (!text || busy() || !state?.chat) { return; }
+	if (!text || !state?.chat) { return; }
 	api.postMessage({ action: 'send', text });
 	// An oversized message is answered with how many characters to remove; the text stays so it can be trimmed.
 	if (text.length > L.maxMessageChars) { return; }
-	const input = document.getElementById('prompt') as HTMLTextAreaElement; input.value = ''; autosize();
+	const input = document.getElementById('prompt') as HTMLTextAreaElement; input.value = ''; autosize(); suggest?.close();
+}
+
+// ---------------------------------------------------------------- provider quota
+const QUOTA_WARN = 20, QUOTA_CRITICAL = 5;
+const quotaLevel = (free: number): 'ok' | 'warn' | 'critical' => free < QUOTA_CRITICAL ? 'critical' : free < QUOTA_WARN ? 'warn' : 'ok';
+/** "Sesion 95% libre - reinicia 20:40"; a reset more than a day away also names the weekday. */
+function quotaLine(window: { id: string; label: string; usedPercent: number; resetsAt?: number }): string {
+	const free = Math.max(0, 100 - window.usedPercent);
+	const line = format(L.quotaFree, L.quotaWindow[window.id] ?? window.label, String(Math.round(free)));
+	if (!window.resetsAt) { return line; }
+	const at = new Date(window.resetsAt * 1000);
+	const near = at.getTime() - Date.now() < 20 * 3600 * 1000;
+	return line + ' \u00b7 ' + format(L.quotaResets, at.toLocaleString([], near ? { hour: '2-digit', minute: '2-digit' } : { weekday: 'short', hour: '2-digit', minute: '2-digit' }));
+}
+/** Shows the shortest window of the active provider, the others in the tooltip; hidden when the provider reported nothing. */
+function renderQuota(provider: string | undefined): void {
+	const node = document.getElementById('quota');
+	const windows = ((provider && state.chat?.quota?.[provider]?.windows) || []).filter(window => !window.resetsAt || window.resetsAt * 1000 > Date.now());
+	node.hidden = !windows.length;
+	if (!windows.length) { return; }
+	const level = quotaLevel(Math.min(...windows.map(window => 100 - window.usedPercent)));
+	node.dataset.level = level;
+	node.querySelector('.quota-icon').textContent = level === 'critical' ? '\u2716' : level === 'warn' ? '\u26a0' : '\u25cf';
+	node.querySelector('.quota-text').textContent = quotaLine(windows[0]);
+	const detail = windows.map(quotaLine).join('\n');
+	const text = format(L.quotaTitle, providerName(provider), detail) + (level === 'ok' ? '' : '\n' + L.quotaLevel[level]);
+	node.title = text; node.setAttribute('aria-label', text.replace(/\n/g, '. '));
 }
 
 // ---------------------------------------------------------------- header state
@@ -193,6 +235,7 @@ function renderHeader(): void {
 	if (state.project) { select.value = state.project.id; }
 	select.hidden = state.projects.length < 2; name.hidden = state.projects.length >= 2;
 	name.textContent = state.project?.name ?? '';
+	(document.getElementById('mode') as HTMLSelectElement).value = state.chatMode === 'ask' ? 'ask' : 'act';
 	const selected = state.chat?.provider;
 	for (const button of document.querySelectorAll<HTMLButtonElement>('.provider-option')) {
 		const provider = button.dataset.provider; const info = state.providers[provider] || { status: 'unknown' };
@@ -204,6 +247,7 @@ function renderHeader(): void {
 	}
 	renderModel(selected);
 	renderEffort(selected);
+	renderQuota(selected);
 	const mcp = state.mcp; const pill = document.getElementById('mcp-pill');
 	pill.dataset.state = mcp.state;
 	pill.querySelector('.mcp-label').textContent = L.mcp + ': ' + L.mcpState[mcp.state];
@@ -327,19 +371,44 @@ function outcomeHint(outcome: any): string | undefined {
 	if (outcome.kind === 'unchanged') { return L.outcomeHint.unchanged; }
 	return outcome.reason ? L.outcomeHint[outcome.reason] : undefined;
 }
-function changedFiles(diff: any): HTMLElement | undefined {
+function fileButton(label: string, path: string, action: string, messageId: string): HTMLButtonElement {
+	const button = el('button', 'link-button', label) as HTMLButtonElement; button.type = 'button'; button.setAttribute('aria-label', label + ': ' + path);
+	button.addEventListener('click', () => api.postMessage({ action, messageId, path }));
+	return button;
+}
+function changedFiles(message: any, current: any): HTMLElement | undefined {
+	const diff = message.run?.outcome?.diff;
 	if (!diff?.available || !diff.count) { return undefined; }
+	const reverted: string[] = message.run.reverted ?? [];
+	const canRevert = !!current && current.messageId === message.id && current.discardable;
 	const box = el('details', 'run-files');
 	box.append(el('summary', undefined, format(L.changedFiles, String(diff.count))));
 	const list = el('ul', 'commands');
 	for (const file of diff.files) {
-		const item = el('li');
-		item.append(el('code', undefined, file.path), el('span', 'muted', ' ' + L.change[file.change] + (file.preexisting ? ' \u00b7 ' + L.preexisting : '')));
+		const item = el('li', 'run-file');
+		const done = reverted.includes(file.path);
+		item.append(el('code', undefined, file.path), el('span', 'muted', ' ' + L.change[file.change] + (file.preexisting ? ' \u00b7 ' + L.preexisting : '') + (done ? ' \u00b7 ' + L.reverted : '')));
+		const actions = el('span', 'file-actions');
+		if (!done) { actions.append(fileButton(L.viewChanges, file.path, 'openDiff', message.id)); }
+		if (!done && canRevert) { actions.append(fileButton(L.revertFile, file.path, 'revertFile', message.id)); }
+		item.append(actions);
 		list.append(item);
 	}
 	if (diff.count > diff.files.length) { list.append(el('li', 'muted', format(L.changedMore, String(diff.count - diff.files.length)))); }
 	box.append(list);
 	return box;
+}
+/** One line per step: what kind of action, its target and how it ended. Targets are text, never markup. */
+function stepList(steps: any[]): HTMLElement {
+	const list = el('ol', 'steps');
+	list.setAttribute('aria-label', L.steps);
+	for (const step of steps) {
+		const item = el('li', 'step ' + step.status);
+		const label = el('code', 'step-label', step.label); if (step.detail) { label.title = step.detail; }
+		item.append(el('span', 'step-icon'), el('span', 'step-kind', L.stepKind[step.kind] || step.kind), label, el('span', 'visually-hidden', L.stepStatus[step.status] || step.status));
+		list.append(item);
+	}
+	return list;
 }
 function runSummary(run: any, messageId: string): HTMLElement {
 	const box = el('div', 'run-summary');
@@ -347,12 +416,16 @@ function runSummary(run: any, messageId: string): HTMLElement {
 	const head = el('div', 'run-head');
 	const kind = run.outcome?.kind;
 	const badge = kind ? el('span', 'status-badge ' + kind, L.outcome[kind] || kind) : el('span', 'status-badge ' + run.status, L.run[run.status] || run.status);
-	head.append(badge, el('span', 'muted', format(L.plan, String(run.planVersion)) + (run.continued ? ' \u00b7 ' + L.continuedRun : '') + ' \u00b7 ' + providerName(run.provider) + ' \u00b7 ' + L.duration + ' ' + duration(run.durationMs)));
+	head.append(badge, el('span', 'muted', (run.planVersion === 0 ? L.directRun : format(L.plan, String(run.planVersion))) + (run.continued ? ' \u00b7 ' + L.continuedRun : '') + ' \u00b7 ' + providerName(run.provider) + ' \u00b7 ' + L.duration + ' ' + duration(run.durationMs)));
 	box.append(head);
 	const hint = outcomeHint(run.outcome);
 	if (hint) { box.append(el('p', kind === 'failed' || kind === 'blocked' ? 'error-text' : 'muted', hint)); }
-	const files = changedFiles(run.outcome?.diff);
-	if (files) { box.append(files); }
+	box.append(el('div', 'run-files-slot'));
+	if (run.steps?.length) {
+		const summary = el('details', 'run-files');
+		summary.append(el('summary', undefined, format(L.stepsSummary, String(run.steps.length))), stepList(run.steps));
+		box.append(summary);
+	}
 	if (run.searches?.length) {
 		const searches = el('details', 'run-files');
 		searches.append(el('summary', undefined, format(L.searches, String(run.searches.length))));
@@ -435,6 +508,23 @@ function renderThread(): void {
 	}
 	updatePlanCards();
 	updateRunActions();
+	updateRunFiles();
+}
+/** Rebuilt only when what it shows changes, so a progress update never takes focus from a button. */
+function updateRunFiles(): void {
+	const messages = new Map<string, any>((state.chat?.messages ?? []).map(message => [message.id, message]));
+	for (const box of document.querySelectorAll<HTMLElement>('.run-summary')) {
+		const slot = box.querySelector<HTMLElement>('.run-files-slot'); const message = messages.get(box.dataset.messageId);
+		if (!slot || !message) { continue; }
+		const current = state.chat.run;
+		const signature = JSON.stringify([message.run.reverted, message.run.outcome?.diff?.count, current?.messageId === message.id && current.discardable]);
+		if (slot.dataset.signature === signature) { continue; }
+		slot.dataset.signature = signature;
+		const open = slot.querySelector('details')?.open;
+		slot.textContent = '';
+		const files = changedFiles(message, current);
+		if (files) { (files as HTMLDetailsElement).open = !!open; slot.append(files); }
+	}
 }
 function renderEmpty(): void {
 	const empty = document.getElementById('empty'); empty.textContent = '';
@@ -452,14 +542,20 @@ function renderEmpty(): void {
 let announced = '';
 /** Speak only phase changes (start, stage, gate results, end), never timers or byte counters. */
 function announce(activity: any): void {
-	const phase = !activity ? '' : activity.kind === 'thinking' ? format(L.thinking, providerName(activity.provider))
-		: [L.stage[activity.stage], ...(activity.gates || []).filter(gate => gate.status !== 'pending').map(gate => gate.id + ': ' + (L.gate[gate.status] || gate.status))].join('. ');
+	const queued = state?.chat?.queue?.length ? '. ' + format(L.queued, String(state.chat.queue.length)) : '';
+	const phase = !activity ? '' : (activity.kind === 'thinking' ? format(L.thinking, providerName(activity.provider))
+		: [L.stage[activity.stage], ...(activity.gates || []).filter(gate => gate.status !== 'pending').map(gate => gate.id + ': ' + (L.gate[gate.status] || gate.status))].join('. ')) + queued;
 	if (phase === announced) { return; }
 	announced = phase;
 	document.getElementById('announcer').textContent = phase || L.idle;
 }
 function renderActivity(): void {
-	const box = document.getElementById('activity'); box.textContent = '';
+	const box = document.getElementById('activity');
+	// Keep the reader's place in the timeline across rebuilds: follow the newest step only when already at the end.
+	const before = box.querySelector<HTMLElement>('.steps');
+	const following = !before || before.scrollHeight - before.scrollTop - before.clientHeight < 24;
+	const scrolled = before?.scrollTop ?? 0;
+	box.textContent = '';
 	const activity = state.chat?.activity;
 	announce(activity);
 	window.clearInterval(ticker); ticker = undefined;
@@ -467,7 +563,7 @@ function renderActivity(): void {
 	box.hidden = false;
 	const head = el('div', 'activity-head');
 	const spinner = el('span', 'spinner'); spinner.setAttribute('aria-hidden', 'true');
-	const title = activity.kind === 'thinking' ? format(L.thinking, providerName(activity.provider)) : format(L.executing, String(activity.planVersion), providerName(activity.provider));
+	const title = activity.kind === 'thinking' ? format(L.thinking, providerName(activity.provider)) : (activity.planVersion === 0 ? format(L.executingDirect, providerName(activity.provider)) : format(L.executing, String(activity.planVersion), providerName(activity.provider)));
 	const clock = el('span', 'muted clock', elapsed(activity.startedAt)); clock.setAttribute('aria-hidden', 'true');
 	head.append(spinner, el('strong', undefined, title), clock);
 	box.append(head);
@@ -488,16 +584,62 @@ function renderActivity(): void {
 		box.append(stages);
 		if (activity.gates?.length) { box.append(gateList(activity.gates)); }
 	}
+	if (activity.steps?.length) {
+		const timeline = stepList(activity.steps);
+		box.append(timeline);
+		timeline.scrollTop = following ? timeline.scrollHeight : scrolled;
+	}
+	const queue: Array<{ id: string; text: string }> = state.chat.queue ?? [];
+	if (queue.length) {
+		const waiting = el('div', 'queue');
+		waiting.append(el('p', 'muted', format(L.queued, String(queue.length)) + ' \u00b7 ' + L.queueHint));
+		const list = el('ul', 'commands');
+		for (const entry of queue) {
+			const item = el('li', 'queued'); item.append(el('span', 'queued-text', entry.text));
+			const remove = el('button', 'link-button', L.unqueue) as HTMLButtonElement; remove.type = 'button'; remove.setAttribute('aria-label', L.unqueue + ': ' + entry.text.slice(0, 60));
+			remove.addEventListener('click', () => api.postMessage({ action: 'unqueue', id: entry.id }));
+			item.append(remove); list.append(item);
+		}
+		waiting.append(list); box.append(waiting);
+	}
 	if (activity.observedBytes) { const bytes = el('p', 'muted', format(L.observed, String(Math.round(activity.observedBytes / 1024)))); bytes.setAttribute('aria-hidden', 'true'); box.append(bytes); }
 	ticker = window.setInterval(() => { clock.textContent = elapsed(activity.startedAt); }, 1000);
 }
+let renderedApprovals = '';
+/** One keyboard-reachable card per pending tool approval. Rebuilt only when the set changes, so progress updates never steal focus. */
+function renderApprovals(): void {
+	const box = document.getElementById('approvals');
+	const pending: any[] = state.chat?.approvals ?? [];
+	const key = pending.map(item => item.id).join(',');
+	if (key === renderedApprovals) { return; }
+	renderedApprovals = key; box.textContent = ''; box.hidden = !pending.length;
+	for (const item of pending) {
+		const card = el('div', 'approval'); card.setAttribute('role', 'group'); card.setAttribute('aria-labelledby', 'title-' + item.id); card.setAttribute('aria-describedby', 'rule-' + item.id);
+		const title = el('strong', 'approval-title', item.title); title.id = 'title-' + item.id;
+		const detail = el('ul', 'approval-detail'); for (const line of item.detail) { detail.append(el('li', undefined, line)); }
+		const rule = el('p', 'muted approval-rule', format(L.alwaysRule, item.rule, L.permissionsFile)); rule.id = 'rule-' + item.id;
+		rule.hidden = !item.rule;
+		const actions = el('div', 'approval-actions');
+		for (const [answer, label, className] of [['once', L.allowOnce, ''], ['always', L.allowAlways, 'secondary'], ['deny', L.denyApproval, 'secondary']]) {
+			if (answer === 'always' && !item.rule) { continue; }
+			const button = el('button', className, label) as HTMLButtonElement; button.type = 'button';
+			button.addEventListener('click', () => { button.disabled = true; api.postMessage({ action: 'approval', id: item.id, answer }); });
+			actions.append(button);
+		}
+		card.append(title, detail, rule, actions); box.append(card);
+	}
+	if (pending.length) {
+		document.getElementById('announcer').textContent = pending[0].title;
+		(box.querySelector('button') as HTMLButtonElement | null)?.focus();
+	}
+}
 function renderComposer(): void {
 	const running = busy();
-	(document.getElementById('send') as HTMLButtonElement).hidden = running;
-	(document.getElementById('send') as HTMLButtonElement).disabled = !state.chat;
+	const send = document.getElementById('send') as HTMLButtonElement;
+	send.textContent = running ? L.queueSend : L.send; send.disabled = !state.chat || (running && (state.chat.queue?.length ?? 0) >= 5);
 	const stop = document.getElementById('stop') as HTMLButtonElement;
 	stop.hidden = !running; stop.disabled = !!state.chat?.activity?.cancelling;
-	stop.textContent = state.chat?.activity?.cancelling ? L.cancelling : L.cancel;
+	stop.textContent = state.chat?.activity?.cancelling ? L.cancelling : L.cancel; stop.title = L.stopHint;
 	(document.getElementById('prompt') as HTMLTextAreaElement).disabled = !state.chat;
 	document.getElementById('composer').setAttribute('aria-busy', String(running));
 	const banner = document.getElementById('banner');
@@ -507,12 +649,13 @@ function renderComposer(): void {
 function render(): void {
 	const log = document.getElementById('log');
 	const pinned = log.scrollHeight - log.scrollTop - log.clientHeight < 120;
-	renderHeader(); renderThread(); renderEmpty(); renderActivity(); renderComposer();
+	renderHeader(); renderThread(); renderEmpty(); renderApprovals(); renderActivity(); renderComposer();
 	if (pinned) { log.scrollTop = log.scrollHeight; }
 }
 
 window.addEventListener('message', event => {
 	const data = event.data;
+	if (data?.type === 'completions' && data.kind === 'mention') { suggest?.complete(data); return; }
 	if (data?.type === 'init') { L = data.labels; shell(); if (state) { render(); } return; }
 	if (data?.type === 'state') {
 		if (data.chat && data.chat.messages === undefined) { data.chat.messages = state?.chat?.messages ?? []; }

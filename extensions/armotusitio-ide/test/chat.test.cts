@@ -142,7 +142,7 @@ async function panelFixture(replies, providerStatus = { claude: 'authenticated',
 	const os = require('node:os'); const fsp = require('node:fs/promises'); const path = require('node:path');
 	const storage = await fsp.mkdtemp(path.join(os.tmpdir(), 'ats-chat-panel-'));
 	const root = await fsp.realpath(storage);
-	const posted = [], executed = [], calls = [];
+	const posted = [], executed = [], calls = [], instructions = [], approvals = [];
 	let receive;
 	const noop = () => ({ dispose() { } });
 	const panel = { reveal() { }, onDidDispose: noop, dispose() { }, webview: { cspSource: 'csp', asWebviewUri: value => value, onDidReceiveMessage: fn => { receive = fn; return noop(); }, postMessage: async value => { posted.push(JSON.parse(JSON.stringify(value))); return true; } } };
@@ -154,10 +154,10 @@ async function panelFixture(replies, providerStatus = { claude: 'authenticated',
 		workspaceFolders.push({ name: index ? 'proyecto-' + index : 'clientes', uri: { fsPath, toString: () => 'file:///' + (index ? 'proyecto-' + index : 'clientes') } });
 	}
 	const memento = new Map();
-	const settings = new Map();
+	const settings = new Map([['chatMode', 'ask']]);
 	const vscode = {
 		l10n: { t: (text, ...args) => text.replace(/\{(\d+)\}/g, (_, i) => String(args[i])) }, ViewColumn: { One: 1 },
-		Uri: { joinPath: (base, ...parts) => base + '/' + parts.join('/') },
+		Uri: { joinPath: (base, ...parts) => base + '/' + parts.join('/'), file: fsPath => ({ fsPath }) },
 		workspace: { isTrusted: true, workspaceFolders, getConfiguration: () => ({ get: (key, fallback) => settings.get(key) ?? fallback, update: async (key, value) => { settings.set(key, value); } }) },
 		window: { createWebviewPanel: () => panel, showWarningMessage: async (_text, _options, choice) => options.confirm ? choice : undefined, showErrorMessage: async () => undefined },
 		commands: { registerCommand: (id, fn) => { commands.set(id, fn); return noop(); }, executeCommand: async (...args) => { executed.push(args); } },
@@ -168,10 +168,16 @@ async function panelFixture(replies, providerStatus = { claude: 'authenticated',
 		nativeChatRuntime: folder => ({
 			root: folder.uri.fsPath,
 			async context() { return { root: this.root, writer: true, skills: [], guides: [], verification: { revision: 'c'.repeat(64), gates: [{ id: 'unit', command: 'npm test' }] } }; },
-			async converse(provider, instruction, hooks) { calls.push(['converse', provider]); hooks.started(() => undefined); hooks.progress(8192); hooks.progress(16384); return answer(replies.shift()); },
+			async converse(provider, instruction, hooks) {
+				calls.push(['converse', provider]); instructions.push(instruction); hooks.started(() => undefined); hooks.progress(8192); hooks.progress(16384);
+				const reply = replies.shift();
+				return typeof reply === 'string' ? answer(reply) : { ...answer(reply.text), usage: reply.usage, quota: reply.quota };
+			},
+			async discard(diff) { return { discarded: diff.files.map(file => file.path), skipped: [] }; },
 			async implement(request, hooks) {
 				calls.push(['implement', request.provider, request.plan.version]);
 				hooks.started(() => undefined); hooks.stage('verifying'); hooks.gates([{ id: 'unit', status: 'running' }]);
+				if (request.instruction.includes('pedir aprobacion')) { approvals.push(await hooks.approval({ kind: 'git_push', title: 'Push', detail: ['branch: feat/x'], rule: 'git_push' })); }
 				return { agent: answer('Cre\u00e9 src/clients.ts'), verification: { status: 'passed', gates: [{ id: 'unit', status: 'passed' }] }, diff: { available: true, files: [{ path: 'src/clients.ts', change: 'added', preexisting: false }], count: 1 } };
 			}
 		})
@@ -192,7 +198,7 @@ async function panelFixture(replies, providerStatus = { claude: 'authenticated',
 		return { ...last, chat: last.chat && { ...last.chat, messages: last.chat.messages ?? messages } };
 	};
 	const cleanup = async () => { context.subscriptions.forEach(item => item.dispose()); await fsp.rm(storage, { recursive: true, force: true }); };
-	return { receive, state, posted, calls, executed, cleanup };
+	return { receive, state, posted, calls, executed, instructions, approvals, root, settings, cleanup };
 }
 
 test('Chat Harness panel: converse, revise, approve and follow execution without leaving the chat', async () => {
@@ -295,5 +301,205 @@ test('review #7: switching away before a project loads and back again keeps the 
 		await Promise.all([away, back]);
 		assert.deepEqual({ project: f.state().project.name, messages: f.state().chat.messages.map(message => message.text) },
 			{ project: 'clientes', messages: ['mensaje A', 'respuesta A'] });
+	} finally { await f.cleanup(); }
+});
+
+test('the chat mode is a user setting: Act sends a direct run, Ask only converses', async () => {
+	const f = await panelFixture(['Es una pregunta.']);
+	try {
+		assert.equal(f.state().chatMode, 'ask');
+		await f.receive({ action: 'mode', mode: 'bogus' });
+		assert.equal(f.state().chatMode, 'ask');
+		await f.receive({ action: 'send', text: 'Una pregunta' });
+		await f.receive({ action: 'mode', mode: 'act' });
+		assert.equal(f.state().chatMode, 'act');
+		await f.receive({ action: 'send', text: 'Correg\u00ed el foco del modal' });
+		assert.deepEqual(f.calls.map(call => call[0]), ['converse', 'implement']);
+		assert.equal(f.calls[1][2], 0);
+	} finally { await f.cleanup(); }
+});
+
+test('slash commands: /ayuda is generated from the command table and the new commands are all listed', async () => {
+	const f = await panelFixture([]);
+	try {
+		const { chatCommands } = require('../src/native-chat-commands.ts');
+		await f.receive({ action: 'send', text: '/ayuda' });
+		const help = f.state().chat.messages.at(-1).text;
+		const names = chatCommands(text => text).map(command => command.name);
+		for (const name of ['ayuda', 'permisos', 'modo', 'deshacer', 'costo', 'estado', 'comentar']) { assert.ok(names.includes(name), name); }
+		for (const name of names) { assert.ok(help.includes('/' + name), name); }
+		// The autocomplete in the composer receives the same table.
+		assert.deepEqual(f.posted.find(item => item.type === 'init').labels.commandList.map(command => command.name), names);
+	} finally { await f.cleanup(); }
+});
+
+test('/modo shows and changes the chat mode in user settings', async () => {
+	const f = await panelFixture([]);
+	try {
+		const last = () => f.state().chat.messages.at(-1).text;
+		await f.receive({ action: 'send', text: '/modo' });
+		assert.match(last(), /Modo actual: Preguntar/);
+		await f.receive({ action: 'send', text: '/modo actuar' });
+		assert.match(last(), /Modo cambiado a Actuar/);
+		assert.equal(f.settings.get('chatMode'), 'act');
+		assert.equal(f.state().chatMode, 'act');
+		await f.receive({ action: 'send', text: '/modo volando' });
+		assert.match(last(), /Uso: \/modo/);
+		assert.equal(f.settings.get('chatMode'), 'act');
+	} finally { await f.cleanup(); }
+});
+
+test('/costo reports only what the provider reported, and says so when it did not', async () => {
+	const f = await panelFixture(['sin uso', { text: 'con uso', usage: { inputTokens: 1200, outputTokens: 340, cachedInputTokens: 900 } }]);
+	try {
+		const last = () => f.state().chat.messages.at(-1).text;
+		await f.receive({ action: 'send', text: '/costo' });
+		assert.match(last(), /no inform\u00f3/);
+		await f.receive({ action: 'send', text: 'hola' });
+		await f.receive({ action: 'send', text: '/costo' });
+		assert.match(last(), /no inform\u00f3/);
+		await f.receive({ action: 'send', text: 'otra' });
+		await f.receive({ action: 'send', text: '/costo' });
+		assert.match(last(), /Entrada: 1200 tokens[\s\S]*Salida: 340 tokens[\s\S]*cach\u00e9: 900 tokens/);
+		assert.ok(!/Costo estimado/.test(last()));
+	} finally { await f.cleanup(); }
+});
+
+test('/deshacer discards the last direct run when it can and explains why when it cannot', async () => {
+	const f = await panelFixture([], undefined, { folders: 1, confirm: true });
+	try {
+		const last = () => f.state().chat.messages.at(-1).text;
+		await f.receive({ action: 'send', text: '/deshacer' });
+		assert.match(last(), /Todav\u00eda no hay ninguna ejecuci\u00f3n/);
+		await f.receive({ action: 'send', text: '/modo actuar' });
+		await f.receive({ action: 'send', text: 'agrega un archivo' });
+		assert.equal(f.state().chat.messages.at(-1).role, 'run');
+		await f.receive({ action: 'send', text: '/deshacer' });
+		assert.ok(f.state().chat.messages.some(message => /Se descartaron 1 archivos/.test(message.text)));
+		assert.ok(f.state().chat.messages.at(-1).text.includes('descart\u00e9 los cambios'));
+		await f.receive({ action: 'send', text: '/deshacer' });
+		assert.match(last(), /ya se descartaron/);
+	} finally { await f.cleanup(); }
+	const declined = await panelFixture([], undefined, { folders: 1, confirm: false });
+	try {
+		await declined.receive({ action: 'send', text: '/modo actuar' });
+		await declined.receive({ action: 'send', text: 'agrega un archivo' });
+		await declined.receive({ action: 'send', text: '/deshacer' });
+		assert.match(declined.state().chat.messages.at(-1).text, /cancelado/);
+		assert.ok(!declined.state().chat.messages.some(message => /Se descartaron/.test(message.text)));
+	} finally { await declined.cleanup(); }
+});
+
+test('/permisos shows the effective rules and creates then opens the JSON files without overwriting', async () => {
+	const os = require('node:os'); const fsp = require('node:fs/promises'); const path = require('node:path');
+	const f = await panelFixture([]);
+	try {
+		const last = () => f.state().chat.messages.at(-1).text;
+		await f.receive({ action: 'send', text: '/permisos' });
+		assert.match(last(), /Permisos efectivos:[\s\S]*preset dev[\s\S]*Archivos:[\s\S]*\.armotusitio\/permissions\.json \u2014 no existe/);
+		const file = path.join(f.root, '.armotusitio', 'permissions.json');
+		await f.receive({ action: 'send', text: '/permisos proyecto' });
+		assert.match(last(), /Cre\u00e9 \.armotusitio\/permissions\.json/);
+		assert.deepEqual(JSON.parse(await fsp.readFile(file, 'utf8')), { version: 1, allow: [], ask: [], deny: [] });
+		assert.deepEqual(f.executed.at(-1).slice(0, 1), ['vscode.open']);
+		assert.equal(f.executed.at(-1)[1].fsPath, file);
+		await fsp.writeFile(file, JSON.stringify({ version: 1, deny: ['run:rm *'] }));
+		await f.receive({ action: 'send', text: '/permisos proyecto' });
+		assert.match(last(), /^`\/permisos proyecto`[\s\S]*Abr\u00ed/);
+		assert.equal(JSON.parse(await fsp.readFile(file, 'utf8')).deny[0], 'run:rm *');
+		await f.receive({ action: 'send', text: '/permisos' });
+		assert.match(last(), /deny: run:rm \*/);
+		await f.receive({ action: 'send', text: '/permisos otro' });
+		assert.match(last(), /Uso: \/permisos/);
+	} finally { await f.cleanup(); }
+});
+
+test('@file mentions reach the model as bounded data and refusals are reported in the chat', async () => {
+	const fsp = require('node:fs/promises'); const path = require('node:path');
+	const f = await panelFixture(['listo']);
+	try {
+		await fsp.mkdir(path.join(f.root, 'src'), { recursive: true });
+		await fsp.writeFile(path.join(f.root, 'src', 'a.ts'), 'export const a = 1;');
+		await fsp.writeFile(path.join(f.root, '.env'), 'SECRET=hunter2');
+		await f.receive({ action: 'send', text: 'revisa @src/a.ts y @.env y @../fuera.txt' });
+		const messages = f.state().chat.messages;
+		assert.deepEqual(messages.map(message => message.role), ['user', 'notice', 'assistant']);
+		assert.equal(messages[0].text, 'revisa @src/a.ts y @.env y @../fuera.txt');
+		assert.match(messages[1].text, /Adjunt\u00e9 como contexto: src\/a\.ts\.\nNo adjunt\u00e9 @\.env: es un archivo sensible[\s\S]*@\.\.\/fuera\.txt: est\u00e1 fuera del proyecto/);
+		assert.match(f.instructions[0], /<mention path="src\/a\.ts">\nexport const a = 1;\n<\/mention>/);
+		assert.ok(!f.instructions[0].includes('hunter2'));
+		// The file content is not stored in the history.
+		assert.ok(!messages.some(message => message.text.includes('export const a')));
+	} finally { await f.cleanup(); }
+});
+
+test('@ autocomplete answers with project files, never credentials, and ignores stale or malformed requests', async () => {
+	const fsp = require('node:fs/promises'); const path = require('node:path');
+	const f = await panelFixture([]);
+	try {
+		await fsp.mkdir(path.join(f.root, 'src'), { recursive: true });
+		await fsp.writeFile(path.join(f.root, 'src', 'app.ts'), 'x');
+		await fsp.writeFile(path.join(f.root, '.env'), 'x');
+		await f.receive({ action: 'complete', kind: 'mention', query: 'app', seq: 7 });
+		await f.receive({ action: 'complete', kind: 'mention', query: 'env', seq: 8 });
+		await f.receive({ action: 'complete', kind: 'mention', query: 'x'.repeat(301), seq: 9 });
+		await f.receive({ action: 'complete', kind: 'mention', query: 'app', seq: 'nope' });
+		assert.deepEqual(f.posted.filter(item => item.type === 'completions').map(({ seq, items }) => ({ seq, items })), [{ seq: 7, items: ['src/app.ts'] }, { seq: 8, items: [] }]);
+	} finally { await f.cleanup(); }
+});
+
+test('an approval card reaches the webview and only a well-formed answer from it resolves the pending request', async () => {
+	const f = await panelFixture([]);
+	try {
+		await f.receive({ action: 'mode', mode: 'act' });
+		const running = f.receive({ action: 'send', text: 'pedir aprobacion' });
+		while (!f.state().chat?.approvals) { await new Promise(resolve => setTimeout(resolve, 5)); }
+		const [card] = f.state().chat.approvals;
+		// Malformed answers (unknown value, oversized id, wrong type) never resolve anything.
+		await f.receive({ action: 'approval', id: card.id, answer: 'maybe' });
+		await f.receive({ action: 'approval', id: 'x'.repeat(65), answer: 'once' });
+		await f.receive({ action: 'approval', id: 7, answer: 'once' });
+		const stillPending = f.state().chat.approvals.length;
+		await f.receive({ action: 'approval', id: card.id, answer: 'once' });
+		await running;
+		assert.deepEqual({ card: { title: card.title, detail: card.detail, rule: card.rule }, stillPending, answers: f.approvals, left: f.state().chat.approvals }, {
+			card: { title: 'Hacer push', detail: ['branch: feat/x'], rule: 'git_push' }, stillPending: 1, answers: ['once'], left: undefined
+		});
+	} finally { await f.cleanup(); }
+});
+
+test('per-file run actions only accept files the run changed; revert is confirmed and unqueue ignores unknown ids', async () => {
+	const f = await panelFixture([], undefined, { folders: 1, confirm: true });
+	try {
+		await f.receive({ action: 'mode', mode: 'act' });
+		await f.receive({ action: 'send', text: 'Cre\u00e1 el CRUD' });
+		const run = f.state().chat.messages.at(-1);
+		assert.equal(run.run.outcome.diff.files[0].path, 'src/clients.ts');
+		const opened = () => f.executed.filter(args => args[0] === 'atsIde.openRunDiff');
+		for (const path of ['../outside.txt', '/etc/passwd', 'C:\Windows\win.ini', 'src/other.ts', 'src/clients.ts\0', 42]) { await f.receive({ action: 'openDiff', messageId: run.id, path }); }
+		await f.receive({ action: 'openDiff', messageId: 'nope', path: 'src/clients.ts' });
+		assert.deepEqual(opened(), []);
+		await f.receive({ action: 'openDiff', messageId: run.id, path: 'src/clients.ts' });
+		assert.deepEqual(opened(), [['atsIde.openRunDiff', 'file:///clientes', 'src/clients.ts', 'added', false]]);
+		await f.receive({ action: 'revertFile', messageId: run.id, path: '../outside.txt' });
+		assert.equal(f.state().chat.messages.at(-1).role, 'run');
+		await f.receive({ action: 'revertFile', messageId: run.id, path: 'src/clients.ts' });
+		const notice = f.state().chat.messages.at(-1);
+		assert.deepEqual({ role: notice.role, reverted: /Revertidos: src\/clients\.ts/.test(notice.text), stored: f.state().chat.messages.find(message => message.id === run.id).run.reverted }, { role: 'notice', reverted: true, stored: ['src/clients.ts'] });
+		await f.receive({ action: 'unqueue', id: 'unknown' });
+		assert.equal(f.state().chat.queue, undefined);
+	} finally { await f.cleanup(); }
+});
+
+test('/costo adds the provider-reported limit windows with the age of the reading', async () => {
+	const quota = { provider: 'claude', asOf: Date.now() - 3 * 60_000, source: 'stream', windows: [{ id: 'session', label: '5h', usedPercent: 72 }, { id: 'weekly', label: '7d', usedPercent: 94.4 }] };
+	const f = await panelFixture([{ text: 'con cupo', quota }]);
+	try {
+		await f.receive({ action: 'send', text: 'hola' });
+		await f.receive({ action: 'send', text: '/costo' });
+		const text = f.state().chat.messages.at(-1).text;
+		assert.match(text, /no inform\u00f3/);
+		assert.match(text, /Cupo de Claude Code \(dato de hace 3 min\):\n {2}Sesi\u00f3n: 28% libre\n {2}Semanal: 6% libre/);
+		assert.equal(f.state().chat.quota.claude.windows.length, 2);
 	} finally { await f.cleanup(); }
 });

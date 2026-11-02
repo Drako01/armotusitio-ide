@@ -8,6 +8,13 @@ const { nativeRun, progressView } = require('./workflow.ts');
 const { sortActivity } = require('./adapter.ts');
 const key = 'atsHarness.history.v1';
 const states = ['running', 'passed', 'failed', 'cancelled', 'ended', 'unknown'];
+/** Every poll spawns `node` (and the project's own tools): poll rarely when idle, back off on errors. */
+const POLL = Object.freeze({ activeMs: 3000, idleMs: 60000, maxBackoffMs: 5 * 60 * 1000 });
+
+/** Delay before the next poll: the base interval doubled per consecutive failure, capped. */
+function nextDelay(active, failures) {
+	return Math.min((active ? POLL.activeMs : POLL.idleMs) * 2 ** Math.min(failures, 10), POLL.maxBackoffMs);
+}
 
 /** Keep only execution summaries, bounded to twenty entries per project. */
 class History {
@@ -156,8 +163,12 @@ function registerActivity(context, controller, projects, vscode, reader = readPr
 			render(); controller.refresh();
 		} catch { if (!disposed) { render(); controller.refresh(); } }
 	}
+	// Without a visible window nobody sees the result: remember that a poll was skipped and catch up on focus.
+	let skipped = false;
+	const visible = () => vscode.window.state?.focused !== false;
 	async function refresh(manual = false) {
 		if (disposed) { return; }
+		if (!manual && !visible()) { skipped = true; return; }
 		if (polling) { if (manual) { trailing = true; return polling; } return; }
 		polling = (async () => { do { const full = manual || trailing; trailing = false; await sample(full); manual = false; } while (trailing && !disposed); })();
 		try { await polling; } finally { polling = undefined; }
@@ -172,14 +183,16 @@ function registerActivity(context, controller, projects, vscode, reader = readPr
 		}
 	}
 	context.subscriptions.push(...watchers);
-	let timer;
+	let timer, failures = 0;
 	function schedule() {
 		clearTimeout(timer); if (disposed) { return; }
 		const active = (controller.getWorkflowActivity?.() || []).some(entry => entry.progress?.live || ['preparing', 'creating', 'running', 'stopping'].includes(entry.phase)) || [...controller.jobs.values()].some(job => job.state === 'running');
-		timer = setTimeout(() => { void refresh().finally(schedule); }, active ? 2000 : 15000);
+		// Errors are counted per completed poll, not per re-schedule, so tree redraws never inflate the backoff.
+		timer = setTimeout(() => { void refresh().finally(() => { failures = controller.progress.some(row => row.error) ? failures + 1 : 0; schedule(); }); }, nextDelay(active, failures));
 	}
 	const changed = controller.onDidChangeTreeData(() => { render(); schedule(); });
 	context.subscriptions.push(bar, changed,
+		vscode.window.onDidChangeWindowState?.(state => { if (state.focused && skipped) { skipped = false; void refresh(); } }) ?? { dispose() { } },
 		vscode.workspace.onDidGrantWorkspaceTrust(() => { void refresh(); }),
 		vscode.workspace.onDidChangeWorkspaceFolders(() => { void refresh(); }),
 		vscode.workspace.onDidChangeConfiguration(e => { if (e.affectsConfiguration('atsHarness.enabled')) { void refresh(); } }),
@@ -188,4 +201,4 @@ function registerActivity(context, controller, projects, vscode, reader = readPr
 	void refresh().finally(schedule);
 }
 
-module.exports = { History, normalizeProgress, readProgress, registerActivity };
+module.exports = { History, POLL, nextDelay, normalizeProgress, readProgress, registerActivity };

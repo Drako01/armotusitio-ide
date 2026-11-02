@@ -27,7 +27,8 @@ const SKIP_DIRS = new Set([
 ]);
 /** Harness-generated output, skipped by path because `runtime` and `state` are too generic to skip by name. */
 const SKIP_PATHS = ['.harness/runtime', '.harness/state'];
-const SECRET_NAME = /^(?:\.env(?:\..*)?|\.npmrc|\.netrc|\.pypirc|\.aws|\.dockerconfigjson|credentials(?:\.[a-z0-9_-]+)?\.json|id_(?:rsa|ed25519)|.*\.(?:pem|p12|pfx|key))$/i;
+/** Credential file names; shared with the git tools so they never commit what this scan treats as sensitive. */
+export const SECRET_NAME = /^(?:\.env(?:\..*)?|\.npmrc|\.netrc|\.pypirc|\.aws|\.dockerconfigjson|credentials(?:\.[a-z0-9_-]+)?\.json|id_(?:rsa|ed25519)|.*\.(?:pem|p12|pfx|key))$/i;
 
 export interface SensitiveScan {
 	digest: string;
