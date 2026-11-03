@@ -36,7 +36,7 @@ export interface RunnerConfig {
 	mcpTools?: WorkMcpTool[];
 	/** Permission rules are read from their files by this process on every call, so an "always" answer applies at once; only the preset travels here. */
 	permissions?: { preset?: PermissionPreset };
-	/** Offers `git_commit` / `git_push`; set only for runs that can ask the user (the chat). */
+	/** Offers structured branch/commit/push/PR tools; set only for runs that can ask the user (the chat). */
 	git?: boolean;
 	/** Integrity snapshots captured by the extension before the provider starts. */
 	projectPermissionsBaseline?: string;
@@ -120,13 +120,16 @@ export async function handleRun(config: RunnerConfig, input: unknown, calls: num
 	};
 }
 
-/** Answer one git tool call (`git_commit` / `git_push`); exported for tests. */
-export async function handleGit(config: RunnerConfig, name: string, input: unknown, deps: RunnerDeps = {}): Promise<{ isError: boolean; text: string }> {
+/** Answer one structured git delivery tool call; exported for tests. */
+export async function handleGit(config: RunnerConfig, name: string, input: unknown, deps: RunnerDeps = {}, signal?: AbortSignal): Promise<{ isError: boolean; text: string }> {
 	if (!config.git) { return { isError: true, text: 'Unknown tool' }; }
 	if (!await permissionsUntouched(config)) { return { isError: true, text: 'POLICY_DENIED: project-permissions-changed' }; }
 	const permissions = await loadRunnerPermissions(config, deps);
-	const result = await handleGitTool({ root: config.root, env: config.env, logDirectory: config.logDirectory, permissions, ask: approverOf(config, deps), repoBaseline: config.repoBaseline, protectedBranches: config.protectedBranches, checkPermissions: () => permissionsUntouched(config) }, name, input);
-	await fs.appendFile(config.logDirectory + '/commands.jsonl', JSON.stringify({ at: new Date().toISOString(), tool: name, isError: result.isError }) + '\n').catch(() => undefined);
+	const result = await handleGitTool({ root: config.root, env: config.env, logDirectory: config.logDirectory, permissions, ask: approverOf(config, deps), repoBaseline: config.repoBaseline, protectedBranches: config.protectedBranches, checkPermissions: () => permissionsUntouched(config), signal }, name, input);
+	// The structured branch creation and first upstream push may legitimately update git config.
+	// Only the tool can refresh this in-memory run snapshot after verifying hooks/config.
+	if (!result.isError && result.repoBaseline) { config.repoBaseline = result.repoBaseline; }
+	await fs.appendFile(config.logDirectory + '/commands.jsonl', JSON.stringify({ at: new Date().toISOString(), tool: name, isError: result.isError, outcome: result.text.split(/[\s\n]/, 1)[0] }) + '\n').catch(() => undefined);
 	return result;
 }
 
@@ -136,7 +139,12 @@ async function main(): Promise<void> {
 	if ((config.permissions && typeof config.projectPermissionsBaseline !== 'string') || (config.git && typeof config.repoBaseline !== 'string')) { throw Error('HARNESS_CONFIG_SCHEMA'); }
 	let calls = 0;
 	const send = (message: unknown): void => { process.stdout.write(JSON.stringify(message) + '\n'); };
-	readline.createInterface({ input: process.stdin }).on('line', async line => {
+	const stopped = new AbortController();
+	let gitQueue = Promise.resolve();
+	let gitDenied = false;
+	const input = readline.createInterface({ input: process.stdin });
+	input.on('close', () => stopped.abort());
+	input.on('line', async line => {
 		let request: { id?: unknown; method?: string; params?: { name?: string; arguments?: unknown; protocolVersion?: string } };
 		try { request = JSON.parse(line); } catch { return; }
 		if (request.id === undefined) { return; }
@@ -161,7 +169,19 @@ async function main(): Promise<void> {
 		}
 		if (request.method === 'tools/call' && config.git && GIT_TOOLS.some(tool => tool.name === request.params?.name)) {
 			calls++;
-			const result = await handleGit(config, request.params!.name!, request.params!.arguments);
+			// A provider can issue several MCP calls concurrently. Git state transitions must be serialized.
+			const task = gitQueue.then(async () => {
+				if (gitDenied) {
+					const result = { isError: true, text: 'POLICY_DENIED: prior-git-denial' };
+					await fs.appendFile(config.logDirectory + '/commands.jsonl', JSON.stringify({ at: new Date().toISOString(), tool: request.params!.name, isError: true, outcome: 'POLICY_DENIED' }) + '\n').catch(() => undefined);
+					return result;
+				}
+				const result = await handleGit(config, request.params!.name!, request.params!.arguments, {}, stopped.signal);
+				if (/^(?:DENIED:|POLICY_DENIED:)/.test(result.text)) { gitDenied = true; }
+				return result;
+			});
+			gitQueue = task.then(() => undefined, () => undefined);
+			const result = await task;
 			return reply({ isError: result.isError, content: [{ type: 'text', text: result.text }] });
 		}
 		const editor = EDITOR_TOOLS.find(tool => tool.name === request.params?.name);

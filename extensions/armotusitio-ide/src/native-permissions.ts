@@ -55,7 +55,7 @@ export function globMatches(glob: string, subject: string): boolean {
 /** Parses one rule of the shared grammar; `undefined` when it is not valid. */
 function parseRule(text: unknown): Rule | undefined {
 	if (typeof text !== 'string' || !text || text.length > MAX_RULE_LENGTH || /[\u0000-\u001f\u007f]/.test(text)) { return undefined; }
-	if (text === 'git_commit' || text === 'git_push') { return { text, kind: text, glob: '' }; }
+	if (text === 'git_commit' || text === 'git_push' || text === 'git_branch_create' || text === 'git_pr_upsert') { return { text, kind: text, glob: '' }; }
 	const match = /^(run|edit):(.+)$/.exec(text);
 	return match ? { text, kind: match[1] as 'run' | 'edit', glob: match[2] } : undefined;
 }
@@ -132,7 +132,9 @@ function presetDecision(preset: PermissionPreset, request: PermissionRequest): P
 	switch (request.kind) {
 		case 'edit': return preset === 'readonly' ? 'deny' : 'allow';
 		case 'git_commit': return preset === 'readonly' ? 'deny' : preset === 'trusted' ? 'allow' : 'ask';
-		case 'git_push': return preset === 'readonly' ? 'deny' : 'ask';
+		case 'git_push':
+		case 'git_branch_create':
+		case 'git_pr_upsert': return preset === 'readonly' ? 'deny' : 'ask';
 		case 'run': {
 			if (preset !== 'readonly') { return 'allow'; }
 			const name = commandName(request.command);
@@ -150,7 +152,7 @@ function createPermissionSet(preset: PermissionPreset, project: Layer, user: Lay
 	const layers: Array<{ source: PermissionSource; layer: Layer }> = [{ source: 'project', layer: project }, { source: 'user', layer: user }];
 	const find = (decision: PermissionDecision, kind: PermissionRequest['kind'], subject: string) => {
 		for (const { source, layer } of layers) {
-			const rule = layer[decision].find(candidate => candidate.kind === kind && (kind === 'git_commit' || kind === 'git_push' || globMatches(candidate.glob, subject)));
+			const rule = layer[decision].find(candidate => candidate.kind === kind && (kind.startsWith('git_') || globMatches(candidate.glob, subject)));
 			if (rule) { return { source, rule: rule.text }; }
 		}
 		return undefined;

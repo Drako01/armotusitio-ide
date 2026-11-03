@@ -49,7 +49,7 @@ test('the tools are described to the model with their immovable rules', () => {
 		names: GIT_TOOLS.map(tool => tool.name), required: commit.inputSchema.required, noProps: Object.keys(push.inputSchema.properties),
 		commitTold: /hooks always run/.test(commit.description) && /do not retry/.test(commit.description),
 		pushTold: /never forces/i.test(push.description) && /main, master, develop, trunk/.test(push.description) && /do not retry/.test(push.description)
-	}, { names: ['git_commit', 'git_push'], required: ['paths', 'message'], noProps: [], commitTold: true, pushTold: true });
+	}, { names: ['git_commit', 'git_push', 'git_branch_create', 'git_pr_upsert'], required: ['paths', 'message'], noProps: [], commitTold: true, pushTold: true });
 });
 
 test('sensitive paths are recognized wherever they sit', () => {

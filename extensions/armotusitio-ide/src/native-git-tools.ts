@@ -3,24 +3,23 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 /**
- * Structured git tools for the chat agent (plan r6): `git_commit` and `git_push`, served by `ats-runner` next to `run`.
- * The agent never gets raw git. Its own immovable floor lives here and no permission rule can widen it: explicit
- * project files only (never a directory, `.` or `-A`), nothing sensitive, hooks always run, no force, no tags, no remote or
- * config changes, and never pushes the default branch. Commits may be made on the current branch, including main.
- * Permission rules then decide `allow`, `ask` or `deny` on top of it.
- * `git commit` and `git push` run the project's own hooks (we do not force `core.hooksPath`: that would break husky and
- * friends), and the agent can write to the project. So the hooks and the repository config are fingerprinted when the run
- * starts and any change refuses both tools, as does a modified hook directory inside the tree.
+ * Structured branch, commit, push and GitHub PR tools for chat agents, served by `ats-runner` beside `run`.
+ * The agent never gets raw git or gh. The immovable floor restricts file selection, branch targets and remote updates:
+ * no force, reset, stash, merge, bypass, tags, secret files or default-branch pushes. GitHub PR operations require an
+ * exact base and payload. The project's permissions and IDE approvals can only further restrict these tools.
+ * Commit/push run the project's own hooks. The IDE pins hooks and config across calls; only its own verified branch
+ * switch or first upstream push can renew that baseline. Modified hooks and unrelated config changes remain blocked.
  */
 import { createHash } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { gitOutput } from './native-git.ts';
 import { runCommand } from './native-command-runner.ts';
-import { requestApproval, type ApprovalAsk } from './native-approval.ts';
+import { requestApproval, type ApprovalAsk, type ApprovalSubject } from './native-approval.ts';
 import { globMatches, suggestRule, type PermissionSet } from './native-permissions.ts';
 import type { PermissionRequest } from './native-permissions-types.ts';
 import { SECRET_NAME } from './native-sensitive-scope.ts';
+import { redactSecrets } from './native-redact.ts';
 
 export interface GitToolsContext {
 	root: string;
@@ -35,8 +34,12 @@ export interface GitToolsContext {
 	protectedBranches?: readonly string[];
 	/** Rechecks the run's project-permission snapshot after the user answers. */
 	checkPermissions?: () => Promise<boolean>;
+	/** Stops commands when the provider session is cancelled. */
+	signal?: AbortSignal;
+	/** Offline fixture only; the runner constructs this context without a replacement. */
+	ghRunner?: (args: string[]) => Promise<Awaited<ReturnType<typeof runCommand>>>;
 }
-export interface GitToolResult { isError: boolean; text: string }
+export interface GitToolResult { isError: boolean; text: string; /** New trusted fingerprint after an IDE-owned git config mutation. */ repoBaseline?: string }
 
 const MAX_PATHS = 100;
 const MAX_PATH_LENGTH = 1024;
@@ -73,6 +76,33 @@ export const GIT_TOOLS = [
 		description: 'Push the current branch to its upstream (or to origin, setting it as upstream). Never forces, never pushes tags, and never pushes main, master, develop, trunk, the remote default branch, init.defaultBranch or a branch the user marked as protected. The project\'s pre-push hooks run. ' +
 			'The user is asked to approve. A `DENIED:` or `POLICY_DENIED:` answer is final: do not retry it. Publishing packages and creating releases are not available.',
 		inputSchema: { type: 'object', properties: {}, additionalProperties: false }
+	},
+	{
+		name: 'git_branch_create',
+		description: 'Create a named, exclusive local branch without force, reset, stash or overwriting worktrees. Optional from: HEAD or an existing origin/<branch> tracking ref (for example origin/qa); do not assume qa for other repositories. Preserve local changes and reject a different base if the checkout is dirty. Reuses the already checked out branch. Permissions and user approval apply; DENIED is final.',
+		inputSchema: {
+			type: 'object',
+			properties: {
+				branch: { type: 'string', minLength: 1, maxLength: 200 },
+				from: { type: 'string', description: 'HEAD (default) or an already available origin/<branch> ref.' }
+			},
+			required: ['branch'],
+			additionalProperties: false
+		}
+	},
+	{
+		name: 'git_pr_upsert',
+		description: 'Create or update the GitHub pull request for the current, already pushed branch. Provide the explicit target base (qa for RedEvent, not globally), complete title and body. Reuse an existing open PR, never duplicate one or reopen a closed PR. No issue association, auto-merge, merge, actions or bypass. The IDE may ask for approval showing repository, head, base and exact content; DENIED is final.',
+		inputSchema: {
+			type: 'object',
+			properties: {
+				base: { type: 'string', minLength: 1, maxLength: 200 },
+				title: { type: 'string', minLength: 1, maxLength: 160 },
+				body: { type: 'string', minLength: 1, maxLength: 2000 }
+			},
+			required: ['base', 'title', 'body'],
+			additionalProperties: false
+		}
 	}
 ];
 
@@ -95,11 +125,9 @@ async function gitPath(root: string, name: string): Promise<string | undefined> 
 	return found ? path.resolve(root, found) : undefined;
 }
 
-/** sha256 over the repository config and every non-sample hook script (name and content), wherever `core.hooksPath` points. */
-export async function repoFingerprint(root: string): Promise<string> {
+/** Fingerprint only hooks, so legitimate branch/upstream config changes cannot launder modified hooks. */
+async function hookFingerprint(root: string): Promise<string> {
 	const hash = createHash('sha256');
-	const config = await gitPath(root, 'config');
-	hash.update('config\0').update(config ? await fs.readFile(config).catch(() => '') : 'no-repo');
 	const hooks = await gitPath(root, 'hooks');
 	let count = 0, bytes = 0;
 	const visit = async (directory: string, depth: number): Promise<void> => {
@@ -120,6 +148,15 @@ export async function repoFingerprint(root: string): Promise<string> {
 		}
 	};
 	if (hooks) { await visit(hooks, 0); }
+	return hash.digest('hex');
+}
+
+/** sha256 over repository configuration and hook scripts, including worktree-specific metadata. */
+export async function repoFingerprint(root: string): Promise<string> {
+	const hash = createHash('sha256');
+	const config = await gitPath(root, 'config');
+	hash.update('config\0').update(config ? await fs.readFile(config).catch(() => '') : 'no-repo');
+	hash.update('\0hooks\0').update(await hookFingerprint(root));
 	return hash.digest('hex');
 }
 
@@ -178,23 +215,24 @@ const currentBranch = async (root: string): Promise<string> => {
 const clip = (text: string, length: number): string => text.length > length ? text.slice(0, length - 1) + '...' : text;
 
 /** `permissions.decide` then, for `ask`, the user's approval. Returns the denial text, or `undefined` to proceed. */
-async function authorize(context: GitToolsContext, request: Extract<PermissionRequest, { kind: 'git_commit' | 'git_push' }>, title: string, detail: string[]): Promise<string | undefined> {
+async function authorize(context: GitToolsContext, request: Exclude<PermissionRequest, { kind: 'run' | 'edit' }>, title: string, detail: string[], subject: ApprovalSubject = {}): Promise<string | undefined> {
 	const verdict = context.permissions.decide(request);
 	if (verdict.decision === 'deny') { return 'POLICY_DENIED: ' + (verdict.reason ?? verdict.rule ?? 'denied by permissions'); }
 	if (verdict.decision === 'allow') { return undefined; }
-	return requestApproval(context.ask, { kind: request.kind, title, detail, rule: suggestRule(request) });
+	return requestApproval(context.ask, { kind: request.kind, title, detail, rule: suggestRule(request), ...subject });
 }
 
 async function runGit(context: GitToolsContext, args: string[], timeoutSec?: number): Promise<Awaited<ReturnType<typeof runCommand>>> {
+	if (context.signal?.aborted) { return refuse('cancelled'); }
 	return runCommand({
 		root: context.root, cwd: '.', command: 'git', args: [...GIT_BASE, ...args], timeoutSec, logDirectory: context.logDirectory,
 		// Never wait for a credential or an editor: an unanswered prompt would hang the run.
-		env: { ...context.env, GIT_TERMINAL_PROMPT: '0', GIT_EDITOR: 'true', GIT_ASKPASS: '', GCM_INTERACTIVE: 'never' }
+		env: { ...context.env, GIT_TERMINAL_PROMPT: '0', GIT_EDITOR: 'true', GIT_ASKPASS: '', GCM_INTERACTIVE: 'never' }, signal: context.signal
 	});
 }
 
 const failure = (what: string, result: { exitCode: number | null; timedOut: boolean; output: string }): GitToolResult =>
-	({ isError: true, text: what + ' failed (' + (result.timedOut ? 'timed out' : 'exit ' + result.exitCode) + '). Fix the cause; do not bypass hooks or checks.\n' + (result.output || '(no output)') });
+	({ isError: true, text: what + ' failed (' + (result.cancelled ? 'cancelled' : result.timedOut ? 'timed out' : 'exit ' + result.exitCode) + '). Fix the cause; do not bypass hooks or checks.\n' + (result.output || '(no output)') });
 
 async function commit(context: GitToolsContext, input: { paths?: unknown; message?: unknown }): Promise<GitToolResult> {
 	const { root } = context;
@@ -242,10 +280,139 @@ async function pushTarget(root: string, branch: string, protectedBranches: reado
 	return { remote, setUpstream };
 }
 
+/** Read-only, bounded verification that this IDE workspace is the actual root of its git checkout. */
+async function repository(root: string): Promise<string> {
+	const top = await git(root, ['rev-parse', '--show-toplevel']);
+	if (!top || await fs.realpath(top).catch(() => '') !== await fs.realpath(root)) { return refuse('repository-root-mismatch'); }
+	const url = await git(root, ['config', '--get', 'remote.origin.url']);
+	const match = /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+?)(?:\.git)?\/?$/.exec(url ?? '');
+	return match ? match[1] : refuse('github-origin-required');
+}
+
+const validName = async (root: string, raw: unknown): Promise<string> => {
+	if (typeof raw !== 'string' || !REF_NAME.test(raw) || raw.startsWith('-') || raw.startsWith('/') || raw.endsWith('/') || raw.includes('..')) { return refuse('invalid-branch'); }
+	return await git(root, ['check-ref-format', '--branch', raw]) === raw ? raw : refuse('invalid-branch');
+};
+
+/** Current config entries, excluding the exact upstream pair that git_push is allowed to install. */
+function otherConfig(entries: string | undefined, branch: string): string[] {
+	if (entries === undefined) { return refuse('repo-config-unavailable'); }
+	return entries.split('\0').filter(entry => entry && !entry.startsWith('branch.' + branch + '.remote\n') && !entry.startsWith('branch.' + branch + '.merge\n')).sort();
+}
+
+async function branchCreate(context: GitToolsContext, input: Record<string, unknown>): Promise<GitToolResult> {
+	const { root } = context;
+	const branch = await validName(root, input.branch);
+	const from = input.from === undefined ? 'HEAD' : input.from;
+	if (typeof from !== 'string' || (from !== 'HEAD' && !/^origin\/[A-Za-z0-9._/-]{1,200}$/.test(from))) { return refuse('invalid-start-point'); }
+	if (from !== 'HEAD') { await validName(root, from.slice('origin/'.length)); }
+	const repo = await repository(root);
+	const current = await currentBranch(root);
+	const initialHead = await git(root, ['rev-parse', '--verify', 'HEAD']);
+	if (!initialHead) { return refuse('no-head'); }
+	const start = from === 'HEAD' ? initialHead : await git(root, ['rev-parse', '--verify', 'refs/remotes/' + from + '^{commit}']);
+	if (!start) { return refuse('base-ref-missing'); }
+	const dirty = await git(root, ['status', '--porcelain', '--untracked-files=all']);
+	if (dirty === undefined) { return refuse('git-status-unavailable'); }
+	if (from !== 'HEAD' && start !== initialHead && dirty) { return refuse('local-changes-on-base-switch'); }
+	await assertHooksUntouched(context, []);
+	const exists = await git(root, ['show-ref', '--verify', '--quiet', 'refs/heads/' + branch]) !== undefined;
+	const existingHead = exists ? await git(root, ['rev-parse', '--verify', 'refs/heads/' + branch + '^{commit}']) : undefined;
+	if (exists && current !== branch && dirty && existingHead !== initialHead) { return refuse('local-changes-on-branch-reuse'); }
+	if (PROTECTED_BRANCHES.has(branch.toLowerCase()) || context.protectedBranches?.some(pattern => globMatches(pattern.toLowerCase(), branch.toLowerCase()))) { return refuse('protected-branch'); }
+	const actualFrom = exists ? 'refs/heads/' + branch : from;
+	const denial = await authorize(context, { kind: 'git_branch_create', repo, branch, from: actualFrom }, 'Create or reuse branch',
+		['repository: ' + repo, 'branch: ' + branch, 'from: ' + actualFrom], { repo, branch, from: actualFrom });
+	if (denial) { return { isError: true, text: denial }; }
+	await assertHooksUntouched(context, []);
+	if (await currentBranch(root) !== current || await git(root, ['rev-parse', '--verify', 'HEAD']) !== initialHead ||
+		await git(root, ['status', '--porcelain', '--untracked-files=all']) !== dirty ||
+		(from !== 'HEAD' && await git(root, ['rev-parse', '--verify', 'refs/remotes/' + from + '^{commit}']) !== start) ||
+		(exists && await git(root, ['rev-parse', '--verify', 'refs/heads/' + branch + '^{commit}']) !== existingHead)) { return refuse('repository-changed'); }
+	if (context.checkPermissions && !await context.checkPermissions()) { return refuse('project-permissions-changed'); }
+	if (exists && current === branch) { return { isError: false, text: 'BRANCH_REUSED ' + branch + ' in ' + repo }; }
+	const hooks = await hookFingerprint(root);
+	const beforeConfig = await git(root, ['config', '--local', '--list', '-z']);
+	const switched = await runGit(context, exists ? ['switch', branch] : ['switch', '--no-track', '--create', branch, from]);
+	if (switched.exitCode !== 0 || switched.cancelled || switched.timedOut) { return failure('git switch', switched); }
+	if (await currentBranch(root) !== branch || await hookFingerprint(root) !== hooks ||
+		await git(root, ['config', '--local', '--list', '-z']) !== beforeConfig) { return refuse('repo-config-changed'); }
+	if (context.checkPermissions && !await context.checkPermissions()) { return refuse('project-permissions-changed'); }
+	return { isError: false, text: (exists ? 'BRANCH_REUSED ' : 'BRANCH_CREATED ') + branch + ' from ' + actualFrom + ' in ' + repo, repoBaseline: await repoFingerprint(root) };
+}
+
+async function runGh(context: GitToolsContext, args: string[]): Promise<Awaited<ReturnType<typeof runCommand>>> {
+	if (context.signal?.aborted) { return refuse('cancelled'); }
+	if (context.ghRunner) { return context.ghRunner(args); }
+	return runCommand({
+		root: context.root, cwd: '.', command: 'gh', args, timeoutSec: PUSH_TIMEOUT_SEC,
+		logDirectory: context.logDirectory, signal: context.signal,
+		env: { ...context.env, GH_PROMPT_DISABLED: '1', GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' }
+	});
+}
+
+interface PrState { number: number; headRefName: string; baseRefName: string; state: string; title: string; body: string; url: string; headRepositoryOwner: { login: string }; headRepository: { name: string } }
+async function existingPr(context: GitToolsContext, repo: string, branch: string, base: string): Promise<PrState | undefined> {
+	const result = await runGh(context, ['pr', 'list', '--repo', repo, '--head', branch, '--state', 'all',
+		'--json', 'number,headRefName,baseRefName,state,title,body,url,headRepositoryOwner,headRepository', '--limit', '100']);
+	if (result.exitCode !== 0 || result.timedOut || result.cancelled || result.truncated) { return refuse('github-pr-query-failed'); }
+	let data: unknown;
+	try { data = JSON.parse(result.output); } catch { return refuse('github-pr-response-invalid'); }
+	if (!Array.isArray(data) || data.length > 100 || !data.every(pr => pr && typeof pr === 'object')) { return refuse('github-pr-response-invalid'); }
+	const prs = data as PrState[];
+	if (!prs.every(pr => Number.isSafeInteger(pr.number) && pr.number > 0 && pr.headRefName === branch &&
+		typeof pr.baseRefName === 'string' && typeof pr.state === 'string' && typeof pr.title === 'string' &&
+		typeof pr.body === 'string' && pr.url === 'https://github.com/' + repo + '/pull/' + pr.number &&
+		pr.headRepositoryOwner?.login === repo.split('/')[0] && pr.headRepository?.name === repo.split('/')[1])) { return refuse('github-pr-response-invalid'); }
+	if (prs.some(pr => pr.baseRefName !== base)) { return refuse('existing-pr-other-base'); }
+	if (prs.length > 1) { return refuse('ambiguous-pr'); }
+	if (prs[0] && prs[0].state !== 'OPEN') { return refuse('closed-pr-exists'); }
+	return prs[0];
+}
+
+async function prUpsert(context: GitToolsContext, input: Record<string, unknown>): Promise<GitToolResult> {
+	const { root } = context;
+	const repo = await repository(root);
+	const branch = await currentBranch(root);
+	const base = await validName(root, input.base);
+	if (base === branch) { return refuse('pr-base-is-head'); }
+	if (typeof input.title !== 'string' || !input.title.trim() || input.title.length > 160 ||
+		typeof input.body !== 'string' || !input.body.trim() || input.body.length > 2000 || /[\0]/.test(input.title + input.body) ||
+		redactSecrets(input.title + input.body) !== input.title + input.body) { return refuse('invalid-pr-content'); }
+	const title = input.title.trim(), body = input.body;
+	await assertHooksUntouched(context, []);
+	const old = await existingPr(context, repo, branch, base);
+	if (old && old.title === title && old.body === body) { return { isError: false, text: 'PR_REUSED ' + old.url + ' (' + branch + ' -> ' + base + ')' }; }
+	const action = old ? 'update #' + old.number : 'create';
+	const denial = await authorize(context, { kind: 'git_pr_upsert', repo, branch, base, title, body }, 'GitHub PR',
+		['repository: ' + repo, 'head: ' + branch, 'base: ' + base, 'action: ' + action, 'title: ' + title],
+		{ repo, branch, base, prTitle: title, prBody: body, action });
+	if (denial) { return { isError: true, text: denial }; }
+	await assertHooksUntouched(context, []);
+	if (await currentBranch(root) !== branch || await repository(root) !== repo ||
+		(context.checkPermissions && !await context.checkPermissions())) { return refuse('repository-changed'); }
+	const checked = await existingPr(context, repo, branch, base);
+	if ((old?.number ?? 0) !== (checked?.number ?? 0) || (old && checked && (old.title !== checked.title || old.body !== checked.body))) {
+		return refuse('pr-state-changed');
+	}
+	const args = old
+		? ['pr', 'edit', String(old.number), '--repo', repo, '--title', title, '--body', body]
+		: ['pr', 'create', '--repo', repo, '--head', branch, '--base', base, '--title', title, '--body', body];
+	const result = await runGh(context, args);
+	if (result.exitCode !== 0 || result.cancelled || result.timedOut || result.truncated) { return failure('GitHub PR', result); }
+	await assertHooksUntouched(context, []);
+	if (await currentBranch(root) !== branch || (context.checkPermissions && !await context.checkPermissions())) { return refuse('repository-changed'); }
+	const verified = await existingPr(context, repo, branch, base);
+	if (!verified || verified.title !== title || verified.body !== body) { return refuse('pr-verification-failed'); }
+	return { isError: false, text: (old ? 'PR_UPDATED ' : 'PR_CREATED ') + verified.url + ' (' + branch + ' -> ' + base + ')' };
+}
+
 async function push(context: GitToolsContext): Promise<GitToolResult> {
 	const branch = await currentBranch(context.root);
 	const { remote, setUpstream } = await pushTarget(context.root, branch, context.protectedBranches);
 	await assertHooksUntouched(context, []);
+	const hooks = await hookFingerprint(context.root);
+	const beforeConfig = otherConfig(await git(context.root, ['config', '--local', '--list', '-z']), branch);
 	const denial = await authorize(context, { kind: 'git_push', branch, remote }, 'Push', ['branch: ' + branch, 'remote: ' + remote]);
 	if (denial) { return { isError: true, text: denial }; }
 	await assertHooksUntouched(context, []);
@@ -256,8 +423,15 @@ async function push(context: GitToolsContext): Promise<GitToolResult> {
 	// Explicit full refspec: always the current branch to the same-named branch, never a force (`+`), tag or deletion. Pre-push hooks run.
 	const refspec = 'refs/heads/' + branch + ':refs/heads/' + branch;
 	const pushed = await runGit(context, ['-c', 'push.followTags=false', 'push', ...(setUpstream ? ['--set-upstream'] : []), '--no-tags', remote, refspec], PUSH_TIMEOUT_SEC);
-	if (pushed.exitCode !== 0) { return failure('git push', pushed); }
-	return { isError: false, text: 'PUSHED ' + branch + ' to ' + remote + '\n' + (pushed.output || '') };
+	if (pushed.exitCode !== 0 || pushed.cancelled || pushed.timedOut) { return failure('git push', pushed); }
+	if (await hookFingerprint(context.root) !== hooks ||
+		JSON.stringify(otherConfig(await git(context.root, ['config', '--local', '--list', '-z']), branch)) !== JSON.stringify(beforeConfig)) {
+		return refuse('repo-config-changed');
+	}
+	if (setUpstream && (await git(context.root, ['config', '--get', 'branch.' + branch + '.remote']) !== remote ||
+		await git(context.root, ['config', '--get', 'branch.' + branch + '.merge']) !== 'refs/heads/' + branch)) { return refuse('upstream-mismatch'); }
+	if (context.checkPermissions && !await context.checkPermissions()) { return refuse('project-permissions-changed'); }
+	return { isError: false, text: 'PUSHED ' + branch + ' to ' + remote + '\n' + (pushed.output || ''), repoBaseline: await repoFingerprint(context.root) };
 }
 
 /** Run one git tool call; every refusal is a short `POLICY_DENIED: <reason>` the model must not retry. */
@@ -266,6 +440,8 @@ export async function handleGitTool(context: GitToolsContext, name: string, inpu
 		const value = (input && typeof input === 'object' && !Array.isArray(input) ? input : {}) as Record<string, unknown>;
 		if (name === 'git_commit') { return await commit(context, value); }
 		if (name === 'git_push') { return await push(context); }
+		if (name === 'git_branch_create') { return await branchCreate(context, value); }
+		if (name === 'git_pr_upsert') { return await prUpsert(context, value); }
 		return { isError: true, text: 'Unknown tool' };
 	} catch (error) {
 		if (error instanceof GitToolError) { return { isError: true, text: error.message }; }

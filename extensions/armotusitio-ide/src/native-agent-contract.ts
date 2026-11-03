@@ -7,13 +7,13 @@ import type { AgentRole, NativeProvider } from './native-providers.ts';
 
 /** Run duration limit of every agent process; see MAX_DURATION_MS in native-agent-execution.ts. */
 export const RUN_MINUTES = 30;
-const NEVER_COMMON = 'open pull requests, publish packages or deploy, install global tools, start or stop services or containers, change global configuration, modify secrets or touch files outside the project.';
-const FORBIDDEN = 'Never: modify git state (commit, branch, checkout, reset, stash, push, merge, rebase, tag), ' + NEVER_COMMON + ' Delivery commits are made by the IDE orchestrator; push and pull requests are the user\'s action.';
-const FORBIDDEN_WITH_GIT = 'Never: modify git state other than through the `git_commit` and `git_push` tools (their descriptions say what they refuse), ' + NEVER_COMMON;
+const NEVER_COMMON = 'publish packages or deploy, install global tools, start or stop services or containers, change global configuration, modify secrets or touch files outside the project.';
+const FORBIDDEN = 'Never: modify git state (commit, branch, checkout, reset, stash, push, merge, rebase, tag), open pull requests, ' + NEVER_COMMON + ' Delivery commits are made by the IDE orchestrator; push and pull requests are the user\'s action.';
+const FORBIDDEN_WITH_GIT = 'Never: modify git state other than through `git_branch_create`, `git_commit`, `git_push` and `git_pr_upsert`, including checkout, reset, stash, merge, rebase and tag; never modify PRs through any other mechanism. ' + NEVER_COMMON;
 /** What the chat agent may do with git; the single wording of the direct-run instruction. */
-export const GIT_TOOLS_CONTRACT = 'You can commit and push only through the `git_commit` (explicit project-relative files and a message) and `git_push` (the current branch) tools, and only when the user asks for it. ' +
-	'Both ask the user for approval; a `DENIED` answer is final, never retry it in another form. They never force-push, never push the default branch (main, master, develop, trunk), never skip hooks and refuse credential files. ' +
-	'You cannot publish packages or create releases, and no other git state change (branch, checkout, reset, stash, merge, rebase, tag) is available.';
+export const GIT_TOOLS_CONTRACT = 'When the user authorizes delivery, you may create a branch through `git_branch_create` (optionally from an existing origin/<branch> ref), commit explicit files through `git_commit`, push the current branch through `git_push`, and create/update its GitHub pull request through `git_pr_upsert` with an explicit base, title and full body. ' +
+	'These are structured ats-runner tools subject to IDE permissions and project Harness authority; never substitute shell git or gh commands. The PR base comes from this project\'s instructions and the user, never from a global assumption (RedEvent uses qa). ' +
+	'Git tools may ask the user for approval showing the actual repository, branch, target and changes. A DENIED or POLICY_DENIED answer is final; do not retry by another mechanism. No force push, no skipped hooks, no protected-branch push, no merge, no release and no GitHub Actions invocation.';
 const BLOCKED = 'If something you cannot resolve blocks the work (a service that does not respond, a missing credential, a policy denial, a decision only the user can make, a missing toolchain, no disk space), stop and end your answer with exactly one line:\nharness-blocked: {"reason":"<what is missing, in the user\'s language>","needs":"service|credential|policy|decision|toolchain|disk","detail":"<optional detail>"}';
 
 /** Decision D9: search results are data, and every query is audited; one with a secret ends the run. */
@@ -41,6 +41,7 @@ export function agentContract(input: { provider: NativeProvider; role: AgentRole
 		tools(input.provider, input.role, !!input.runner),
 		git ? FORBIDDEN_WITH_GIT : FORBIDDEN
 	];
+	if (git) { lines.push(GIT_TOOLS_CONTRACT); }
 	if (input.webSearch) { lines.push(WEB_SEARCH); }
 	if (input.role === 'implementer') {
 		lines.push('Make only the changes the instruction requires; report files touched and validation.', BLOCKED,
@@ -54,5 +55,5 @@ export function agentContract(input: { provider: NativeProvider; role: AgentRole
 /** What the planner must know so it never proposes a step the implementer cannot do. */
 export function plannerContract(): string {
 	return 'Plans are executed by an IDE agent that edits project files and runs builds, tests and linters through the IDE command policy, without network. ' +
-		'Plan steps must not include git operations, pull requests, publishing, deployment, installing global tools or starting services: list those as actions for the user after the run.';
+		'Only if the user explicitly requests delivery, plans may include branch creation, commit, push and PR creation/update through the IDE structured git tools, each subject to its permissions and project Harness; never assume a PR base. Plans must not include merges, publishing, deployment, installing global tools or starting services.';
 }
