@@ -19,7 +19,7 @@ test('the agent environment keeps what toolchains need and never a credential', 
 		env: {
 			PATH: 'C:\\bin', USERPROFILE: 'C:\\Users\\dev', SystemRoot: 'C:\\Windows', GOFLAGS: '-mod=mod', XDG_CONFIG_HOME: 'C:\\cfg', ANTHROPIC_API_KEY: 'provider-auth',
 			LOCALAPPDATA: 'C:\\Users\\dev\\AppData\\Local', APPDATA: 'C:\\Users\\dev\\AppData\\Roaming',
-			npm_config_manage_package_manager_versions: 'false', pnpm_config_manage_package_manager_versions: 'false'
+			GIT_TERMINAL_PROMPT: '0', COREPACK_ENABLE_DOWNLOAD_PROMPT: '0', npm_config_manage_package_manager_versions: 'false', pnpm_config_manage_package_manager_versions: 'false'
 		},
 		writableRoots: ['C:\\Users\\dev\\AppData\\Local\\go-build', 'C:\\Users\\dev\\go\\pkg\\mod']
 	});
@@ -31,4 +31,10 @@ test('only a Codex writer gets the toolchain caches as extra writable folders', 
 	const reader = buildAgentInvocation({ ...base, role: 'reviewer', readOnly: true }, ['/home/dev/go/pkg/mod']);
 	assert.deepEqual({ writer: writer.args.slice(writer.args.indexOf('--add-dir'), writer.args.indexOf('--add-dir') + 2), reader: reader.args.includes('--add-dir') },
 		{ writer: ['--add-dir', '/home/dev/go/pkg/mod'], reader: false });
+});
+
+test('PATH names the real folder of a linked toolchain such as the nvm-windows symlink', async () => {
+	const links = new Map([['C:\nvm4w\nodejs', 'C:\Users\dev\AppData\Local\nvm\v24.22.1']]);
+	const profile = await buildToolchainEnvironment({ PATH: 'C:\nvm4w\nodejs;C:\bin', USERPROFILE: 'C:\Users\dev' }, 'win32', async () => false, async folder => links.get(folder) ?? folder);
+	assert.equal(profile.env.PATH, 'C:\Users\dev\AppData\Local\nvm\v24.22.1;C:\bin');
 });
