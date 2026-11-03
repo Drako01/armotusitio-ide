@@ -14,7 +14,12 @@ export interface ToolchainEnvironment {
 	offline: boolean;
 }
 
-const SYSTEM = ['PATH', 'Path', 'PATHEXT', 'SystemRoot', 'WINDIR', 'ComSpec', 'TEMP', 'TMP', 'TMPDIR', 'HOME', 'USERPROFILE', 'LOCALAPPDATA', 'APPDATA', 'ProgramData', 'ProgramFiles', 'ProgramFiles(x86)', 'LANG', 'LC_ALL', 'TZ'];
+const SYSTEM = ['PATH', 'Path', 'PATHEXT', 'SystemRoot', 'WINDIR', 'ComSpec', 'TEMP', 'TMP', 'TMPDIR', 'HOME', 'USERPROFILE', 'LOCALAPPDATA', 'APPDATA', 'ProgramData', 'ProgramFiles', 'ProgramFiles(x86)', 'LANG', 'LC_ALL', 'TZ',
+	// Windows basics that MSBuild, dotnet, Python, git and native installers read; none is a credential.
+	'SystemDrive', 'HOMEDRIVE', 'HOMEPATH', 'USERNAME', 'USERDOMAIN', 'COMPUTERNAME', 'ALLUSERSPROFILE', 'PUBLIC', 'ProgramW6432', 'CommonProgramFiles', 'CommonProgramFiles(x86)', 'CommonProgramW6432',
+	'OS', 'PROCESSOR_ARCHITECTURE', 'PROCESSOR_IDENTIFIER', 'PROCESSOR_LEVEL', 'PROCESSOR_REVISION', 'NUMBER_OF_PROCESSORS', 'PSModulePath', 'LOGONSERVER', 'SESSIONNAME',
+	// Corporate or local certificate authorities, so HTTPS keeps working behind an inspecting proxy.
+	'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'SSL_CERT_DIR', 'REQUESTS_CA_BUNDLE', 'CURL_CA_BUNDLE'];
 const TOOLCHAINS = ['GOPATH', 'GOCACHE', 'GOMODCACHE', 'GOROOT', 'GOFLAGS', 'GOPROXY', 'GOPRIVATE', 'CARGO_HOME', 'RUSTUP_HOME', 'JAVA_HOME', 'GRADLE_USER_HOME', 'MAVEN_OPTS', 'DOTNET_ROOT', 'NUGET_PACKAGES', 'PNPM_HOME', 'NVM_HOME', 'NVM_SYMLINK', 'VOLTA_HOME', 'PYENV_ROOT', 'VIRTUAL_ENV', 'CONDA_PREFIX', 'COMPOSER_HOME', 'ANDROID_HOME'];
 /** Provider authentication the CLIs already used before this profile existed. */
 const PROVIDER_AUTH = ['CODEX_HOME', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY'];
@@ -22,10 +27,11 @@ const FORBIDDEN_NAME = /TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|PRIVATE_KEY|API_
 /** A URL with a user or password embedded (`http://user:pass@proxy`). */
 const EMBEDDED_CREDENTIALS = /^[a-z][a-z0-9+.-]*:\/\/[^/\s@]+@/i;
 /**
+ * Agent runs are unattended: git and corepack must fail instead of waiting for a prompt nobody sees.
  * pnpm switches to the version a project pins (`packageManager`) through a junction in `PNPM_HOME/.tools`; a sandboxed Codex
  * process cannot cross it (Windows error 448, untrusted mount point), so no Harness preflight could run. Use the pnpm on PATH.
  */
-const PNPM_NO_VERSION_SWITCH = { npm_config_manage_package_manager_versions: 'false', pnpm_config_manage_package_manager_versions: 'false' };
+const AGENT_DEFAULTS = { GIT_TERMINAL_PROMPT: '0', COREPACK_ENABLE_DOWNLOAD_PROMPT: '0', npm_config_manage_package_manager_versions: 'false', pnpm_config_manage_package_manager_versions: 'false' };
 
 /** Whether a variable may reach an agent; provider authentication is the only named exception. */
 export function allowedVariable(name: string, value: string): boolean {
@@ -37,12 +43,16 @@ export function allowedVariable(name: string, value: string): boolean {
  * Build the agent environment from the IDE's own. Missing profile folders are derived from the home folder,
  * because toolchains (Go's build cache, npm, pnpm) fail without them.
  */
-export async function buildToolchainEnvironment(source: NodeJS.ProcessEnv, platform: NodeJS.Platform, exists: (folder: string) => Promise<boolean>): Promise<ToolchainEnvironment> {
-	const env: NodeJS.ProcessEnv = { ...PNPM_NO_VERSION_SWITCH };
+export async function buildToolchainEnvironment(source: NodeJS.ProcessEnv, platform: NodeJS.Platform, exists: (folder: string) => Promise<boolean>, realFolder: (folder: string) => Promise<string> = async folder => folder): Promise<ToolchainEnvironment> {
+	const env: NodeJS.ProcessEnv = { ...AGENT_DEFAULTS };
 	const names = [...SYSTEM, ...TOOLCHAINS, ...PROVIDER_AUTH, ...Object.keys(source).filter(name => name.startsWith('XDG_'))];
 	for (const name of names) {
 		const value = source[name];
 		if (value && allowedVariable(name, value)) { env[name] = value; }
+	}
+	const separator = platform === 'win32' ? ';' : ':';
+	for (const name of ['PATH', 'Path']) {
+		if (env[name]) { env[name] = (await Promise.all(env[name].split(separator).map(realFolder))).join(separator); }
 	}
 	const join = platform === 'win32' ? path.win32.join : path.posix.join;
 	const home = env.USERPROFILE || env.HOME;
@@ -60,9 +70,19 @@ export function pathExists(file: string): Promise<boolean> {
 	return fs.access(file).then(() => true, () => false);
 }
 
+/**
+ * A folder with its links resolved, or as given when it does not exist. A sandboxed agent cannot cross a symlink or junction
+ * (Windows error 448), and nvm-windows exposes Node through one (`C:
+vm4w
+odejs`), so PATH must name the real folder.
+ */
+export function realFolder(folder: string): Promise<string> {
+	return fs.realpath(folder).catch(() => folder);
+}
+
 /** The agent environment of this IDE process. */
 export function currentToolchainEnvironment(): Promise<ToolchainEnvironment> {
-	return buildToolchainEnvironment(process.env, process.platform, pathExists);
+	return buildToolchainEnvironment(process.env, process.platform, pathExists, realFolder);
 }
 
 /** Default cache folders of each toolchain, unless the environment moves them. */
