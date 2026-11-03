@@ -12,6 +12,8 @@
  *   edit:<glob>       RESERVED, not enforced yet: edits are made by the provider's native tools, which nothing here intercepts
  *   git_commit        the structured commit tool
  *   git_push          the structured push tool
+ *   git_branch_create the structured branch creation tool
+ *   git_pr_upsert     the structured GitHub PR create/update tool
  * Precedence inside one layer: deny, then ask, then allow. Across layers: floor > project > user > preset; a project file can
  * only add `ask` / `deny` (its `allow` is ignored and reported), because a cloned repository must not grant itself permissions.
  */
@@ -33,7 +35,9 @@ export type PermissionRequest =
 	| { kind: 'run'; command: string; args: string[]; cwd: string }
 	| { kind: 'edit'; path: string }
 	| { kind: 'git_commit'; branch: string; files: string[]; message: string }
-	| { kind: 'git_push'; branch: string; remote: string };
+	| { kind: 'git_push'; branch: string; remote: string }
+	| { kind: 'git_branch_create'; repo: string; branch: string; from: string }
+	| { kind: 'git_pr_upsert'; repo: string; branch: string; base: string; title: string; body: string };
 
 export interface PermissionVerdict {
 	decision: PermissionDecision;

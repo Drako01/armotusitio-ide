@@ -70,7 +70,7 @@ export interface ToolServerLaunch {
 	env: Record<string, string>;
 	/** Claude `--mcp-config` file holding the same launch. */
 	mcpConfigFile: string;
-	/** The server also offers `git_commit` / `git_push` (chat runs that can ask the user). */
+	/** The server also offers branch creation, commit/push and PR upsert (chat runs with IDE approval). */
 	git?: boolean;
 }
 /** Every tool of the IDE's own server (commands and editor), and no other MCP server. */

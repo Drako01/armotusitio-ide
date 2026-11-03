@@ -132,3 +132,13 @@ test('approval rules derive from the shown command, and malformed answers fail c
 	const card: ApprovalDraft = { kind: 'git_push', title: 'Push', detail: [], rule: '' };
 	assert.equal(await requestApproval(async () => 'always', card), 'DENIED: the user did not allow it');
 });
+
+test('PR approval cards reconstruct the concrete repository, head, base and complete body', () => {
+	const draft = { kind: 'git_pr_upsert', title: 'GitHub PR', detail: ['fake'], rule: 'git_pr_upsert', repo: 'Drako01/redevent', branch: 'feat/fix', base: 'qa', prTitle: 'Fix integration', prBody: 'Summary\n- detail', action: 'create' };
+	const parsed = parseApprovalDraft(draft);
+	assert.deepEqual(parsed?.detail, ['repository: Drako01/redevent', 'head: feat/fix', 'base: qa', 'action: create', 'title: Fix integration', 'body 1: Summary\n- detail']);
+	assert.equal(parsed?.rule, '');
+	assert.equal(parseApprovalDraft({ ...draft, action: 'merge' }), undefined);
+	assert.equal(parseApprovalDraft({ ...draft, prBody: 'x'.repeat(2001) }), undefined);
+	assert.equal(parseApprovalDraft({ kind: 'git_branch_create', title: 'Branch', detail: ['wrong'], rule: 'git_branch_create', repo: 'Drako01/redevent', branch: 'feat/fix', from: 'origin/qa' })?.detail.join(', '), 'repository: Drako01/redevent, new branch: feat/fix, from: origin/qa');
+});

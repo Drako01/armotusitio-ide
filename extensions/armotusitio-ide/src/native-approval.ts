@@ -19,7 +19,7 @@ const ANSWERS: readonly ApprovalAnswer[] = ['once', 'always', 'deny'];
 /** What the tool server asks; the extension assigns the id. */
 export type ApprovalDraft = Omit<ApprovalRequest, 'id'>;
 /** The structured fields the extension derives the "always" rule from; the runner's own `rule` is only a hint and is never trusted. */
-export interface ApprovalSubject { command?: string; args?: string[]; cwd?: string; path?: string }
+export interface ApprovalSubject { command?: string; args?: string[]; cwd?: string; path?: string; repo?: string; branch?: string; from?: string; base?: string; prTitle?: string; prBody?: string; action?: string }
 export type ApprovalAsk = (request: ApprovalDraft & ApprovalSubject) => Promise<ApprovalAnswer>;
 
 const MAX_PENDING_ARGS = 100;
@@ -36,6 +36,15 @@ function subjectRequest(draft: Partial<ApprovalDraft> & ApprovalSubject): Permis
 		case 'edit': return typeof draft.path === 'string' && draft.path ? { kind: 'edit', path: draft.path } : undefined;
 		case 'git_commit': return { kind: 'git_commit', branch: '', files: [], message: '' };
 		case 'git_push': return { kind: 'git_push', branch: '', remote: '' };
+		case 'git_branch_create': {
+			if (![draft.repo, draft.branch, draft.from].every(value => typeof value === 'string' && value.length > 0 && value.length <= 250)) { return undefined; }
+			return { kind: 'git_branch_create', repo: draft.repo!, branch: draft.branch!, from: draft.from! };
+		}
+		case 'git_pr_upsert': {
+			if (![draft.repo, draft.branch, draft.base, draft.prTitle].every(value => typeof value === 'string' && value.length > 0 && value.length <= 250) ||
+				typeof draft.prBody !== 'string' || draft.prBody.length > 2000 || !/^(?:create|update #[1-9][0-9]*)$/.test(draft.action ?? '')) { return undefined; }
+			return { kind: 'git_pr_upsert', repo: draft.repo!, branch: draft.branch!, base: draft.base!, title: draft.prTitle!, body: draft.prBody };
+		}
 		default: return undefined;
 	}
 }
@@ -52,7 +61,12 @@ export function parseApprovalDraft(value: unknown): ApprovalDraft | undefined {
 	if (!request) { return undefined; }
 	const detail = request.kind === 'run'
 		? ['command: ' + [request.command, ...request.args].join(' ').slice(0, 300), 'cwd: ' + request.cwd.slice(0, 300)]
-		: draft.detail.map(line => line.slice(0, 400));
+		: request.kind === 'git_branch_create'
+			? ['repository: ' + request.repo, 'new branch: ' + request.branch, 'from: ' + request.from]
+			: request.kind === 'git_pr_upsert'
+				? ['repository: ' + request.repo, 'head: ' + request.branch, 'base: ' + request.base, 'action: ' + draft.action, 'title: ' + request.title,
+					...((request.body.match(/[\s\S]{1,300}/g) ?? ['']).map((part, index) => 'body ' + (index + 1) + ': ' + part))]
+				: draft.detail.map(line => line.slice(0, 400));
 	const rule = suggestRule(request);
 	return { kind: request.kind, title: redactSecrets(draft.title.slice(0, 200)), rule: redactSecrets(rule) === rule ? rule : '', detail: detail.map(redactSecrets) };
 }

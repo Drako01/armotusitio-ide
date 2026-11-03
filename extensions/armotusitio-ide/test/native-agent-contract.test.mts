@@ -41,9 +41,9 @@ test('the git tools are described only to writers that have them, and publishing
 	const planner = agentContract({ provider: 'claude', role: 'planner', runner: true, git: true });
 	const direct = buildDirectInstruction([chatMessage('user', 'sube los cambios')]);
 	assert.deepEqual({
-		withTools: chatWriter.stdin.includes('other than through the `git_commit` and `git_push` tools') && chatWriter.stdin.includes('open pull requests') && chatWriter.stdin.includes('publish packages'),
+		withTools: ['git_branch_create', 'git_commit', 'git_push', 'git_pr_upsert', 'publish packages'].every(text => chatWriter.stdin.includes(text)) && !chatWriter.stdin.includes('Never: modify git state (commit'),
 		withoutTools: plain.includes('Never: modify git state (commit, branch, checkout, reset, stash, push'), readOnlyNever: planner.includes('git_commit'),
-		direct: ['`git_commit`', '`git_push`', 'never force-push', 'never push the default branch', 'cannot publish packages or create releases', 'a `DENIED` answer is final'].every(text => direct.includes(text)),
+		direct: ['`git_branch_create`', '`git_commit`', '`git_push`', '`git_pr_upsert`', 'No force push', 'No force push', 'no release', 'A DENIED or POLICY_DENIED answer is final'].every(text => direct.includes(text)),
 		oldPhrase: direct.includes('You cannot commit, push or publish')
 	}, { withTools: true, withoutTools: true, readOnlyNever: false, direct: true, oldPhrase: false });
 });

@@ -24,6 +24,8 @@ const run = (command: string, ...args: string[]): PermissionRequest => ({ kind: 
 const edit = (file: string): PermissionRequest => ({ kind: 'edit', path: file });
 const commit: PermissionRequest = { kind: 'git_commit', branch: 'main', files: [], message: 'x' };
 const push: PermissionRequest = { kind: 'git_push', branch: 'main', remote: 'origin' };
+const branch: PermissionRequest = { kind: 'git_branch_create', repo: 'Drako01/redevent', branch: 'feat/x', from: 'origin/qa' };
+const pr: PermissionRequest = { kind: 'git_pr_upsert', repo: 'Drako01/redevent', branch: 'feat/x', base: 'qa', title: 'Title', body: 'Body' };
 
 test('glob matching is literal except for star, iterative, and immune to pathological patterns', () => {
 	const started = Date.now();
@@ -116,9 +118,9 @@ test('addUserRule writes atomically to the user file, validates, deduplicates an
 test('suggested rules persist only exact unambiguous commands and never dependencies, git or edits', async () => {
 	const space = await workspace();
 	try {
-		const suggestions = [run('pnpm.cmd', 'test', '--run'), run('Make'), edit('src/a/b.ts'), edit('README.md'), commit, push,
+		const suggestions = [run('pnpm.cmd', 'test', '--run'), run('Make'), edit('src/a/b.ts'), edit('README.md'), commit, push, branch, pr,
 			run('pnpm', 'install', 'x'), run('npx', '-y', 'x'), run('node'), run('node', '*.js'), run('node', 'a b.js'), run('node', 'a?.js'), run('go', 'get', 'x'), run('python', '-m', 'pip', 'install', 'x')].map(suggestRule);
-		assert.deepEqual(suggestions, ['run:pnpm test --run', '', '', '', '', '', '', '', '', '', '', '', '', '']);
+		assert.deepEqual(suggestions, ['run:pnpm test --run', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']);
 		await addUserRule(suggestions[0], 'allow', space.home);
 		const set = await loadPermissions(space.root, space.home, undefined, { preset: 'readonly' });
 		assert.deepEqual([set.decide(run('pnpm', 'test', '--run')).decision, set.decide(run('pnpm', 'test', '-w')).decision], ['allow', 'deny']);
@@ -142,4 +144,15 @@ test('subjects exceeding the bounded glob budget are denied rather than matched 
 		const set = await loadPermissions(space.root, space.home);
 		assert.equal(set.decide(run('node', 'a'.repeat(2048))).decision, 'deny');
 	} finally { await space.cleanup(); }
+});
+
+test('new structured delivery permissions are opt-in and project denials win', async () => {
+	const w = await workspace({ project: { version: 1, deny: ['git_pr_upsert'] } });
+	try {
+		const decisions = async (preset: PermissionPreset) => {
+			const set = await loadPermissions(w.root, w.home, undefined, { preset });
+			return [set.decide(branch).decision, set.decide(pr).decision];
+		};
+		assert.deepEqual([await decisions('readonly'), await decisions('dev'), await decisions('trusted')], [['deny', 'deny'], ['ask', 'deny'], ['ask', 'deny']]);
+	} finally { await w.cleanup(); }
 });
