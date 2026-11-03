@@ -4,6 +4,17 @@
  *--------------------------------------------------------------------------------------------*/
 import test from 'node:test';
 import assert from 'node:assert/strict';
+
+test('ripgrep is available for navigation without allowing executable helpers', () => {
+	const policy = createCommandPolicy({ subprojects: [], delegate: false, extras: [] });
+	assert.equal(policy.decide('rg', ['--files', 'src'], '.').allowed, true);
+	assert.equal(policy.decide('rg', ['-n', 'MFA', 'src'], '.').allowed, true);
+	for (const delegate of [false, true]) {
+		for (const args of [['--pre', 'helper'], ['--pre=helper'], ['--hostname-bin', 'helper'], ['--hostname-bin=helper']]) {
+			assert.deepEqual(createCommandPolicy({ subprojects: [], delegate, extras: [] }).decide('rg', args, '.'), { allowed: false, reason: 'inline-code' });
+		}
+	}
+});
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';

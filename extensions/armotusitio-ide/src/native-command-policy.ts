@@ -60,6 +60,8 @@ function floor(command: string, args: readonly string[], depth = 0): PolicyDenia
 	if (NETWORK.has(name)) { return 'network'; }
 	if (DESTRUCTIVE.has(name)) { return 'destructive'; }
 	if (PUBLISH_TOOLS.has(name)) { return 'publish'; }
+	// ripgrep can launch preprocessors and hostname helpers: navigation must not become command execution.
+	if (name === 'rg' && hasFlag(args, '--pre', '--hostname-bin')) { return 'inline-code'; }
 	const normalized = command.replace(/\\/g, '/');
 	if (/[\\/]/.test(command) && !['./mvnw', './gradlew', 'vendor/bin/phpunit', 'vendor/bin/phpstan', 'vendor/bin/pest'].includes(normalized)) { return 'invalid'; }
 	// Inspect the executable behind launchers before dependency approval can let the outer command through.
@@ -146,7 +148,7 @@ function allowlisted(config: CommandPolicyConfig, extras: string[][], command: s
 	const name = /[\\/]/.test(command) ? command.replace(/\\/g, '/') : base(command);
 	// The project's Harness applies its own, possibly stricter, policy after the floor.
 	if (config.delegate) { return { allowed: true, executable: command, cwd: folder, delegate: true }; }
-	if (name === 'git') { return { allowed: true, executable: command, cwd: folder, delegate: false }; }
+	if (name === 'git' || name === 'rg') { return { allowed: true, executable: command, cwd: folder, delegate: false }; }
 	const sub = args[0];
 	const presetAllows = config.subprojects.some(project => {
 		if (!inside(folder, project.path)) { return false; }
@@ -176,7 +178,7 @@ export function createCommandPolicy(config: CommandPolicyConfig): CommandPolicy 
 		describe() {
 			if (config.delegate) { return ['El Harness del proyecto decide qu\u00e9 comandos se ejecutan, dentro del piso del IDE.']; }
 			const lines = config.subprojects.map(project => project.path + ' (' + project.ecosystem + '): ' + Object.entries(presets(project)).map(([executable, allowed]) => allowed === true ? executable : executable + ' ' + allowed.slice(0, 6).join('/')).join(', '));
-			return ['git (solo lectura)', ...lines, ...(extras.length ? ['Extras: ' + extras.map(parts => parts.join(' ')).join(', ')] : [])];
+			return ['git, rg (solo lectura)', ...lines, ...(extras.length ? ['Extras: ' + extras.map(parts => parts.join(' ')).join(', ')] : [])];
 		}
 	};
 }

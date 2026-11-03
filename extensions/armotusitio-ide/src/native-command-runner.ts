@@ -62,7 +62,8 @@ export async function runCommand(request: CommandRequest): Promise<CommandResult
 		resolved = { executable: process.execPath, args: [request.delegateEntry, 'ide-run', '--ide-protocol', '2', '--cwd', request.cwd, '--', request.command, ...request.args], embeddedNode: true };
 	} else {
 		const local = await projectExecutable(request.root, request.cwd, request.command);
-		resolved = local ? { executable: local, args: [...request.args], embeddedNode: false } : await resolveNativeCommand(request.command, [...request.args]);
+		const args = request.command.replace(/\.exe$/i, '').toLowerCase() === 'rg' ? ['--no-config', ...request.args] : [...request.args];
+		resolved = local ? { executable: local, args, embeddedNode: false } : await resolveNativeCommand(request.command, args);
 	}
 	await fsp.mkdir(request.logDirectory, { recursive: true });
 	const logFile = path.join(request.logDirectory, new Date(started).toISOString().replace(/[:.]/g, '-') + '-' + path.basename(request.command).replace(/[^\w.-]/g, '_') + '.log');

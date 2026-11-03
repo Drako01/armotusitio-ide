@@ -19,6 +19,7 @@ import { GIT_TOOLS, handleGitTool } from './native-git-tools.ts';
 import { loadPermissions, type PermissionSet } from './native-permissions.ts';
 import type { PermissionPreset } from './native-permissions-types.ts';
 import { projectPermissionsDigest } from './native-run-integrity.ts';
+import { MCP_TOOL_PREFIX, type WorkMcpTool } from './native-mcp-bridge.ts';
 
 export interface RunnerConfig {
 	schemaVersion: 1;
@@ -31,6 +32,8 @@ export interface RunnerConfig {
 	maxTurns?: number;
 	/** Channel to the extension for editor tools (S) and development secrets (V); secrets never go in this file. */
 	channel?: { address: string; token: string };
+	/** Work Management schemas only; the credential and HTTP client stay in the extension. */
+	mcpTools?: WorkMcpTool[];
 	/** Permission rules are read from their files by this process on every call, so an "always" answer applies at once; only the preset travels here. */
 	permissions?: { preset?: PermissionPreset };
 	/** Offers `git_commit` / `git_push`; set only for runs that can ask the user (the chat). */
@@ -139,8 +142,19 @@ async function main(): Promise<void> {
 		if (request.id === undefined) { return; }
 		const reply = (result: unknown): void => send({ jsonrpc: '2.0', id: request.id, result });
 		if (request.method === 'initialize') { return reply({ protocolVersion: request.params?.protocolVersion ?? '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'ats-runner', version: '1.0.0' } }); }
-		if (request.method === 'tools/list') { return reply({ tools: [TOOL, ...(config.git ? GIT_TOOLS : []), ...(config.channel ? EDITOR_TOOLS : [])] }); }
+		if (request.method === 'tools/list') { return reply({ tools: [TOOL, ...(config.git ? GIT_TOOLS : []), ...(config.channel ? EDITOR_TOOLS : []), ...(config.channel ? config.mcpTools ?? [] : [])] }); }
 		if (request.method === 'ping') { return reply({}); }
+		if (request.method === 'tools/call' && config.channel && request.params?.name?.startsWith(MCP_TOOL_PREFIX) && config.mcpTools?.some(tool => tool.name === request.params!.name)) {
+			calls++;
+			if (!await permissionsUntouched(config)) { return reply({ isError: true, content: [{ type: 'text', text: 'POLICY_DENIED: project-permissions-changed' }] }); }
+			try {
+				const result = await callToolChannel(config.channel.address, config.channel.token, 'work-mcp', { name: request.params.name, input: request.params.arguments ?? {} }, 11 * 60 * 1000);
+				return reply(result);
+			} catch (error) {
+				const message = (error as Error).message;
+				return reply({ isError: true, content: [{ type: 'text', text: /^HARNESS_[A-Z_]+$/.test(message) ? message : 'HARNESS_MCP_FAILED' }] });
+			}
+		}
 		if (request.method === 'tools/call' && request.params?.name === TOOL.name) {
 			const result = await handleRun(config, request.params.arguments, ++calls);
 			return reply({ isError: result.isError, content: [{ type: 'text', text: result.text }] });
