@@ -11,6 +11,10 @@ const DIAGNOSE = '\u00abArmoTuSitio: Diagn\u00f3stico del Harness nativo\u00bb';
 const RECONCILE_FENCE = '\u00abArmoTuSitio: Reconciliar lock compartido obsoleto\u00bb';
 
 const EXACT: Record<string, Hint> = {
+	HARNESS_MCP_FAILED: t => t('No se pudo consultar ArmotuSitio. Revis\u00e1 la conexi\u00f3n MCP y la clave del agente en este workspace.'),
+	HARNESS_MCP_INPUT_INVALID: t => t('El pedido a ArmotuSitio tiene argumentos inv\u00e1lidos. Pedile al agente que revise los campos de la herramienta.'),
+	HARNESS_MCP_TOOL_DENIED: t => t('La herramienta de ArmotuSitio no est\u00e1 habilitada para esta ejecuci\u00f3n. Revis\u00e1 la conexi\u00f3n, el modo de permisos y el alcance del agente.'),
+	HARNESS_MCP_WRITE_DENIED: t => t('El cambio en ArmotuSitio no fue autorizado. La operaci\u00f3n qued\u00f3 sin ejecutar.'),
 	HARNESS_FENCE_HELD_RECONCILIATION_REQUIRED: t => t('Otra ejecuci\u00f3n tiene el lock del proyecto o qued\u00f3 colgada. Si no hay nada corriendo, us\u00e1 {0} y reintent\u00e1.', RECONCILE_FENCE),
 	HARNESS_ALREADY_RUNNING: t => t('Hay otra tarea de IA en curso. Esper\u00e1 a que termine o cancelala.'),
 	HARNESS_PROVIDER_CAPACITY_REACHED: t => t('Hay otra tarea de IA en curso. Esper\u00e1 a que termine o cancelala.'),

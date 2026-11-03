@@ -6,6 +6,7 @@
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
 import { createHash, randomBytes } from 'node:crypto';
+import { redactSecrets } from './native-redact.ts';
 import { currentToolchainEnvironment } from './native-toolchain-env.ts';
 import { detectEcosystems, describeEcosystems } from './native-ecosystems.ts';
 import { detectProjectCommands, detectedVerificationPlan } from './native-project-detect.ts';
@@ -18,6 +19,7 @@ import { createResultCache, type ResultCache } from './native-result-cache.ts';
 import { composeUpCommand, detectServiceNeeds, probeService } from './native-services.ts';
 import { runCommand } from './native-command-runner.ts';
 import { openToolChannel } from './native-tool-server.ts';
+import { createWorkMcpBridge, type WorkMcpTool } from './native-mcp-bridge.ts';
 import { parseApprovalDraft, type ApprovalAsk } from './native-approval.ts';
 import { addUserRule, configuredPreset, loadPermissions } from './native-permissions.ts';
 import { repoFingerprint } from './native-git-tools.ts';
@@ -253,9 +255,26 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 		const directory = path.join(metricsDirectory(root), 'runs', Date.now() + '-' + randomBytes(6).toString('hex'));
 		await fs.mkdir(directory, { recursive: true, mode: 0o700 });
 		const { env } = await currentToolchainEnvironment();
+		const mcp = createWorkMcpBridge({
+			client: {
+				tools: async () => controller.mcp ? controller.mcp.client.tools() : [],
+				call: async (name, args) => controller.mcp.client.call(name, args)
+			},
+			enabled: () => vscode.workspace.isTrusted && !!controller.mcp?.enabled(),
+			canWrite: () => !!approve && permissionsPreset() !== 'readonly',
+			confirmWrite: async (name, args) => {
+				const accept = vscode.l10n.t('Autorizar cambio');
+				if (permissionsPreset() === 'readonly') { return false; }
+				return await vscode.window.showWarningMessage(vscode.l10n.t('El agente solicita un cambio en ArmotuSitio: {0}', name),
+					{ modal: true, detail: redactSecrets(JSON.stringify(args, null, 2)) }, accept) === accept;
+			}
+		});
+		// Discovery failure must not take away the runner's local tools. Calls still recheck availability.
+		const mcpTools: WorkMcpTool[] = await mcp.tools().catch(() => []);
 		const channel = await openToolChannel(directory, async (method, params) => {
 			const input = (params ?? {}) as { name?: string; input?: Record<string, unknown>; command?: string; args?: string[]; cwd?: string };
 			if (method === 'editor' && typeof input.name === 'string') { return runEditorTool({ root, backend: editorBackend, inScope }, input.name, input.input ?? {}); }
+			if (method === 'work-mcp' && typeof input.name === 'string') { return mcp.call(input.name, input.input ?? {}); }
 			// Only a run that can ask the user (the chat) has an approver; any other run is denied.
 			if (method === 'approval') { const draft = parseApprovalDraft(params); return draft && approve ? approve(draft) : 'deny'; }
 			if (method === 'secrets' && typeof input.command === 'string') { return devSecrets.forCommand(projectKeyOf(root), input.command, Array.isArray(input.args) ? input.args : [], input.cwd ?? '.'); }
@@ -263,7 +282,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 		});
 		const config: RunnerConfig = {
 			schemaVersion: 1, root, policy, env: { ...env, ...extraEnv }, logDirectory: path.join(directory, 'logs'), maxTurns,
-			channel: { address: channel.address, token: channel.token },
+			channel: { address: channel.address, token: channel.token }, mcpTools,
 			...(approve ? {
 				git: true, permissions: { preset: permissionsPreset() },
 				projectPermissionsBaseline: await projectPermissionsDigest(root), repoBaseline: await repoFingerprint(root),
