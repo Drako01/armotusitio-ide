@@ -231,7 +231,7 @@ async function runGit(context: GitToolsContext, args: string[], timeoutSec?: num
 	});
 }
 
-const failure = (what: string, result: { exitCode: number | null; timedOut: boolean; output: string }): GitToolResult =>
+const failure = (what: string, result: { exitCode: number | null; timedOut: boolean; cancelled: boolean; output: string }): GitToolResult =>
 	({ isError: true, text: what + ' failed (' + (result.cancelled ? 'cancelled' : result.timedOut ? 'timed out' : 'exit ' + result.exitCode) + '). Fix the cause; do not bypass hooks or checks.\n' + (result.output || '(no output)') });
 
 async function commit(context: GitToolsContext, input: { paths?: unknown; message?: unknown }): Promise<GitToolResult> {
