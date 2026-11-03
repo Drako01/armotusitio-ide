@@ -65,7 +65,7 @@ export function parseApprovalDraft(value: unknown): ApprovalDraft | undefined {
 			? ['repository: ' + request.repo, 'new branch: ' + request.branch, 'from: ' + request.from]
 			: request.kind === 'git_pr_upsert'
 				? ['repository: ' + request.repo, 'head: ' + request.branch, 'base: ' + request.base, 'action: ' + draft.action, 'title: ' + request.title,
-					...((request.body.match(/[\s\S]{1,300}/g) ?? ['']).map((part, index) => 'body ' + (index + 1) + ': ' + part))]
+				...((request.body.match(/[\s\S]{1,300}/g) ?? ['']).map((part, index) => 'body ' + (index + 1) + ': ' + part))]
 				: draft.detail.map(line => line.slice(0, 400));
 	const rule = suggestRule(request);
 	return { kind: request.kind, title: redactSecrets(draft.title.slice(0, 200)), rule: redactSecrets(rule) === rule ? rule : '', detail: detail.map(redactSecrets) };
