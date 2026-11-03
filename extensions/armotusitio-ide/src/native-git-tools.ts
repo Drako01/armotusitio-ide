@@ -92,7 +92,7 @@ export const GIT_TOOLS = [
 	},
 	{
 		name: 'git_pr_upsert',
-		description: 'Create or update the GitHub pull request for the current, already pushed branch. Provide the explicit target base (qa for RedEvent, not globally), complete title and body. Reuse an existing open PR, never duplicate one or reopen a closed PR. No issue association, auto-merge, merge, actions or bypass. The IDE may ask for approval showing repository, head, base and exact content; DENIED is final.',
+		description: 'Create or update the GitHub pull request for the current, already pushed branch. Provide the explicit target base (never assumed globally), complete title and body. Reuse an existing open PR, never duplicate one or reopen a closed PR. No issue association, auto-merge, merge, actions or bypass. The IDE may ask for approval showing repository, head, base and exact content; DENIED is final.',
 		inputSchema: {
 			type: 'object',
 			properties: {
@@ -318,8 +318,8 @@ async function branchCreate(context: GitToolsContext, input: Record<string, unkn
 	await assertHooksUntouched(context, []);
 	const exists = await git(root, ['show-ref', '--verify', '--quiet', 'refs/heads/' + branch]) !== undefined;
 	const existingHead = exists ? await git(root, ['rev-parse', '--verify', 'refs/heads/' + branch + '^{commit}']) : undefined;
-	if (exists && current !== branch && dirty && existingHead !== initialHead) { return refuse('local-changes-on-branch-reuse'); }
 	if (PROTECTED_BRANCHES.has(branch.toLowerCase()) || context.protectedBranches?.some(pattern => globMatches(pattern.toLowerCase(), branch.toLowerCase()))) { return refuse('protected-branch'); }
+	if (exists && current !== branch && dirty && existingHead !== initialHead) { return refuse('local-changes-on-branch-reuse'); }
 	const actualFrom = exists ? 'refs/heads/' + branch : from;
 	const denial = await authorize(context, { kind: 'git_branch_create', repo, branch, from: actualFrom }, 'Create or reuse branch',
 		['repository: ' + repo, 'branch: ' + branch, 'from: ' + actualFrom], { repo, branch, from: actualFrom });
