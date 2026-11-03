@@ -12,6 +12,7 @@
  *   `codex sandbox`: writes outside the workspace are denied, reads outside it are not.
  * - `tool-allowlist`: only the provider's tool permissions restrict the agent; nothing at operating system level.
  */
+import { codexSandbox } from './native-codex-sandbox.ts';
 import type { NativeProvider } from './native-providers.ts';
 
 export type IsolationLevel = 'os-kernel' | 'provider-sandbox' | 'tool-allowlist' | 'none';
@@ -26,14 +27,14 @@ export interface AgentIsolation {
 }
 
 export function describeAgentIsolation(provider: NativeProvider): AgentIsolation {
-	return provider === 'codex'
-		? { writes: 'provider-sandbox', reads: 'none' }
-		: { writes: 'tool-allowlist', reads: 'tool-allowlist' };
+	if (provider === 'codex') { return codexSandbox() === 'danger-full-access' ? { writes: 'none', reads: 'none' } : { writes: 'provider-sandbox', reads: 'none' }; }
+	return { writes: 'tool-allowlist', reads: 'tool-allowlist' };
 }
 
 /** True when the isolation of this provider's writers is at least the level the user requires. */
 export function meetsWriterIsolation(provider: NativeProvider, required: IsolationLevel): boolean {
-	return RANK[describeAgentIsolation(provider).writes] >= RANK[required];
+	// `none` only exists when the user switched Codex to full access, which is the explicit choice to go without a sandbox.
+	return required === 'tool-allowlist' || RANK[describeAgentIsolation(provider).writes] >= RANK[required];
 }
 
 /** Fails closed: an unknown setting value is treated as the strictest requirement. */

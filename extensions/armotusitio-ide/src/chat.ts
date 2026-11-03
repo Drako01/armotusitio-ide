@@ -10,6 +10,7 @@ const { ChatStore, harnessErrorCode, MAX_USER_MESSAGE_CHARS } = require('./nativ
 const { HarnessChatSession, describeFailure, chatActivityItems } = require('./native-chat-session.ts');
 import type { ActivityFeed } from './native-activity-feed.ts';
 import type { ChatMode } from './native-chat.ts';
+const { parseCodexSandbox, useCodexSandbox } = require('./native-codex-sandbox.ts');
 const { diagnoseProvider } = require('./native-provider-diagnostics.ts');
 const { listProviderModels } = require('./native-provider-models.ts');
 const { validModel, validEffort } = require('./native-providers.ts');
@@ -151,7 +152,7 @@ function labels(t) {
 		effort: t('Razonamiento de {0}', '{0}'), effortShort: t('Esfuerzo'), effortDefault: t('Esfuerzo: predeterminado'), effortLevels: { low: t('Bajo'), medium: t('Medio'), high: t('Alto'), xhigh: t('Extra alto'), max: t('M\u00e1ximo') },
 		effortHint: t('La disponibilidad del nivel depende del modelo y del CLI instalado.'),
 		mode: t('Modo del chat'), modeAct: t('Modo: Actuar'), modeAsk: t('Modo: Preguntar'), directRun: t('Ejecuci\u00f3n directa'), executingDirect: t('Ejecutando directo con {0}'),
-		modeHint: t('Actuar: la IA cambia el c\u00f3digo directamente. Preguntar: solo conversa y propone planes que aprob\u00e1s antes de ejecutar.'),
+		sandboxFull: t('Acceso total'), sandboxHint: t('Codex sin sandbox: sin l\u00edmites de enlaces, red ni carpetas. Desactivado, Codex queda confinado al proyecto.'), modeHint: t('Actuar: la IA cambia el c\u00f3digo directamente. Preguntar: solo conversa y propone planes que aprob\u00e1s antes de ejecutar.'),
 		quotaWindow: { session: t('Sesi\u00f3n'), weekly: t('Semanal') }, quotaFree: t('{0} {1}% libre', '{0}', '{1}'), quotaResets: t('reinicia {0}', '{0}'),
 		quotaTitle: t('Cuota de {0} (informada por el proveedor)\n{1}', '{0}', '{1}'), quotaLevel: { warn: t('Queda poco cupo.'), critical: t('Cupo casi agotado.') },
 		providerStatus: { ready: t('Autenticado'), unauthenticated: t('Sin sesi\u00f3n iniciada'), unavailable: t('No instalado'), incompatible: t('Versi\u00f3n incompatible'), unknown: t('Estado desconocido'), checking: t('Verificando\u2026') },
@@ -221,6 +222,8 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 	const models = { codex: { options: [] }, claude: { options: [] } };
 	const modelSetting = provider => provider + 'Model';
 	const effortSetting = provider => provider + 'Effort';
+	const codexFullAccess = () => parseCodexSandbox(vscode.workspace.getConfiguration('atsHarness').get('codexSandbox')) === 'danger-full-access';
+	useCodexSandbox(vscode.workspace.getConfiguration('atsHarness').get('codexSandbox'));
 	const chatMode = (): ChatMode => vscode.workspace.getConfiguration('atsHarness').get('chatMode', 'act') === 'ask' ? 'ask' : 'act';
 	const mentionIndex = new TtlCache(MENTION_INDEX_TTL_MS);
 	const chosenEfforts = () => Object.fromEntries(['codex', 'claude'].map(provider => [provider, vscode.workspace.getConfiguration('atsHarness').get(effortSetting(provider), '')]));
@@ -263,7 +266,7 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 		// The webview drops its history whenever it receives no chat, so the next one must be complete.
 		else { posted = chat ? { key, revision: chat.revision } : { key: undefined, revision: -1 }; }
 		post({
-			type: 'state', trusted: !!vscode.workspace.isTrusted, providers, models: chosenModels(), efforts: chosenEfforts(), chatMode: chatMode(), mcp: { ...mcpStatus, endpoint: new URL(endpoint).host, enabled: !!mcp.enabled?.() },
+			type: 'state', trusted: !!vscode.workspace.isTrusted, providers, models: chosenModels(), efforts: chosenEfforts(), chatMode: chatMode(), codexFullAccess: codexFullAccess(), mcp: { ...mcpStatus, endpoint: new URL(endpoint).host, enabled: !!mcp.enabled?.() },
 			project: folder ? { name: folder.name, id: key } : null,
 			projects: folders().map(item => ({ name: item.name, id: item.uri.toString() })),
 			chat
@@ -346,6 +349,17 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 	// Personal choice, like the model: user settings, not a project policy.
 	const setChatMode = async (mode: ChatMode) => {
 		await vscode.workspace.getConfiguration('atsHarness').update('chatMode', mode, true);
+		publish();
+	};
+	/** Full access takes Codex out of its sandbox, so turning it on asks first; turning it off does not. */
+	const setCodexFullAccess = async (full: boolean) => {
+		if (full) {
+			const confirm = t('Activar acceso total');
+			if (await vscode.window.showWarningMessage(t('Con acceso total, Codex deja de estar confinado por el sandbox: puede leer y escribir fuera del proyecto y usar la red. Las reglas de permisos solo valen para los comandos que pasan por el IDE. \u00bfActivarlo?'), { modal: true }, confirm) !== confirm) { publish(); return; }
+		}
+		const value = full ? 'danger-full-access' : 'workspace-write';
+		await vscode.workspace.getConfiguration('atsHarness').update('codexSandbox', value, true);
+		useCodexSandbox(value);
 		publish();
 	};
 	const confirmDiscard = async () => {
@@ -453,6 +467,9 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 				await vscode.workspace.getConfiguration('atsHarness').update(modelSetting(message.provider), message.model, true);
 				publish(folder);
 			}
+			if (action === 'sandbox' && typeof message.full === 'boolean') {
+				await setCodexFullAccess(message.full);
+			}
 			if (action === 'mode' && ['act', 'ask'].includes(message.mode)) {
 				await setChatMode(message.mode);
 			}
@@ -487,6 +504,10 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 	if (vscode.workspace.onDidChangeConfiguration) {
 		context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
 			if (['codex', 'claude'].some(provider => event.affectsConfiguration('atsHarness.' + modelSetting(provider)))) { providerCache.invalidate(); }
+			if (event.affectsConfiguration('atsHarness.codexSandbox')) {
+				useCodexSandbox(vscode.workspace.getConfiguration('atsHarness').get('codexSandbox'));
+				if (panel) { publish(); }
+			}
 			if (panel && event.affectsConfiguration('atsHarness.chatMode')) { publish(); }
 			if (panel && ['codex', 'claude'].some(provider => event.affectsConfiguration('atsHarness.' + modelSetting(provider)) || event.affectsConfiguration('atsHarness.' + effortSetting(provider)))) { publish(); }
 			// Writer settings apply immediately: the plan card re-reads the project facts instead of asking for a reload.

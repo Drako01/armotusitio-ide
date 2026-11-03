@@ -8,6 +8,7 @@ import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { parseCodexSandbox, useCodexSandbox } from '../src/native-codex-sandbox.ts';
 import { describeAgentIsolation, meetsWriterIsolation, parseWriterIsolation } from '../src/native-isolation.ts';
 
 test('isolation claims never exceed what was demonstrated and unknown requirements fail closed', () => {
@@ -52,4 +53,18 @@ test('Codex sandbox denies writes outside the workspace and does not confine rea
 			readOnly: ['write-inside:denied', 'write-outside:denied', 'read-outside:allowed']
 		});
 	} finally { await fs.rm(base, { recursive: true, force: true }); }
+});
+
+test('Codex full access is reported as no isolation, passes only the default requirement and never reaches readers', () => {
+	useCodexSandbox('danger-full-access');
+	try {
+		assert.deepEqual({
+			codex: describeAgentIsolation('codex'), claude: describeAgentIsolation('claude'),
+			atDefault: meetsWriterIsolation('codex', 'tool-allowlist'), needsSandbox: meetsWriterIsolation('codex', 'provider-sandbox'), needsKernel: meetsWriterIsolation('codex', 'os-kernel'),
+			parsed: [parseCodexSandbox('danger-full-access'), parseCodexSandbox('true'), parseCodexSandbox(undefined)]
+		}, {
+			codex: { writes: 'none', reads: 'none' }, claude: { writes: 'tool-allowlist', reads: 'tool-allowlist' },
+			atDefault: true, needsSandbox: false, needsKernel: false, parsed: ['danger-full-access', 'workspace-write', 'workspace-write']
+		});
+	} finally { useCodexSandbox('workspace-write'); }
 });

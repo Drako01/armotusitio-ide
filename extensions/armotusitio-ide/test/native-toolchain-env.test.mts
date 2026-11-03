@@ -6,6 +6,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildToolchainEnvironment } from '../src/native-toolchain-env.ts';
 import { buildAgentInvocation } from '../src/native-agent-execution.ts';
+import { useCodexSandbox } from '../src/native-codex-sandbox.ts';
 
 test('the agent environment keeps what toolchains need and never a credential', async () => {
 	const source = {
@@ -37,4 +38,15 @@ test('PATH names the real folder of a linked toolchain such as the nvm-windows s
 	const links = new Map([['C:\nvm4w\nodejs', 'C:\Users\dev\AppData\Local\nvm\v24.22.1']]);
 	const profile = await buildToolchainEnvironment({ PATH: 'C:\nvm4w\nodejs;C:\bin', USERPROFILE: 'C:\Users\dev' }, 'win32', async () => false, async folder => links.get(folder) ?? folder);
 	assert.equal(profile.env.PATH, 'C:\Users\dev\AppData\Local\nvm\v24.22.1;C:\bin');
+});
+
+test('Codex full access drops the sandbox and the extra folders, only for writers', () => {
+	const base = { schemaVersion: 1 as const, provider: 'codex' as const, projectRoot: '/repo', instruction: 'x' };
+	useCodexSandbox('danger-full-access');
+	try {
+		const sandboxOf = (args: string[]) => args[args.indexOf('--sandbox') + 1];
+		const writer = buildAgentInvocation({ ...base, role: 'implementer', readOnly: false }, ['/home/dev/go/pkg/mod']);
+		const reader = buildAgentInvocation({ ...base, role: 'planner', readOnly: true }, ['/home/dev/go/pkg/mod']);
+		assert.deepEqual({ writer: sandboxOf(writer.args), writerDirs: writer.args.includes('--add-dir'), reader: sandboxOf(reader.args) }, { writer: 'danger-full-access', writerDirs: false, reader: 'read-only' });
+	} finally { useCodexSandbox('workspace-write'); }
 });
