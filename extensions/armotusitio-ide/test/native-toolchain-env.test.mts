@@ -18,7 +18,8 @@ test('the agent environment keeps what toolchains need and never a credential', 
 	assert.deepEqual({ env: profile.env, writableRoots: profile.writableRoots }, {
 		env: {
 			PATH: 'C:\\bin', USERPROFILE: 'C:\\Users\\dev', SystemRoot: 'C:\\Windows', GOFLAGS: '-mod=mod', XDG_CONFIG_HOME: 'C:\\cfg', ANTHROPIC_API_KEY: 'provider-auth',
-			LOCALAPPDATA: 'C:\\Users\\dev\\AppData\\Local', APPDATA: 'C:\\Users\\dev\\AppData\\Roaming'
+			LOCALAPPDATA: 'C:\\Users\\dev\\AppData\\Local', APPDATA: 'C:\\Users\\dev\\AppData\\Roaming',
+			npm_config_manage_package_manager_versions: 'false', pnpm_config_manage_package_manager_versions: 'false'
 		},
 		writableRoots: ['C:\\Users\\dev\\AppData\\Local\\go-build', 'C:\\Users\\dev\\go\\pkg\\mod']
 	});
