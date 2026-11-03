@@ -110,6 +110,10 @@ function shell(): void {
 	for (const [value, label] of [['act', L.modeAct], ['ask', L.modeAsk]]) { const item = el('option', '', label) as HTMLOptionElement; item.value = value; mode.append(item); }
 	mode.setAttribute('aria-label', L.mode); mode.title = L.modeHint;
 	mode.addEventListener('change', () => api.postMessage({ action: 'mode', mode: mode.value }));
+	const sandbox = el('label', 'sandbox-switch'); sandbox.id = 'sandbox-switch'; sandbox.title = L.sandboxHint; sandbox.hidden = true;
+	const sandboxBox = el('input') as HTMLInputElement; sandboxBox.type = 'checkbox'; sandboxBox.id = 'sandbox-full'; sandboxBox.setAttribute('role', 'switch');
+	sandboxBox.addEventListener('change', () => api.postMessage({ action: 'sandbox', full: sandboxBox.checked }));
+	sandbox.append(sandboxBox, el('span', '', L.sandboxFull));
 	const mcp = el('button', 'mcp-pill') as HTMLButtonElement; mcp.type = 'button'; mcp.id = 'mcp-pill';
 	mcp.setAttribute('aria-expanded', 'false'); mcp.setAttribute('aria-controls', 'mcp-details');
 	mcp.append(el('span', 'dot'), el('span', 'mcp-label'));
@@ -119,7 +123,7 @@ function shell(): void {
 	more.addEventListener('click', () => toggle('menu', more));
 	const quota = el('span', 'quota'); quota.id = 'quota'; quota.hidden = true; quota.setAttribute('role', 'group'); quota.tabIndex = 0;
 	quota.append(el('span', 'quota-icon'), el('span', 'quota-text'));
-	controls.append(switcher, quota, model, effort, mode, mcp, more);
+	controls.append(switcher, quota, model, effort, mode, sandbox, mcp, more);
 	header.append(brand, controls);
 
 	const details = el('section', 'popover mcp-details'); details.id = 'mcp-details'; details.hidden = true; details.setAttribute('aria-label', L.mcp);
@@ -236,6 +240,8 @@ function renderHeader(): void {
 	select.hidden = state.projects.length < 2; name.hidden = state.projects.length >= 2;
 	name.textContent = state.project?.name ?? '';
 	(document.getElementById('mode') as HTMLSelectElement).value = state.chatMode === 'ask' ? 'ask' : 'act';
+	(document.getElementById('sandbox-full') as HTMLInputElement).checked = !!state.codexFullAccess;
+	(document.getElementById('sandbox-switch') as HTMLElement).hidden = state.chat?.provider !== 'codex';
 	const selected = state.chat?.provider;
 	for (const button of document.querySelectorAll<HTMLButtonElement>('.provider-option')) {
 		const provider = button.dataset.provider; const info = state.providers[provider] || { status: 'unknown' };

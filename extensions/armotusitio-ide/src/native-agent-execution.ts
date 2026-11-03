@@ -14,6 +14,7 @@ import type { ChatStep } from './native-run-steps.ts';
 import { StringDecoder } from 'node:string_decoder';
 import { redactSecrets } from './native-redact.ts';
 import { currentToolchainEnvironment } from './native-toolchain-env.ts';
+import { codexSandbox } from './native-codex-sandbox.ts';
 import { agentContract, RUN_MINUTES } from './native-agent-contract.ts';
 import { reviewAgentDraft, validateReviewedAgent, type AgentDraft, type AgentReview } from './native-providers.ts';
 import { APPROVAL_TIMEOUT_MS } from './native-approval.ts';
@@ -94,7 +95,8 @@ export function buildAgentInvocation(draft: AgentDraft, writableRoots: readonly 
 		? ['--config', 'model_reasoning_effort="' + draft.effort + '"']
 		: ['--effort', draft.effort] : [];
 	if (draft.provider === 'codex') {
-		const caches = draft.readOnly ? [] : writableRoots.flatMap(root => ['--add-dir', root]);
+		const sandbox = draft.readOnly ? 'read-only' : codexSandbox();
+		const caches = sandbox === 'workspace-write' ? writableRoots.flatMap(root => ['--add-dir', root]) : [];
 		// Codex's native search tool; it is off unless the project enabled web search (D9).
 		const search = draft.webSearch ? ['--config', 'tools.web_search=true'] : [];
 		// Codex keeps its sandboxed shell (D1) and also gets the runner as the recommended path. Under `--ask-for-approval never`
@@ -104,7 +106,7 @@ export function buildAgentInvocation(draft: AgentDraft, writableRoots: readonly 
 		return {
 			executable: 'codex',
 			// The approval flag is global and must precede the exec subcommand on current Codex CLIs.
-			args: ['--ask-for-approval', 'never', ...effort, ...search, ...server, 'exec', ...model, '--sandbox', draft.readOnly ? 'read-only' : 'workspace-write', ...caches, '--skip-git-repo-check', '--ephemeral', '--json', '-'],
+			args: ['--ask-for-approval', 'never', ...effort, ...search, ...server, 'exec', ...model, '--sandbox', sandbox, ...caches, '--skip-git-repo-check', '--ephemeral', '--json', '-'],
 			stdin: instruction
 		};
 	}

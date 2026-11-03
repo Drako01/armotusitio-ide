@@ -11,7 +11,7 @@ function harness() {
 	let trusted = true, enabled = true, confirm = false;
 	const calls = [], confirmations = [];
 	const names = ['list_projects', 'list_issues', 'get_issue_context', 'get_project_context', 'create_issue', 'transition_issue', 'add_issue_comment'];
-	const vscode = { l10n: { t: (text, ...args) => text.replace(/\{(\d+)\}/g, (_, i) => String(args[i])) }, workspace: { get isTrusted() { return trusted; } }, window: { async showWarningMessage(text, options, choice) { confirmations.push({ text, options }); return typeof confirm === 'function' ? confirm(choice) : confirm ? choice : undefined; } } };
+	const vscode = { l10n: { t: (text, ...args) => text.replace(/\{(\d+)\}/g, (_, i) => String(args[i])) }, workspace: { get isTrusted() { return trusted; }, getConfiguration: () => ({ get: () => undefined }) }, window: { async showWarningMessage(text, options, choice) { confirmations.push({ text, options }); return typeof confirm === 'function' ? confirm(choice) : confirm ? choice : undefined; } } };
 	const controller = { progress: [{ id: 'RED-1', state: 'running', percent: 42 }], getHistory: () => [], async refreshActivity() { }, async execute(...args) { calls.push(['execute', ...args]); return 'started'; } };
 	const client = { tools: async () => names.map(name => ({ name })), async call(...args) { calls.push(args); return { structuredContent: { ok: true } }; } };
 	const projects = async () => [{ profile: { name: 'RedEvent', id: 'redevent', root: '/repo', actions: ['check'] }, folder: { uri: { toString: () => 'file:///repo' } } }];
@@ -74,7 +74,7 @@ test('native chat participant dispatches explicit slash commands as escaped text
 	let handler, response;
 	const noop = () => ({ dispose() { } });
 	const vscode = {
-		l10n: { t: value => value }, workspace: { isTrusted: true },
+		l10n: { t: value => value }, workspace: { isTrusted: true, getConfiguration: () => ({ get: () => undefined }) },
 		chat: { createChatParticipant(id, fn) { assert.equal(id, 'atsIde.harness'); handler = fn; return noop(); } },
 		Uri: { joinPath: (base, ...parts) => base + '/' + parts.join('/') }, commands: { registerCommand: noop },
 		MarkdownString: class { value = ''; appendText(value) { this.value += value; } }
@@ -502,4 +502,22 @@ test('/costo adds the provider-reported limit windows with the age of the readin
 		assert.match(text, /Cupo de Claude Code \(dato de hace 3 min\):\n {2}Sesi\u00f3n: 28% libre\n {2}Semanal: 6% libre/);
 		assert.equal(f.state().chat.quota.claude.windows.length, 2);
 	} finally { await f.cleanup(); }
+});
+
+test('the Codex full access switch asks before turning on, never turns on by itself and turns off without asking', async () => {
+	const { codexSandbox, useCodexSandbox } = require('../src/native-codex-sandbox.ts');
+	const declined = await panelFixture([]);
+	try {
+		assert.equal(declined.state().codexFullAccess, false);
+		await declined.receive({ action: 'sandbox', full: true });
+		await declined.receive({ action: 'sandbox', full: 'yes' });
+		assert.deepEqual({ setting: declined.settings.get('codexSandbox'), shown: declined.state().codexFullAccess, mode: codexSandbox() }, { setting: undefined, shown: false, mode: 'workspace-write' });
+	} finally { await declined.cleanup(); }
+	const accepted = await panelFixture([], undefined, { folders: 1, confirm: true });
+	try {
+		await accepted.receive({ action: 'sandbox', full: true });
+		assert.deepEqual({ setting: accepted.settings.get('codexSandbox'), shown: accepted.state().codexFullAccess, mode: codexSandbox() }, { setting: 'danger-full-access', shown: true, mode: 'danger-full-access' });
+		await accepted.receive({ action: 'sandbox', full: false });
+		assert.deepEqual({ setting: accepted.settings.get('codexSandbox'), shown: accepted.state().codexFullAccess, mode: codexSandbox() }, { setting: 'workspace-write', shown: false, mode: 'workspace-write' });
+	} finally { useCodexSandbox('workspace-write'); await accepted.cleanup(); }
 });
