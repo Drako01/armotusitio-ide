@@ -21,6 +21,11 @@ const PROVIDER_AUTH = ['CODEX_HOME', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY'];
 const FORBIDDEN_NAME = /TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|PRIVATE_KEY|API_KEY|^AWS_|^AZURE_|^GCP_|^GOOGLE_APPLICATION_CREDENTIALS$|^DATABASE_URL$/i;
 /** A URL with a user or password embedded (`http://user:pass@proxy`). */
 const EMBEDDED_CREDENTIALS = /^[a-z][a-z0-9+.-]*:\/\/[^/\s@]+@/i;
+/**
+ * pnpm switches to the version a project pins (`packageManager`) through a junction in `PNPM_HOME/.tools`; a sandboxed Codex
+ * process cannot cross it (Windows error 448, untrusted mount point), so no Harness preflight could run. Use the pnpm on PATH.
+ */
+const PNPM_NO_VERSION_SWITCH = { npm_config_manage_package_manager_versions: 'false', pnpm_config_manage_package_manager_versions: 'false' };
 
 /** Whether a variable may reach an agent; provider authentication is the only named exception. */
 export function allowedVariable(name: string, value: string): boolean {
@@ -33,7 +38,7 @@ export function allowedVariable(name: string, value: string): boolean {
  * because toolchains (Go's build cache, npm, pnpm) fail without them.
  */
 export async function buildToolchainEnvironment(source: NodeJS.ProcessEnv, platform: NodeJS.Platform, exists: (folder: string) => Promise<boolean>): Promise<ToolchainEnvironment> {
-	const env: NodeJS.ProcessEnv = {};
+	const env: NodeJS.ProcessEnv = { ...PNPM_NO_VERSION_SWITCH };
 	const names = [...SYSTEM, ...TOOLCHAINS, ...PROVIDER_AUTH, ...Object.keys(source).filter(name => name.startsWith('XDG_'))];
 	for (const name of names) {
 		const value = source[name];
