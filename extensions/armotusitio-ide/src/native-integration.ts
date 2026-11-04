@@ -60,6 +60,7 @@ import { exportOtlp, validateOtlpEndpoint } from './native-otlp.ts';
 import { buildAdaptiveWorkflow, type ProviderAvailability } from './native-agent-planner.ts';
 import { readLatestCodexQuota } from './native-quota.ts';
 import { acquireWriterLease, type WriterLease } from './native-hybrid-writer.ts';
+import { withHarnessProvider } from './native-provider-environment.ts';
 import { describeAgentIsolation, meetsWriterIsolation, parseWriterIsolation } from './native-isolation.ts';
 import { describeTrace, taskTrace, traceparent, workflowTrace, type TraceSpan } from './native-trace.ts';
 import {
@@ -247,14 +248,14 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 	 * removed after the run. A project Harness that declares `command-runner` runs each command itself (layer 2).
 	 * `inScope` limits editor refactors to the run's scope (a goal's charter); a chat run may edit the whole project.
 	 */
-	const prepareToolServer = async (root: string, maxTurns: number, inScope: (file: string) => boolean = () => true, extraEnv: Record<string, string> = {}, approve?: ApprovalAsk): Promise<{ launch: ToolServerLaunch; policy: string[]; ecosystems: string[]; dispose(): Promise<void> }> => {
+	const prepareToolServer = async (root: string, maxTurns: number, provider: NativeProvider, inScope: (file: string) => boolean = () => true, extraEnv: Record<string, string> = {}, approve?: ApprovalAsk): Promise<{ launch: ToolServerLaunch; policy: string[]; ecosystems: string[]; dispose(): Promise<void> }> => {
 		const authority = await inspectHarnessAuthority(root);
 		const delegate = authority.engine === 'project' && !!authority.entry && (await readProjectCapabilities(root).catch(() => [])).includes('command-runner');
 		const subprojects = delegate ? [] : await detectEcosystems(root);
 		const policy: CommandPolicyConfig = { subprojects, delegate, extras: commandExtras() };
 		const directory = path.join(metricsDirectory(root), 'runs', Date.now() + '-' + randomBytes(6).toString('hex'));
 		await fs.mkdir(directory, { recursive: true, mode: 0o700 });
-		const { env } = await currentToolchainEnvironment();
+		const env = await withHarnessProvider({ ...(await currentToolchainEnvironment()).env, ...extraEnv }, provider);
 		const mcp = createWorkMcpBridge({
 			client: {
 				tools: async () => controller.mcp ? controller.mcp.client.tools() : [],
@@ -281,7 +282,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			throw Error('HARNESS_TOOL');
 		});
 		const config: RunnerConfig = {
-			schemaVersion: 1, root, policy, env: { ...env, ...extraEnv }, logDirectory: path.join(directory, 'logs'), maxTurns,
+			schemaVersion: 1, root, policy, env, logDirectory: path.join(directory, 'logs'), maxTurns,
 			channel: { address: channel.address, token: channel.token }, mcpTools,
 			...(approve ? {
 				git: true, permissions: { preset: permissionsPreset() },
@@ -476,7 +477,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 				let verificationError: string | undefined;
 				const maxTurns = implementerMaxTurns();
 				if (!await servicePreflight(root)) { throw Error('HARNESS_CANCELLED_BEFORE_START'); }
-				const server = await prepareToolServer(root, maxTurns, undefined, undefined, hooks.approval);
+				const server = await prepareToolServer(root, maxTurns, provider, undefined, undefined, hooks.approval);
 				const ecosystems = server.ecosystems.length ? '\n\nDetected subprojects and their usual commands:\n' + server.ecosystems.join('\n') : '';
 				// A resumed session already holds the references; it only receives the continuation request.
 				const instructions = resumeSession ? '' : (await detectedInstructions(root, guides)).text;
@@ -612,7 +613,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 		providerCallsPer24h: folder => providerCallsPer24h(folder), resultCache, environmentTemplates, systemExec, doctorFor, servicePreflight,
 		launchAgent: async (folder, workRoot, { provider, readOnly, instruction, resumeSession, maxTurns }, scope) => {
 			if (readOnly) { return runGuardedAgent(folder, draftOf(workRoot, provider, 'planner', instruction)); }
-			const server = await prepareToolServer(workRoot, maxTurns, scope.inScope, scope.extraEnv);
+			const server = await prepareToolServer(workRoot, maxTurns, provider, scope.inScope, scope.extraEnv);
 			const ecosystems = server.ecosystems.length ? '\n\nDetected subprojects and their usual commands:\n' + server.ecosystems.join('\n') : '';
 			try { return await runGuardedAgent(folder, draftOf(workRoot, provider, 'implementer', resumeSession ? instruction : instruction + ecosystems, { maxTurns, ...(resumeSession ? { resumeSession } : {}) }), { toolServer: server.launch }); }
 			finally { await server.dispose(); }
