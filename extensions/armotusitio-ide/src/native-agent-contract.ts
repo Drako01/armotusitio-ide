@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 /** The agent contract (block E): what an IDE agent can do, must not attempt and how it reports a blocker. One source for every prompt. */
 import type { AgentRole, NativeProvider } from './native-providers.ts';
+import { codexSandbox } from './native-codex-sandbox.ts';
 
 /** Run duration limit of every agent process; see MAX_DURATION_MS in native-agent-execution.ts. */
 export const RUN_MINUTES = 30;
@@ -14,7 +15,7 @@ const FORBIDDEN_WITH_GIT = 'Never: modify git state other than through `git_bran
 export const GIT_TOOLS_CONTRACT = 'When the user authorizes delivery, you may create a branch through `git_branch_create` (optionally from an existing origin/<branch> ref), commit explicit files through `git_commit`, push the current branch through `git_push`, and create/update its GitHub pull request through `git_pr_upsert` with an explicit base, title and full body. ' +
 	'These are structured ats-runner tools subject to IDE permissions and project Harness authority; never substitute shell git or gh commands. The PR base comes from this project\'s instructions and the user, never from a global assumption. ' +
 	'Git tools may ask the user for approval showing the actual repository, branch, target and changes. A DENIED or POLICY_DENIED answer is final; do not retry by another mechanism. No force push, no skipped hooks, no protected-branch push, no merge, no release and no GitHub Actions invocation.';
-const BLOCKED = 'If something you cannot resolve blocks the work (a service that does not respond, a missing credential, a policy denial, a decision only the user can make, a missing toolchain, no disk space), stop and end your answer with exactly one line:\nharness-blocked: {"reason":"<what is missing, in the user\'s language>","needs":"service|credential|policy|decision|toolchain|disk","detail":"<optional detail>"}';
+const BLOCKED = 'Before declaring a toolchain missing, check it with an available version probe and report the observed failure. A failed project script or generic runner error alone does not prove that its runtime is absent. Do not retry a policy-denied action by another mechanism. If something you cannot resolve blocks the work (a service that does not respond, a missing credential, a policy denial, a decision only the user can make, a missing toolchain, no disk space), stop and end your answer with exactly one line:\nharness-blocked: {"reason":"<what is missing, in the user\'s language>","needs":"service|credential|policy|decision|toolchain|disk","detail":"<optional detail>"}';
 
 /** Decision D9: search results are data, and every query is audited; one with a secret ends the run. */
 const WEB_SEARCH = 'You may use web search to read documentation of public libraries and tools. Queries are audited: never include project code, file contents, ' +
@@ -29,7 +30,10 @@ function tools(provider: NativeProvider, role: AgentRole, runner: boolean): stri
 	if (role !== 'implementer') { return 'You have read-only tools (read, search). You cannot modify files or run commands.'; }
 	const edit = 'You can read, search, edit and create files in the project.';
 	if (provider === 'claude') { return runner ? edit + ' ' + RUNNER : edit + ' You cannot run commands: leave builds and tests to the verification gates the IDE runs after you.'; }
-	return edit + ' You can also run commands inside the project sandbox, without network access' + (runner ? '; prefer the IDE runner: ' + RUNNER : '.');
+	const execution = codexSandbox() === 'danger-full-access'
+		? ' You can also run commands with Codex full access (danger-full-access): its native shell has no OS-level confinement. IDE command permissions apply only to calls through ats-runner; a denied action remains denied'
+		: ' You can also run commands inside the project sandbox; network availability follows the effective provider configuration';
+	return edit + execution + (runner ? '; prefer the IDE runner: ' + RUNNER : '.');
 }
 
 /** Contract for an agent process; `maxTurns` applies to Claude only; `runner` says the `ats-runner` tool is available. */
@@ -54,6 +58,6 @@ export function agentContract(input: { provider: NativeProvider; role: AgentRole
 
 /** What the planner must know so it never proposes a step the implementer cannot do. */
 export function plannerContract(): string {
-	return 'Plans are executed by an IDE agent that edits project files and runs builds, tests and linters through the IDE command policy, without network. ' +
+	return 'Plans are executed by an IDE agent that edits project files and runs builds, tests and linters through the IDE command policy, with the effective provider isolation. ' +
 		'Only if the user explicitly requests delivery, plans may include branch creation, commit, push and PR creation/update through the IDE structured git tools, each subject to its permissions and project Harness; never assume a PR base. Plans must not include merges, publishing, deployment, installing global tools or starting services.';
 }

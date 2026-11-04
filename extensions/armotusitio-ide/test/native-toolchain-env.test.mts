@@ -4,7 +4,9 @@
  *--------------------------------------------------------------------------------------------*/
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildToolchainEnvironment } from '../src/native-toolchain-env.ts';
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
+import { buildToolchainEnvironment, withNodeRuntime } from '../src/native-toolchain-env.ts';
 import { buildAgentInvocation } from '../src/native-agent-execution.ts';
 import { useCodexSandbox } from '../src/native-codex-sandbox.ts';
 
@@ -38,6 +40,21 @@ test('PATH names the real folder of a linked toolchain such as the nvm-windows s
 	const links = new Map([['C:\nvm4w\nodejs', 'C:\Users\dev\AppData\Local\nvm\v24.22.1']]);
 	const profile = await buildToolchainEnvironment({ PATH: 'C:\nvm4w\nodejs;C:\bin', USERPROFILE: 'C:\Users\dev' }, 'win32', async () => false, async folder => links.get(folder) ?? folder);
 	assert.equal(profile.env.PATH, 'C:\Users\dev\AppData\Local\nvm\v24.22.1;C:\bin');
+});
+
+test('Windows environment keys are case insensitive and PATH has one canonical spelling', async () => {
+	const profile = await buildToolchainEnvironment({ pAtH: 'C:\\tools', userprofile: 'C:\\Users\\dev', nvm_symlink: 'C:\\node' }, 'win32', async () => false);
+	assert.deepEqual({ path: profile.env.PATH, duplicate: profile.env.Path, home: profile.env.USERPROFILE, nvm: profile.env.NVM_SYMLINK },
+		{ path: 'C:\\tools', duplicate: undefined, home: 'C:\\Users\\dev', nvm: 'C:\\node' });
+});
+
+test('the Node directory is exposed to package-script children even when the GUI PATH omitted it', { skip: process.platform !== 'win32' }, async () => {
+	const executable = await fs.realpath(process.execPath);
+	const system = path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32');
+	const source = { Path: system, NVM_SYMLINK: path.dirname(executable) };
+	const env = await withNodeRuntime(source, { execPath: path.join(system, 'editor.exe'), electron: true });
+	assert.deepEqual({ first: env.PATH?.split(path.delimiter)[0], node: env.PATH?.split(path.delimiter).includes(path.dirname(executable)), duplicate: env.Path, original: source.Path },
+		{ first: path.dirname(executable), node: true, duplicate: undefined, original: system });
 });
 
 test('Codex full access drops the sandbox and the extra folders, only for writers', () => {

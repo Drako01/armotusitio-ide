@@ -42,6 +42,12 @@ const PRIVILEGE = new Set(['sudo', 'su', 'doas', 'runas', 'gsudo']);
 const PUBLISH_TOOLS = new Set(['gh', 'docker', 'podman', 'kubectl', 'helm', 'terraform', 'twine', 'vercel', 'netlify', 'firebase', 'flyctl', 'heroku', 'aws', 'az', 'gcloud']);
 const GIT_READ = new Set(['status', 'diff', 'log', 'show', 'rev-parse', 'ls-files', 'blame', 'grep', 'describe', 'shortlog', 'cat-file', 'merge-base', 'name-rev', 'ls-tree']);
 const PACKAGE_MANAGERS = new Set(['npm', 'pnpm', 'yarn', 'bun']);
+/** Exact information probes help distinguish an unavailable runtime from a failed project command. */
+const INFO_TOOLS = new Set(['node', 'npm', 'npx', 'pnpm', 'pnpx', 'yarn', 'bun', 'bunx', 'go', 'gofmt', 'cargo', 'rustc', 'dotnet',
+	'python', 'python3', 'py', 'pip', 'pip3', 'pipx', 'uv', 'poetry', 'conda', 'mvn', 'mvnw', 'gradle', 'gradlew', 'composer', 'php', 'gem', 'bundle', 'ruby',
+	'tsc', 'eslint', 'vitest', 'jest', 'prettier', 'pytest', 'mypy', 'ruff', 'git', 'rg']);
+const INFO_FLAGS = new Set(['--version', '-v', '-V', '--help', '-h']);
+const informationProbe = (name: string, args: readonly string[]): boolean => INFO_TOOLS.has(name) && args.length === 1 && INFO_FLAGS.has(args[0]);
 
 const base = commandName;
 const hasFlag = (args: readonly string[], ...flags: string[]): boolean => args.some(arg => flags.includes(arg) || flags.some(flag => flag.startsWith('--') && arg.startsWith(flag + '=')));
@@ -64,6 +70,7 @@ function floor(command: string, args: readonly string[], depth = 0): PolicyDenia
 	if (name === 'rg' && hasFlag(args, '--pre', '--hostname-bin')) { return 'inline-code'; }
 	const normalized = command.replace(/\\/g, '/');
 	if (/[\\/]/.test(command) && !['./mvnw', './gradlew', 'vendor/bin/phpunit', 'vendor/bin/phpstan', 'vendor/bin/pest'].includes(normalized)) { return 'invalid'; }
+	if (informationProbe(name, args)) { return undefined; }
 	// Inspect the executable behind launchers before dependency approval can let the outer command through.
 	if ([...PACKAGE_MANAGERS, 'uv', 'poetry', 'bundle'].includes(name) && sub?.startsWith('-') &&
 		!(args.length === 1 && ['--version', '-v', '--help', '-h'].includes(sub))) { return 'not-allowed'; }
@@ -148,7 +155,7 @@ function allowlisted(config: CommandPolicyConfig, extras: string[][], command: s
 	const name = /[\\/]/.test(command) ? command.replace(/\\/g, '/') : base(command);
 	// The project's Harness applies its own, possibly stricter, policy after the floor.
 	if (config.delegate) { return { allowed: true, executable: command, cwd: folder, delegate: true }; }
-	if (name === 'git' || name === 'rg') { return { allowed: true, executable: command, cwd: folder, delegate: false }; }
+	if (name === 'git' || name === 'rg' || informationProbe(name, args)) { return { allowed: true, executable: command, cwd: folder, delegate: false }; }
 	const sub = args[0];
 	const presetAllows = config.subprojects.some(project => {
 		if (!inside(folder, project.path)) { return false; }

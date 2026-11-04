@@ -4,10 +4,11 @@
  *--------------------------------------------------------------------------------------------*/
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { agentContract } from '../src/native-agent-contract.ts';
+import { agentContract, plannerContract } from '../src/native-agent-contract.ts';
 import { buildDirectInstruction, chatMessage } from '../src/native-chat.ts';
 import { buildAgentInvocation } from '../src/native-agent-execution.ts';
 import { parseRunBlock } from '../src/native-run-outcome.ts';
+import { codexSandbox, useCodexSandbox } from '../src/native-codex-sandbox.ts';
 
 test('every agent prompt carries the contract that matches its provider and role', () => {
 	const writer = buildAgentInvocation({ schemaVersion: 1, provider: 'claude', role: 'implementer', projectRoot: '/repo', instruction: 'Escribí tests', readOnly: false, maxTurns: 50 });
@@ -46,4 +47,28 @@ test('the git tools are described only to writers that have them, and publishing
 		direct: ['`git_branch_create`', '`git_commit`', '`git_push`', '`git_pr_upsert`', 'No force push', 'No force push', 'no release', 'A DENIED or POLICY_DENIED answer is final'].every(text => direct.includes(text)),
 		oldPhrase: direct.includes('You cannot commit, push or publish')
 	}, { withTools: true, withoutTools: true, readOnlyNever: false, direct: true, oldPhrase: false });
+});
+
+
+test('Codex full-access instructions match the invocation while readers and IDE permission boundaries remain explicit', () => {
+	const previous = codexSandbox();
+	try {
+		for (const mode of ['workspace-write', 'danger-full-access']) {
+			useCodexSandbox(mode);
+			const writer = buildAgentInvocation({ schemaVersion: 1, provider: 'codex', role: 'implementer', projectRoot: '/repo', instruction: 'x', readOnly: false });
+			const reader = buildAgentInvocation({ schemaVersion: 1, provider: 'codex', role: 'reviewer', projectRoot: '/repo', instruction: 'x', readOnly: true });
+			assert.equal(writer.args[writer.args.indexOf('--sandbox') + 1], mode);
+			assert.equal(writer.stdin.includes('run commands inside the project sandbox'), mode === 'workspace-write');
+			assert.equal(writer.stdin.includes('its native shell has no OS-level confinement'), mode === 'danger-full-access');
+			assert.equal(writer.stdin.includes('without network access'), false);
+			assert.equal(reader.args[reader.args.indexOf('--sandbox') + 1], 'read-only');
+			assert.equal(reader.stdin.includes('You cannot modify files or run commands'), true);
+			assert.equal(reader.stdin.includes('danger-full-access'), false);
+		}
+		const full = agentContract({ provider: 'codex', role: 'implementer', runner: true, git: true });
+		assert.equal(full.includes('IDE command permissions apply only to calls through ats-runner; a denied action remains denied'), true);
+		assert.equal(full.includes('never substitute shell git or gh commands'), true);
+		assert.equal(full.includes('A failed project script or generic runner error alone does not prove that its runtime is absent'), true);
+		assert.equal(plannerContract().includes('without network'), false);
+	} finally { useCodexSandbox(previous); }
 });

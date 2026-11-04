@@ -7,7 +7,7 @@ import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
 import { createHash, randomBytes } from 'node:crypto';
 import { redactSecrets } from './native-redact.ts';
-import { currentToolchainEnvironment } from './native-toolchain-env.ts';
+import { currentToolchainEnvironment, withNodeRuntime } from './native-toolchain-env.ts';
 import { detectEcosystems, describeEcosystems } from './native-ecosystems.ts';
 import { detectProjectCommands, detectedVerificationPlan } from './native-project-detect.ts';
 import { readProjectInstructions } from './native-project-instructions.ts';
@@ -559,8 +559,9 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 	};
 	/** IDE-owned system commands (doctor checks, ephemeral environments): no shell, bounded time, never run by an agent. */
 	const systemExec: Exec = async (command, args) => {
-		const resolved = await resolveNativeCommand(command, args);
-		return new Promise(resolve => execFile(resolved.executable, resolved.args, { timeout: 60_000, windowsHide: true, maxBuffer: 1024 * 1024, env: { ...process.env, ...(resolved.embeddedNode ? { ELECTRON_RUN_AS_NODE: '1' } : {}) } },
+		const env = await withNodeRuntime(process.env);
+		const resolved = await resolveNativeCommand(command, args, env);
+		return new Promise(resolve => execFile(resolved.executable, resolved.args, { timeout: 60_000, windowsHide: true, maxBuffer: 1024 * 1024, env: { ...env, ...(resolved.embeddedNode ? { ELECTRON_RUN_AS_NODE: '1' } : {}) } },
 			(error, stdout, stderr) => resolve({ code: error ? (typeof error.code === 'number' ? error.code : 1) : 0, output: stdout + stderr })));
 	};
 	controller.systemExec = systemExec;

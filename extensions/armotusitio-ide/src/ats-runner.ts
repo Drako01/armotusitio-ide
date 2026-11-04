@@ -108,7 +108,12 @@ export async function handleRun(config: RunnerConfig, input: unknown, calls: num
 		for (const variant of Object.values(secrets).flatMap(secretVariants)) { result.output = result.output.split(variant).join('[REDACTED]'); }
 	}
 	if (result instanceof Error) {
-		return { isError: true, text: /^HARNESS_[A-Z_]+$/.test(result.message) ? result.message : 'HARNESS_EXECUTABLE_UNAVAILABLE' };
+		const systemCode = (result as NodeJS.ErrnoException).code;
+		const code = /^HARNESS_[A-Z_]+$/.test(result.message) ? result.message : 'HARNESS_COMMAND_FAILED';
+		const text = code + '\n[ats-runner] command: ' + value.command + (systemCode ? '; system error: ' + systemCode : '') +
+			(code === 'HARNESS_COMMAND_FAILED' ? '. The command could not be prepared; this does not establish that the tool is missing.' : '');
+		await fs.appendFile(config.logDirectory + '/commands.jsonl', JSON.stringify({ ...audit, error: code, systemCode }) + '\n').catch(() => undefined);
+		return { isError: true, text };
 	}
 	await fs.appendFile(config.logDirectory + '/commands.jsonl', JSON.stringify({ ...audit, exitCode: result.exitCode, durationMs: result.durationMs, timedOut: result.timedOut }) + '\n').catch(() => undefined);
 	const status = result.timedOut ? 'timed out' : 'exit ' + result.exitCode;

@@ -139,7 +139,7 @@ export async function executeReviewedAgent(review: AgentReview, current: AgentDr
 	const toolchain = await currentToolchainEnvironment();
 	const invocation = buildAgentInvocation(current, toolchain.writableRoots, toolServer);
 	const initialScope = current.readOnly ? await captureAgentScope(canonical) : undefined;
-	const command = await resolveNativeCommand(invocation.executable, invocation.args);
+	const command = await resolveNativeCommand(invocation.executable, invocation.args, toolchain.env);
 	const env: NodeJS.ProcessEnv = toolchain.env;
 	if (command.embeddedNode) { env.ELECTRON_RUN_AS_NODE = '1'; }
 	if (current.provider === 'claude') { env.CLAUDE_CODE_SKIP_PROMPT_HISTORY = '1'; }

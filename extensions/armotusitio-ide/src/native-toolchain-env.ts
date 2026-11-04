@@ -5,6 +5,7 @@
 /** Environment an agent process receives (block B): what toolchains need, never credentials. Pure: no I/O but `exists`. */
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import { resolveNodeRuntime, type NativeRuntimeHost } from './native-runtime.ts';
 
 export interface ToolchainEnvironment {
 	env: NodeJS.ProcessEnv;
@@ -47,7 +48,9 @@ export async function buildToolchainEnvironment(source: NodeJS.ProcessEnv, platf
 	const env: NodeJS.ProcessEnv = { ...AGENT_DEFAULTS };
 	const names = [...SYSTEM, ...TOOLCHAINS, ...PROVIDER_AUTH, ...Object.keys(source).filter(name => name.startsWith('XDG_'))];
 	for (const name of names) {
-		const value = source[name];
+		if (platform === 'win32' && name === 'Path') { continue; }
+		const key = platform === 'win32' ? Object.keys(source).find(key => key.toLowerCase() === name.toLowerCase()) : name;
+		const value = key ? source[key] : undefined;
 		if (value && allowedVariable(name, value)) { env[name] = value; }
 	}
 	const separator = platform === 'win32' ? ';' : ':';
@@ -80,9 +83,31 @@ export function realFolder(folder: string): Promise<string> {
 	return fs.realpath(folder).catch(() => folder);
 }
 
+/**
+ * The host can execute JavaScript with Electron even when `node` is missing from PATH. Package scripts and their children
+ * need a real Node executable too: resolve the same runtime once and expose its canonical directory to the whole tree.
+ * Collapse Windows PATH aliases before spawn, which otherwise keeps just one case-insensitive key.
+ */
+export async function withNodeRuntime(source: NodeJS.ProcessEnv, host?: NativeRuntimeHost): Promise<NodeJS.ProcessEnv> {
+	const env = { ...source };
+	const runtime = await resolveNodeRuntime(env, host);
+	const keys = Object.keys(env).filter(key => process.platform === 'win32' ? key.toLowerCase() === 'path' : key === 'PATH');
+	const entries = keys.flatMap(key => (env[key] ?? '').split(path.delimiter)).filter(Boolean);
+	for (const key of keys) { delete env[key]; }
+	const directories = runtime.embeddedNode ? entries : [path.dirname(runtime.executable), ...entries];
+	const seen = new Set<string>();
+	env.PATH = directories.filter(directory => {
+		const key = process.platform === 'win32' ? directory.toLowerCase() : directory;
+		if (seen.has(key)) { return false; }
+		seen.add(key); return true;
+	}).join(path.delimiter);
+	return env;
+}
+
 /** The agent environment of this IDE process. */
-export function currentToolchainEnvironment(): Promise<ToolchainEnvironment> {
-	return buildToolchainEnvironment(process.env, process.platform, pathExists, realFolder);
+export async function currentToolchainEnvironment(): Promise<ToolchainEnvironment> {
+	const profile = await buildToolchainEnvironment(process.env, process.platform, pathExists, realFolder);
+	return { ...profile, env: await withNodeRuntime(profile.env) };
 }
 
 /** Default cache folders of each toolchain, unless the environment moves them. */
