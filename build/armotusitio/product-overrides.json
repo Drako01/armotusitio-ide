@@ -18,10 +18,10 @@
 	"armotusitioUpdate": {
 		"repository": "Drako01/armotusitio-ide",
 		"publicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAXhmSyY9FdlYjs5y5OVnNDxtiQUrJDdsEQ/ZIqP0slGo=\n-----END PUBLIC KEY-----\n",
-		"revision": 2
+		"revision": 1
 	},
 	"armotusitioUpstream": {
-		"ref": "1.144.1",
-		"commit": "261c84cb1eddf11235f9e2c921425e9663fbe556"
+		"ref": "1.145.0",
+		"commit": "a717861c07586a53d83b80d742cd3f59b20a6273"
 	}
 }

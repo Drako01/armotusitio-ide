@@ -28,7 +28,7 @@ import { IWorkspaceTrustManagementService } from '../../../../../platform/worksp
 import { IChatEntitlementService } from '../../../../services/chat/common/chatEntitlementService.js';
 import { ILifecycleService } from '../../../../services/lifecycle/common/lifecycle.js';
 import { Extensions, IOutputChannelRegistry, IOutputService } from '../../../../services/output/common/output.js';
-import { ChatSessionStatus as AgentSessionStatus, IChatSessionFileChange, IChatSessionFileChange2, IChatSessionItem, IChatSessionsService, isSessionInProgressStatus, ResolvedChatSessionsExtensionPoint } from '../../common/chatSessionsService.js';
+import { ChatSessionRefreshReason, ChatSessionStatus as AgentSessionStatus, IChatSessionFileChange, IChatSessionFileChange2, IChatSessionItem, IChatSessionsService, isSessionInProgressStatus, ResolvedChatSessionsExtensionPoint } from '../../common/chatSessionsService.js';
 import { getChatSessionType } from '../../common/model/chatUri.js';
 import { IChatWidgetService } from '../chat.js';
 import { dedupeMigratedCopilotCliSessions, legacyCopilotCliResource } from '../copilotCliEventsUri.js';
@@ -37,6 +37,8 @@ import { AgentSessionProviders, getAgentSessionProvider, getAgentSessionProvider
 //#region Interfaces, Types
 
 export { ChatSessionStatus as AgentSessionStatus, isSessionInProgressStatus } from '../../common/chatSessionsService.js';
+
+export type AgentSessionRefreshReason = Exclude<ChatSessionRefreshReason, 'initial'>;
 
 export interface IAgentSessionsModel {
 
@@ -64,8 +66,8 @@ export interface IAgentSessionsModel {
 	 */
 	observeSession(resource: URI): IObservable<IAgentSession | undefined>;
 
-	/** Resolves sessions, optionally observing errors that are otherwise logged and isolated. */
-	resolve(provider: string | string[] | undefined, onError?: (error: unknown) => void): Promise<void>;
+	/** Resolves sessions; automatic refreshes may reuse fresh data. Errors are logged and isolated, with an optional observer. */
+	resolve(provider: string | string[] | undefined, onError?: (error: unknown) => void, reason?: AgentSessionRefreshReason): Promise<void>;
 }
 
 interface IAgentSessionData extends Omit<IChatSessionItem, 'archived' | 'children' | 'iconPath' | 'isRead'> {
@@ -531,9 +533,14 @@ export class AgentSessionsModel extends Disposable implements IAgentSessionsMode
 	get resolved(): boolean { return this._resolved; }
 
 	private _sessions: ResourceMap<IInternalAgentSession>;
-	get sessions(): IAgentSession[] { return this._dedupeMigratedCopilotCliSessions(Array.from(this._sessions.values())); }
+	get sessions(): IAgentSession[] {
+		return this._dedupeMigratedCopilotCliSessions(Array.from(this._sessions.values()))
+			.filter(session => session.metadata?.isAutomation !== true);
+	}
 
 	private readonly resolvers = this._register(new DisposableMap<string, ThrottledDelayer<readonly unknown[]>>());
+	private readonly providersToRefresh = new Map<string, AgentSessionRefreshReason>();
+	private readonly providersToResolveItems = new Set<string>();
 
 	private readonly cache: AgentSessionsCache;
 	private readonly logger: AgentSessionsLogger;
@@ -578,8 +585,9 @@ export class AgentSessionsModel extends Disposable implements IAgentSessionsMode
 	private registerListeners(): void {
 
 		// Sessions updates
-		this._register(this.chatSessionsService.onDidChangeItemsProviders(({ chatSessionType }) => this.resolve(chatSessionType)));
-		this._register(this.chatSessionsService.onDidChangeAvailability(() => this.resolve(undefined)));
+		// Registration already refreshes the controller; reading its items waits for that refresh.
+		this._register(this.chatSessionsService.onDidChangeItemsProviders(({ chatSessionType }) => this.resolveProvider(chatSessionType, { resolveItems: true })));
+		this._register(this.chatSessionsService.onDidChangeAvailability(() => this.resolve(undefined, undefined, 'automatic')));
 		this._register(this.chatSessionsService.onDidChangeSessionItems((delta) => {
 			const changedChatSessionTypes = new Set<string>();
 
@@ -592,11 +600,11 @@ export class AgentSessionsModel extends Disposable implements IAgentSessionsMode
 			}
 
 			for (const chatSessionType of changedChatSessionTypes) {
-				this.resolveProvider(chatSessionType, { refreshProvider: false /* skip because we react on an event already */ });
+				this.resolveProvider(chatSessionType, {});
 			}
 		}));
-		this._register(this.workspaceContextService.onDidChangeWorkspaceFolders(() => this.resolve(undefined)));
-		this._register(this.workspaceTrustManagementService.onDidChangeTrust(() => this.resolve(undefined)));
+		this._register(this.workspaceContextService.onDidChangeWorkspaceFolders(() => this.resolve(undefined, undefined, 'automatic')));
+		this._register(this.workspaceTrustManagementService.onDidChangeTrust(() => this.resolve(undefined, undefined, 'automatic')));
 
 		// State
 		this._register(this.storageService.onWillSaveState(() => {
@@ -621,9 +629,10 @@ export class AgentSessionsModel extends Disposable implements IAgentSessionsMode
 	}
 
 	/**
-	 * Hide the extension-host `copilotcli:` row when its agent-host
-	 * `agent-host-copilotcli:` twin is present, so the list shows a single entry
-	 * per legacy Copilot CLI session — the agent-host one.
+	 * Lists each legacy Copilot CLI session once. The extension-host `copilotcli:`
+	 * row is hidden once its agent-host `agent-host-copilotcli:` twin has been
+	 * adopted; while the twin is still un-opened, the twin is hidden instead (see
+	 * {@link dedupeMigratedCopilotCliSessions}).
 	 *
 	 * A legacy row with no twin yet stays visible: opening it redirects through the
 	 * agent host and adopts it, so it is never a dead end.
@@ -631,7 +640,7 @@ export class AgentSessionsModel extends Disposable implements IAgentSessionsMode
 	 * Only display is deduped; {@link getSession} and the cache use the full map.
 	 */
 	private _dedupeMigratedCopilotCliSessions(sessions: IAgentSession[]): IAgentSession[] {
-		return dedupeMigratedCopilotCliSessions(sessions, session => session.resource);
+		return dedupeMigratedCopilotCliSessions(sessions, session => session.resource, session => session.metadata?.[SESSION_META_EHCLI_ADOPTABLE_KEY] === true);
 	}
 
 	private _changedSignal: IObservable<void> | undefined;
@@ -664,14 +673,14 @@ export class AgentSessionsModel extends Disposable implements IAgentSessionsMode
 		return observable;
 	}
 
-	async resolve(provider: string | string[] | undefined, onError?: (error: unknown) => void): Promise<void> {
+	async resolve(provider: string | string[] | undefined, onError?: (error: unknown) => void, reason: AgentSessionRefreshReason = 'manual'): Promise<void> {
 		const providers = Array.isArray(provider)
 			? provider
 			: provider !== undefined
 				? [provider]
 				: this.chatSessionsService.getRegisteredChatSessionItemProviders();
 
-		const results = await Promise.all(providers.map(provider => this.resolveProvider(provider, { refreshProvider: true })));
+		const results = await Promise.all(providers.map(provider => this.resolveProvider(provider, { refreshReason: reason })));
 		for (const errors of results) {
 			for (const error of errors) {
 				onError?.(error);
@@ -679,9 +688,17 @@ export class AgentSessionsModel extends Disposable implements IAgentSessionsMode
 		}
 	}
 
-	private resolveProvider(provider: string, options: { refreshProvider: boolean }): Promise<readonly unknown[]> {
+	private resolveProvider(provider: string, options: { refreshReason?: AgentSessionRefreshReason; resolveItems?: boolean }): Promise<readonly unknown[]> {
 		if (this.chatEntitlementService.sentiment.hidden) {
 			return Promise.resolve([]); // don't resolve if AI features are disabled
+		}
+
+		// A later automatic refresh or cache reread must not replace a queued manual refresh.
+		if (options.refreshReason !== undefined && this.providersToRefresh.get(provider) !== 'manual') {
+			this.providersToRefresh.set(provider, options.refreshReason);
+		}
+		if (options.resolveItems) {
+			this.providersToResolveItems.add(provider);
 		}
 
 		let resolver = this.resolvers.get(provider);
@@ -691,6 +708,9 @@ export class AgentSessionsModel extends Disposable implements IAgentSessionsMode
 		}
 
 		return resolver.trigger(async token => {
+			const refreshReason = this.providersToRefresh.get(provider);
+			this.providersToRefresh.delete(provider);
+			const resolveItems = this.providersToResolveItems.delete(provider);
 			if (token.isCancellationRequested || this.lifecycleService.willShutdown) {
 				return [];
 			}
@@ -698,7 +718,7 @@ export class AgentSessionsModel extends Disposable implements IAgentSessionsMode
 			const errors: unknown[] = [];
 			try {
 				this._onWillResolve.fire(provider);
-				await this.doResolveProvider(provider, options, token, error => errors.push(error));
+				await this.doResolveProvider(provider, { refreshReason, resolveItems }, token, error => errors.push(error));
 			} catch (error) {
 				this.logger.logIfTrace(`Error resolving sessions for provider ${provider}: ${error instanceof Error ? error.stack : String(error)}`);
 				errors.push(error);
@@ -709,25 +729,10 @@ export class AgentSessionsModel extends Disposable implements IAgentSessionsMode
 		});
 	}
 
-	private async doResolveProvider(provider: string, options: { refreshProvider: boolean }, token: CancellationToken, onError: (error: unknown) => void): Promise<void> {
-		if (options.refreshProvider) {
-			await this.chatSessionsService.refreshChatSessionItems([provider], token, onError);
-
-			// Clear the resolve-once guard for sessions belonging to this
-			// provider and re-trigger resolve for any that were previously
-			// observed. This is necessary because the refresh returns items
-			// with lazy properties (e.g. changes: undefined) that need a
-			// fresh resolve RPC. Re-calling observeSession() for resources
-			// already in _sessionObservables is cheap (the observable is
-			// cached) and only fires the RPC side-effect.
-			for (const resource of [...this._resolvedResources]) {
-				if (getChatSessionType(resource) === provider) {
-					this._resolvedResources.delete(resource);
-					if (this._sessionObservables.has(resource)) {
-						this.observeSession(resource);
-					}
-				}
-			}
+	private async doResolveProvider(provider: string, options: { refreshReason: AgentSessionRefreshReason | undefined; resolveItems: boolean }, token: CancellationToken, onError: (error: unknown) => void): Promise<void> {
+		if (options.refreshReason !== undefined) {
+			await this.chatSessionsService.refreshChatSessionItems([provider], token, onError, options.refreshReason);
+			this.resolveObservedSessionItems(provider);
 		}
 
 		const mapSessionContributionToType = new Map<string, ResolvedChatSessionsExtensionPoint>();
@@ -792,6 +797,7 @@ export class AgentSessionsModel extends Disposable implements IAgentSessionsMode
 						status: item.status ?? AgentSessionStatus.Completed,
 						statusKnown: item.status !== undefined,
 						archived: item.archived,
+						canArchive: item.canArchive,
 						providerIsRead: shouldKeepOpenSessionRead ? true : item.isRead,
 						timing: item.timing,
 						changes: normalizedChanges,
@@ -807,6 +813,10 @@ export class AgentSessionsModel extends Disposable implements IAgentSessionsMode
 
 				sessions.set(session.resource, this.toAgentSession(toInternalSession(session)));
 			}
+		}
+
+		if (options.resolveItems && options.refreshReason === undefined) {
+			this.resolveObservedSessionItems(provider);
 		}
 
 		// Phase 2: Atomically update sessions (sync - reads latest this._sessions
@@ -855,6 +865,18 @@ export class AgentSessionsModel extends Disposable implements IAgentSessionsMode
 			this._onDidChangeSessionArchivedState.fire(session);
 		}
 		this._onDidChangeSessions.fire();
+	}
+
+	/** Refreshes lazy properties after a provider has populated its items. */
+	private resolveObservedSessionItems(provider: string): void {
+		for (const resource of [...this._resolvedResources]) {
+			if (getChatSessionType(resource) === provider) {
+				this._resolvedResources.delete(resource);
+				if (this._sessionObservables.has(resource)) {
+					this.observeSession(resource);
+				}
+			}
+		}
 	}
 
 	private toAgentSession(data: IInternalAgentSessionData): IInternalAgentSession {
