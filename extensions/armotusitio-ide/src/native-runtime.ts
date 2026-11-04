@@ -7,9 +7,15 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { constants } from 'node:fs';
 import { spawn, type ChildProcess } from 'node:child_process';
+import { readWindowsToolchainEnvironment } from './native-windows-environment.ts';
 
-export interface NativeRuntimeHost { execPath: string; electron: boolean }
-const CURRENT_HOST: NativeRuntimeHost = { execPath: process.execPath, electron: !!process.versions.electron };
+export interface NativeRuntimeHost {
+	execPath: string;
+	electron: boolean;
+	/** A trusted OS environment fallback, never a project's configuration. */
+	registeredEnvironment?(): Promise<NodeJS.ProcessEnv>;
+}
+const CURRENT_HOST: NativeRuntimeHost = { execPath: process.execPath, electron: !!process.versions.electron, registeredEnvironment: readWindowsToolchainEnvironment };
 
 /** Windows environment names are case-insensitive, including when supplied as a plain serialized object. */
 function environmentValue(env: NodeJS.ProcessEnv, name: string): string | undefined {
@@ -49,6 +55,25 @@ export async function resolveNodeRuntime(env: NodeJS.ProcessEnv = process.env, h
 	if (!host.electron) {
 		const executable = await executableFile(host.execPath);
 		if (executable) { return { executable, embeddedNode: false }; }
+	}
+	if (process.platform === 'win32' && host.registeredEnvironment) {
+		const registered = await host.registeredEnvironment().catch(() => ({}));
+		const values = { ...registered, ...env };
+		const expand = (value: string): string => {
+			for (let attempt = 0; attempt < 6; attempt++) {
+				const next = value.replace(/%([^%]+)%/g, (match, name: string) => environmentValue(values, name) ?? match);
+				if (next === value) { break; }
+				value = next;
+			}
+			return value;
+		};
+		const recovered = pathDirectories({ PATH: expand(environmentValue(registered, 'PATH') ?? '') });
+		const nvm = expand(environmentValue(registered, 'NVM_SYMLINK') ?? '');
+		if (path.isAbsolute(nvm)) { recovered.push(nvm); }
+		for (const directory of recovered) {
+			const executable = await executableFile(path.join(directory, 'node.exe'));
+			if (executable) { return { executable, embeddedNode: false }; }
+		}
 	}
 	return { executable: host.execPath, embeddedNode: true };
 }

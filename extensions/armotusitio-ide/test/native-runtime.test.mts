@@ -150,6 +150,31 @@ test('an explicit home finds Claude without borrowing the host account installat
 	} finally { await fs.rm(root, { recursive: true, force: true }); }
 });
 
+test('Windows recovers registered Node locations when an Electron GUI inherited neither PATH nor nvm', { skip: process.platform !== 'win32' }, async () => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-node-registered-'));
+	try {
+		const executable = path.join(root, 'node.exe');
+		await fs.writeFile(executable, 'fixture');
+		const host = { execPath: 'C:\\fixture\\Code.exe', electron: true, registeredEnvironment: async () => ({ Path: '%NVM_SYMLINK%', NVM_SYMLINK: '%NVM_HOME%', NVM_HOME: root }) };
+		assert.deepEqual(await resolveNodeRuntime({ PATH: '' }, host), { executable: await fs.realpath(executable), embeddedNode: false });
+		assert.deepEqual(await resolveNodeRuntime({ PATH: '' }, { ...host, registeredEnvironment: async () => ({ nvm_symlink: root }) }), { executable: await fs.realpath(executable), embeddedNode: false });
+	} finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
+test('Windows keeps explicit Node precedence and survives unavailable registry access', { skip: process.platform !== 'win32' }, async () => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-node-registered-order-'));
+	try {
+		const executable = path.join(root, 'node.exe');
+		await fs.writeFile(executable, 'fixture');
+		let reads = 0;
+		const host = { execPath: 'C:\\fixture\\Code.exe', electron: true, registeredEnvironment: async (): Promise<NodeJS.ProcessEnv> => { reads++; throw Error('Registry unavailable'); } };
+		assert.deepEqual(await resolveNodeRuntime({ PATH: root }, host), { executable: await fs.realpath(executable), embeddedNode: false });
+		assert.equal(reads, 0);
+		assert.deepEqual(await resolveNodeRuntime({ PATH: '' }, host), { executable: host.execPath, embeddedNode: true });
+		assert.equal(reads, 1);
+	} finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
 test('Windows pnpm prefers the native binary behind its npm shim and supports the pnpm 12 script fallback', { skip: process.platform !== 'win32' }, async () => {
 	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-pnpm-native-env-'));
 	try {
