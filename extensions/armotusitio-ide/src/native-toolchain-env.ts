@@ -21,7 +21,7 @@ const SYSTEM = ['PATH', 'Path', 'PATHEXT', 'SystemRoot', 'WINDIR', 'ComSpec', 'T
 	'OS', 'PROCESSOR_ARCHITECTURE', 'PROCESSOR_IDENTIFIER', 'PROCESSOR_LEVEL', 'PROCESSOR_REVISION', 'NUMBER_OF_PROCESSORS', 'PSModulePath', 'LOGONSERVER', 'SESSIONNAME',
 	// Corporate or local certificate authorities, so HTTPS keeps working behind an inspecting proxy.
 	'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'SSL_CERT_DIR', 'REQUESTS_CA_BUNDLE', 'CURL_CA_BUNDLE'];
-const TOOLCHAINS = ['GOPATH', 'GOCACHE', 'GOMODCACHE', 'GOROOT', 'GOFLAGS', 'GOPROXY', 'GOPRIVATE', 'CARGO_HOME', 'RUSTUP_HOME', 'JAVA_HOME', 'GRADLE_USER_HOME', 'MAVEN_OPTS', 'DOTNET_ROOT', 'NUGET_PACKAGES', 'PNPM_HOME', 'NVM_HOME', 'NVM_SYMLINK', 'VOLTA_HOME', 'PYENV_ROOT', 'VIRTUAL_ENV', 'CONDA_PREFIX', 'COMPOSER_HOME', 'ANDROID_HOME'];
+const TOOLCHAINS = ['GOPATH', 'GOBIN', 'GOCACHE', 'GOMODCACHE', 'GOROOT', 'GOFLAGS', 'GOPROXY', 'GOPRIVATE', 'CARGO_HOME', 'RUSTUP_HOME', 'JAVA_HOME', 'GRADLE_USER_HOME', 'MAVEN_OPTS', 'DOTNET_ROOT', 'NUGET_PACKAGES', 'PNPM_HOME', 'NVM_HOME', 'NVM_SYMLINK', 'VOLTA_HOME', 'PYENV_ROOT', 'VIRTUAL_ENV', 'CONDA_PREFIX', 'COMPOSER_HOME', 'ANDROID_HOME'];
 /** Provider authentication the CLIs already used before this profile existed. */
 const PROVIDER_AUTH = ['CODEX_HOME', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY'];
 const FORBIDDEN_NAME = /TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|PRIVATE_KEY|API_KEY|^AWS_|^AZURE_|^GCP_|^GOOGLE_APPLICATION_CREDENTIALS$|^DATABASE_URL$/i;
@@ -62,6 +62,19 @@ export async function buildToolchainEnvironment(source: NodeJS.ProcessEnv, platf
 	if (platform === 'win32' && home) {
 		env.LOCALAPPDATA ??= join(home, 'AppData', 'Local');
 		env.APPDATA ??= join(home, 'AppData', 'Roaming');
+	}
+	// `go install` puts tools here even when a GUI host never inherited the shell profile's PATH.
+	const paths = (env.PATH ?? '').split(separator).filter(Boolean);
+	const goBins = env.GOBIN ? [env.GOBIN] : (env.GOPATH ? env.GOPATH.split(separator) : home ? [join(home, 'go')] : []).map(folder => join(folder, 'bin'));
+	const absolute = platform === 'win32' ? path.win32.isAbsolute : path.posix.isAbsolute;
+	const pathKey = (folder: string): string => platform === 'win32' ? folder.toLowerCase() : folder;
+	for (const folder of goBins) {
+		if (!absolute(folder) || !await exists(folder)) { continue; }
+		const canonical = await realFolder(folder);
+		if (absolute(canonical) && !paths.some(value => pathKey(value) === pathKey(canonical))) {
+			paths.push(canonical);
+			env.PATH = paths.join(separator);
+		}
 	}
 	const caches = toolchainCaches(env, platform, home);
 	const present = await Promise.all(caches.map(exists));
