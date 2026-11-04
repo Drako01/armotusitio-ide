@@ -182,7 +182,16 @@ export function createCommandPolicy(config: CommandPolicyConfig): CommandPolicy 
 			const permitted = permit(config.permissions, command, args, folder, dependency);
 			if (permitted === 'deny') { return { allowed: false, reason: dependency ? 'dependency-change' : 'not-allowed' }; }
 			// A dependency change is never in the ecosystem lists: it is decided by the permission layer alone (ask unless an explicit user rule allows it).
-			const decision = dependency ? { allowed: true as const, executable: command, cwd: folder, delegate: config.delegate } : allowlisted(config, extras, command, args, folder);
+			let decision = dependency ? { allowed: true as const, executable: command, cwd: folder, delegate: config.delegate } : allowlisted(config, extras, command, args, folder);
+			if (!decision.allowed && config.permissions && config.permissions.preset !== 'readonly') {
+				// A missing ecosystem entry is a request for consent, not a permanent denial.
+				// Explicit deny/invalid files and the command floor have already returned above.
+				const verdict = config.permissions.decide({ kind: 'run', command, args: [...args], cwd: folder });
+				decision = { allowed: true, executable: command, cwd: folder, delegate: config.delegate };
+				if (!(verdict.decision === 'allow' && verdict.source === 'user')) {
+					return { allowed: false, reason: 'needs-approval', rule: suggestRule({ kind: 'run', command, args: [...args], cwd: folder }), executable: command, cwd: folder, delegate: config.delegate };
+				}
+			}
 			if (!decision.allowed || permitted === 'allow') { return decision; }
 			return { allowed: false, reason: 'needs-approval', rule: suggestRule({ kind: 'run', command, args: [...args], cwd: folder }), executable: decision.executable, cwd: decision.cwd, delegate: decision.delegate };
 		},

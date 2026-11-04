@@ -30,7 +30,7 @@ import { KeychainDevSecrets } from './native-dev-secrets.ts';
 import { doctorReport, runDoctor, type DoctorCheck, type Exec } from './native-machine-doctor.ts';
 import { collectOrphans, validateTemplate, type EnvironmentTemplate } from './native-ephemeral-env.ts';
 import { execFile } from 'node:child_process';
-import { resolveNativeCommand } from './native-runtime.ts';
+import { resolveNativeCommand, resolveNodeRuntime, usePreferredNodeRuntime } from './native-runtime.ts';
 import { NativeHarness, nativePlanRevision, type Plan } from './native-harness.ts';
 import type { ChatImplementOutcome, ChatRuntime } from './native-chat-session.ts';
 import type { ChatStep } from './native-run-steps.ts';
@@ -83,6 +83,26 @@ async function listRecordIds(directory: string, tooLarge: string): Promise<strin
 }
 
 export function registerNativeHarness(context: Host, vscode: Host, controller: Host): void {
+	const configuredNode = () => vscode.workspace.getConfiguration('atsHarness').inspect?.('nodeExecutable')?.globalValue;
+	usePreferredNodeRuntime(configuredNode());
+	if (vscode.workspace.onDidChangeConfiguration) {
+		context.subscriptions.push(vscode.workspace.onDidChangeConfiguration((event: Host) => {
+			if (event.affectsConfiguration('atsHarness.nodeExecutable')) { usePreferredNodeRuntime(configuredNode()); }
+		}));
+	}
+	const selectNode = async (): Promise<boolean> => {
+		const selection = await vscode.window.showOpenDialog({
+			canSelectFiles: true, canSelectFolders: false, canSelectMany: false,
+			title: vscode.l10n.t('Eleg\u00ed el ejecutable de Node.js (node.exe o node)'), openLabel: vscode.l10n.t('Usar este Node.js')
+		});
+		if (!selection?.[0]) { return false; }
+		const executable = await fs.realpath(selection[0].fsPath);
+		if (!/^(?:node|node\.exe)$/i.test(path.basename(executable)) || !(await fs.stat(executable)).isFile()) { throw Error('HARNESS_NODE_EXECUTABLE_UNAVAILABLE'); }
+		await vscode.workspace.getConfiguration('atsHarness').update('nodeExecutable', executable, true);
+		usePreferredNodeRuntime(executable);
+		return true;
+	};
+	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.selectNodeRuntime', selectNode));
 	const choose = async (requested?: string, allowProjectAgent = false): Promise<{ folder: Host; engine: NativeHarness } | undefined> => {
 		const roots = vscode.workspace.workspaceFolders || [];
 		if (!roots.length) { vscode.window.showWarningMessage(vscode.l10n.t('Abr\u00ed una carpeta para utilizar el Harness nativo.')); return; }
@@ -249,6 +269,14 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 	 * `inScope` limits editor refactors to the run's scope (a goal's charter); a chat run may edit the whole project.
 	 */
 	const prepareToolServer = async (root: string, maxTurns: number, provider: NativeProvider, inScope: (file: string) => boolean = () => true, extraEnv: Record<string, string> = {}, approve?: ApprovalAsk): Promise<{ launch: ToolServerLaunch; policy: string[]; ecosystems: string[]; dispose(): Promise<void> }> => {
+		let nodeAvailable = false;
+		try { nodeAvailable = !(await resolveNodeRuntime()).embeddedNode; } catch { /* A stale user path can be repaired through the same picker. */ }
+		if (!nodeAvailable && approve) {
+			const chooseNode = vscode.l10n.t('Seleccionar Node.js');
+			if (await vscode.window.showWarningMessage(vscode.l10n.t('No se encontr\u00f3 Node.js para los comandos del proyecto. Eleg\u00ed su ejecutable; se guardar\u00e1 la ruta en tu configuraci\u00f3n de usuario.'), { modal: true }, chooseNode) !== chooseNode || !await selectNode()) {
+				throw Error('HARNESS_NODE_EXECUTABLE_UNAVAILABLE');
+			}
+		}
 		const authority = await inspectHarnessAuthority(root);
 		const delegate = authority.engine === 'project' && !!authority.entry && (await readProjectCapabilities(root).catch(() => [])).includes('command-runner');
 		const subprojects = delegate ? [] : await detectEcosystems(root);

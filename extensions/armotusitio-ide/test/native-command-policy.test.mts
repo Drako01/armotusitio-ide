@@ -19,13 +19,29 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { createCommandPolicy } from '../src/native-command-policy.ts';
-import { loadPermissions, type PermissionSet } from '../src/native-permissions.ts';
+import { addUserRule, loadPermissions, type PermissionSet } from '../src/native-permissions.ts';
 import type { PermissionPreset } from '../src/native-permissions-types.ts';
 import { detectEcosystems } from '../src/native-ecosystems.ts';
 import { runCommand } from '../src/native-command-runner.ts';
 import { handleRun, type RunnerConfig } from '../src/ats-runner.ts';
 
 const monorepo = [{ path: 'apps/api', ecosystem: 'go' as const }, { path: 'apps/web', ecosystem: 'node' as const, packageManager: 'pnpm' as const, scripts: ['test', 'lint'] }];
+
+test('unknown development tools ask for consent and a persisted user grant survives reloading', async () => {
+	const base = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'ats-remember-tool-')));
+	const home = path.join(base, 'home');
+	const root = path.join(base, 'project');
+	const request = ['custom-tool', ['check'], '.'] as const;
+	const policyFor = async () => createCommandPolicy({ subprojects: [], delegate: false, extras: [], permissions: await loadPermissions(root, home) });
+	try {
+		assert.deepEqual((await policyFor()).decide(...request), { allowed: false, reason: 'needs-approval', rule: 'run:custom-tool check', executable: 'custom-tool', cwd: '.', delegate: false });
+		await addUserRule('run:custom-tool check', 'allow', home);
+		assert.equal((await policyFor()).decide(...request).allowed, true);
+		assert.equal((await policyFor()).decide('custom-tool', ['other'], '.').allowed, false);
+		await addUserRule('run:custom-tool check', 'deny', home);
+		assert.deepEqual((await policyFor()).decide(...request), { allowed: false, reason: 'not-allowed' });
+	} finally { await fs.rm(base, { recursive: true, force: true }); }
+});
 
 test('the IDE floor rejects what no preset, project or user extra can allow', () => {
 	const policy = createCommandPolicy({ subprojects: monorepo, delegate: false, extras: ['rm', 'curl', 'make test'] });
@@ -128,7 +144,7 @@ test('a permission ask is a denial for consumers that only read allowed, and car
 		const policy = createCommandPolicy({ subprojects: monorepo, delegate: false, extras: [], permissions: loaded.set });
 		const asked = policy.decide('go.exe', ['test', './...'], 'apps/api\\');
 		assert.deepEqual({ asked, denied: policy.decide('go', ['vet'], 'apps/api'), outside: policy.decide('go', ['build'], 'apps/web'), allowed: policy.decide('go', ['build'], 'apps/api').allowed },
-			{ asked: { allowed: false, reason: 'needs-approval', rule: 'run:go test ./...', executable: 'go.exe', cwd: 'apps/api', delegate: false }, denied: { allowed: false, reason: 'not-allowed' }, outside: { allowed: false, reason: 'not-allowed' }, allowed: true });
+			{ asked: { allowed: false, reason: 'needs-approval', rule: 'run:go test ./...', executable: 'go.exe', cwd: 'apps/api', delegate: false }, denied: { allowed: false, reason: 'not-allowed' }, outside: { allowed: false, reason: 'needs-approval', rule: 'run:go build', executable: 'go', cwd: 'apps/web', delegate: false }, allowed: true });
 		const delegated = createCommandPolicy({ subprojects: [], delegate: true, extras: [], permissions: await permissionsFor('readonly').then(({ set }) => set) });
 		assert.equal((createCommandPolicy({ subprojects: monorepo, delegate: false, extras: [], permissions: loaded.set }).decide('pnpm', ['add', 'x'], 'apps/web') as { rule?: string }).rule, '');
 		assert.deepEqual([delegated.decide('git', ['status'], '.').allowed, delegated.decide('just', ['test'], '.')], [true, { allowed: false, reason: 'not-allowed' }]);
