@@ -185,3 +185,27 @@ test('exact toolchain information probes are available without a detected projec
 		}
 	} finally { await loaded.cleanup(); }
 });
+
+test('provider version probes preserve delegation and permission rules without allowing nested agents', async () => {
+	const deniedArgs = [[], ['--help'], ['-h'], ['-v'], ['-V'], ['--version=1'], ['--version', '--help'], ['--version', '-p', 'prompt'],
+		['exec', 'prompt'], ['-p', 'prompt'], ['login'], ['auth', 'login'], ['config'], ['--dangerously-skip-permissions'], ['--sandbox', 'danger-full-access']];
+	const trusted = await permissionsFor('trusted', { user: { version: 1, allow: ['run:*'] } });
+	const readonly = await permissionsFor('readonly', { project: { version: 1, deny: ['run:claude --version'], ask: ['run:codex --version'] } });
+	try {
+		for (const delegate of [false, true]) {
+			const policy = createCommandPolicy({ subprojects: [], delegate, extras: ['claude', 'codex'], permissions: trusted.set });
+			for (const command of ['claude', 'claude.exe', 'codex', 'codex.exe']) {
+				assert.deepEqual(policy.decide(command, ['--version'], '.'), { allowed: true, executable: command, cwd: '.', delegate });
+				assert.deepEqual(deniedArgs.map(args => policy.decide(command, args, '.')), deniedArgs.map(() => ({ allowed: false, reason: 'not-allowed' })));
+			}
+			const restricted = createCommandPolicy({ subprojects: [], delegate, extras: [], permissions: readonly.set });
+			assert.deepEqual(restricted.decide('claude', ['--version'], '.'), { allowed: false, reason: 'not-allowed' });
+			assert.deepEqual(restricted.decide('codex', ['--version'], '.'), {
+				allowed: false, reason: 'needs-approval', rule: 'run:codex --version', executable: 'codex', cwd: '.', delegate
+			});
+			assert.deepEqual(policy.decide('claude', ['--version', ';'], '.'), { allowed: false, reason: 'shell-operator' });
+			assert.deepEqual(policy.decide('C:/tools/codex.exe', ['--version'], '.'), { allowed: false, reason: 'invalid' });
+			assert.deepEqual(policy.decide('pnpm', ['exec', 'claude', '-p', 'prompt'], '.'), { allowed: false, reason: 'not-allowed' });
+		}
+	} finally { await trusted.cleanup(); await readonly.cleanup(); }
+});

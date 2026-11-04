@@ -410,7 +410,13 @@ test('chat runtime converses read-only, then implements an approved plan and run
 			'#!/usr/bin/env node',
 			'let input = ""; process.stdin.on("data", c => input += c);',
 			'process.stdin.on("end", () => {',
-			'  if (input.includes("Implement the approved plan")) { require("fs").writeFileSync("clients.txt", "crud"); console.log("Created clients.txt"); return; }',
+			'  if (input.includes("Implement the approved plan")) {',
+			'    const setting = process.argv.find(arg => arg.startsWith("mcp_servers.ats-runner.args="));',
+			'    const configFile = JSON.parse(setting.slice(setting.indexOf("=") + 1))[1];',
+			'    const env = JSON.parse(require("fs").readFileSync(configFile, "utf8")).env;',
+			'    if (env.HARNESS_HOST !== "codex") { throw Error("Selected provider did not reach runner"); }',
+			'    require("fs").writeFileSync("clients.txt", "crud"); console.log("Created clients.txt"); return;',
+			'  }',
 			'  console.log(["Propuesta", "```harness-plan", JSON.stringify({ title: "CRUD", steps: ["Crear clients.txt"] }), "```"].join(String.fromCharCode(10)));',
 			'});'
 		].join('\n'));

@@ -47,7 +47,9 @@ const INFO_TOOLS = new Set(['node', 'npm', 'npx', 'pnpm', 'pnpx', 'yarn', 'bun',
 	'python', 'python3', 'py', 'pip', 'pip3', 'pipx', 'uv', 'poetry', 'conda', 'mvn', 'mvnw', 'gradle', 'gradlew', 'composer', 'php', 'gem', 'bundle', 'ruby',
 	'tsc', 'eslint', 'vitest', 'jest', 'prettier', 'pytest', 'mypy', 'ruff', 'git', 'rg']);
 const INFO_FLAGS = new Set(['--version', '-v', '-V', '--help', '-h']);
-const informationProbe = (name: string, args: readonly string[]): boolean => INFO_TOOLS.has(name) && args.length === 1 && INFO_FLAGS.has(args[0]);
+const AGENT_TOOLS = new Set(['claude', 'codex']);
+const informationProbe = (name: string, args: readonly string[]): boolean => args.length === 1 &&
+	(AGENT_TOOLS.has(name) ? args[0] === '--version' : INFO_TOOLS.has(name) && INFO_FLAGS.has(args[0]));
 
 const base = commandName;
 const hasFlag = (args: readonly string[], ...flags: string[]): boolean => args.some(arg => flags.includes(arg) || flags.some(flag => flag.startsWith('--') && arg.startsWith(flag + '=')));
@@ -71,6 +73,8 @@ function floor(command: string, args: readonly string[], depth = 0): PolicyDenia
 	const normalized = command.replace(/\\/g, '/');
 	if (/[\\/]/.test(command) && !['./mvnw', './gradlew', 'vendor/bin/phpunit', 'vendor/bin/phpstan', 'vendor/bin/pest'].includes(normalized)) { return 'invalid'; }
 	if (informationProbe(name, args)) { return undefined; }
+	// Provider diagnostics must never become a nested agent, login or configuration invocation.
+	if (AGENT_TOOLS.has(name)) { return 'not-allowed'; }
 	// Inspect the executable behind launchers before dependency approval can let the outer command through.
 	if ([...PACKAGE_MANAGERS, 'uv', 'poetry', 'bundle'].includes(name) && sub?.startsWith('-') &&
 		!(args.length === 1 && ['--version', '-v', '--help', '-h'].includes(sub))) { return 'not-allowed'; }
