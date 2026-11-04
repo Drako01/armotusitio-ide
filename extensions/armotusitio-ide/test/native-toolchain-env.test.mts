@@ -36,6 +36,24 @@ test('only a Codex writer gets the toolchain caches as extra writable folders', 
 		{ writer: ['--add-dir', '/home/dev/go/pkg/mod'], reader: false });
 });
 
+test('installed Go tools are visible without a shell profile while explicit PATH and GOBIN keep precedence', async () => {
+	for (const platform of ['win32', 'linux'] as const) {
+		const join = platform === 'win32' ? path.win32.join : path.posix.join;
+		const home = platform === 'win32' ? 'C:\\Users\\dev' : '/home/dev';
+		const system = join(home, 'system');
+		const bin = join(home, 'go', 'bin');
+		const custom = join(home, 'custom-bin');
+		const separator = platform === 'win32' ? ';' : ':';
+		const exists = async (folder: string): Promise<boolean> => [bin, custom].includes(folder);
+		const source = { PATH: system, USERPROFILE: home, HOME: home };
+		assert.equal((await buildToolchainEnvironment(source, platform, exists)).env.PATH, system + separator + bin);
+		assert.equal((await buildToolchainEnvironment({ ...source, GOBIN: custom }, platform, exists)).env.PATH, system + separator + custom);
+		assert.equal((await buildToolchainEnvironment({ ...source, GOBIN: 'relative' }, platform, exists)).env.PATH, system);
+		assert.equal((await buildToolchainEnvironment({ ...source, PATH: bin }, platform, exists)).env.PATH, bin);
+		assert.equal(source.PATH, system);
+	}
+});
+
 test('PATH names the real folder of a linked toolchain such as the nvm-windows symlink', async () => {
 	const links = new Map([['C:\nvm4w\nodejs', 'C:\Users\dev\AppData\Local\nvm\v24.22.1']]);
 	const profile = await buildToolchainEnvironment({ PATH: 'C:\nvm4w\nodejs;C:\bin', USERPROFILE: 'C:\Users\dev' }, 'win32', async () => false, async folder => links.get(folder) ?? folder);
