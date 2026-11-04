@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { resolveNativeCommand, windowsNpmProviderCandidates } from '../src/native-runtime.ts';
+import { resolveNativeCommand, resolveNodeRuntime, windowsNpmProviderCandidates } from '../src/native-runtime.ts';
 
 test('Windows npm Claude layout includes native executable and legacy JS fallback, never shell shims', () => {
 	const prefix = path.resolve('npm-prefix-fixture');
@@ -52,7 +52,7 @@ test('Windows resolver starts the native Codex binary itself so its wrapper cann
 		assert.deepEqual(await resolveNativeCommand('codex', ['--version']), { executable: candidate.native, args: ['--version'], embeddedNode: false });
 		// Without the platform package (older layouts) the wrapper still works.
 		await fs.rm(candidate.native!);
-		assert.deepEqual(await resolveNativeCommand('codex', ['--version']), { executable: process.execPath, args: [candidate.script, '--version'], embeddedNode: true });
+		assert.deepEqual(await resolveNativeCommand('codex', ['--version']), { executable: await fs.realpath(process.execPath), args: [candidate.script, '--version'], embeddedNode: false });
 	} finally {
 		if (oldPath === undefined) { delete process.env.PATH; } else { process.env.PATH = oldPath; }
 		await fs.rm(root, { recursive: true, force: true });
@@ -68,7 +68,7 @@ test('Windows resolver keeps older npm Claude JavaScript entry working without a
 		await fs.writeFile(candidate.script, 'fixture-script');
 		process.env.PATH = root;
 		const result = await resolveNativeCommand('claude', ['--version']);
-		assert.deepEqual(result, { executable: process.execPath, args: [candidate.script, '--version'], embeddedNode: true });
+		assert.deepEqual(result, { executable: await fs.realpath(process.execPath), args: [candidate.script, '--version'], embeddedNode: false });
 	} finally {
 		if (oldPath === undefined) { delete process.env.PATH; } else { process.env.PATH = oldPath; }
 		await fs.rm(root, { recursive: true, force: true });
@@ -88,4 +88,81 @@ test('resolver finds the native Claude installer location even when it is missin
 		for (const [key, value] of Object.entries(saved)) { if (value === undefined) { delete process.env[key]; } else { process.env[key] = value; } }
 		await fs.rm(root, { recursive: true, force: true });
 	}
+});
+
+test('an explicit environment controls executable resolution instead of the host PATH', async () => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-resolver-env-'));
+	try {
+		const name = process.platform === 'win32' ? 'fixture-tool.exe' : 'fixture-tool';
+		const executable = path.join(root, name);
+		await fs.writeFile(executable, 'fixture', { mode: 0o755 });
+		assert.deepEqual(await resolveNativeCommand('fixture-tool', ['check'], { PATH: root }), { executable: await fs.realpath(executable), args: ['check'], embeddedNode: false });
+		await assert.rejects(resolveNativeCommand('fixture-tool', [], { PATH: '' }), /HARNESS_EXECUTABLE_UNAVAILABLE/);
+	} finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
+test('a native Node host is usable without PATH while Electron remains an explicit fallback', async () => {
+	const node = await fs.realpath(process.execPath);
+	const electron = path.resolve('fixture-electron.exe');
+	assert.deepEqual(await resolveNodeRuntime({ PATH: '' }, { execPath: process.execPath, electron: false }), { executable: node, embeddedNode: false });
+	assert.deepEqual(await resolveNativeCommand('node', ['--version'], { PATH: '' }, { execPath: electron, electron: true }), { executable: electron, args: ['--version'], embeddedNode: true });
+});
+
+test('Windows Node resolution accepts case-insensitive environment names and quoted PATH entries', { skip: process.platform !== 'win32' }, async () => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-node-env-'));
+	try {
+		const executable = path.join(root, 'node.exe');
+		await fs.writeFile(executable, 'fixture');
+		const env = { path: '"' + root + '"' };
+		assert.deepEqual(await resolveNativeCommand('node.exe', ['check'], env, { execPath: 'C:\\fixture\\Code.exe', electron: true }), { executable: await fs.realpath(executable), args: ['check'], embeddedNode: false });
+	} finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
+test('Windows pnpm scripts use the same native Node selected through the explicit nvm environment', { skip: process.platform !== 'win32' }, async () => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-pnpm-node-env-'));
+	try {
+		const prefix = path.join(root, 'prefix');
+		const nodeFolder = path.join(root, 'nvm version');
+		const link = path.join(root, 'nvm link');
+		const script = path.join(prefix, 'node_modules', 'pnpm', 'bin', 'pnpm.cjs');
+		await fs.mkdir(path.dirname(script), { recursive: true });
+		await fs.mkdir(nodeFolder);
+		await fs.writeFile(script, 'fixture');
+		await fs.writeFile(path.join(nodeFolder, 'node.exe'), 'fixture');
+		await fs.symlink(nodeFolder, link, 'junction');
+		const env = { Path: prefix, nvm_symlink: link };
+		const host = { execPath: 'C:\\fixture\\Code.exe', electron: true };
+		assert.deepEqual(await resolveNativeCommand('pnpm', ['run', 'preflight'], env, host), {
+			executable: await fs.realpath(path.join(nodeFolder, 'node.exe')), args: [script, 'run', 'preflight'], embeddedNode: false
+		});
+		await fs.rm(path.join(nodeFolder, 'node.exe'));
+		assert.deepEqual(await resolveNativeCommand('pnpm', ['--version'], env, host), { executable: host.execPath, args: [script, '--version'], embeddedNode: true });
+	} finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
+test('an explicit home finds Claude without borrowing the host account installation', async () => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-claude-explicit-env-'));
+	try {
+		const executable = path.join(root, '.local', 'bin', process.platform === 'win32' ? 'claude.exe' : 'claude');
+		await fs.mkdir(path.dirname(executable), { recursive: true });
+		await fs.writeFile(executable, 'fixture', { mode: 0o755 });
+		assert.deepEqual(await resolveNativeCommand('claude', ['--version'], { PATH: '', HOME: root, USERPROFILE: root }), { executable: await fs.realpath(executable), args: ['--version'], embeddedNode: false });
+	} finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
+test('Windows pnpm prefers the native binary behind its npm shim and supports the pnpm 12 script fallback', { skip: process.platform !== 'win32' }, async () => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-pnpm-native-env-'));
+	try {
+		const directory = path.join(root, 'node_modules', 'pnpm');
+		const native = path.join(directory, 'pnpm.exe');
+		const script = path.join(directory, 'bin', 'pnpm.mjs');
+		await fs.mkdir(path.dirname(script), { recursive: true });
+		await fs.writeFile(native, 'fixture-binary');
+		await fs.writeFile(script, 'fixture-script');
+		const env = { PATH: root };
+		const host = { execPath: 'C:\\fixture\\Code.exe', electron: true };
+		assert.deepEqual(await resolveNativeCommand('pnpm', ['--version'], env, host), { executable: await fs.realpath(native), args: ['--version'], embeddedNode: false });
+		await fs.rm(native);
+		assert.deepEqual(await resolveNativeCommand('pnpm', ['--version'], env, host), { executable: host.execPath, args: [script, '--version'], embeddedNode: true });
+	} finally { await fs.rm(root, { recursive: true, force: true }); }
 });

@@ -48,6 +48,7 @@ const EXACT: Record<string, Hint> = {
 	HARNESS_PROVIDER_UNSUPPORTED: t => t('Eleg\u00ed Codex o Claude Code.'),
 	HARNESS_NO_PROVIDER_AVAILABLE: t => t('Ning\u00fan proveedor est\u00e1 listo. Us\u00e1 \u00abArmoTuSitio: Diagnosticar Codex y Claude locales\u00bb para ver qu\u00e9 falta.'),
 	HARNESS_EXECUTABLE_UNAVAILABLE: t => t('No se encontr\u00f3 el programa necesario en el PATH. Instalalo o us\u00e1 \u00abArmoTuSitio: Diagnosticar Codex y Claude locales\u00bb.'),
+	HARNESS_COMMAND_FAILED: t => t('No se pudo preparar el comando. Revis\u00e1 el error del sistema en los detalles; esto no significa que falte la herramienta.'),
 	HARNESS_CHAT_TURN_INVALID: t => t('Escrib\u00ed un mensaje nuevo para que la IA responda.'),
 	HARNESS_CHECKPOINT_APPROVAL_REQUIRED: t => t('Esta acci\u00f3n necesita tu confirmaci\u00f3n. Volv\u00e9 a ejecutarla y aprobala.'),
 	HARNESS_CHECKPOINT_ROLLBACK_INCOMPLETE: t => t('La reversi\u00f3n qued\u00f3 incompleta. Revis\u00e1 git status antes de seguir y us\u00e1 {0}.', DIAGNOSE),

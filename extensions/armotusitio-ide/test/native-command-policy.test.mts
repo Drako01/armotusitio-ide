@@ -157,3 +157,31 @@ test('the floor checks executable paths, inline flag variants and nested launche
 		assert.equal(policy.decide('pnpm', ['exec', 'tsc', '--noEmit'], 'apps/web').allowed, true);
 	} finally { await loaded.cleanup(); }
 });
+
+
+test('exact toolchain information probes are available without a detected project and preserve delegation and permissions', async () => {
+	for (const delegate of [false, true]) {
+		const policy = createCommandPolicy({ subprojects: [], delegate, extras: [] });
+		for (const command of ['node', 'node.exe', 'npm', 'pnpm', 'npx', 'yarn', 'bun', 'go', 'cargo', 'dotnet', 'python', 'pip', 'uv', 'composer', 'git']) {
+			for (const flag of ['--version', '-v', '-V', '--help', '-h']) {
+				assert.deepEqual(policy.decide(command, [flag], '.'), { allowed: true, executable: command, cwd: '.', delegate });
+			}
+		}
+		for (const [command, args] of [
+			['node', ['--version', '--eval=1']], ['pnpm', ['--version', 'exec', 'sh']], ['npx', ['--help', 'curl']],
+			['C:/node/node.exe', ['--version']], ['curl', ['--help']], ['gh', ['--version']], ['bash', ['--version']]
+		] as Array<[string, string[]]>) { assert.equal(policy.decide(command, args, '.').allowed, false); }
+	}
+	const plain = createCommandPolicy({ subprojects: [], delegate: false, extras: [] });
+	for (const [command, args] of [['unlisted-tool', ['--version']], ['pnpm', ['--version=anything']], ['pnpm', ['--version --help']]] as Array<[string, string[]]>) {
+		assert.equal(plain.decide(command, args, '.').allowed, false);
+	}
+	const loaded = await permissionsFor('readonly', { project: { version: 1, deny: ['run:pnpm --version'] } });
+	try {
+		for (const delegate of [false, true]) {
+			const policy = createCommandPolicy({ subprojects: [], delegate, extras: [], permissions: loaded.set });
+			assert.equal(policy.decide('node', ['--version'], '.').allowed, true);
+			assert.deepEqual(policy.decide('pnpm', ['--version'], '.'), { allowed: false, reason: 'not-allowed' });
+		}
+	} finally { await loaded.cleanup(); }
+});

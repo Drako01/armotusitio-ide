@@ -10,6 +10,7 @@ import { spawn } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
 import { resolveNativeCommand, stopProcess } from './native-runtime.ts';
 import { redactSecrets } from './native-redact.ts';
+import { withNodeRuntime } from './native-toolchain-env.ts';
 
 /** Last part of the output returned to the agent; the full output goes to the log file. */
 export const RETURNED_OUTPUT_BYTES = 64 * 1024;
@@ -57,18 +58,19 @@ export async function runCommand(request: CommandRequest): Promise<CommandResult
 	const cwd = path.resolve(request.root, request.cwd);
 	const realCwd = await fsp.realpath(cwd).catch(() => undefined);
 	if (!realCwd || (realCwd !== request.root && !realCwd.startsWith(request.root + path.sep))) { throw Error('HARNESS_INVALID_CWD'); }
+	const toolchainEnv = await withNodeRuntime(request.env);
 	let resolved: { executable: string; args: string[]; embeddedNode: boolean };
 	if (request.delegateEntry) {
-		resolved = { executable: process.execPath, args: [request.delegateEntry, 'ide-run', '--ide-protocol', '2', '--cwd', request.cwd, '--', request.command, ...request.args], embeddedNode: true };
+		resolved = await resolveNativeCommand('node', [request.delegateEntry, 'ide-run', '--ide-protocol', '2', '--cwd', request.cwd, '--', request.command, ...request.args], toolchainEnv);
 	} else {
 		const local = await projectExecutable(request.root, request.cwd, request.command);
 		const args = request.command.replace(/\.exe$/i, '').toLowerCase() === 'rg' ? ['--no-config', ...request.args] : [...request.args];
-		resolved = local ? { executable: local, args, embeddedNode: false } : await resolveNativeCommand(request.command, args);
+		resolved = local ? { executable: local, args, embeddedNode: false } : await resolveNativeCommand(request.command, args, toolchainEnv);
 	}
 	await fsp.mkdir(request.logDirectory, { recursive: true });
 	const logFile = path.join(request.logDirectory, new Date(started).toISOString().replace(/[:.]/g, '-') + '-' + path.basename(request.command).replace(/[^\w.-]/g, '_') + '.log');
 	const log = fs.createWriteStream(logFile, { flags: 'wx', mode: 0o600 });
-	const env = { ...request.env, ...(resolved.embeddedNode ? { ELECTRON_RUN_AS_NODE: '1' } : {}) };
+	const env = { ...toolchainEnv, ...(resolved.embeddedNode ? { ELECTRON_RUN_AS_NODE: '1' } : {}) };
 	return new Promise(resolve => {
 		const child = spawn(resolved.executable, resolved.args, { cwd: realCwd, env, shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
 		let tail = '', logged = 0, truncated = false, timedOut = false, cancelled = false, done = false;
@@ -90,7 +92,11 @@ export async function runCommand(request: CommandRequest): Promise<CommandResult
 			log.end();
 			resolve({ exitCode, timedOut, cancelled, durationMs: Date.now() - started, output: redactSecrets(tail + decoder.end()), truncated, logFile });
 		};
-		child.once('error', () => { tail += '\n[ats-runner] the executable could not be started'; finish(null); });
+		child.once('error', (error: NodeJS.ErrnoException) => {
+			tail += '\n[ats-runner] could not start ' + path.basename(resolved.executable) + ' (' + (error.code ?? 'UNKNOWN') + '). ' +
+				(error.code === 'ENOENT' ? 'The executable or working directory was not found.' : 'The process failed to start; this does not establish that the tool is missing.');
+			finish(null);
+		});
 		child.once('close', code => finish(code));
 	});
 }

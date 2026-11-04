@@ -17,6 +17,26 @@ import { projectPermissionsDigest } from '../src/native-run-integrity.ts';
 
 const permissionsOf = (decision: PermissionDecision): PermissionSet => ({ preset: 'dev', warnings: [], describe: () => [], decide: () => ({ decision, source: 'user' }) });
 
+test('runner preparation errors preserve their system code instead of claiming a missing executable', async () => {
+	await withProject(async ({ root, config }) => {
+		const badLogs = path.join(root, 'not-a-directory');
+		await fs.writeFile(badLogs, 'fixture');
+		const result = await handleRun({ ...config, logDirectory: badLogs }, { command: 'node', args: ['--version'] }, 1);
+		assert.equal(result.isError, true);
+		assert.match(result.text, /^HARNESS_COMMAND_FAILED/);
+		assert.match(result.text, /EEXIST|ENOTDIR/);
+		assert.doesNotMatch(result.text, /HARNESS_EXECUTABLE_UNAVAILABLE/);
+	});
+});
+
+test('a project script failure keeps its actual output and exit code', async () => {
+	await withProject(async ({ root, config }) => {
+		await fs.writeFile(path.join(root, 'fail.cjs'), 'console.error("PROJECT_CHECK_FAILED"); process.exitCode = 7;');
+		const result = await handleRun(config, { command: 'node', args: ['fail.cjs'] }, 1);
+		assert.deepEqual({ error: result.isError, exit: result.text.startsWith('exit 7'), reason: result.text.includes('PROJECT_CHECK_FAILED') }, { error: true, exit: true, reason: true });
+	});
+});
+
 async function withProject(work: (input: { root: string; logs: string; config: RunnerConfig }) => Promise<void>): Promise<void> {
 	const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'ats-approval-')));
 	const logs = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-approval-logs-'));
