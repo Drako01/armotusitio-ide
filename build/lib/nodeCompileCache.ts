@@ -89,7 +89,9 @@ export async function generateNodeCompileCache(platform: string, outputDirectory
 		const totalCacheEntryCount = await validateNodeCompileCache(paths.cacheDirectory, process.arch);
 		console.log(`Generated ${totalCacheEntryCount} total Node.js compile cache entries in ${paths.cacheDirectory}.`);
 	} finally {
-		await fs.promises.rm(portableDirectory, { recursive: true, force: true });
+		// Windows may retain a child process's log handle briefly after Electron closes.
+		// Retry transient locks, but still fail if the directory cannot be removed.
+		await fs.promises.rm(portableDirectory, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
 	}
 }
 
