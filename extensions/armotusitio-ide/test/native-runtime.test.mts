@@ -7,7 +7,21 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { resolveNativeCommand, resolveNodeRuntime, windowsNpmProviderCandidates } from '../src/native-runtime.ts';
+import { resolveNativeCommand, resolveNodeRuntime, usePreferredNodeRuntime, windowsNpmProviderCandidates } from '../src/native-runtime.ts';
+
+test('a user-selected Node runtime takes precedence and stale or unrelated paths fail explicitly', async () => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-node-preference-'));
+	const executable = path.join(root, process.platform === 'win32' ? 'node.exe' : 'node');
+	try {
+		await fs.writeFile(executable, 'fixture', { mode: 0o700 });
+		usePreferredNodeRuntime(executable);
+		assert.deepEqual(await resolveNodeRuntime({ PATH: '' }), { executable: await fs.realpath(executable), embeddedNode: false });
+		await fs.rm(executable);
+		await assert.rejects(resolveNodeRuntime(), /HARNESS_NODE_EXECUTABLE_UNAVAILABLE/);
+		usePreferredNodeRuntime(process.platform === 'win32' ? 'C:\\Windows\\cmd.exe' : '/bin/sh');
+		await assert.rejects(resolveNodeRuntime(), /HARNESS_NODE_EXECUTABLE_UNAVAILABLE/);
+	} finally { usePreferredNodeRuntime(undefined); await fs.rm(root, { recursive: true, force: true }); }
+});
 
 test('Windows npm Claude layout includes native executable and legacy JS fallback, never shell shims', () => {
 	const prefix = path.resolve('npm-prefix-fixture');

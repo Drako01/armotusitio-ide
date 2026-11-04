@@ -16,6 +16,12 @@ export interface NativeRuntimeHost {
 	registeredEnvironment?(): Promise<NodeJS.ProcessEnv>;
 }
 const CURRENT_HOST: NativeRuntimeHost = { execPath: process.execPath, electron: !!process.versions.electron, registeredEnvironment: readWindowsToolchainEnvironment };
+let preferredNode: string | undefined;
+
+/** Only the extension host supplies this user-level preference; projects cannot choose a runtime. */
+export function usePreferredNodeRuntime(value: unknown): void {
+	preferredNode = typeof value === 'string' && value ? value : undefined;
+}
 
 /** Windows environment names are case-insensitive, including when supplied as a plain serialized object. */
 function environmentValue(env: NodeJS.ProcessEnv, name: string): string | undefined {
@@ -43,6 +49,11 @@ async function executableFile(candidate: string): Promise<string | undefined> {
  * it is a fallback for direct scripts, not evidence that `node` is present on the child process's PATH.
  */
 export async function resolveNodeRuntime(env: NodeJS.ProcessEnv = process.env, host: NativeRuntimeHost = CURRENT_HOST): Promise<{ executable: string; embeddedNode: boolean }> {
+	if (preferredNode) {
+		const executable = path.isAbsolute(preferredNode) && /^(?:node|node\.exe)$/i.test(path.basename(preferredNode)) ? await executableFile(preferredNode) : undefined;
+		if (!executable) { throw Error('HARNESS_NODE_EXECUTABLE_UNAVAILABLE'); }
+		return { executable, embeddedNode: false };
+	}
 	const directories = pathDirectories(env);
 	if (process.platform === 'win32') {
 		const nvm = environmentValue(env, 'NVM_SYMLINK');

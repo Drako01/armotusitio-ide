@@ -165,6 +165,12 @@
 					"scope": "application",
 					"description": "Aislamiento minimo exigido a un agente que modifica archivos. tool-allowlist: solo permisos de herramientas del proveedor. provider-sandbox: exige el sandbox del sistema operativo del propio proveedor (hoy solo Codex). os-kernel: exige un sandbox del kernel aplicado por el IDE, que ningun proveedor de modelos ofrece todavia, por lo que bloquea toda escritura."
 				},
+				"atsHarness.nodeExecutable": {
+					"type": "string",
+					"default": "",
+					"scope": "application",
+					"description": "Ruta absoluta de Node.js elegida por el usuario. Vacía usa la detección automática. Un proyecto no puede modificarla."
+				},
 				"atsHarness.codexSandbox": {
 					"type": "string",
 					"enum": [
@@ -173,7 +179,7 @@
 					],
 					"enumDescriptions": [
 						"Codex queda confinado al proyecto por el sandbox del sistema operativo.",
-						"Codex corre sin sandbox: sin l\u00edmites de enlaces simb\u00f3licos, red ni carpetas. Las reglas de permisos solo valen para lo que pasa por el IDE."
+						"Codex corre sin sandbox: sin límites de enlaces simbólicos, red ni carpetas. Las reglas de permisos solo valen para lo que pasa por el IDE."
 					],
 					"default": "workspace-write",
 					"scope": "application",
@@ -606,6 +612,10 @@
 			{
 				"command": "atsIde.agent",
 				"title": "ArmoTuSitio: Run Claude or Codex"
+			},
+			{
+				"command": "atsHarness.selectNodeRuntime",
+				"title": "ArmotuSitio: Seleccionar Node.js"
 			}
 		],
 		"menus": {
