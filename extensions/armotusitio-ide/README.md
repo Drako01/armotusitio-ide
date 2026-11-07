@@ -269,6 +269,26 @@ Quien use VS Code común con el Harness propio del proyecto no ve ningún cambio
 
 Los tests automáticos nunca consumen cuota. La prueba de punta a punta con un proveedor autenticado existe pero está apagada: `ATS_E2E_PROVIDER=codex|claude`, `ATS_E2E_ACKNOWLEDGE_REAL_MODEL_CALLS=1` y, opcionalmente, `ATS_E2E_MAX_CALLS` (2 a 5, por defecto 3) corren el flujo completo en un proyecto descartable. `ATS_REAL_SANDBOX=1` ejecuta en Windows la medición del sandbox de Codex sin llamar a ningún modelo. La matriz manual para lectores de pantalla está en `docs/CHAT_HARNESS_ACCESSIBILITY_MATRIX.md`.
 
+## Sesiones nativas del chat (r8)
+
+Con `atsHarness.agentTransport` en `native` o `auto`, el chat usa una sesión persistente del proveedor, en lugar de lanzar un proceso por mensaje:
+
+- **Claude Code**: el CLI instalado con `--input-format stream-json`.
+- **Codex**: `codex app-server` sobre JSON-RPC.
+
+Qué cambia:
+
+- **Continuidad**: la conversación sigue en el proveedor entre mensajes y después de reiniciar el IDE (se reanuda por id), y cada mensaje manda solo lo nuevo.
+- **Tiempo real**: el texto llega en streaming, cada herramienta aparece en la línea de tiempo y el agente puede hacerte preguntas con una tarjeta.
+- **Permisos**: cada permiso lo decide la misma política del IDE. Las tarjetas muestran qué, dónde, el riesgo y por cuánto tiempo (una vez, esta tarea, esta sesión o siempre).
+
+Comandos:
+
+- `/permisos` lista los permisos temporales y `/permisos temporales quitar [REGLA]` los revoca.
+- `/bifurcar` continúa en una copia de la sesión del proveedor.
+
+Cambiar de proveedor crea una sesión nueva que recibe el historial como contexto. Si la versión instalada no es compatible, el chat usa el canal estructurado y te avisa. Arquitectura y evidencia: `docs/R8_ARCHITECTURE.md` y `docs/R8_TEST_EVIDENCE.md`.
+
 ## Chat Harness: modos, permisos y comandos
 
 ### Modo Actuar y modo Preguntar

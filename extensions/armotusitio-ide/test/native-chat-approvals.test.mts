@@ -46,7 +46,7 @@ test('an approval requested by the writer is a card in the snapshot until the us
 	const s = await actingSession();
 	try {
 		const [card] = s.chat.snapshot().approvals!;
-		assert.deepEqual({ ...card, id: card.id.startsWith('ap-') && card.id.length <= 64 }, { id: true, kind: 'run', title: 'Ejecutar un comando', detail: CARD.detail, rule: 'run:pnpm test' });
+		assert.deepEqual({ ...card, id: card.id.startsWith('ap-') && card.id.length <= 64 }, { id: true, kind: 'run', title: 'Ejecutar un comando', detail: CARD.detail, rule: 'run:pnpm test', risk: 'medium' });
 		await s.chat.resolveApproval(card.id, 'once');
 		assert.deepEqual({ answer: await s.answer(), left: s.chat.snapshot().approvals, remembered: s.remembered, busy: s.chat.busy }, { answer: 'once', left: undefined, remembered: [], busy: true });
 		s.release(); await s.running;

@@ -617,12 +617,15 @@ let renderedApprovals = '';
 function renderApprovals(): void {
 	const box = document.getElementById('approvals');
 	const pending: any[] = state.chat?.approvals ?? [];
-	const key = pending.map(item => item.id).join(',');
+	const questions: any[] = state.chat?.questions ?? [];
+	const key = [...pending, ...questions].map(item => item.id).join(',');
 	if (key === renderedApprovals) { return; }
-	renderedApprovals = key; box.textContent = ''; box.hidden = !pending.length;
+	renderedApprovals = key; box.textContent = ''; box.hidden = !pending.length && !questions.length;
 	for (const item of pending) {
-		const card = el('div', 'approval'); card.setAttribute('role', 'group'); card.setAttribute('aria-labelledby', 'title-' + item.id); card.setAttribute('aria-describedby', 'rule-' + item.id);
+		const card = el('div', 'approval' + (item.risk ? ' risk-' + item.risk : '')); card.setAttribute('role', 'group'); card.setAttribute('aria-labelledby', 'title-' + item.id); card.setAttribute('aria-describedby', 'rule-' + item.id);
 		const title = el('strong', 'approval-title', item.title); title.id = 'title-' + item.id;
+		// What, where (detail lines), for how long (the buttons) and how risky: the four things a card must say.
+		const risk = el('p', 'approval-risk', item.risk ? L.risk[item.risk] ?? '' : ''); risk.id = 'risk-' + item.id; risk.hidden = !risk.textContent;
 		const detail = el('ul', 'approval-detail'); for (const line of item.detail) { detail.append(el('li', undefined, line)); }
 		// Without a rule the card says why it can only be allowed once, instead of silently hiding the other options.
 		const rule = el('p', 'muted approval-rule', item.rule ? format(L.alwaysRule, item.rule, L.permissionsFile) : (L.noRemember[item.noRemember] ?? '')); rule.id = 'rule-' + item.id;
@@ -634,12 +637,54 @@ function renderApprovals(): void {
 			button.addEventListener('click', () => { button.disabled = true; api.postMessage({ action: 'approval', id: item.id, answer }); });
 			actions.append(button);
 		}
-		card.append(title, detail, rule, actions); box.append(card);
+		card.append(title, risk, detail, rule, actions); box.append(card);
 	}
-	if (pending.length) {
-		document.getElementById('announcer').textContent = pending[0].title;
-		(box.querySelector('button') as HTMLButtonElement | null)?.focus();
+	for (const item of questions) { box.append(questionCard(item)); }
+	if (pending.length || questions.length) {
+		document.getElementById('announcer').textContent = pending.length ? pending[0].title : questions[0].questions[0].question;
+		(box.querySelector('button, input') as HTMLElement | null)?.focus();
 	}
+}
+/** One card per agent question set: options as radio buttons or checkboxes, an optional free answer, answer or skip. */
+function questionCard(item: { id: string; questions: any[] }): HTMLElement {
+	const card = el('form', 'approval question'); card.setAttribute('aria-label', L.questions);
+	const read: Array<() => string[]> = [];
+	item.questions.forEach((question, index) => {
+		const group = el('fieldset', 'question-group');
+		group.append(el('legend', 'approval-title', (question.header ? question.header + ': ' : '') + question.question));
+		const name = item.id + '-' + index;
+		const inputs: HTMLInputElement[] = [];
+		for (const option of question.options) {
+			const label = el('label', 'question-option');
+			const input = document.createElement('input'); input.type = question.multiSelect ? 'checkbox' : 'radio'; input.name = name; input.value = option.label;
+			label.append(input, document.createTextNode(' ' + option.label + (option.description ? ' \u2014 ' + option.description : '')));
+			inputs.push(input); group.append(label);
+		}
+		let other: HTMLInputElement | undefined;
+		if (question.allowOther) {
+			other = document.createElement('input'); other.type = question.secret ? 'password' : 'text'; other.placeholder = L.questionOther; other.setAttribute('aria-label', L.questionOther); other.maxLength = 2000;
+			group.append(other);
+		}
+		read.push(() => {
+			const chosen = inputs.filter(input => input.checked).map(input => input.value);
+			const free = other?.value.trim();
+			return free ? (question.multiSelect ? [...chosen, free] : [free]) : chosen;
+		});
+		card.append(group);
+	});
+	const actions = el('div', 'approval-actions');
+	const send = el('button', '', L.questionSend) as HTMLButtonElement; send.type = 'submit';
+	const skip = el('button', 'secondary', L.questionSkip) as HTMLButtonElement; skip.type = 'button';
+	skip.addEventListener('click', () => { skip.disabled = true; api.postMessage({ action: 'questionSkip', id: item.id }); });
+	card.addEventListener('submit', event => {
+		event.preventDefault();
+		const answers = Object.fromEntries(item.questions.map((question, index) => [question.id, read[index]()]));
+		if (Object.values(answers).some(values => !values.length)) { return; }
+		send.disabled = true;
+		api.postMessage({ action: 'question', id: item.id, answers });
+	});
+	actions.append(send, skip); card.append(actions);
+	return card;
 }
 function renderComposer(): void {
 	const running = busy();

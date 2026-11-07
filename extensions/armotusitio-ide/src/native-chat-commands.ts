@@ -47,7 +47,8 @@ export function quotaLines(quotas: readonly ProviderQuota[], t: CommandTranslato
 export function chatCommands(t: CommandTranslator): ChatCommand[] {
 	return [
 		{ name: 'ayuda', description: t('Lista los comandos disponibles.'), session: false },
-		{ name: 'permisos', usage: '[usuario|proyecto|quitar REGLA]', description: t('Muestra los permisos efectivos y tus reglas guardadas; con usuario o proyecto abre (o crea) su archivo JSON; con quitar revoca una regla tuya.'), session: true },
+		{ name: 'permisos', usage: '[usuario|proyecto|quitar REGLA|temporales quitar [REGLA]]', description: t('Muestra los permisos efectivos, tus reglas guardadas y los permisos temporales de esta sesi\u00f3n; con usuario o proyecto abre (o crea) su archivo JSON; con quitar revoca una regla tuya; con temporales quitar revoca permisos de esta tarea o sesi\u00f3n.'), session: true },
+		{ name: 'bifurcar', description: t('Contin\u00faa en una copia de la sesi\u00f3n nativa del proveedor; la original queda guardada sin cambios.'), session: true },
 		{ name: 'modo', usage: '[actuar|preguntar]', description: t('Muestra o cambia el modo del chat.'), session: true },
 		{ name: 'deshacer', description: t('Descarta los cambios de la \u00faltima ejecuci\u00f3n.'), session: true },
 		{ name: 'doctor', description: t('Revisa la m\u00e1quina y el proyecto (Node, gestor de paquetes, git, Docker, disco) y dice c\u00f3mo arreglar cada problema.'), session: true },
@@ -155,17 +156,24 @@ export async function runSessionCommand(deps: SessionCommandDeps, action: string
 				? t('Revoqu\u00e9 la regla \u00ab{0}\u00bb. Desde ahora esa acci\u00f3n vuelve a pedir permiso.', rule)
 				: t('No encontr\u00e9 la regla \u00ab{0}\u00bb en {1}.', rule, USER_FILE_LABEL);
 		}
-		if (words.length) { return t('Uso: /permisos [usuario|proyecto|quitar REGLA]'); }
+		if (target === 'temporales' && (words[1] ?? '').toLowerCase() === 'quitar') {
+			const rule = words.slice(2).join(' ');
+			const removed = session.revokeGrant(rule || undefined);
+			return removed ? t('Revoqu\u00e9 {0} permisos temporales. Esas acciones vuelven a pedir permiso.', String(removed)) : t('No hab\u00eda permisos temporales para revocar.');
+		}
+		if (words.length) { return t('Uso: /permisos [usuario|proyecto|quitar REGLA|temporales quitar [REGLA]]'); }
 		const set = await loadPermissions(root, home, t, { preset: deps.permissionsPreset() });
 		// Only the rules that apply here: global ones and this project's own section.
 		const key = projectKey(root);
 		const saved = (await listUserRules(home).catch(() => [])).filter(entry => !entry.project || entry.project === key);
 		const savedLines = saved.map(entry => '  ' + entry.decision + '  ' + entry.rule + '  (' + (entry.project ? t('este proyecto') : t('todos los proyectos')) + ')');
 		const files = [[USER_FILE_LABEL, path.join(home, '.armotusitio', 'permissions.json')], [PROJECT_FILE_LABEL, path.join(root, '.armotusitio', 'permissions.json')]] as const;
+		const grants = (session.broker?.list() ?? []).map(grant => '  ' + grant.rule + '  (' + (grant.scope === 'task' ? t('esta tarea') : t('esta sesi\u00f3n, hasta {0}', new Date(grant.expiresAt ?? 0).toLocaleTimeString())) + ')');
 		return [
 			t('Permisos efectivos:'), ...set.describe().map(line => '  ' + line),
 			...(set.warnings.length ? ['', t('Avisos:'), ...set.warnings.map(warning => '  ' + warning)] : []),
 			'', t('Tus reglas guardadas (revocalas con /permisos quitar REGLA):'), ...(savedLines.length ? savedLines : ['  ' + t('ninguna')]),
+			'', t('Permisos temporales de este chat (revocalos con /permisos temporales quitar [REGLA]):'), ...(grants.length ? grants : ['  ' + t('ninguno')]),
 			'', t('Archivos:'), ...await Promise.all(files.map(async ([label, file]) => '  ' + label + ' \u2014 ' + (await exists(file) ? t('existe') : t('no existe')))),
 			'', t('Reglas: run:<glob> (comando), edit:<glob> (borrar o mover archivos), git_commit, git_push, git_branch_create, git_pr_upsert (con :<ruta> valen solo para ese proyecto). Ejemplo: "run:pnpm test*". Gana deny, despu\u00e9s ask, despu\u00e9s allow; el archivo del proyecto solo puede agregar ask y deny.'),
 			t('Us\u00e1 /permisos usuario o /permisos proyecto para abrir o crear el archivo.')
@@ -179,6 +187,11 @@ export async function runSessionCommand(deps: SessionCommandDeps, action: string
 		if (words.length > 1 || !wanted) { return t('Uso: /modo [actuar|preguntar]'); }
 		await deps.setChatMode(wanted);
 		return t('Modo cambiado a {0}.', label(wanted));
+	}
+	if (action === 'bifurcar') {
+		try { await session.fork(); }
+		catch { return t('Bifurcar necesita el transporte nativo (atsHarness.agentTransport) y que no haya una tarea en curso.'); }
+		return t('Listo: los pr\u00f3ximos mensajes contin\u00faan una copia de la sesi\u00f3n.');
 	}
 	if (action === 'deshacer') {
 		await session.refreshContext();

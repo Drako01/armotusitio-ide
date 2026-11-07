@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 const root = path.dirname(fileURLToPath(import.meta.url));
 const suites = [
 	'native-chat-conformance', 'native-approve-tool', 'native-command-policy', 'native-permissions', 'native-runner-approval',
-	'native-chat-approvals', 'native-git-tools', 'native-git-delivery', 'native-chat-session', 'native-setup-check'
+	'native-chat-approvals', 'native-git-tools', 'native-git-delivery', 'native-chat-session', 'native-setup-check', 'native-runtime', 'native-runtime-units'
 ].map(name => path.join(root, 'test', name + '.test.mts'));
 
 const code = await new Promise<number | null>((resolve, reject) => {

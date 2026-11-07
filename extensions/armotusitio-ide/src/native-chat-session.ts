@@ -3,10 +3,13 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 /* One conversation per project. Sending only converses; code changes require approving the latest plan. */
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import type { AgentOutcome } from './native-agent-execution.ts';
 import { APPROVAL_ANSWERS, APPROVAL_TIMEOUT_MS, REMEMBERING_ANSWERS, type ApprovalDraft } from './native-approval.ts';
-import type { ApprovalAnswer, ApprovalRequest } from './native-permissions-types.ts';
+import type { ApprovalAnswer, ApprovalRequest, ApprovalRisk } from './native-permissions-types.ts';
+import { ApprovalBroker, type Grant } from './runtime/approval-broker.ts';
+import type { AgentQuestion, QuestionAnswers } from './runtime/contracts.ts';
+import type { RecoveryNotice } from './runtime/session-manager.ts';
 import type { DoctorCheck } from './native-machine-doctor.ts';
 import type { NativeProvider } from './native-providers.ts';
 import type { ProviderUsage } from './native-provider-output.ts';
@@ -19,7 +22,7 @@ import type { ActivityActionId, ActivityItem } from './native-activity-feed.ts';
 import type { RunDiffSummary, RunFileChange } from './native-run-diff.ts';
 import { summarizeSteps, upsertStep, type ChatStep } from './native-run-steps.ts';
 import {
-	buildContinuationInstruction, buildConversationInstruction, buildDirectInstruction, buildImplementationInstruction, chatMessage, DIRECT_PLAN_VERSION, directPlan, extractChatPlan, harnessErrorCode, latestPlanMessage, MAX_USER_MESSAGE_CHARS, pendingAlive, samePlanContent,
+	buildContinuationInstruction, buildConversationDelta, buildConversationInstruction, buildDirectInstruction, buildImplementationInstruction, chatMessage, DIRECT_PLAN_VERSION, directPlan, extractChatPlan, harnessErrorCode, latestPlanMessage, MAX_USER_MESSAGE_CHARS, pendingAlive, samePlanContent,
 	type ChatConversation, type ChatMessage, type ChatMode, type ChatPlan, type ChatProjectContext, type ChatRunSummary, type ChatStore, type GateSummary, type RunStatus
 } from './native-chat.ts';
 
@@ -34,6 +37,26 @@ export interface ChatRunHooks {
 	step?(step: ChatStep): void;
 	/** A tool needs the user's approval: resolves with the answer, or `deny` when the turn ends, is cancelled or nobody answers. */
 	approval?(request: ApprovalDraft): Promise<ApprovalAnswer>;
+	/** The agent asks the user (native transport): resolves with the answers, or `undefined` when nobody answers. */
+	question?(questions: AgentQuestion[]): Promise<QuestionAnswers | undefined>;
+	/** The native runtime recovered from something the user should know (a provider session that no longer exists). */
+	notice?(notice: RecoveryNotice): void;
+}
+/** What a turn tells the runtime about this conversation's native session. */
+export interface TurnTransport {
+	conversationId: string;
+	/** Chat message id this turn delivers; a completed turn makes it the session's `lastInputRef`. */
+	inputRef?: string;
+	/** Full instruction, used instead of a follow-up when the provider had to start a new session. */
+	fresh?: string;
+}
+/** Native transport state of one provider for this conversation (r8). */
+export interface TransportState {
+	native: boolean;
+	/** Chat message id of the last input the native session received in a completed turn. */
+	lastInputRef?: string;
+	/** Why the native transport is not used (incompatible CLI); shown once. */
+	reason?: string;
 }
 export interface ChatImplementHooks extends ChatRunHooks {
 	stage(stage: ImplementStage): void;
@@ -48,9 +71,13 @@ export interface ChatImplementOutcome {
 /** Engine boundary: the IDE provides the guarded implementation; tests provide a scripted one. */
 export interface ChatRuntime {
 	context(): Promise<ChatProjectContext>;
-	converse(provider: NativeProvider, instruction: string, hooks: ChatRunHooks, signal: AbortSignal): Promise<AgentOutcome>;
-	/** `resumeSession` continues the provider session of an earlier partial run (Claude only). */
-	implement(request: { provider: NativeProvider; instruction: string; plan: ChatPlan; verificationRevision?: string; resumeSession?: string }, hooks: ChatImplementHooks, signal: AbortSignal): Promise<ChatImplementOutcome>;
+	converse(provider: NativeProvider, instruction: string, hooks: ChatRunHooks, signal: AbortSignal, transport?: TurnTransport): Promise<AgentOutcome>;
+	/** `resumeSession` continues the provider session of an earlier partial run (Claude only, structured transport). */
+	implement(request: { provider: NativeProvider; instruction: string; plan: ChatPlan; verificationRevision?: string; resumeSession?: string; transport?: TurnTransport }, hooks: ChatImplementHooks, signal: AbortSignal): Promise<ChatImplementOutcome>;
+	/** Native transport state of `provider` for this conversation; absent or `native: false` means the structured transport. */
+	transport?(provider: NativeProvider, conversationId: string): Promise<TransportState>;
+	/** Fork the native session of `conversationId` into `newConversationId` (the original stays untouched). */
+	fork?(provider: NativeProvider, conversationId: string, newConversationId: string): Promise<void>;
 	/** Undo the files a run changed, under the same fence and lease as a writer; files the user touched are skipped. */
 	discard?(diff: RunDiffSummary): Promise<{ discarded: string[]; skipped: string[] }>;
 	/** Persists the rule of an "always allow" answer in the USER permissions file. */
@@ -90,6 +117,10 @@ export interface ChatSnapshot {
 	run?: { messageId: string; continuable: boolean; retryable: boolean; discardable: boolean };
 	/** Tool calls waiting for the user's answer; dropped (denied) when the turn ends or is cancelled. */
 	approvals?: ApprovalRequest[];
+	/** Questions the agent asked and the user has not answered yet; dropped (unanswered) when the turn ends. */
+	questions?: Array<{ id: string; questions: AgentQuestion[] }>;
+	/** Temporary grants of this project's chat (task and session), revocable from /permisos. */
+	grants?: Grant[];
 	writer: boolean;
 	/** Isolation of the selected provider's writer, for display next to the approval. */
 	isolation?: { writes: string; allowed: boolean };
@@ -135,6 +166,13 @@ export const MAX_QUEUED_MESSAGES = 5;
 const providerLabel = (provider: NativeProvider): string => provider === 'claude' ? 'Claude Code' : 'Codex';
 
 interface PendingApproval { request: ApprovalRequest; resolving?: boolean; settle(answer: ApprovalAnswer): void }
+interface PendingQuestion { questions: AgentQuestion[]; settle(answers: QuestionAnswers | undefined): void }
+
+/** What a wrong yes can do, by kind; a compound shell line or a sandbox escalation is always high. */
+function riskOf(draft: ApprovalDraft): ApprovalRisk {
+	if (draft.kind === 'sandbox' || draft.kind === 'git_push' || draft.kind === 'git_pr_upsert' || draft.detail.includes('shell: provider sandbox')) { return 'high'; }
+	return draft.kind === 'edit' || draft.kind === 'git_fetch' || draft.kind === 'git_branch_create' ? 'low' : 'medium';
+}
 /** Turn-only extras of a message (mentioned file content and its notice); a queued message keeps them until it runs. */
 interface SendAttachments { context?: string; notice?: string }
 
@@ -204,10 +242,9 @@ export class HarnessChatSession {
 	private loaded?: Promise<void>;
 	private revision = 0;
 	private readonly approvals = new Map<string, PendingApproval>();
-	/** Rules the user allowed for the current run ("esta tarea"); cleared when the run ends. */
-	private readonly taskGrants = new Set<string>();
-	/** Rules the user allowed until the IDE closes ("esta sesion"), in this project's conversation only. */
-	private readonly sessionGrants = new Set<string>();
+	private readonly questionCards = new Map<string, PendingQuestion>();
+	/** Task and session grants of this project's conversation only ("esta tarea", "esta sesi\u00f3n"). */
+	readonly broker: ApprovalBroker;
 	private readonly queue: Array<{ id: string; text: string; mode: ChatMode; attachments: SendAttachments }> = [];
 	/** The turn that just ended finished cleanly, so the queue may continue. */
 	private turnOk = false;
@@ -220,8 +257,8 @@ export class HarnessChatSession {
 	private readonly t: Translate;
 	private readonly defaultProvider: NativeProvider;
 
-	constructor(store: ChatStore, runtime: ChatRuntime, listener: (snapshot: ChatSnapshot) => void, t: Translate, defaultProvider: NativeProvider = 'claude') {
-		this.store = store; this.runtime = runtime; this.listener = listener; this.t = t; this.defaultProvider = defaultProvider;
+	constructor(store: ChatStore, runtime: ChatRuntime, listener: (snapshot: ChatSnapshot) => void, t: Translate, defaultProvider: NativeProvider = 'claude', broker = new ApprovalBroker()) {
+		this.store = store; this.runtime = runtime; this.listener = listener; this.t = t; this.defaultProvider = defaultProvider; this.broker = broker;
 	}
 
 	open(): Promise<void> {
@@ -238,7 +275,10 @@ export class HarnessChatSession {
 					? this.t('La ejecuci\u00f3n del plan v{0} se interrumpi\u00f3 porque el IDE se cerr\u00f3. Revis\u00e1 los cambios del workspace (por ejemplo con git status) y, si el lock qued\u00f3 tomado, us\u00e1 \u00abArmoTuSitio: Reconciliar lock compartido obsoleto\u00bb antes de reintentar.', String(entry.planVersion ?? '?'))
 					: this.t('La respuesta anterior se interrumpi\u00f3 porque el IDE se cerr\u00f3. Volv\u00e9 a enviar el mensaje.'), { tone: 'error' }));
 			}
-			if (recovered || interrupted.length) { await this.persist(); }
+			// r7 histories get their native-session identity on first load (r8).
+			const identified = !this.conversation.conversationId;
+			this.conversation.conversationId ??= randomUUID();
+			if (recovered || interrupted.length || identified) { await this.persist(); }
 			await this.refreshContext();
 			// Claude reports its limits only inside a run; Codex keeps them in its rollout files, readable right away.
 			await this.noteQuota('codex', undefined);
@@ -324,6 +364,8 @@ export class HarnessChatSession {
 			} : undefined,
 			...(this.queue.length ? { queue: this.queue.map(({ id, text }) => ({ id, text: text.slice(0, 200) })) } : {}),
 			...(this.approvals.size ? { approvals: [...this.approvals.values()].map(pending => pending.request) } : {}),
+			...(this.questionCards.size ? { questions: [...this.questionCards.entries()].map(([id, pending]) => ({ id, questions: pending.questions })) } : {}),
+			...(this.broker.list().length ? { grants: this.broker.list() } : {}),
 			writer,
 			isolation: this.context?.isolation?.[this.conversation.provider],
 			verification: this.context?.verification?.gates ?? []
@@ -365,7 +407,13 @@ export class HarnessChatSession {
 	/** Switching provider affects only future turns; a running turn keeps the provider it started with. */
 	async selectProvider(provider: NativeProvider): Promise<void> {
 		if (provider !== 'codex' && provider !== 'claude') { throw Error('HARNESS_PROVIDER_UNSUPPORTED'); }
+		const previous = this.conversation.provider;
 		this.conversation.provider = provider;
+		// A native session never moves between providers: the other one starts its own session with this conversation as
+		// explicit context, and the previous session stays resumable if the user switches back.
+		if (previous !== provider && this.conversation.messages.length && (await this.transportState(provider))?.native) {
+			this.conversation.messages.push(chatMessage('notice', this.t('Cambiaste a {0}: empieza su propia sesi\u00f3n y recibe el historial de esta conversaci\u00f3n como contexto. La sesi\u00f3n de {1} queda guardada si volv\u00e9s.', providerLabel(provider), providerLabel(previous)), { tone: 'info', provider }));
+		}
 		await this.persist();
 	}
 
@@ -374,10 +422,37 @@ export class HarnessChatSession {
 		this.queue.length = 0;
 		this.conversation.messages = [];
 		this.conversation.memory = undefined;
+		// A new conversation gets new native sessions; the old ones are never continued by mistake.
+		this.conversation.conversationId = randomUUID();
 		await this.persist({ replace: true });
 	}
 
+	/** Native transport state, or `undefined` when the runtime has none or cannot tell (then the turn is structured). */
+	private async transportState(provider: NativeProvider): Promise<TransportState | undefined> {
+		if (!this.runtime.transport || !this.conversation.conversationId) { return undefined; }
+		try { return await this.runtime.transport(provider, this.conversation.conversationId); }
+		catch { return undefined; }
+	}
+
+	/** Branch the native session of this conversation (Bifurcar): the provider forks it, the chat keeps its history. */
+	async fork(): Promise<void> {
+		if (this.activity) { throw Error('HARNESS_ALREADY_RUNNING'); }
+		if (!this.runtime.fork || !this.conversation.conversationId) { throw Error('HARNESS_FORK_UNAVAILABLE'); }
+		const next = randomUUID();
+		await this.runtime.fork(this.conversation.provider, this.conversation.conversationId, next);
+		this.conversation.conversationId = next;
+		this.conversation.messages.push(chatMessage('notice', this.t('Bifurcaste la sesi\u00f3n de {0}: los pr\u00f3ximos mensajes contin\u00faan una copia; la sesi\u00f3n original queda guardada sin cambios.', providerLabel(this.conversation.provider)), { tone: 'info', provider: this.conversation.provider }));
+		await this.persist();
+	}
+
 	cancel(): void { this.denyApprovals(); this.cancelActive?.(); }
+
+	/** Revoke one temporary grant (or all of them); the next matching action asks again. */
+	revokeGrant(rule?: string): number {
+		const removed = this.broker.revoke(rule);
+		if (removed) { this.emit(); }
+		return removed;
+	}
 
 	/** The user's answer to a pending approval card. A stale id (the turn already ended) is ignored. */
 	async resolveApproval(id: string, answer: ApprovalAnswer): Promise<void> {
@@ -397,8 +472,8 @@ export class HarnessChatSession {
 				this.conversation.messages.push(chatMessage('notice', this.t('No se pudo guardar la regla \u00ab{0}\u00bb; se permiti\u00f3 solo esta vez.', redactSecrets(pending.request.rule)), { tone: 'error' }));
 			}
 		}
+		this.broker.record(pending.request.rule, final, this.activity?.provider);
 		if (final === 'task' || final === 'session') {
-			(final === 'task' ? this.taskGrants : this.sessionGrants).add(pending.request.rule);
 			this.conversation.messages.push(chatMessage('notice', final === 'task'
 				? this.t('Permitido hasta que termine esta tarea: \u00ab{0}\u00bb.', redactSecrets(pending.request.rule))
 				: this.t('Permitido hasta que cierres el IDE, en este proyecto: \u00ab{0}\u00bb.', redactSecrets(pending.request.rule)), { tone: 'info' }));
@@ -410,24 +485,58 @@ export class HarnessChatSession {
 	private requestApproval(draft: ApprovalDraft): Promise<ApprovalAnswer> {
 		if (!this.activity || this.activity.cancelling || this.approvals.size >= 8) { return Promise.resolve('deny'); }
 		// Already allowed for this run or this session: no card, the same answer as before.
-		if (draft.rule && (this.taskGrants.has(draft.rule) || this.sessionGrants.has(draft.rule))) { return Promise.resolve('once'); }
+		if (draft.rule && this.broker.covers(draft.rule, this.activity.provider)) { return Promise.resolve('once'); }
 		const id = 'ap-' + randomBytes(8).toString('hex');
 		const titles: Record<ApprovalDraft['kind'], string> = {
 			run: this.t('Ejecutar un comando'), edit: this.t('Borrar o mover archivos del proyecto'), git_commit: this.t('Hacer commit'), git_push: this.t('Hacer push'),
-			git_branch_create: this.t('Crear una rama'), git_pr_upsert: this.t('Crear o actualizar un pull request'), git_fetch: this.t('Traer cambios del remoto (fetch)')
+			git_branch_create: this.t('Crear una rama'), git_pr_upsert: this.t('Crear o actualizar un pull request'), git_fetch: this.t('Traer cambios del remoto (fetch)'),
+			sandbox: this.t('Ampliar los permisos del sandbox')
 		};
 		const title = titles[draft.kind];
 		return new Promise<ApprovalAnswer>(resolve => {
 			const timer = setTimeout(() => this.settleApproval(id, 'deny'), APPROVAL_TIMEOUT_MS);
 			timer.unref();
-			this.approvals.set(id, { request: { ...draft, id, title }, settle: answer => { clearTimeout(timer); this.approvals.delete(id); resolve(answer); this.emit(); } });
+			this.approvals.set(id, { request: { ...draft, id, title, risk: riskOf(draft) }, settle: answer => { clearTimeout(timer); this.approvals.delete(id); resolve(answer); this.emit(); } });
 			this.emit();
 		});
 	}
 
 	private settleApproval(id: string, answer: ApprovalAnswer): void { this.approvals.get(id)?.settle(answer); }
 
-	private denyApprovals(): void { for (const id of [...this.approvals.keys()]) { this.settleApproval(id, 'deny'); } }
+	private denyApprovals(): void {
+		for (const id of [...this.approvals.keys()]) { this.settleApproval(id, 'deny'); }
+		for (const pending of [...this.questionCards.values()]) { pending.settle(undefined); }
+	}
+
+	/** The agent asks; the card stays until the user answers, the turn ends or the approval timeout passes. */
+	private requestQuestion(questions: AgentQuestion[]): Promise<QuestionAnswers | undefined> {
+		if (!this.activity || this.activity.cancelling || this.questionCards.size >= 4 || !questions.length) { return Promise.resolve(undefined); }
+		const id = 'qu-' + randomBytes(8).toString('hex');
+		return new Promise(resolve => {
+			const timer = setTimeout(() => this.questionCards.get(id)?.settle(undefined), APPROVAL_TIMEOUT_MS);
+			timer.unref();
+			this.questionCards.set(id, { questions, settle: answers => { clearTimeout(timer); this.questionCards.delete(id); resolve(answers); this.emit(); } });
+			this.emit();
+		});
+	}
+
+	/** The user chose not to answer: the agent is told so and decides by itself. */
+	skipQuestion(id: string): void { this.questionCards.get(id)?.settle(undefined); }
+
+	/** The user's answers to a question card; a stale id, a missing answer or an unknown option is ignored. */
+	resolveQuestion(id: string, answers: QuestionAnswers): void {
+		const pending = this.questionCards.get(id);
+		if (!pending || !answers || typeof answers !== 'object') { return; }
+		const clean: QuestionAnswers = {};
+		for (const question of pending.questions) {
+			const given = answers[question.id];
+			if (!Array.isArray(given) || !given.length || given.length > Math.max(1, question.options.length) || !given.every(value => typeof value === 'string' && value.trim() && value.length <= 2000)) { return; }
+			if (!question.multiSelect && given.length > 1) { return; }
+			if (!question.allowOther && !given.every(value => question.options.some(option => option.label === value))) { return; }
+			clean[question.id] = given.map(value => value.trim());
+		}
+		pending.settle(clean);
+	}
 
 	/** Local, non-AI entries (slash command results, environment warnings) shown in the same timeline. */
 	async note(body: string, tone: 'info' | 'error' = 'info'): Promise<void> {
@@ -477,9 +586,17 @@ export class HarnessChatSession {
 				return;
 			}
 			const current = latestPlanMessage(this.conversation.messages)?.plan;
-			const instruction = withAttachments(buildConversationInstruction(this.conversation.messages, this.context, current, this.conversation.memory));
+			const userMessageId = this.conversation.messages.at(-1)!.id;
+			const full = buildConversationInstruction(this.conversation.messages, this.context, current, this.conversation.memory);
+			// A persistent native session already holds the rules and the history it received: send only what is newer.
+			const native = await this.transportState(provider);
+			const delta = native?.native && native.lastInputRef ? buildConversationDelta(this.conversation.messages, this.context, native.lastInputRef, current) : undefined;
+			const instruction = withAttachments(delta ?? full);
+			const transport: TurnTransport | undefined = native?.native
+				? { conversationId: this.conversation.conversationId!, inputRef: userMessageId, ...(delta ? { fresh: attachments.context ? full + '\n\n' + attachments.context : full } : {}) }
+				: undefined;
 			if (controller.signal.aborted) { throw Error('HARNESS_CANCELLED_BEFORE_START'); }
-			const outcome = await this.runtime.converse(provider, instruction, hooks, controller.signal);
+			const outcome = await this.runtime.converse(provider, instruction, hooks, controller.signal, transport);
 			this.noteUsage(provider, outcome.usage);
 			await this.noteQuota(provider, outcome.quota);
 			this.turnOk = outcome.status === 'passed' && !!outcome.output.trim();
@@ -567,9 +684,11 @@ export class HarnessChatSession {
 		const previous = this.conversation.messages.find(message => message.id === messageId)?.run;
 		if (!plan || !previous || state.run?.messageId !== messageId || !state.run.continuable || !this.context) { throw Error('HARNESS_CHAT_RUN_NOT_CONTINUABLE'); }
 		const provider = this.conversation.provider;
-		const resumeSession = provider === 'claude' && previous.provider === 'claude' ? previous.outcome?.sessionId : undefined;
+		// A native session of the same provider still holds the partial run; the structured transport resumes Claude by id.
+		const native = (await this.transportState(provider))?.native && previous.provider === provider;
+		const resumeSession = !native && provider === 'claude' && previous.provider === 'claude' ? previous.outcome?.sessionId : undefined;
 		this.conversation.messages.push(chatMessage('notice', this.t('Continuando el plan v{0} con {1}.', String(plan.version), providerLabel(provider)), { tone: 'info', provider }));
-		await this.execute(plan, provider, buildContinuationInstruction(plan, previous, this.conversation.messages, !!resumeSession, this.context), { resumeSession, continued: true });
+		await this.execute(plan, provider, buildContinuationInstruction(plan, previous, this.conversation.messages, !!resumeSession || !!native, this.context), { resumeSession, continued: true });
 	}
 
 	/** "Descartar cambios de esta corrida": only the files the run changed and nobody touched since; reported file by file. */
@@ -609,7 +728,10 @@ export class HarnessChatSession {
 				stage: stage => { if (this.activity) { this.activity.stage = stage; this.emit(); } },
 				gates: gates => { if (this.activity) { this.activity.gates = gates; this.emit(); } }
 			};
-			const result = await this.runtime.implement({ provider, instruction, plan, verificationRevision: context.verification?.revision, ...(options.resumeSession ? { resumeSession: options.resumeSession } : {}) }, hooks, controller.signal);
+			// A native writer turn continues the conversation's session; everything up to the latest message is in its input.
+			const native = !options.resumeSession && (await this.transportState(provider))?.native;
+			const transport: TurnTransport | undefined = native ? { conversationId: this.conversation.conversationId!, inputRef: this.conversation.messages.at(-1)?.id } : undefined;
+			const result = await this.runtime.implement({ provider, instruction, plan, verificationRevision: context.verification?.revision, ...(options.resumeSession ? { resumeSession: options.resumeSession } : {}), ...(transport ? { transport } : {}) }, hooks, controller.signal);
 			this.noteUsage(provider, result.agent.usage);
 			await this.noteQuota(provider, result.agent.quota);
 			// The agent result decides first; a passing agent is only as good as its verification.
@@ -650,13 +772,20 @@ export class HarnessChatSession {
 			progress: observedBytes => { if (this.activity) { this.activity.observedBytes = observedBytes; this.emit(); } },
 			message: text => { if (this.activity) { this.activity.partial = text.length > 8000 ? text.slice(-8000) : text; this.emit(); } },
 			step: step => { if (this.activity) { this.activity.steps = upsertStep(this.activity.steps ?? [], step); this.emit(); } },
-			approval: request => this.requestApproval(request)
+			approval: request => this.requestApproval(request),
+			question: questions => this.requestQuestion(questions),
+			notice: notice => {
+				// Only what changes the user's picture is shown: a provider session that had to start over.
+				if (notice.kind !== 'new-session') { return; }
+				this.conversation.messages.push(chatMessage('notice', this.t('La sesi\u00f3n anterior ya no existe en el proveedor: empez\u00f3 una nueva con el historial de esta conversaci\u00f3n como contexto.'), { tone: 'info', provider: this.activity?.provider }));
+				this.emit();
+			}
 		};
 	}
 
 	private finish(): void {
 		this.denyApprovals();
-		this.activity = undefined; this.cancelActive = undefined; this.conversation.pending = undefined; this.taskGrants.clear();
+		this.activity = undefined; this.cancelActive = undefined; this.conversation.pending = undefined; this.broker.endTask();
 	}
 
 	private errorNotice(error: unknown): string { return describeFailure(this.t, error); }
