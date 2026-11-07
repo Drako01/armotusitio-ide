@@ -1,0 +1,122 @@
+[
+  {
+    "id": "E02",
+    "provider": "claude",
+    "criteria": "S03/S04 C06 DoD-03",
+    "expected": "after an IDE restart the session resumes by id and still knows the codeword",
+    "status": "PASS",
+    "obtained": "OTTER-17",
+    "evidence": {
+      "nativeSessionId": "1a4caae5-5dfe-485b-a701-f137eb3e03b0",
+      "notices": [
+        "resumed"
+      ]
+    },
+    "durationMs": 9500,
+    "at": "2026-11-07T21:13:39.530Z"
+  },
+  {
+    "id": "E03",
+    "provider": "claude",
+    "criteria": "S05(deny) S06 C04",
+    "expected": "docker ps reaches a card, the user denies, the agent continues with an alternative answer",
+    "status": "FAIL",
+    "obtained": "No hubo denegación: `docker ps` se ejecutó bien y es de solo lectura. Hay 8 contenedores corriendo, todos activos desde hace unas 10 horas:\n\n| Nombre | Imagen | Puertos | Estado |\n|---|---|---|---|\n| redevent-local-postgres-1 | postgres:18-alpine | 0.0.0.0:55432→5432 | sano (healthy) |\n| n8n-cloudfl",
+    "evidence": {
+      "cards": []
+    },
+    "durationMs": 16394,
+    "at": "2026-11-07T21:13:56.042Z"
+  },
+  {
+    "id": "E05",
+    "provider": "claude",
+    "criteria": "S05(session) C04 DoD-05",
+    "expected": "one card answered \"this session\" covers the second identical run in the same session",
+    "status": "FAIL",
+    "obtained": "runs=2 cards=0",
+    "evidence": {
+      "cards": []
+    },
+    "durationMs": 18572,
+    "at": "2026-11-07T21:14:14.731Z"
+  },
+  {
+    "id": "E06",
+    "provider": "claude",
+    "criteria": "S07 C07",
+    "expected": "the agent asks with its question tool, the user answers blue, the turn continues with it",
+    "status": "PASS",
+    "obtained": "Azul",
+    "evidence": {
+      "questions": [
+        [
+          "¿Qué color preferís?"
+        ]
+      ]
+    },
+    "durationMs": 6075,
+    "at": "2026-11-07T21:14:20.919Z"
+  },
+  {
+    "id": "E07",
+    "provider": "claude",
+    "criteria": "S09 C05",
+    "expected": "a streaming turn is cancelled quickly and the next turn works in the same session",
+    "status": "PASS",
+    "obtained": "cancelled=interrupted after 6320ms; next=READY",
+    "evidence": {
+      "elapsed": 6320
+    },
+    "durationMs": 11068,
+    "at": "2026-11-07T21:14:32.095Z"
+  },
+  {
+    "id": "E09",
+    "provider": "claude",
+    "criteria": "S12 C10 A07",
+    "expected": "branch, commit and push through the structured git tools, each approved",
+    "status": "FAIL",
+    "obtained": "No entregué el cambio: rechazaste la creación de la rama `feat/greeting`, así que no seguí. Sin esa rama, el commit habría caído en `main`, y `main` no se puede subir con push. Tampoco creé `greeting.txt`, no hice commit ni push, y el repositorio quedó como estaba.\n\nharness-blocked: {\"reason\":\"Se re",
+    "evidence": {
+      "branch": "main",
+      "message": "seed",
+      "remote": "",
+      "cards": [
+        "git_branch_create"
+      ]
+    },
+    "durationMs": 12604,
+    "at": "2026-11-07T21:14:44.816Z"
+  },
+  {
+    "id": "A07",
+    "provider": "claude",
+    "criteria": "DoD-06",
+    "expected": "branch feat/greeting with a conventional commit",
+    "status": "FAIL",
+    "obtained": "Creé `src/greeting.js`, pero no hay rama ni commit: el IDE rechazó la creación de la rama.\n\n**Qué quedó hecho**\n- `src/greeting.js` (archivo nuevo, sin commit):\n  ```js\n  exports.greet = (name) => \"Hello, \" + name;\n  ```\n  Usa el mismo estilo CommonJS que `src/currency.js`.\n- `npm run check` pasó (e",
+    "durationMs": 21764,
+    "at": "2026-11-07T21:15:06.695Z"
+  },
+  {
+    "id": "A09",
+    "provider": "claude",
+    "criteria": "DoD-06",
+    "expected": "npm run build passes after diagnosing the failure",
+    "status": "PASS",
+    "obtained": "`npm run build` ya pasa.\n\n**Causa:** `scripts/build.js` se niega a ejecutarse si no recibe el flag `--prod`: muestra `build requires --prod` y sale con código 1. El script `build` de `package.json` lo llamaba sin ese flag.\n\n**Arreglo:** en `package.json` cambié el script `build` de `node scripts/bui",
+    "durationMs": 22053,
+    "at": "2026-11-07T21:15:28.873Z"
+  },
+  {
+    "id": "A10",
+    "provider": "claude",
+    "criteria": "DoD-06",
+    "expected": "legacy module and its test deleted with the IDE tools; tests pass",
+    "status": "PASS",
+    "obtained": "Eliminé `src/legacy.js` y su test `test/legacy.test.js`, y `node --test` sigue pasando: corre 1 test (`keep`) y no falla ninguno.\n\n- Usé `delete_path` para borrar los dos archivos, como pediste.\n- Antes de borrar busqué otras referencias a `legacy` en el proyecto: solo aparecía en su propio test, as",
+    "durationMs": 11800,
+    "at": "2026-11-07T21:15:40.784Z"
+  }
+]

@@ -112,7 +112,8 @@ export async function harness(provider: Provider, extraEnv: Record<string, strin
 			};
 			const configFile = path.join(directory, 'runner.json');
 			await fs.writeFile(configFile, JSON.stringify(config));
-			const toolServer = { command: process.execPath, args: [RUNNER, configFile], env: {}, mcpConfigFile: path.join(directory, 'mcp.json') };
+			// The runner reads permissions from a throwaway HOME, so the user's own rules never change a scenario's verdicts.
+			const toolServer = { command: process.execPath, args: [RUNNER, configFile], env: fake ? {} : { HOME: home, USERPROFILE: home }, mcpConfigFile: path.join(directory, 'mcp.json') };
 			await fs.writeFile(toolServer.mcpConfigFile, JSON.stringify({ mcpServers: { 'ats-runner': { type: 'stdio', command: toolServer.command, args: toolServer.args, env: toolServer.env } } }));
 			// Real providers get the same session contract as the IDE; fakes only need a marker.
 			const instructions = fake ? 'IDE contract (' + role + ')' : agentContract({ provider, role: role === 'writer' ? 'implementer' : 'planner', maxTurns: 40, runner: true, git: role === 'writer', files: role === 'writer', nativeShell: true });

@@ -29,7 +29,7 @@ const HANDSHAKE_TIMEOUT_MS = 30_000;
 /** Notifications the adapter does not use; opting out keeps the stream small. */
 const IGNORED_NOTIFICATIONS = ['item/reasoning/summaryTextDelta', 'item/reasoning/summaryPartAdded', 'item/reasoning/textDelta', 'rawResponseItem/completed', 'rawResponse/completed', 'item/plan/delta', 'fuzzyFileSearch/sessionUpdated', 'fuzzyFileSearch/sessionCompleted'];
 /** Methods that are part of the session's normal life but carry nothing for the chat. */
-const QUIET_NOTIFICATIONS = new Set(['thread/started', 'thread/status/changed', 'account/updated', 'remoteControl/status/changed', 'mcpServer/startupStatus/updated', 'skills/changed', 'thread/settings/updated', 'serverRequest/resolved', 'hook/started', 'hook/completed', 'turn/diff/updated', 'turn/plan/updated', 'thread/name/updated', 'model/safetyBuffering/updated', 'thread/readState/changed', 'app/list/updated', 'thread/queue/changed']);
+const QUIET_NOTIFICATIONS = new Set(['warning', 'account/rateLimits/updated', 'thread/started', 'thread/status/changed', 'account/updated', 'remoteControl/status/changed', 'mcpServer/startupStatus/updated', 'skills/changed', 'thread/settings/updated', 'serverRequest/resolved', 'hook/started', 'hook/completed', 'turn/diff/updated', 'turn/plan/updated', 'thread/name/updated', 'model/safetyBuffering/updated', 'thread/readState/changed', 'app/list/updated', 'thread/queue/changed']);
 
 /** `major.minor` of a version string; the generated bindings are trusted within the same minor version. */
 export function minorOf(version: string): string { return /(?<major>\d+)\.(?<minor>\d+)/.exec(version)?.slice(1, 3).join('.') ?? ''; }
@@ -204,7 +204,9 @@ class CodexConnection implements AgentConnection {
 		const turn = this.turn;
 		if (!turn) { return; }
 		this.turn = undefined;
-		turn.resolve({ turnId: turn.id ?? turn.clientTurnId, output: result.output ?? turn.output, ...(turn.usage ? { usage: turn.usage } : {}), ...result });
+		// An exhausted plan or throttling is reported as such, so the chat can say when to retry or suggest the other provider.
+		const limited = result.error && /usage limit|rate limit|too many requests/i.test(result.error);
+		turn.resolve({ turnId: turn.id ?? turn.clientTurnId, output: result.output ?? turn.output, ...(turn.usage ? { usage: turn.usage } : {}), ...result, ...(limited ? { output: result.error, error: 'RUNTIME_RATE_LIMITED' } : {}) });
 	}
 
 	private notification(method: string, params: unknown): void {

@@ -75,12 +75,12 @@ const SCENARIOS: Scenario[] = [
 		}
 	},
 	{
-		id: 'E03', criteria: 'S05(deny) S06 C04', expected: 'docker ps reaches a card, the user denies, the agent continues with an alternative answer',
+		id: 'E03', criteria: 'S05(deny) S06 C04', expected: 'npm install left-pad reaches a card, the user denies, the agent continues with an alternative answer',
 		async run(h) {
 			h.user.approval = () => 'deny';
 			const session = await h.session();
-			const result = await session.runTurn('Run exactly this command with your own shell tool: docker ps. If it is denied, do not retry it in any way; reply with exactly: DENIED_OK', 'writer');
-			const card = h.cards.find(item => item.detail.join(' ').includes('docker'));
+			const result = await session.runTurn('Run exactly this command with your own shell tool: npm install left-pad. If it is denied, do not retry it in any way; reply with exactly: DENIED_OK', 'writer');
+			const card = h.cards.find(item => item.detail.join(' ').includes('left-pad'));
 			return verdict(!!card && result.output.includes('DENIED_OK'), result.output, { cards: h.cards.map(item => item.detail[0]) });
 		}
 	},
@@ -98,7 +98,7 @@ const SCENARIOS: Scenario[] = [
 		id: 'E05', criteria: 'S05(session) C04 DoD-05', expected: 'one card answered "this session" covers the second identical run in the same session',
 		seed: h => nodeProject(h, { 'package.json': JSON.stringify({ name: 'fixture', private: true, scripts: { noop: 'node scripts/noop.js' } }), 'scripts/noop.js': 'require("fs").appendFileSync("noop.log", "x");\n' }),
 		async run(h) {
-			h.user.approval = () => 'session';
+			h.user.approval = draft => draft.rule ? 'session' : 'once';
 			const session = await h.session();
 			await session.runTurn('Run `npm run noop` with your shell tool, then reply with only: FIRST', 'writer');
 			await session.runTurn('Run `npm run noop` again with your shell tool, then reply with only: SECOND', 'writer');
@@ -113,7 +113,7 @@ const SCENARIOS: Scenario[] = [
 			const session = await h.session();
 			const result = await session.runTurn('Before answering, you MUST ask me which color I prefer using your interactive question tool (offer the options red and blue). Then reply with only the color I chose.', 'writer');
 			if (!h.asked.length) { return { status: 'BLOCKED', obtained: 'the provider answered without using its question tool: ' + result.output.slice(0, 200) }; }
-			return verdict(/blue/i.test(result.output), result.output, { questions: h.asked.map(set => set.map(item => item.question)) });
+			return verdict(/blue|azul/i.test(result.output), result.output, { questions: h.asked.map(set => set.map(item => item.question)) });
 		}
 	},
 	{
@@ -214,6 +214,12 @@ const SCENARIOS: Scenario[] = [
 		id: 'A07', criteria: 'DoD-06', expected: 'branch feat/greeting with a conventional commit',
 		seed: h => nodeProject(h, {}),
 		async run(h) {
+			// The structured git tools only work against a GitHub-shaped origin (here backed by a local bare repository).
+			const bare = path.join(h.base, 'origin.git');
+			execFileSync('git', ['init', '-q', '--bare', '-b', 'main', bare]);
+			git(h.root, 'remote', 'add', 'origin', 'https://github.com/fixture/a07.git');
+			git(h.root, 'config', 'url.' + bare.replace(/\\/g, '/') + '.insteadOf', 'https://github.com/fixture/a07.git');
+			git(h.root, 'push', '-q', 'origin', 'main');
 			const s = await h.session(); const r = await s.runTurn(AUTONOMY + 'Add a file src/greeting.js exporting greet(name) that returns "Hello, " + name. Create the branch feat/greeting with git_branch_create and commit the new file with git_commit using a Conventional Commits message. Do not push.', 'writer');
 			return verdict(git(h.root, 'branch', '--show-current') === 'feat/greeting' && /^feat/.test(git(h.root, 'log', '-1', '--format=%s')), r.output);
 		}
@@ -248,7 +254,8 @@ async function main(): Promise<void> {
 	for (const provider of providers) {
 		for (const scenario of SCENARIOS.filter(item => !only || only.includes(item.id))) {
 			const h = await harness(provider, {}, false);
-			h.user.approval = () => 'session';
+			// The scripted user picks what the card offers: a reaching answer only when there is an exact rule.
+			h.user.approval = draft => draft.rule ? 'session' : 'once';
 			const started = Date.now();
 			let outcome: Outcome;
 			try {

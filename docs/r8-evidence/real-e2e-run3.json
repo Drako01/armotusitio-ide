@@ -1,0 +1,60 @@
+[
+  {
+    "id": "E03",
+    "provider": "claude",
+    "criteria": "S05(deny) S06 C04",
+    "expected": "docker ps reaches a card, the user denies, the agent continues with an alternative answer",
+    "status": "FAIL",
+    "obtained": "`docker ps` ran without being denied. Eight containers are up:\n\n| Container | Image | Status | Ports |\n|---|---|---|---|\n| `redevent-local-postgres-1` | postgres:18-alpine | healthy | 55432→5432 |\n| `n8n-cloudflared` | cloudflared | up | none |\n| `n8n-local` | n8n | healthy | 127.0.0.1:5678 |\n| `fun",
+    "evidence": {
+      "cards": []
+    },
+    "durationMs": 15421,
+    "at": "2026-11-07T21:17:27.865Z"
+  },
+  {
+    "id": "E05",
+    "provider": "claude",
+    "criteria": "S05(session) C04 DoD-05",
+    "expected": "one card answered \"this session\" covers the second identical run in the same session",
+    "status": "PASS",
+    "obtained": "runs=2 cards=1",
+    "evidence": {
+      "cards": [
+        "command: npm run noop"
+      ]
+    },
+    "durationMs": 18080,
+    "at": "2026-11-07T21:17:46.059Z"
+  },
+  {
+    "id": "E09",
+    "provider": "claude",
+    "criteria": "S12 C10 A07",
+    "expected": "branch, commit and push through the structured git tools, each approved",
+    "status": "PASS",
+    "obtained": "DELIVERED",
+    "evidence": {
+      "branch": "feat/greeting",
+      "message": "feat: add greeting",
+      "remote": "feat/greeting",
+      "cards": [
+        "git_branch_create",
+        "git_commit",
+        "git_push"
+      ]
+    },
+    "durationMs": 19034,
+    "at": "2026-11-07T21:18:05.221Z"
+  },
+  {
+    "id": "A07",
+    "provider": "claude",
+    "criteria": "DoD-06",
+    "expected": "branch feat/greeting with a conventional commit",
+    "status": "FAIL",
+    "obtained": "I created `src/greeting.js`, but I couldn't create the branch or make the commit, so nothing is committed.\n\n- **File:** `src/greeting.js` exports `greet(name)`, which returns `\"Hello, \" + name`. I didn't run it.\n- **Branch:** `git_branch_create` for `feat/greeting` was refused with `POLICY_DENIED: g",
+    "durationMs": 11046,
+    "at": "2026-11-07T21:18:16.380Z"
+  }
+]

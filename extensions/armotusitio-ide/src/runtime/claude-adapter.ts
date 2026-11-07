@@ -122,6 +122,8 @@ class ClaudeConnection implements AgentConnection {
 			'--print', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', ...identity,
 			...(options.model ? ['--model', options.model] : []), ...(options.effort ? ['--effort', options.effort] : []),
 			...(runner ? ['--mcp-config', options.toolServer!.mcpConfigFile, '--strict-mcp-config'] : []),
+			// No user, project or local Claude settings: their allow rules would approve tools without the IDE ever being asked.
+			'--setting-sources', '',
 			// Questions and permission prompts reach the IDE in both roles; a conversation still cannot edit or run commands.
 			...(runner ? ['--permission-prompts', 'host', '--permission-prompt-tool', RUNNER + '__approve'] : []),
 			...claudeToolArgs({ readOnly: !writer, runner, native: writer && runner, webSearch: options.webSearch }),
@@ -129,7 +131,8 @@ class ClaudeConnection implements AgentConnection {
 			// The appended system prompt is not part of the stored transcript: every process of the session gets it again.
 			...(options.instructions ? ['--append-system-prompt', options.instructions] : [])
 		];
-		const env: NodeJS.ProcessEnv = { ...options.env, CLAUDE_CODE_SKIP_PROMPT_HISTORY: '1' };
+		// A native session must be stored by the CLI to be resumable, so prompt history is not skipped here (r7 one-shot runs still skip it).
+		const env: NodeJS.ProcessEnv = { ...options.env };
 		const child = await startProviderProcess('claude', args, options.identity.root, env);
 		this.process = child;
 		this.buffer = ''; this.decoder = new StringDecoder('utf8');
