@@ -14,10 +14,11 @@ import { runCommand, MAX_COMMAND_TIMEOUT_SEC } from './native-command-runner.ts'
 import { callToolChannel } from './native-tool-server.ts';
 import { EDITOR_TOOLS } from './native-editor-tools.ts';
 import { secretVariants } from './native-dev-secrets.ts';
-import { channelApprover, requestApproval, type ApprovalAsk } from './native-approval.ts';
+import { APPROVAL_TIMEOUT_MS, channelApprover, requestApproval, type ApprovalAsk } from './native-approval.ts';
 import { GIT_TOOLS, endsGitDelivery, handleGitTool } from './native-git-tools.ts';
 import { FILE_TOOLS, handleFileTool } from './native-file-tools.ts';
-import { APPROVE_TOOL, decidePermissionPrompt, type PromptDecision } from './native-approve-tool.ts';
+import { APPROVE_TOOL, decidePermissionPrompt, type ApproveContext, type PromptDecision } from './native-approve-tool.ts';
+import type { QuestionAnswers } from './runtime/contracts.ts';
 import { loadPermissions, type PermissionSet } from './native-permissions.ts';
 import type { PermissionPreset } from './native-permissions-types.ts';
 import { projectPermissionsDigest } from './native-run-integrity.ts';
@@ -44,6 +45,11 @@ export interface RunnerConfig {
 	files?: boolean;
 	/** Offers `approve`, Claude's permission prompt tool (native transport pilot); set only for runs that can ask the user. */
 	approve?: boolean;
+	/**
+	 * A long-lived native session (r8): refusals and the command budget last one turn, not the whole process. The extension
+	 * names the current turn through the channel (`epoch`); an unreadable epoch never matches, so nothing is forgotten early.
+	 */
+	turnEpochs?: boolean;
 	/** Integrity snapshots captured by the extension before the provider starts. */
 	projectPermissionsBaseline?: string;
 	repoBaseline?: string;
@@ -51,11 +57,16 @@ export interface RunnerConfig {
 }
 
 /** Seams for tests; in production the permissions come from the files and approvals from the channel. */
-export interface RunnerDeps { permissions?: PermissionSet; ask?: ApprovalAsk }
+export interface RunnerDeps { permissions?: PermissionSet; ask?: ApprovalAsk; question?: ApproveContext['question'] }
 
 const loadRunnerPermissions = (config: RunnerConfig, deps: RunnerDeps): Promise<PermissionSet> =>
 	deps.permissions ? Promise.resolve(deps.permissions) : loadPermissions(config.root, undefined, undefined, { preset: config.permissions?.preset });
 const approverOf = (config: RunnerConfig, deps: RunnerDeps): ApprovalAsk | undefined => deps.ask ?? (config.channel ? channelApprover(config.channel) : undefined);
+/** Agent questions go to the extension like approvals; anything but a well-formed answer is `undefined` (not answered). */
+const questionerOf = (config: RunnerConfig, deps: RunnerDeps): ApproveContext['question'] => deps.question ?? (config.channel ? async questions => {
+	const answer = await callToolChannel(config.channel!.address, config.channel!.token, 'question', { questions }, APPROVAL_TIMEOUT_MS + 5000);
+	return answer && typeof answer === 'object' && !Array.isArray(answer) && Object.values(answer).every(value => Array.isArray(value) && value.every(item => typeof item === 'string')) ? answer as QuestionAnswers : undefined;
+} : undefined);
 
 const permissionsUntouched = async (config: RunnerConfig): Promise<boolean> => config.projectPermissionsBaseline === undefined ||
 	(config.projectPermissionsBaseline !== 'unreadable' && await projectPermissionsDigest(config.root) === config.projectPermissionsBaseline);
@@ -163,7 +174,7 @@ export async function handleGit(config: RunnerConfig, name: string, input: unkno
 export async function handleApprove(config: RunnerConfig, input: unknown, deps: RunnerDeps = {}): Promise<PromptDecision> {
 	if (!await permissionsUntouched(config)) { return { behavior: 'deny', message: 'POLICY_DENIED: project-permissions-changed' }; }
 	const permissions = await loadRunnerPermissions(config, deps);
-	const decision = await decidePermissionPrompt({ root: config.root, policy: createCommandPolicy({ ...config.policy, permissions }), permissions, ask: approverOf(config, deps) }, input);
+	const decision = await decidePermissionPrompt({ root: config.root, policy: createCommandPolicy({ ...config.policy, permissions }), permissions, ask: approverOf(config, deps), question: questionerOf(config, deps) }, input);
 	const request = (input ?? {}) as { tool_name?: unknown };
 	await fs.appendFile(config.logDirectory + '/commands.jsonl', JSON.stringify({ at: new Date().toISOString(), tool: 'approve', for: String(request.tool_name).slice(0, 60), outcome: decision.behavior === 'allow' ? 'ALLOWED' : decision.message.split('\n', 1)[0] }) + '\n').catch(() => undefined);
 	return decision;
@@ -178,14 +189,27 @@ async function main(): Promise<void> {
 	const stopped = new AbortController();
 	let gitQueue = Promise.resolve();
 	let gitDenied = false;
-	// The user's "no" covers that exact call for the rest of the run: asking again for the same thing is not a new question.
-	// Any other call (another command, another branch) is still asked normally.
-	const refused = new Set<string>();
+	// The user's "no" covers that exact call for the rest of the run (or of the turn, in a native session): asking again for
+	// the same thing is not a new question. Any other call (another command, another branch) is still asked normally.
+	const refused = new Map<string, number>();
 	const callKey = (name: string, args: unknown): string => name + '\0' + JSON.stringify(args ?? {});
 	const ALREADY_REFUSED = { isError: true, text: 'DENIED: the user already refused this exact action in this run. Do something else or report it.' };
-	const remember = (key: string, result: { isError: boolean; text: string }): { isError: boolean; text: string } => {
-		if (result.text.startsWith('DENIED: the user did not allow it')) { refused.add(key); }
+	let budgetEpoch = 0;
+	const currentEpoch = async (): Promise<number> => {
+		if (!config.turnEpochs || !config.channel) { return 0; }
+		const value = Number(await callToolChannel(config.channel.address, config.channel.token, 'epoch', {}, 5000).catch(() => Number.NaN));
+		return Number.isSafeInteger(value) ? value : -1;
+	};
+	const isRefused = async (key: string): Promise<boolean> => refused.has(key) && refused.get(key) === await currentEpoch();
+	const remember = async (key: string, result: { isError: boolean; text: string }): Promise<{ isError: boolean; text: string }> => {
+		if (result.text.startsWith('DENIED: the user did not allow it')) { refused.set(key, await currentEpoch()); }
 		return result;
+	};
+	/** The command budget of a native session restarts with each turn. */
+	const nextCall = async (): Promise<number> => {
+		const epoch = await currentEpoch();
+		if (epoch !== budgetEpoch) { budgetEpoch = epoch; calls = 0; }
+		return ++calls;
 	};
 	const input = readline.createInterface({ input: process.stdin });
 	input.on('close', () => stopped.abort());
@@ -210,7 +234,7 @@ async function main(): Promise<void> {
 		}
 		if (request.method === 'tools/call' && request.params?.name === TOOL.name) {
 			const key = callKey(TOOL.name, request.params.arguments);
-			const result = refused.has(key) ? ALREADY_REFUSED : remember(key, await handleRun(config, request.params.arguments, ++calls));
+			const result = await isRefused(key) ? ALREADY_REFUSED : await remember(key, await handleRun(config, request.params.arguments, await nextCall()));
 			return reply({ isError: result.isError, content: [{ type: 'text', text: result.text }] });
 		}
 		if (request.method === 'tools/call' && config.git && GIT_TOOLS.some(tool => tool.name === request.params?.name)) {
@@ -223,8 +247,8 @@ async function main(): Promise<void> {
 					return result;
 				}
 				const key = callKey(request.params!.name!, request.params!.arguments);
-				if (refused.has(key)) { return ALREADY_REFUSED; }
-				const result = remember(key, await handleGit(config, request.params!.name!, request.params!.arguments, {}, stopped.signal));
+				if (await isRefused(key)) { return ALREADY_REFUSED; }
+				const result = await remember(key, await handleGit(config, request.params!.name!, request.params!.arguments, {}, stopped.signal));
 				// An integrity refusal (config or hooks changed, a permission rule) ends git for the run; input refusals can be fixed.
 				if (endsGitDelivery(result.text)) { gitDenied = true; }
 				return result;
@@ -236,15 +260,15 @@ async function main(): Promise<void> {
 		if (request.method === 'tools/call' && config.files && FILE_TOOLS.some(tool => tool.name === request.params?.name)) {
 			calls++;
 			const key = callKey(request.params!.name!, request.params!.arguments);
-			const result = refused.has(key) ? ALREADY_REFUSED : remember(key, await handleFiles(config, request.params!.name!, request.params!.arguments));
+			const result = await isRefused(key) ? ALREADY_REFUSED : await remember(key, await handleFiles(config, request.params!.name!, request.params!.arguments));
 			return reply({ isError: result.isError, content: [{ type: 'text', text: result.text }] });
 		}
 		if (request.method === 'tools/call' && config.approve && request.params?.name === APPROVE_TOOL.name) {
 			// No turn is counted: the CLI asks, not the agent. A refused prompt is answered from memory, like any refused call.
 			const prompt = (request.params.arguments ?? {}) as { tool_name?: unknown; input?: unknown };
 			const key = callKey(APPROVE_TOOL.name, { tool_name: prompt.tool_name, input: prompt.input });
-			const decision: PromptDecision = refused.has(key) ? { behavior: 'deny', message: ALREADY_REFUSED.text } : await handleApprove(config, prompt);
-			if (decision.behavior === 'deny') { remember(key, { isError: true, text: decision.message }); }
+			const decision: PromptDecision = await isRefused(key) ? { behavior: 'deny', message: ALREADY_REFUSED.text } : await handleApprove(config, prompt);
+			if (decision.behavior === 'deny') { await remember(key, { isError: true, text: decision.message }); }
 			return reply({ content: [{ type: 'text', text: JSON.stringify(decision) }] });
 		}
 		const editor = EDITOR_TOOLS.find(tool => tool.name === request.params?.name);
