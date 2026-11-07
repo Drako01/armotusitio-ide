@@ -52,15 +52,18 @@ const REMOTE_NAME = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,99}$/;
 const SENSITIVE_SEGMENTS = new Set(['.git', '.ssh', '.gnupg', '.aws', '.kube', '.armotusitio']);
 const MAX_HOOK_FILES = 200;
 /** Fixed prefix: literal pathspecs (a name like `*.ts` or `:(top)x` is never a pattern) and no fsmonitor command from repository config. */
-const GIT_BASE = ['--literal-pathspecs', '-c', 'core.fsmonitor=false', '-c', 'protocol.ext.allow=never'];
+export const GIT_BASE = ['--literal-pathspecs', '-c', 'core.fsmonitor=false', '-c', 'protocol.ext.allow=never'];
 const PUSH_TIMEOUT_SEC = 180;
+
+/** Retry rule shared by the git tool descriptions; it matches `endsGitDelivery`. */
+const RETRY_RULE = 'A `DENIED:` answer (the user said no) is final. A `POLICY_DENIED:` about your own input (path, branch name, protected branch, message, local changes) may be corrected and called again; any other `POLICY_DENIED:` is final: do not retry the same action in another form.';
 
 export const GIT_TOOLS = [
 	{
 		name: 'git_commit',
 		description: 'Commit specific files of the project. Pass each project-relative file in `paths` (never a directory, ".", a wildcard or an absolute path) and the commit `message`. ' +
 			'Repository hooks always run (they are the project\'s own and cannot be skipped); if the hooks or the git config change during the run the tool refuses with `repo-config-changed` or `hooks-modified`. Credential files (.env, keys) are refused. The user may be asked to approve. ' +
-			'A `DENIED:` or `POLICY_DENIED:` answer is final: do not retry the same action in another form. If a hook fails, fix the cause and call again; never try to bypass it.',
+			RETRY_RULE + ' If a hook fails, fix the cause and call again; never try to bypass it.',
 		inputSchema: {
 			type: 'object',
 			properties: {
@@ -74,7 +77,7 @@ export const GIT_TOOLS = [
 	{
 		name: 'git_push',
 		description: 'Push the current branch to its upstream (or to origin, setting it as upstream). Never forces, never pushes tags, and never pushes main, master, develop, trunk, the remote default branch, init.defaultBranch or a branch the user marked as protected. The project\'s pre-push hooks run. ' +
-			'The user is asked to approve. A `DENIED:` or `POLICY_DENIED:` answer is final: do not retry it. Publishing packages and creating releases are not available.',
+			'The user is asked to approve. ' + RETRY_RULE + ' On a protected branch, create a feature branch with git_branch_create and push that. Publishing packages and creating releases are not available.',
 		inputSchema: { type: 'object', properties: {}, additionalProperties: false }
 	},
 	{
@@ -434,7 +437,23 @@ async function push(context: GitToolsContext): Promise<GitToolResult> {
 	return { isError: false, text: 'PUSHED ' + branch + ' to ' + remote + '\n' + (pushed.output || ''), repoBaseline: await repoFingerprint(context.root) };
 }
 
-/** Run one git tool call; every refusal is a short `POLICY_DENIED: <reason>` the model must not retry. */
+/**
+ * Refusals about the agent's own input (a wrong path, a protected branch name, an empty message): the agent may correct
+ * them and call again. Any other refusal, and every user denial, ends git delivery for the rest of the run.
+ */
+const CORRECTABLE_REFUSALS = new Set(['absolute-path', 'directory-not-allowed', 'invalid-branch', 'invalid-message', 'invalid-path', 'invalid-paths',
+	'invalid-pr-content', 'invalid-start-point', 'path-not-found', 'path-outside-project', 'pr-base-is-head', 'protected-branch', 'sensitive-file',
+	'local-changes-on-base-switch', 'local-changes-on-branch-reuse', 'base-ref-missing']);
+
+/** True when a git tool result must stop further git calls in this run (see `CORRECTABLE_REFUSALS`). */
+export function endsGitDelivery(text: string): boolean {
+	if (text.startsWith('DENIED:')) { return true; }
+	// Any reason outside the correctable list (including a permission rule's own text) is final.
+	const refusal = /^POLICY_DENIED: (.+)$/.exec(text.trim());
+	return !!refusal && !CORRECTABLE_REFUSALS.has(refusal[1]);
+}
+
+/** Run one git tool call; every refusal is a short `POLICY_DENIED: <reason>`; `endsGitDelivery` says whether it may be corrected. */
 export async function handleGitTool(context: GitToolsContext, name: string, input: unknown): Promise<GitToolResult> {
 	try {
 		const value = (input && typeof input === 'object' && !Array.isArray(input) ? input : {}) as Record<string, unknown>;

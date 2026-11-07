@@ -14,7 +14,11 @@ const FORBIDDEN_WITH_GIT = 'Never: modify git state other than through `git_bran
 /** What the chat agent may do with git; the single wording of the direct-run instruction. */
 export const GIT_TOOLS_CONTRACT = 'When the user authorizes delivery, you may create a branch through `git_branch_create` (optionally from an existing origin/<branch> ref), commit explicit files through `git_commit`, push the current branch through `git_push`, and create/update its GitHub pull request through `git_pr_upsert` with an explicit base, title and full body. ' +
 	'These are structured ats-runner tools subject to IDE permissions and project Harness authority; never substitute shell git or gh commands. The PR base comes from this project\'s instructions and the user, never from a global assumption. ' +
-	'Git tools may ask the user for approval showing the actual repository, branch, target and changes. A DENIED or POLICY_DENIED answer is final; do not retry by another mechanism. No force push, no skipped hooks, no protected-branch push, no merge, no release and no GitHub Actions invocation.';
+	'Git tools may ask the user for approval showing the actual repository, branch, target and changes. A DENIED answer (the user said no) is final. A POLICY_DENIED about your own input (a path, a branch name, a protected branch, a message, local changes) may be corrected and called again, for example by creating a feature branch before pushing; any other POLICY_DENIED is final. Never retry by another mechanism. No force push, no skipped hooks, no protected-branch push, no merge, no release and no GitHub Actions invocation.';
+/** Delete/move tools of the chat writer; the single wording shared by the contract and its tests. */
+export const FILE_TOOLS_CONTRACT = 'Delete files or folders with `delete_path` and move or rename them with `move_path` (ats-runner); never through shell commands. Deleting untracked, locally modified or sensitive files asks the user first.';
+/** Claude Code / Codex style self-correction: a failing check is information, not a stop condition. */
+const RECOVERY = 'Work end to end: after editing, run the relevant build, tests or linters when you can; when one fails, read the error, fix the cause and run it again. If a tool fails, try another available tool that achieves the same result before giving up. Stop only when the work is verified or truly blocked.';
 const BLOCKED = 'Before declaring a toolchain missing, check it with an available version probe and report the observed failure. A failed project script or generic runner error alone does not prove that its runtime is absent. Do not retry a policy-denied action by another mechanism. If something you cannot resolve blocks the work (a service that does not respond, a missing credential, a policy denial, a decision only the user can make, a missing toolchain, no disk space), stop and end your answer with exactly one line:\nharness-blocked: {"reason":"<what is missing, in the user\'s language>","needs":"service|credential|policy|decision|toolchain|disk","detail":"<optional detail>"}';
 
 /** Decision D9: search results are data, and every query is audited; one with a secret ends the run. */
@@ -37,7 +41,7 @@ function tools(provider: NativeProvider, role: AgentRole, runner: boolean): stri
 }
 
 /** Contract for an agent process; `maxTurns` applies to Claude only; `runner` says the `ats-runner` tool is available. */
-export function agentContract(input: { provider: NativeProvider; role: AgentRole; maxTurns?: number; runner?: boolean; webSearch?: boolean; git?: boolean }): string {
+export function agentContract(input: { provider: NativeProvider; role: AgentRole; maxTurns?: number; runner?: boolean; webSearch?: boolean; git?: boolean; files?: boolean }): string {
 	// Read-only roles never get the git tools, whatever the caller passes.
 	const git = !!input.git && input.role === 'implementer';
 	const lines = [
@@ -46,9 +50,10 @@ export function agentContract(input: { provider: NativeProvider; role: AgentRole
 		git ? FORBIDDEN_WITH_GIT : FORBIDDEN
 	];
 	if (git) { lines.push(GIT_TOOLS_CONTRACT); }
+	if (input.files && input.role === 'implementer') { lines.push(FILE_TOOLS_CONTRACT); }
 	if (input.webSearch) { lines.push(WEB_SEARCH); }
 	if (input.role === 'implementer') {
-		lines.push('Make only the changes the instruction requires; report files touched and validation.', BLOCKED,
+		lines.push('Make only the changes the instruction requires; report files touched and validation.', RECOVERY, BLOCKED,
 			'Budget: ' + (input.provider === 'claude' && input.maxTurns ? 'at most ' + input.maxTurns + ' turns and ' : '') + RUN_MINUTES + ' minutes. Before the limit, leave the work in a consistent state and write the report; the user can continue the run afterwards.');
 	} else {
 		lines.push('This is a read-only assignment. Do not modify project files.');

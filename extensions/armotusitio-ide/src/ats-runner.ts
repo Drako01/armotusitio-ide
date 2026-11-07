@@ -15,7 +15,8 @@ import { callToolChannel } from './native-tool-server.ts';
 import { EDITOR_TOOLS } from './native-editor-tools.ts';
 import { secretVariants } from './native-dev-secrets.ts';
 import { channelApprover, requestApproval, type ApprovalAsk } from './native-approval.ts';
-import { GIT_TOOLS, handleGitTool } from './native-git-tools.ts';
+import { GIT_TOOLS, endsGitDelivery, handleGitTool } from './native-git-tools.ts';
+import { FILE_TOOLS, handleFileTool } from './native-file-tools.ts';
 import { loadPermissions, type PermissionSet } from './native-permissions.ts';
 import type { PermissionPreset } from './native-permissions-types.ts';
 import { projectPermissionsDigest } from './native-run-integrity.ts';
@@ -38,6 +39,8 @@ export interface RunnerConfig {
 	permissions?: { preset?: PermissionPreset };
 	/** Offers structured branch/commit/push/PR tools; set only for runs that can ask the user (the chat). */
 	git?: boolean;
+	/** Offers the structured delete/move tools; set only for runs that can ask the user (the chat). */
+	files?: boolean;
 	/** Integrity snapshots captured by the extension before the provider starts. */
 	projectPermissionsBaseline?: string;
 	repoBaseline?: string;
@@ -57,7 +60,8 @@ const permissionsUntouched = async (config: RunnerConfig): Promise<boolean> => c
 const TOOL = {
 	name: 'run',
 	description: 'Run one command in the project, without a shell, under the IDE command policy. Pass the executable in `command`, each argument separately in `args`, ' +
-		'and a project-relative `cwd` for subprojects (for example "apps/api"). No shell operators, inline code, git changes, publishing, network tools or deletions. ' +
+		'and a project-relative `cwd` for subprojects (for example "apps/api"). No shell operators, inline code, git changes, publishing, network tools or deletions ' +
+		'(use the delete_path, move_path and git_* tools when they are listed). ' +
 		'A denied command returns `POLICY_DENIED: <reason>`; do not retry it in another form.',
 	inputSchema: {
 		type: 'object',
@@ -125,6 +129,19 @@ export async function handleRun(config: RunnerConfig, input: unknown, calls: num
 	};
 }
 
+/** One audit line per structured tool call; the outcome is the first word of the result (`COMMITTED`, `POLICY_DENIED:`, ...). */
+const auditTool = (config: RunnerConfig, tool: string, result: { isError: boolean; text: string }): Promise<void> =>
+	fs.appendFile(config.logDirectory + '/commands.jsonl', JSON.stringify({ at: new Date().toISOString(), tool, isError: result.isError, outcome: result.text.split(/[\s\n]/, 1)[0] }) + '\n').catch(() => undefined);
+
+/** Answer one structured delete/move call; exported for tests. */
+export async function handleFiles(config: RunnerConfig, name: string, input: unknown, deps: RunnerDeps = {}): Promise<{ isError: boolean; text: string }> {
+	if (!config.files) { return { isError: true, text: 'Unknown tool' }; }
+	if (!await permissionsUntouched(config)) { return { isError: true, text: 'POLICY_DENIED: project-permissions-changed' }; }
+	const result = await handleFileTool({ root: config.root, permissions: await loadRunnerPermissions(config, deps), ask: approverOf(config, deps) }, name, input);
+	await auditTool(config, name, result);
+	return result;
+}
+
 /** Answer one structured git delivery tool call; exported for tests. */
 export async function handleGit(config: RunnerConfig, name: string, input: unknown, deps: RunnerDeps = {}, signal?: AbortSignal): Promise<{ isError: boolean; text: string }> {
 	if (!config.git) { return { isError: true, text: 'Unknown tool' }; }
@@ -134,14 +151,14 @@ export async function handleGit(config: RunnerConfig, name: string, input: unkno
 	// The structured branch creation and first upstream push may legitimately update git config.
 	// Only the tool can refresh this in-memory run snapshot after verifying hooks/config.
 	if (!result.isError && result.repoBaseline) { config.repoBaseline = result.repoBaseline; }
-	await fs.appendFile(config.logDirectory + '/commands.jsonl', JSON.stringify({ at: new Date().toISOString(), tool: name, isError: result.isError, outcome: result.text.split(/[\s\n]/, 1)[0] }) + '\n').catch(() => undefined);
+	await auditTool(config, name, result);
 	return result;
 }
 
 async function main(): Promise<void> {
 	const config = JSON.parse(await fs.readFile(process.argv[2], 'utf8')) as RunnerConfig;
 	if (config.schemaVersion !== 1 || typeof config.root !== 'string') { throw Error('HARNESS_CONFIG_SCHEMA'); }
-	if ((config.permissions && typeof config.projectPermissionsBaseline !== 'string') || (config.git && typeof config.repoBaseline !== 'string')) { throw Error('HARNESS_CONFIG_SCHEMA'); }
+	if (((config.permissions || config.files) && typeof config.projectPermissionsBaseline !== 'string') || (config.git && typeof config.repoBaseline !== 'string')) { throw Error('HARNESS_CONFIG_SCHEMA'); }
 	let calls = 0;
 	const send = (message: unknown): void => { process.stdout.write(JSON.stringify(message) + '\n'); };
 	const stopped = new AbortController();
@@ -155,7 +172,7 @@ async function main(): Promise<void> {
 		if (request.id === undefined) { return; }
 		const reply = (result: unknown): void => send({ jsonrpc: '2.0', id: request.id, result });
 		if (request.method === 'initialize') { return reply({ protocolVersion: request.params?.protocolVersion ?? '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'ats-runner', version: '1.0.0' } }); }
-		if (request.method === 'tools/list') { return reply({ tools: [TOOL, ...(config.git ? GIT_TOOLS : []), ...(config.channel ? EDITOR_TOOLS : []), ...(config.channel ? config.mcpTools ?? [] : [])] }); }
+		if (request.method === 'tools/list') { return reply({ tools: [TOOL, ...(config.git ? GIT_TOOLS : []), ...(config.files ? FILE_TOOLS : []), ...(config.channel ? EDITOR_TOOLS : []), ...(config.channel ? config.mcpTools ?? [] : [])] }); }
 		if (request.method === 'ping') { return reply({}); }
 		if (request.method === 'tools/call' && config.channel && request.params?.name?.startsWith(MCP_TOOL_PREFIX) && config.mcpTools?.some(tool => tool.name === request.params!.name)) {
 			calls++;
@@ -182,11 +199,17 @@ async function main(): Promise<void> {
 					return result;
 				}
 				const result = await handleGit(config, request.params!.name!, request.params!.arguments, {}, stopped.signal);
-				if (/^(?:DENIED:|POLICY_DENIED:)/.test(result.text)) { gitDenied = true; }
+				// A user denial or an integrity refusal is final; a correctable input refusal lets the agent fix its call.
+				if (endsGitDelivery(result.text)) { gitDenied = true; }
 				return result;
 			});
 			gitQueue = task.then(() => undefined, () => undefined);
 			const result = await task;
+			return reply({ isError: result.isError, content: [{ type: 'text', text: result.text }] });
+		}
+		if (request.method === 'tools/call' && config.files && FILE_TOOLS.some(tool => tool.name === request.params?.name)) {
+			calls++;
+			const result = await handleFiles(config, request.params!.name!, request.params!.arguments);
 			return reply({ isError: result.isError, content: [{ type: 'text', text: result.text }] });
 		}
 		const editor = EDITOR_TOOLS.find(tool => tool.name === request.params?.name);

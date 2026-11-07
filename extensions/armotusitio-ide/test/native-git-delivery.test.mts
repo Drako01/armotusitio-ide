@@ -205,11 +205,13 @@ test('the actual ats-runner stdio MCP process exposes and carries branch/commit 
 	await fixture(async ({ root, base, context }) => {
 		const channel = await openToolChannel(path.join(base, 'channel'), async (method, params) => {
 			if (method !== 'approval') { throw Error('UNEXPECTED_CHANNEL_CALL'); }
-			return parseApprovalDraft(params) ? 'once' : 'deny';
+			// The user refuses only the branch named feat/refused, so the final user-denial latch can be observed.
+			const draft = parseApprovalDraft(params);
+			return draft && !draft.detail.some(line => line.includes('feat/refused')) ? 'once' : 'deny';
 		});
 		const logs = path.join(base, 'runner-logs');
 		const config: RunnerConfig = { schemaVersion: 1, root, policy: { subprojects: [], delegate: false, extras: [] },
-			env: context.env, logDirectory: logs, git: true, permissions: { preset: 'dev' },
+			env: context.env, logDirectory: logs, git: true, files: true, permissions: { preset: 'dev' },
 			repoBaseline: await repoFingerprint(root), projectPermissionsBaseline: await projectPermissionsDigest(root),
 			channel: { address: channel.address, token: channel.token } };
 		const configFile = path.join(base, 'runner.json');
@@ -248,9 +250,17 @@ test('the actual ats-runner stdio MCP process exposes and carries branch/commit 
 			assert.deepEqual(audit.map(entry => [entry.tool, entry.isError]), [['git_branch_create', false], ['git_commit', false]]);
 			const denied = await rpc('tools/call', { name: 'git_branch_create', arguments: { branch: 'main' } });
 			assert.equal(denied.content?.[0]?.text, 'POLICY_DENIED: protected-branch');
-			const noRetry = await rpc('tools/call', { name: 'git_branch_create', arguments: { branch: 'feat/alternate' } });
-			assert.equal(noRetry.content?.[0]?.text, 'POLICY_DENIED: prior-git-denial');
-			assert.equal(git(root, 'branch', '--show-current'), 'feat/delivered');
+			// A protected-branch refusal is about the agent's input: it recovers by choosing a feature branch.
+			const recovered = await rpc('tools/call', { name: 'git_branch_create', arguments: { branch: 'feat/alternate' } });
+			assert.match(recovered.content?.[0]?.text ?? '', /^BRANCH_CREATED/);
+			assert.equal(listed.tools?.some(tool => tool.name === 'delete_path') && listed.tools?.some(tool => tool.name === 'move_path'), true);
+			const moved = await rpc('tools/call', { name: 'move_path', arguments: { from: 'transport.txt', to: 'moved/transport.txt' } });
+			const deleted = await rpc('tools/call', { name: 'delete_path', arguments: { path: 'moved' } });
+			const refused = await rpc('tools/call', { name: 'git_branch_create', arguments: { branch: 'feat/refused' } });
+			const noRetry = await rpc('tools/call', { name: 'git_branch_create', arguments: { branch: 'feat/other' } });
+			assert.deepEqual([moved, deleted, refused, noRetry].map(result => result.content?.[0]?.text),
+				['MOVED transport.txt -> moved/transport.txt', 'DELETED moved (2 entries)', 'DENIED: the user did not allow it', 'POLICY_DENIED: prior-git-denial']);
+			assert.equal(git(root, 'branch', '--show-current'), 'feat/alternate');
 		} finally {
 			runner.stdin!.end();
 			await new Promise<void>(resolve => { if (runner.exitCode !== null) { resolve(); } else { runner.once('close', () => resolve()); runner.kill(); } });
