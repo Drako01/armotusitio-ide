@@ -73,6 +73,8 @@ export interface ToolServerLaunch {
 	mcpConfigFile: string;
 	/** The server also offers branch creation, commit/push and PR upsert (chat runs with IDE approval). */
 	git?: boolean;
+	/** The server also offers delete_path and move_path (chat runs with IDE approval). */
+	files?: boolean;
 }
 /** Every tool of the IDE's own server (commands and editor), and no other MCP server. */
 const RUNNER_TOOL = 'mcp__ats-runner';
@@ -88,7 +90,7 @@ export function buildAgentInvocation(draft: AgentDraft, writableRoots: readonly 
 	if (draft.role !== 'implementer' && !draft.readOnly) { throw Error('HARNESS_READ_ONLY_ROLE_REQUIRED'); }
 	if (draft.role === 'implementer' && draft.readOnly) { throw Error('HARNESS_IMPLEMENTER_MODE_MISMATCH'); }
 	const runner = !draft.readOnly && !!toolServer;
-	const instruction = agentContract({ provider: draft.provider, role: draft.role, maxTurns: draft.maxTurns, runner, webSearch: draft.webSearch, git: runner && !!toolServer?.git }) + '\n\n' + draft.instruction;
+	const instruction = agentContract({ provider: draft.provider, role: draft.role, maxTurns: draft.maxTurns, runner, webSearch: draft.webSearch, git: runner && !!toolServer?.git, files: runner && !!toolServer?.files }) + '\n\n' + draft.instruction;
 	const model = draft.model ? ['--model', draft.model] : [];
 	// Keep effort as a reviewed, per-invocation override. Never modify CLI config files.
 	const effort = draft.effort ? draft.provider === 'codex'

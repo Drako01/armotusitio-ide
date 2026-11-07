@@ -40,8 +40,8 @@
 			"items": {
 				"type": "string",
 				"maxLength": 300,
-				"pattern": "^(git_commit|git_push|(run|edit):[^\u0000-\u001f\u007f]+)$",
-				"description": "run:<glob>, git_commit o git_push. edit:<glob> esta reservado y todavia no se aplica (las ediciones las hace el proveedor).",
+				"pattern": "^((git_commit|git_push|git_branch_create|git_pr_upsert)(:[^\u0000-\u001f\u007f]+)?|(run|edit):[^\u0000-\u001f\u007f]+)$",
+				"description": "run:<glob>, edit:<glob> (delete_path y move_path), git_commit, git_push, git_branch_create o git_pr_upsert; una regla git con :<glob> vale solo para los proyectos cuya raiz coincide.",
 				"examples": [
 					"run:pnpm test*",
 					"git_commit",

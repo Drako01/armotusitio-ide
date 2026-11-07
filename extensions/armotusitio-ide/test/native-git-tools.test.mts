@@ -8,7 +8,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { execFileSync } from 'node:child_process';
-import { GIT_TOOLS, handleGitTool, isSensitiveGitPath, repoFingerprint, type GitToolsContext } from '../src/native-git-tools.ts';
+import { endsGitDelivery, GIT_TOOLS, handleGitTool, isSensitiveGitPath, repoFingerprint, type GitToolsContext } from '../src/native-git-tools.ts';
 import type { ApprovalAnswer, PermissionDecision, PermissionRequest } from '../src/native-permissions-types.ts';
 import type { ApprovalDraft } from '../src/native-approval.ts';
 
@@ -265,4 +265,10 @@ test('push protects configured patterns and init.defaultBranch without a remote 
 		git(root, 'checkout', '-q', '-B', 'release/next');
 		assert.equal((await handleGitTool({ ...context, protectedBranches: ['release/*'] }, 'git_push', {})).text, 'POLICY_DENIED: protected-branch');
 	});
+});
+
+test('only user denials and integrity refusals end git delivery; input refusals can be corrected', () => {
+	assert.deepEqual(['DENIED: the user did not allow it', 'POLICY_DENIED: repo-config-changed', 'POLICY_DENIED: hooks-modified', 'POLICY_DENIED: denied by permissions',
+		'POLICY_DENIED: protected-branch', 'POLICY_DENIED: path-not-found', 'POLICY_DENIED: invalid-message', 'COMMITTED abc on feat/x: 1 file(s)'].map(endsGitDelivery),
+	[true, true, true, true, false, false, false, false]);
 });

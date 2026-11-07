@@ -159,3 +159,21 @@ test('cancelling while a rule is being persisted cannot approve the pending comm
 		assert.equal(await s.answer(), 'deny');
 	} finally { saved(); s.release(); await s.running; await s.cleanup(); }
 });
+
+test('branch and PR approval cards carry their own title, and a remembered git rule is revocable from the notice', async () => {
+	const titles: string[] = [];
+	for (const card of [
+		{ kind: 'git_branch_create', title: 'Branch', detail: ['new branch: feat/x'], rule: 'git_branch_create:/repo' },
+		{ kind: 'git_pr_upsert', title: 'PR', detail: ['base: qa'], rule: '' }
+	] satisfies ApprovalDraft[]) {
+		const s = await actingSession({ card });
+		try {
+			const [pending] = s.chat.snapshot().approvals!;
+			titles.push(pending.title);
+			await s.chat.resolveApproval(pending.id, card.rule ? 'always' : 'once');
+			s.release(); await s.running;
+			if (card.rule) { titles.push(String(s.chat.snapshot().messages.some(message => message.role === 'notice' && message.text.includes('/permisos quitar git_branch_create:/repo')))); }
+		} finally { await s.cleanup(); }
+	}
+	assert.deepEqual(titles, ['Crear una rama', 'true', 'Crear o actualizar un pull request']);
+});

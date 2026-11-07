@@ -382,7 +382,7 @@ export class HarnessChatSession {
 		if (answer === 'always') {
 			try {
 				await this.runtime.rememberApproval?.(pending.request.rule);
-				this.conversation.messages.push(chatMessage('notice', this.t('Se guard\u00f3 la regla \u00ab{0}\u00bb en tu archivo de permisos (~/.armotusitio/permissions.json). Pod\u00e9s quitarla desde ah\u00ed.', redactSecrets(pending.request.rule)), { tone: 'info' }));
+				this.conversation.messages.push(chatMessage('notice', this.t('Se guard\u00f3 la regla \u00ab{0}\u00bb en tu archivo de permisos (~/.armotusitio/permissions.json). Revocala con /permisos quitar {0}', redactSecrets(pending.request.rule)), { tone: 'info' }));
 			} catch {
 				final = 'once';
 				this.conversation.messages.push(chatMessage('notice', this.t('No se pudo guardar la regla \u00ab{0}\u00bb; se permiti\u00f3 solo esta vez.', redactSecrets(pending.request.rule)), { tone: 'error' }));
@@ -395,7 +395,11 @@ export class HarnessChatSession {
 	private requestApproval(draft: ApprovalDraft): Promise<ApprovalAnswer> {
 		if (!this.activity || this.activity.cancelling || this.approvals.size >= 8) { return Promise.resolve('deny'); }
 		const id = 'ap-' + randomBytes(8).toString('hex');
-		const title = { run: this.t('Ejecutar un comando'), edit: this.t('Editar un archivo'), git_commit: this.t('Hacer commit'), git_push: this.t('Hacer push') }[draft.kind];
+		const titles: Record<ApprovalDraft['kind'], string> = {
+			run: this.t('Ejecutar un comando'), edit: this.t('Borrar o mover archivos del proyecto'), git_commit: this.t('Hacer commit'), git_push: this.t('Hacer push'),
+			git_branch_create: this.t('Crear una rama'), git_pr_upsert: this.t('Crear o actualizar un pull request')
+		};
+		const title = titles[draft.kind];
 		return new Promise<ApprovalAnswer>(resolve => {
 			const timer = setTimeout(() => this.settleApproval(id, 'deny'), APPROVAL_TIMEOUT_MS);
 			timer.unref();

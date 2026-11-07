@@ -12,7 +12,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import type { ChatMode } from './native-chat.ts';
 import type { HarnessChatSession } from './native-chat-session.ts';
-import { loadPermissions } from './native-permissions.ts';
+import { loadPermissions, removeUserRule, userRules } from './native-permissions.ts';
 import type { PermissionPreset } from './native-permissions-types.ts';
 import type { ProviderQuota } from './native-quota.ts';
 
@@ -46,7 +46,7 @@ export function quotaLines(quotas: readonly ProviderQuota[], t: CommandTranslato
 export function chatCommands(t: CommandTranslator): ChatCommand[] {
 	return [
 		{ name: 'ayuda', description: t('Lista los comandos disponibles.'), session: false },
-		{ name: 'permisos', usage: '[usuario|proyecto]', description: t('Muestra los permisos efectivos; con usuario o proyecto abre (o crea) su archivo JSON.'), session: true },
+		{ name: 'permisos', usage: '[usuario|proyecto|quitar REGLA]', description: t('Muestra los permisos efectivos y tus reglas guardadas; con usuario o proyecto abre (o crea) su archivo JSON; con quitar revoca una regla tuya.'), session: true },
 		{ name: 'modo', usage: '[actuar|preguntar]', description: t('Muestra o cambia el modo del chat.'), session: true },
 		{ name: 'deshacer', description: t('Descarta los cambios de la \u00faltima ejecuci\u00f3n.'), session: true },
 		{ name: 'costo', description: t('Muestra los tokens que inform\u00f3 el proveedor en el \u00faltimo turno.'), session: true },
@@ -120,14 +120,25 @@ export async function runSessionCommand(deps: SessionCommandDeps, action: string
 			await deps.openFile(file);
 			return existed ? t('Abr\u00ed {0}.', target === 'usuario' ? USER_FILE_LABEL : PROJECT_FILE_LABEL) : t('Cre\u00e9 {0} vac\u00edo y lo abr\u00ed. Agreg\u00e1 reglas en allow, ask o deny.', target === 'usuario' ? USER_FILE_LABEL : PROJECT_FILE_LABEL);
 		}
-		if (words.length) { return t('Uso: /permisos [usuario|proyecto]'); }
+		if (target === 'quitar') {
+			// Rules have no spaces except in `run:` commands, so the rest of the line is the rule verbatim.
+			const rule = words.slice(1).join(' ');
+			if (!rule) { return t('Uso: /permisos quitar REGLA (copiala de la lista de /permisos).'); }
+			return await removeUserRule(rule, home)
+				? t('Revoqu\u00e9 la regla \u00ab{0}\u00bb. Desde ahora esa acci\u00f3n vuelve a pedir permiso.', rule)
+				: t('No encontr\u00e9 la regla \u00ab{0}\u00bb en {1}.', rule, USER_FILE_LABEL);
+		}
+		if (words.length) { return t('Uso: /permisos [usuario|proyecto|quitar REGLA]'); }
 		const set = await loadPermissions(root, home, t, { preset: deps.permissionsPreset() });
+		const saved = await userRules(home).catch(() => undefined);
+		const savedLines = saved ? (['allow', 'ask', 'deny'] as const).flatMap(decision => saved[decision].map(rule => '  ' + decision + '  ' + rule)) : [];
 		const files = [[USER_FILE_LABEL, path.join(home, '.armotusitio', 'permissions.json')], [PROJECT_FILE_LABEL, path.join(root, '.armotusitio', 'permissions.json')]] as const;
 		return [
 			t('Permisos efectivos:'), ...set.describe().map(line => '  ' + line),
 			...(set.warnings.length ? ['', t('Avisos:'), ...set.warnings.map(warning => '  ' + warning)] : []),
+			'', t('Tus reglas guardadas (revocalas con /permisos quitar REGLA):'), ...(savedLines.length ? savedLines : ['  ' + t('ninguna')]),
 			'', t('Archivos:'), ...await Promise.all(files.map(async ([label, file]) => '  ' + label + ' \u2014 ' + (await exists(file) ? t('existe') : t('no existe')))),
-			'', t('Reglas: run:<glob> (comando), git_commit, git_push (edit:<glob> est\u00e1 reservado y todav\u00eda no se aplica). Ejemplo: "run:pnpm test*". Gana deny, despu\u00e9s ask, despu\u00e9s allow; el archivo del proyecto solo puede agregar ask y deny.'),
+			'', t('Reglas: run:<glob> (comando), edit:<glob> (borrar o mover archivos), git_commit, git_push, git_branch_create, git_pr_upsert (con :<ruta> valen solo para ese proyecto). Ejemplo: "run:pnpm test*". Gana deny, despu\u00e9s ask, despu\u00e9s allow; el archivo del proyecto solo puede agregar ask y deny.'),
 			t('Us\u00e1 /permisos usuario o /permisos proyecto para abrir o crear el archivo.')
 		].join('\n');
 	}

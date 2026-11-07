@@ -49,6 +49,7 @@ const EXACT: Record<string, Hint> = {
 	HARNESS_NO_PROVIDER_AVAILABLE: t => t('Ning\u00fan proveedor est\u00e1 listo. Us\u00e1 \u00abArmoTuSitio: Diagnosticar Codex y Claude locales\u00bb para ver qu\u00e9 falta.'),
 	HARNESS_EXECUTABLE_UNAVAILABLE: t => t('No se encontr\u00f3 el programa necesario en el PATH. Instalalo o us\u00e1 \u00abArmoTuSitio: Diagnosticar Codex y Claude locales\u00bb.'),
 	HARNESS_NODE_EXECUTABLE_UNAVAILABLE: t => t('No se encontr\u00f3 un Node.js utilizable. Us\u00e1 \u00abArmotuSitio: Seleccionar Node.js\u00bb para guardar su ruta en tu configuraci\u00f3n de usuario y reintent\u00e1.'),
+	HARNESS_FILE_OPERATION_FAILED: t => t('No se pudo borrar o mover el archivo. Revis\u00e1 que no est\u00e9 abierto en otro programa y que tengas permisos sobre la carpeta.'),
 	HARNESS_COMMAND_FAILED: t => t('No se pudo preparar el comando. Revis\u00e1 el error del sistema en los detalles; esto no significa que falte la herramienta.'),
 	HARNESS_CHAT_TURN_INVALID: t => t('Escrib\u00ed un mensaje nuevo para que la IA responda.'),
 	HARNESS_CHECKPOINT_APPROVAL_REQUIRED: t => t('Esta acci\u00f3n necesita tu confirmaci\u00f3n. Volv\u00e9 a ejecutarla y aprobala.'),

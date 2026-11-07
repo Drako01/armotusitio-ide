@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { agentContract, plannerContract } from '../src/native-agent-contract.ts';
+import { agentContract, FILE_TOOLS_CONTRACT, plannerContract } from '../src/native-agent-contract.ts';
 import { buildDirectInstruction, chatMessage } from '../src/native-chat.ts';
 import { buildAgentInvocation } from '../src/native-agent-execution.ts';
 import { parseRunBlock } from '../src/native-run-outcome.ts';
@@ -37,16 +37,18 @@ test('every agent prompt carries the contract that matches its provider and role
 
 test('the git tools are described only to writers that have them, and publishing stays forbidden', () => {
 	const chatWriter = buildAgentInvocation({ schemaVersion: 1, provider: 'claude', role: 'implementer', projectRoot: '/repo', instruction: 'x', readOnly: false },
-		[], { command: 'node', args: ['ats-runner.js', 'runner.json'], env: {}, mcpConfigFile: '/storage/mcp.json', git: true });
+		[], { command: 'node', args: ['ats-runner.js', 'runner.json'], env: {}, mcpConfigFile: '/storage/mcp.json', git: true, files: true });
 	const plain = agentContract({ provider: 'claude', role: 'implementer', runner: true });
 	const planner = agentContract({ provider: 'claude', role: 'planner', runner: true, git: true });
 	const direct = buildDirectInstruction([chatMessage('user', 'sube los cambios')]);
 	assert.deepEqual({
 		withTools: ['git_branch_create', 'git_commit', 'git_push', 'git_pr_upsert', 'publish packages'].every(text => chatWriter.stdin.includes(text)) && !chatWriter.stdin.includes('Never: modify git state (commit'),
 		withoutTools: plain.includes('Never: modify git state (commit, branch, checkout, reset, stash, push'), readOnlyNever: planner.includes('git_commit'),
-		direct: ['`git_branch_create`', '`git_commit`', '`git_push`', '`git_pr_upsert`', 'No force push', 'No force push', 'no release', 'A DENIED or POLICY_DENIED answer is final'].every(text => direct.includes(text)),
-		oldPhrase: direct.includes('You cannot commit, push or publish')
-	}, { withTools: true, withoutTools: true, readOnlyNever: false, direct: true, oldPhrase: false });
+		direct: ['`git_branch_create`', '`git_commit`', '`git_push`', '`git_pr_upsert`', 'No force push', 'No force push', 'no release', 'A DENIED answer (the user said no) is final', 'may be corrected and called again'].every(text => direct.includes(text)),
+		oldPhrase: direct.includes('You cannot commit, push or publish'),
+		fileTools: chatWriter.stdin.includes(FILE_TOOLS_CONTRACT) && !plain.includes('delete_path') && !agentContract({ provider: 'claude', role: 'reviewer', files: true }).includes('delete_path'),
+		recovery: plain.includes('fix the cause and run it again') && !planner.includes('fix the cause and run it again')
+	}, { withTools: true, withoutTools: true, readOnlyNever: false, direct: true, oldPhrase: false, fileTools: true, recovery: true });
 });
 
 

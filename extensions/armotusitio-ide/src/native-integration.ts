@@ -305,7 +305,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			if (method === 'editor' && typeof input.name === 'string') { return runEditorTool({ root, backend: editorBackend, inScope }, input.name, input.input ?? {}); }
 			if (method === 'work-mcp' && typeof input.name === 'string') { return mcp.call(input.name, input.input ?? {}); }
 			// Only a run that can ask the user (the chat) has an approver; any other run is denied.
-			if (method === 'approval') { const draft = parseApprovalDraft(params); return draft && approve ? approve(draft) : 'deny'; }
+			if (method === 'approval') { const draft = parseApprovalDraft(params, root); return draft && approve ? approve(draft) : 'deny'; }
 			if (method === 'secrets' && typeof input.command === 'string') { return devSecrets.forCommand(projectKeyOf(root), input.command, Array.isArray(input.args) ? input.args : [], input.cwd ?? '.'); }
 			throw Error('HARNESS_TOOL');
 		});
@@ -313,7 +313,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			schemaVersion: 1, root, policy, env, logDirectory: path.join(directory, 'logs'), maxTurns,
 			channel: { address: channel.address, token: channel.token }, mcpTools,
 			...(approve ? {
-				git: true, permissions: { preset: permissionsPreset() },
+				git: true, files: true, permissions: { preset: permissionsPreset() },
 				projectPermissionsBaseline: await projectPermissionsDigest(root), repoBaseline: await repoFingerprint(root),
 				protectedBranches: vscode.workspace.getConfiguration('atsHarness').get('protectedBranches', [])
 			} : {}),
@@ -321,7 +321,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 		};
 		const configFile = path.join(directory, 'runner.json');
 		await fs.writeFile(configFile, JSON.stringify(config), { mode: 0o600 });
-		const launch = { command: process.execPath, args: [path.join(context.extensionPath ?? context.extensionUri?.fsPath ?? '', 'dist', 'ats-runner.js'), configFile], env: { ELECTRON_RUN_AS_NODE: '1' }, mcpConfigFile: path.join(directory, 'mcp.json'), ...(approve ? { git: true } : {}) };
+		const launch = { command: process.execPath, args: [path.join(context.extensionPath ?? context.extensionUri?.fsPath ?? '', 'dist', 'ats-runner.js'), configFile], env: { ELECTRON_RUN_AS_NODE: '1' }, mcpConfigFile: path.join(directory, 'mcp.json'), ...(approve ? { git: true, files: true } : {}) };
 		await fs.writeFile(launch.mcpConfigFile, JSON.stringify({ mcpServers: { 'ats-runner': { type: 'stdio', command: launch.command, args: launch.args, env: launch.env } } }), { mode: 0o600 });
 		return {
 			launch, policy: createCommandPolicy(approve ? { ...policy, permissions: await loadPermissions(root, undefined, vscode.l10n.t, { preset: permissionsPreset() }) } : policy).describe(), ecosystems: describeEcosystems(subprojects),

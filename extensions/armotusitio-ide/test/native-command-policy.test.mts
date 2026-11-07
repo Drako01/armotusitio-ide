@@ -52,8 +52,9 @@ test('the IDE floor rejects what no preset, project or user extra can allow', ()
 		['node', ['-e', 'process.exit()']], ['python', ['-c', 'print(1)']], ['bash', ['-c', 'ls']], ['go', ['test', '&&', 'rm']], ['sudo', ['go']], ['docker', ['compose', 'up']],
 		['gh', ['pr', 'create']], ['python', ['-m', 'pip', 'install', 'x']], ['npx', ['-y', 'cowsay']]
 	] as Array<[string, string[]]>).map(([command, args]) => target.decide(command, args, 'apps/api')).map(decision => decision.allowed ? 'allowed' : decision.reason);
-	const expected = ['git-mutation', 'git-mutation', 'global-config', 'publish', 'dependency-change', 'dependency-change', 'dependency-change', 'global-config', 'network', 'destructive',
-		'inline-code', 'inline-code', 'shell-operator', 'shell-operator', 'privilege', 'publish', 'publish', 'dependency-change', 'dependency-change'];
+	// External CLIs (curl, docker, gh) are not allowed without a way to ask the user; with one they become a question (see below).
+	const expected = ['git-mutation', 'git-mutation', 'global-config', 'publish', 'dependency-change', 'dependency-change', 'dependency-change', 'global-config', 'external-cli', 'destructive',
+		'inline-code', 'inline-code', 'shell-operator', 'shell-operator', 'privilege', 'external-cli', 'external-cli', 'dependency-change', 'dependency-change'];
 	assert.deepEqual({ ide: reasons(policy), delegated: reasons(project) }, { ide: expected, delegated: expected });
 });
 
@@ -185,7 +186,7 @@ test('exact toolchain information probes are available without a detected projec
 		}
 		for (const [command, args] of [
 			['node', ['--version', '--eval=1']], ['pnpm', ['--version', 'exec', 'sh']], ['npx', ['--help', 'curl']],
-			['C:/node/node.exe', ['--version']], ['curl', ['--help']], ['gh', ['--version']], ['bash', ['--version']]
+			['C:/node/node.exe', ['--version']], ['curl', ['--help']], ['gh', ['--version', 'x']], ['bash', ['--version']]
 		] as Array<[string, string[]]>) { assert.equal(policy.decide(command, args, '.').allowed, false); }
 	}
 	const plain = createCommandPolicy({ subprojects: [], delegate: false, extras: [] });
@@ -224,4 +225,39 @@ test('provider version probes preserve delegation and permission rules without a
 			assert.deepEqual(policy.decide('pnpm', ['exec', 'claude', '-p', 'prompt'], '.'), { allowed: false, reason: 'not-allowed' });
 		}
 	} finally { await trusted.cleanup(); await readonly.cleanup(); }
+});
+
+
+test('external CLIs ask the user, read-only gh runs directly, credentials never, and only a rule naming the CLI pre-approves it', async () => {
+	const loaded = await permissionsFor('dev', { user: { version: 1, allow: ['run:*', 'run:aws sts get-caller-identity'] } });
+	try {
+		const policy = createCommandPolicy({ subprojects: monorepo, delegate: false, extras: [], permissions: loaded.set });
+		const plain = createCommandPolicy({ subprojects: monorepo, delegate: false, extras: [] });
+		const verdict = (target: typeof policy, command: string, ...args: string[]) => { const decision = target.decide(command, args, '.'); return decision.allowed ? 'allowed' : decision.reason; };
+		assert.deepEqual({
+			ghRead: [['pr', 'checks', '12'], ['run', 'view', '99', '--log-failed'], ['issue', 'list', '--state', 'open'], ['pr', 'view', '--web']].map(args => verdict(policy, 'gh', ...args)),
+			asks: [['aws', 's3', 'ls'], ['gh', 'pr', 'merge', '12'], ['gh', 'api', 'repos/o/r'], ['kubectl', 'get', 'pods'], ['docker', 'build', '.'], ['curl', 'https://example.test'], ['terraform', 'plan']]
+				.map(([command, ...args]) => verdict(policy, command, ...args)),
+			remembered: verdict(policy, 'aws', 'sts', 'get-caller-identity'),
+			credentials: [['aws', 'configure', 'export-credentials'], ['aws', '--profile', 'prod', 'sts', 'get-session-token'], ['aws', 'secretsmanager', 'get-secret-value', '--secret-id', 'x'],
+				['aws', 'ssm', 'get-parameter', '--name', 'x', '--with-decryption'], ['gh', 'auth', 'token'], ['az', 'account', 'get-access-token'], ['gcloud', 'auth', 'print-access-token'],
+				['docker', 'login'], ['heroku', 'auth:token'], ['kubectl', 'config', 'view', '--raw'], ['vercel', 'login']].map(([command, ...args]) => verdict(policy, command, ...args)),
+			hidden: [verdict(policy, 'pnpm', 'exec', 'aws', 's3', 'ls'), verdict(policy, '/usr/bin/aws', 's3', 'ls')],
+			noChannel: [verdict(plain, 'aws', 's3', 'ls'), verdict(plain, 'gh', 'pr', 'checks'), verdict(plain, 'gh', '--version')],
+			describe: policy.describe().some(line => line.includes('aws'))
+		}, {
+			ghRead: ['allowed', 'allowed', 'allowed', 'needs-approval'],
+			asks: Array(7).fill('needs-approval'),
+			remembered: 'allowed',
+			credentials: Array(11).fill('credential-access'),
+			hidden: ['not-allowed', 'invalid'],
+			noChannel: ['external-cli', 'allowed', 'allowed'],
+			describe: true
+		});
+		const readonly = await permissionsFor('readonly');
+		try {
+			const strict = createCommandPolicy({ subprojects: monorepo, delegate: false, extras: [], permissions: readonly.set });
+			assert.deepEqual([verdict(strict, 'aws', 's3', 'ls'), verdict(strict, 'gh', 'pr', 'checks')], ['external-cli', 'not-allowed']);
+		} finally { await readonly.cleanup(); }
+	} finally { await loaded.cleanup(); }
 });
