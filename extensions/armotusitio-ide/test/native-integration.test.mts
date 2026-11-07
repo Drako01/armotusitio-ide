@@ -11,6 +11,7 @@ import { inspectHarnessAuthority } from '../src/native-authority.ts';
 import { acquireSharedExecutionFence, inspectSharedExecutionFence } from '../src/native-shared-fence.ts';
 import { installFakeCodex } from './native-fake-provider.mts';
 import { referenceEngine } from './native-reference-engine.mts';
+import { addUserRule, listUserRules, projectKey } from '../src/native-permissions.ts';
 
 import { fixture } from './native-integration-fixture.mts';
 
@@ -36,6 +37,33 @@ test('native IDE flow preserves the full configured DAG and isolates two open ro
 		await f.invoke('nativeStatus', f.roots[0]);
 		assert.equal(JSON.parse(f.documents.at(-1)!.content)[0].plan.gates[0].cwd, 'subproject');
 	} finally { await f.cleanup(); }
+});
+
+test('"Gestionar permisos" lists every saved rule with its decision and scope and revokes the ones picked', async () => {
+	const f = await fixture();
+	const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+	const home = path.join(path.dirname(f.roots[0]), 'home');
+	await fs.mkdir(home);
+	// The command reads the user's file through the OS home; the test points it at a throwaway one.
+	process.env.HOME = home; process.env.USERPROFILE = home;
+	try {
+		await addUserRule('run:docker ps', 'allow', home, f.roots[0]);
+		await addUserRule('run:pnpm lint', 'ask', home);
+		let offered: Array<{ label: string; description: string }> = [];
+		f.vscode.window.showQuickPick = async (items: Array<{ label: string; description: string }>) => { offered = items; return items.filter(item => item.label === 'run:docker ps'); };
+		await f.invoke('managePermissions', f.roots[0]);
+		assert.deepEqual({
+			offered: offered.map(item => item.label + ' | ' + item.description.replace(projectKey(f.roots[0]), '<project>')).sort(),
+			left: (await listUserRules(home)).map(entry => entry.rule), notice: f.notices.at(-1)
+		}, {
+			offered: ['run:docker ps | Permitir \u00b7 solo el proyecto <project>', 'run:pnpm lint | Preguntar \u00b7 todos los proyectos'],
+			left: ['run:pnpm lint'], notice: 'Reglas revocadas: 1. La pr\u00f3xima vez esas acciones se preguntan de nuevo.'
+		});
+	} finally {
+		Object.assign(process.env, saved);
+		for (const [key, value] of Object.entries(saved)) { if (value === undefined) { delete process.env[key]; } }
+		await f.cleanup();
+	}
 });
 
 test('restricted workspace, outside root and project authority cannot start a bundled task', async () => {

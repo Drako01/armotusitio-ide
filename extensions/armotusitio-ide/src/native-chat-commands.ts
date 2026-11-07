@@ -12,9 +12,10 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import type { ChatMode } from './native-chat.ts';
 import type { HarnessChatSession } from './native-chat-session.ts';
-import { loadPermissions, removeUserRule, userRules } from './native-permissions.ts';
+import { listUserRules, loadPermissions, projectKey, removeUserRule } from './native-permissions.ts';
 import type { PermissionPreset } from './native-permissions-types.ts';
 import type { ProviderQuota } from './native-quota.ts';
+import { redactSecrets } from './native-redact.ts';
 
 export type CommandTranslator = (text: string, ...args: string[]) => string;
 export interface ChatCommand {
@@ -49,6 +50,8 @@ export function chatCommands(t: CommandTranslator): ChatCommand[] {
 		{ name: 'permisos', usage: '[usuario|proyecto|quitar REGLA]', description: t('Muestra los permisos efectivos y tus reglas guardadas; con usuario o proyecto abre (o crea) su archivo JSON; con quitar revoca una regla tuya.'), session: true },
 		{ name: 'modo', usage: '[actuar|preguntar]', description: t('Muestra o cambia el modo del chat.'), session: true },
 		{ name: 'deshacer', description: t('Descarta los cambios de la \u00faltima ejecuci\u00f3n.'), session: true },
+		{ name: 'doctor', description: t('Revisa la m\u00e1quina y el proyecto (Node, gestor de paquetes, git, Docker, disco) y dice c\u00f3mo arreglar cada problema.'), session: true },
+		{ name: 'auditoria', description: t('\u00daltimas acciones de las herramientas del agente en este proyecto (comandos, git, archivos) y su resultado.'), session: true },
 		{ name: 'costo', description: t('Muestra los tokens que inform\u00f3 el proveedor en el \u00faltimo turno.'), session: true },
 		{ name: 'estado', description: t('Progreso de las tareas del Harness.'), session: false },
 		{ name: 'comandos', description: t('Acciones disponibles por proyecto.'), session: false },
@@ -93,6 +96,26 @@ async function ensurePermissionsFile(file: string): Promise<void> {
 	}
 }
 
+const AUDITED_RUNS = 10;
+
+/** Latest tool actions of this project's recent runs, newest first, one line each; secrets are redacted. */
+export async function auditLines(runsDirectory: string, limit = 30): Promise<string[]> {
+	const runs = (await fs.readdir(runsDirectory).catch(() => [] as string[])).sort().reverse().slice(0, AUDITED_RUNS);
+	const entries: Array<Record<string, unknown>> = [];
+	for (const run of runs) {
+		const raw = await fs.readFile(path.join(runsDirectory, run, 'logs', 'commands.jsonl'), 'utf8').catch(() => '');
+		for (const line of raw.split('\n')) {
+			// A torn last line (the run was killed mid-write) is skipped; every complete line is shown.
+			try { const value = JSON.parse(line) as Record<string, unknown>; if (value && typeof value.at === 'string') { entries.push(value); } } catch { continue; }
+		}
+	}
+	return entries.sort((left, right) => String(right.at).localeCompare(String(left.at))).slice(0, limit).map(entry => {
+		const what = typeof entry.command === 'string' ? [entry.command, ...(Array.isArray(entry.args) ? entry.args : [])].join(' ') : String(entry.tool);
+		const result = entry.denied ? 'denegado: ' + entry.denied : entry.error ? 'error: ' + entry.error : entry.exitCode !== undefined ? 'exit ' + entry.exitCode : String(entry.outcome ?? '');
+		return '  ' + String(entry.at).slice(0, 19).replace('T', ' ') + '  ' + redactSecrets(what).slice(0, 160) + '  -> ' + result;
+	});
+}
+
 const exists = (file: string): Promise<boolean> => fs.lstat(file).then(() => true, () => false);
 
 export interface SessionCommandDeps {
@@ -104,6 +127,10 @@ export interface SessionCommandDeps {
 	openFile(file: string): Promise<void>;
 	/** Modal confirmation shared with the "discard changes" button. */
 	confirmDiscard(): Promise<boolean>;
+	/** Markdown report of the machine doctor for a project. */
+	doctor?(root: string): Promise<string>;
+	/** Folder holding this project's agent runs, each with `logs/commands.jsonl`. */
+	runsDirectory?(root: string): string | undefined;
 	home?: string;
 }
 
@@ -124,14 +151,16 @@ export async function runSessionCommand(deps: SessionCommandDeps, action: string
 			// Rules have no spaces except in `run:` commands, so the rest of the line is the rule verbatim.
 			const rule = words.slice(1).join(' ');
 			if (!rule) { return t('Uso: /permisos quitar REGLA (copiala de la lista de /permisos).'); }
-			return await removeUserRule(rule, home)
+			return await removeUserRule(rule, home, projectKey(root))
 				? t('Revoqu\u00e9 la regla \u00ab{0}\u00bb. Desde ahora esa acci\u00f3n vuelve a pedir permiso.', rule)
 				: t('No encontr\u00e9 la regla \u00ab{0}\u00bb en {1}.', rule, USER_FILE_LABEL);
 		}
 		if (words.length) { return t('Uso: /permisos [usuario|proyecto|quitar REGLA]'); }
 		const set = await loadPermissions(root, home, t, { preset: deps.permissionsPreset() });
-		const saved = await userRules(home).catch(() => undefined);
-		const savedLines = saved ? (['allow', 'ask', 'deny'] as const).flatMap(decision => saved[decision].map(rule => '  ' + decision + '  ' + rule)) : [];
+		// Only the rules that apply here: global ones and this project's own section.
+		const key = projectKey(root);
+		const saved = (await listUserRules(home).catch(() => [])).filter(entry => !entry.project || entry.project === key);
+		const savedLines = saved.map(entry => '  ' + entry.decision + '  ' + entry.rule + '  (' + (entry.project ? t('este proyecto') : t('todos los proyectos')) + ')');
 		const files = [[USER_FILE_LABEL, path.join(home, '.armotusitio', 'permissions.json')], [PROJECT_FILE_LABEL, path.join(root, '.armotusitio', 'permissions.json')]] as const;
 		return [
 			t('Permisos efectivos:'), ...set.describe().map(line => '  ' + line),
@@ -158,6 +187,14 @@ export async function runSessionCommand(deps: SessionCommandDeps, action: string
 		if (!await deps.confirmDiscard()) { return t('Cambio cancelado.'); }
 		await session.discardRun(status.messageId);
 		return t('Listo: descart\u00e9 los cambios de la \u00faltima ejecuci\u00f3n.');
+	}
+	if (action === 'auditoria') {
+		const directory = deps.runsDirectory?.(root);
+		const lines = directory ? await auditLines(directory) : [];
+		return lines.length ? [t('\u00daltimas acciones del agente (hora UTC, m\u00e1s reciente primero):'), ...lines].join('\n') : t('Todav\u00eda no hay acciones registradas del agente en este proyecto.');
+	}
+	if (action === 'doctor') {
+		return deps.doctor ? await deps.doctor(root) : t('El m\u00e9dico de la m\u00e1quina no est\u00e1 disponible en esta ventana.');
 	}
 	if (action === 'costo') {
 		const last = session.lastUsage();

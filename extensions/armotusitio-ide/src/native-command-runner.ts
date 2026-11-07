@@ -71,8 +71,11 @@ export async function runCommand(request: CommandRequest): Promise<CommandResult
 	const logFile = path.join(request.logDirectory, new Date(started).toISOString().replace(/[:.]/g, '-') + '-' + path.basename(request.command).replace(/[^\w.-]/g, '_') + '.log');
 	const log = fs.createWriteStream(logFile, { flags: 'wx', mode: 0o600 });
 	const env = { ...toolchainEnv, ...(resolved.embeddedNode ? { ELECTRON_RUN_AS_NODE: '1' } : {}) };
+	// A project Harness resolves `--cwd` against its own root, which it may take from the process directory (for example
+	// `Path.cwd()` in a Python `ide-run`): starting it inside the subfolder made it look for `<cwd>/<cwd>`.
+	const processCwd = request.delegateEntry ? request.root : realCwd;
 	return new Promise(resolve => {
-		const child = spawn(resolved.executable, resolved.args, { cwd: realCwd, env, shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
+		const child = spawn(resolved.executable, resolved.args, { cwd: processCwd, env, shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
 		let tail = '', logged = 0, truncated = false, timedOut = false, cancelled = false, done = false;
 		const decoder = new StringDecoder('utf8');
 		const collect = (chunk: Buffer): void => {

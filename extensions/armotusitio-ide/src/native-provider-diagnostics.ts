@@ -144,6 +144,16 @@ export async function probeWebSearch(provider: NativeProvider): Promise<boolean>
 	return !!help && /--search\b|web_search/.test(help);
 }
 
+/**
+ * Whether Claude can hand its permission prompts to the IDE (native transport pilot). `--permission-prompts` is documented
+ * in help; `--permission-prompt-tool`, its companion, is accepted but not listed, so help cannot prove more than this.
+ */
+export async function probeHostPermissionPrompts(provider: NativeProvider): Promise<boolean> {
+	if (provider !== 'claude') { return false; }
+	const help = await readProviderHelp(provider, ['--help']);
+	return !!help && /--permission-prompts\b/.test(help) && /--permission-prompt-tool\b/.test(help);
+}
+
 export async function diagnoseProvider(provider: NativeProvider): Promise<ProviderDiagnostic> {
 	if (provider !== 'codex' && provider !== 'claude') { throw Error('HARNESS_PROVIDER_UNSUPPORTED'); }
 	let resolved;

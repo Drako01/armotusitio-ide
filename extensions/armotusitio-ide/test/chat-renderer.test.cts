@@ -183,6 +183,13 @@ test('live timeline, queued messages and per-file run actions render inertly, ac
 		assert.deepEqual(await page.evaluate(() => ({ open: document.querySelector('.run-files-slot details')?.open, files: [...document.querySelectorAll('.run-file')].map(item => item.textContent.replace(/\s+/g, ' ').trim()) })), {
 			open: true, files: ['src/a.ts modificado \u00b7 revertido', 'src/b.ts nuevoVer cambiosRevertir']
 		});
+
+		// A blocked run always ends with the concrete next step for what it needs, never a dead end.
+		const blocked = JSON.parse(JSON.stringify(after)); blocked.chat.revision = 3;
+		blocked.chat.messages.push({ id: 'r2', role: 'run', provider: 'claude', text: '', at, run: { ...run.run, status: 'failed', outcome: { kind: 'blocked', reason: 'git fetch denegado', needs: 'policy' } } });
+		await push(blocked);
+		assert.equal(await page.evaluate(() => document.querySelector('[data-id="r2"] .run-summary .error-text')?.textContent),
+			'El agente necesita algo que no puede resolver solo: git fetch denegado (un permiso) Revis\u00e1 /permisos: aprob\u00e1 la acci\u00f3n cuando la pida o quit\u00e1 la regla que la bloquea, y toc\u00e1 Continuar.');
 	} finally { await browser.close(); }
 });
 
@@ -192,9 +199,11 @@ test('Chat Harness quota indicator shows the shortest window of the active provi
 		const page = await browser.newPage({ viewport: { width: 1100, height: 900 }, reducedMotion: 'reduce' });
 		const push = await mountChat(page);
 		const reading = (session, weekly) => ({
-			claude: { provider: 'claude', asOf: Date.now(), source: 'stream', windows: [
-				{ id: 'session', label: '5h', usedPercent: session, resetsAt: Math.floor(Date.now() / 1000) + 3600 },
-				{ id: 'weekly', label: '7d', usedPercent: weekly, resetsAt: Math.floor(Date.now() / 1000) + 3 * 86400 }] }
+			claude: {
+				provider: 'claude', asOf: Date.now(), source: 'stream', windows: [
+					{ id: 'session', label: '5h', usedPercent: session, resetsAt: Math.floor(Date.now() / 1000) + 3600 },
+					{ id: 'weekly', label: '7d', usedPercent: weekly, resetsAt: Math.floor(Date.now() / 1000) + 3 * 86400 }]
+			}
 		});
 		const withQuota = quota => { const value = state(undefined); value.chat.quota = quota; return value; };
 		const probe = () => page.evaluate(() => { const node = document.getElementById('quota'); return { hidden: node.hidden, level: node.dataset.level, icon: node.querySelector('.quota-icon').textContent, text: node.querySelector('.quota-text').textContent, label: node.getAttribute('aria-label'), title: node.title }; });

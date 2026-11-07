@@ -15,6 +15,7 @@
  *   git_push          the structured push tool, in every project
  *   git_branch_create the structured branch creation tool, in every project
  *   git_pr_upsert     the structured GitHub PR create/update tool, in every project
+ *   git_fetch         the structured fetch tool, in every project
  *   <git rule>:<glob> the same tool only in projects whose root (`/` separators, lowercase on Windows) matches, e.g. `git_push:c:/work/app`
  * Precedence inside one layer: deny, then ask, then allow. Across layers: floor > project > user > preset; a project file can
  * only add `ask` / `deny` (its `allow` is ignored and reported), because a cloned repository must not grant itself permissions.
@@ -23,13 +24,21 @@ export type PermissionDecision = 'allow' | 'ask' | 'deny';
 export type PermissionPreset = 'readonly' | 'dev' | 'trusted';
 export type PermissionSource = 'floor' | 'project' | 'user' | 'preset' | 'default';
 
-/** On-disk shape of `~/.armotusitio/permissions.json` (user) and `<project>/.armotusitio/permissions.json` (project). */
-export interface PermissionFile {
-	version: 1;
-	preset?: PermissionPreset;
+/** Rules of one decision list. */
+export interface PermissionRules {
 	allow?: string[];
 	ask?: string[];
 	deny?: string[];
+}
+
+/**
+ * On-disk shape of `~/.armotusitio/permissions.json` (user) and `<project>/.armotusitio/permissions.json` (project).
+ * `projects` (user file only) holds rules that apply in one project, keyed by `projectKey(root)`: "always" answers go there.
+ */
+export interface PermissionFile extends PermissionRules {
+	version: 1;
+	preset?: PermissionPreset;
+	projects?: Record<string, PermissionRules>;
 }
 
 /** What an agent wants to do; every tool call that needs a decision is described by exactly one of these. */
@@ -39,7 +48,8 @@ export type PermissionRequest =
 	| { kind: 'git_commit'; branch: string; files: string[]; message: string }
 	| { kind: 'git_push'; branch: string; remote: string }
 	| { kind: 'git_branch_create'; repo: string; branch: string; from: string }
-	| { kind: 'git_pr_upsert'; repo: string; branch: string; base: string; title: string; body: string };
+	| { kind: 'git_pr_upsert'; repo: string; branch: string; base: string; title: string; body: string }
+	| { kind: 'git_fetch'; remote: string; branch?: string };
 
 export interface PermissionVerdict {
 	decision: PermissionDecision;
@@ -57,7 +67,15 @@ export interface ApprovalRequest {
 	title: string;
 	/** Short lines (branch, files, message, command) shown verbatim; never secrets. */
 	detail: string[];
-	/** Rule persisted when the user answers `always` (written to the USER file, never to the project file). */
+	/** Rule remembered for `task`, `session` or `always` (always: the USER file's project section, never the project file). */
 	rule: string;
+	/** Why the action cannot be remembered, when `rule` is empty; the card says so instead of hiding the options silently. */
+	noRemember?: NoRememberReason;
 }
-export type ApprovalAnswer = 'once' | 'always' | 'deny';
+/**
+ * How far an approval reaches: this action only, the rest of the current run, the rest of the IDE session in this project,
+ * or always in this project. Anything else is a denial.
+ */
+export type ApprovalAnswer = 'once' | 'task' | 'session' | 'always' | 'deny';
+/** Why an approval is offered only once: dependency installs, irreversible file changes, publication, or no exact rule exists. */
+export type NoRememberReason = 'dependency' | 'irreversible' | 'publication' | 'inexact';

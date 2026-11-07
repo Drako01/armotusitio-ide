@@ -11,7 +11,7 @@ import type { Subproject } from './native-ecosystems.ts';
 import { commandName, dependencyDecision, suggestRule, type PermissionSet } from './native-permissions.ts';
 
 /** Machine-readable denial returned to the agent as `POLICY_DENIED: <category>`. */
-export type PolicyDenial = 'shell-operator' | 'inline-code' | 'git-mutation' | 'publish' | 'network' | 'destructive' | 'privilege' | 'global-config' | 'dependency-change' | 'external-cli' | 'credential-access' | 'not-allowed' | 'cwd-outside-project' | 'invalid' | 'needs-approval';
+export type PolicyDenial = 'shell-operator' | 'inline-code' | 'git-mutation' | 'publish' | 'network' | 'destructive' | 'privilege' | 'global-config' | 'dependency-change' | 'external-cli' | 'credential-access' | 'unusual-form' | 'not-allowed' | 'cwd-outside-project' | 'invalid' | 'needs-approval';
 /** `needs-approval` is a permission `ask`: still `allowed: false`, so a consumer that only reads `allowed` treats it as denied. */
 export type PolicyDecision = { allowed: true; executable: string; cwd: string; delegate: boolean }
 	| { allowed: false; reason: Exclude<PolicyDenial, 'needs-approval'> }
@@ -98,6 +98,78 @@ const informationProbe = (name: string, args: readonly string[]): boolean => arg
 const base = commandName;
 const hasFlag = (args: readonly string[], ...flags: string[]): boolean => args.some(arg => flags.includes(arg) || flags.some(flag => flag.startsWith('--') && arg.startsWith(flag + '=')));
 
+/** Flags a package manager may take before its subcommand; `folder` flags take a project-relative folder, checked like `cwd`. */
+const LEADING_FLAGS: Record<string, { bare: readonly string[]; valued: readonly string[]; folder: readonly string[] }> = {
+	pnpm: { bare: ['-r', '--recursive', '-w', '--workspace-root', '--silent', '-s'], valued: ['--filter', '-F', '--reporter'], folder: ['--dir', '-C'] },
+	npm: { bare: ['--workspaces', '--silent', '-s'], valued: ['-w', '--workspace'], folder: ['--prefix'] },
+	yarn: { bare: ['--silent', '-s'], valued: [], folder: ['--cwd'] }
+};
+
+/**
+ * Splits the safe leading flags of a package manager invocation from the rest. `folder` is the last folder flag, so a
+ * caller can judge the command in that subproject; `undefined` when any leading flag is not in `LEADING_FLAGS`.
+ */
+function leadingFlags(name: string, args: readonly string[]): { rest: string[]; folder?: string; outside?: true } | undefined {
+	const known = LEADING_FLAGS[name];
+	if (!known) { return undefined; }
+	let index = 0, folder: string | undefined;
+	while (index < args.length && args[index].startsWith('-')) {
+		const [flag, inline] = args[index].includes('=') ? [args[index].slice(0, args[index].indexOf('=')), args[index].slice(args[index].indexOf('=') + 1)] : [args[index], undefined];
+		if (known.bare.includes(flag) && inline === undefined) { index++; continue; }
+		if (!known.valued.includes(flag) && !known.folder.includes(flag)) { return undefined; }
+		const value = inline ?? args[index + 1];
+		if (!value || /[\u0000-\u001f]/.test(value) || (inline === undefined && value.startsWith('-'))) { return undefined; }
+		if (known.folder.includes(flag)) {
+			folder = validCwd(value);
+			// Pointing a package manager at another folder must follow the same rule as `cwd`: never outside the project.
+			if (!folder) { return { rest: [], outside: true }; }
+		}
+		index += inline === undefined ? 2 : 1;
+	}
+	return { rest: args.slice(index), folder };
+}
+
+/** What the agent should do instead, per denial; sent with every `POLICY_DENIED` so a refusal is never a dead end. */
+const DENIAL_HINTS: Record<Exclude<PolicyDenial, 'needs-approval'>, string> = {
+	'shell-operator': 'Run one command per call, without a shell or shell operators; split it into separate `run` calls.',
+	'inline-code': 'Write the code to a file in the project and run that file.',
+	'git-mutation': 'Change git state only with the structured tools: git_fetch, git_branch_create, git_commit, git_push, git_pr_upsert.',
+	'publish': 'Publishing, releases and deployments are the user\'s action: report what is ready instead.',
+	'network': 'Raw network tools are not available; use curl or wget (they ask the user) or report what you need.',
+	'destructive': 'Delete or move project files with delete_path and move_path.',
+	'privilege': 'Never elevate privileges; report what needs administrator rights.',
+	'global-config': 'Change only project-local configuration, or report the global change for the user to make.',
+	'dependency-change': 'Installing or changing dependencies needs the user\'s approval; if it was refused, report the missing dependency.',
+	'external-cli': 'External CLIs need the user\'s approval for each call; if it was refused, report what you needed.',
+	'credential-access': 'Logins and credential output are never available: ask the user to authenticate in their own terminal (for example `aws sso login`, `gh auth login`) and then run the original command.',
+	'unusual-form': 'Use the `cwd` parameter (for example cwd "apps/web") and a plain subcommand instead of leading flags; the user may still approve this exact form.',
+	'not-allowed': 'This executable is not available to agents here; use a project script or another available tool.',
+	'cwd-outside-project': 'Use a project-relative folder inside the project as `cwd`.',
+	'invalid': 'Pass the executable by its bare name and each argument as a separate item.'
+};
+
+/** The `POLICY_DENIED` answer for a refusal, with the action that is still available. */
+export function denialText(reason: Exclude<PolicyDenial, 'needs-approval'>): string {
+	return 'POLICY_DENIED: ' + reason + '\nNext: ' + DENIAL_HINTS[reason];
+}
+
+/** Floor results that are about safety, not shape: an unusual form may never hide one of them. */
+const SECURITY_DENIALS: ReadonlySet<PolicyDenial> = new Set(['shell-operator', 'inline-code', 'privilege', 'destructive', 'publish', 'network',
+	'credential-access', 'global-config', 'git-mutation', 'external-cli', 'dependency-change']);
+
+/**
+ * Verdict for a launcher or package manager written with flags the IDE cannot parse. An unknown flag may take a value, so
+ * the nested executable cannot be located: every positional argument is judged as one, and any safety denial wins.
+ */
+function unusualForm(args: readonly string[], depth: number): PolicyDenial {
+	for (let index = 0; index < args.length; index++) {
+		if (args[index].startsWith('-')) { continue; }
+		const nested = floor(args[index], args.slice(index + 1), depth + 1);
+		if (nested && SECURITY_DENIALS.has(nested)) { return nested; }
+	}
+	return 'unusual-form';
+}
+
 /** The immovable floor: what no project, preset or user setting can allow. */
 function floor(command: string, args: readonly string[], depth = 0): PolicyDenial | undefined {
 	const name = base(command);
@@ -126,14 +198,21 @@ function floor(command: string, args: readonly string[], depth = 0): PolicyDenia
 	if (AGENT_TOOLS.has(name)) { return 'not-allowed'; }
 	// Inspect the executable behind launchers before dependency approval can let the outer command through.
 	if ([...PACKAGE_MANAGERS, 'uv', 'poetry', 'bundle'].includes(name) && sub?.startsWith('-') &&
-		!(args.length === 1 && ['--version', '-v', '--help', '-h'].includes(sub))) { return 'not-allowed'; }
+		!(args.length === 1 && ['--version', '-v', '--help', '-h'].includes(sub))) {
+		if (hasFlag(args, '-g', '--global', '--location=global')) { return 'global-config'; }
+		// Workspace selectors (`--filter`, `--dir apps/x`) are judged on the subcommand behind them; any other leading flag
+		// is an unusual form the user (or the project's Harness) decides.
+		const leading = leadingFlags(name, args);
+		if (leading?.outside) { return 'cwd-outside-project'; }
+		return leading ? floor(command, leading.rest, depth + 1) : unusualForm(args, depth);
+	}
 	const launcher = ['npx', 'pnpx', 'bunx'].includes(name);
 	const wrapper = (PACKAGE_MANAGERS.has(name) && ['exec', 'dlx', 'x'].includes(sub ?? '')) ||
 		(['uv', 'poetry'].includes(name) && sub === 'run') || (name === 'bundle' && sub === 'exec');
 	if (launcher || wrapper) {
 		const nested = args.slice(launcher ? 0 : 1);
 		while (launcher && ['-y', '--yes', '--no-install', '--'].includes(nested[0])) { nested.shift(); }
-		if (!nested[0] || nested[0].startsWith('-')) { return 'not-allowed'; }
+		if (!nested[0] || nested[0].startsWith('-')) { return unusualForm(nested, depth); }
 		const denied = floor(nested[0], nested.slice(1), depth + 1);
 		// An external CLI behind a launcher would be approved under the launcher's name: call it directly instead.
 		if (denied) { return denied === 'external-cli' ? 'not-allowed' : denied; }
@@ -210,7 +289,7 @@ function permit(permissions: PermissionSet | undefined, command: string, args: r
 }
 
 /** Floor categories that become a question to the user (instead of a denial) when the run can ask. */
-const APPROVABLE: ReadonlySet<PolicyDenial> = new Set(['dependency-change', 'external-cli']);
+const APPROVABLE: ReadonlySet<PolicyDenial> = new Set(['dependency-change', 'external-cli', 'unusual-form']);
 
 /** Whether the project's Harness, the ecosystem presets or the user extras let this command through (after the floor). */
 function allowlisted(config: CommandPolicyConfig, extras: string[][], command: string, args: readonly string[], folder: string): Extract<PolicyDecision, { allowed: true }> | { allowed: false; reason: 'not-allowed' } {
@@ -218,9 +297,12 @@ function allowlisted(config: CommandPolicyConfig, extras: string[][], command: s
 	// The project's Harness applies its own, possibly stricter, policy after the floor.
 	if (config.delegate) { return { allowed: true, executable: command, cwd: folder, delegate: true }; }
 	if (name === 'git' || name === 'rg' || informationProbe(name, args) || ghReadOnly(name, args)) { return { allowed: true, executable: command, cwd: folder, delegate: false }; }
-	const sub = args[0];
+	// `pnpm --dir apps/web lint` is judged as `lint` in `apps/web`, the same as `cwd: "apps/web"` would be.
+	const leading = args[0]?.startsWith('-') ? leadingFlags(name, args) : undefined;
+	const sub = (leading?.rest ?? args)[0];
+	const target = leading?.folder ? (folder === '.' ? leading.folder : folder + '/' + leading.folder) : folder;
 	const presetAllows = config.subprojects.some(project => {
-		if (!inside(folder, project.path)) { return false; }
+		if (!inside(target, project.path)) { return false; }
 		const allowed = presets(project)[name];
 		return allowed === true || (!!allowed && !!sub && allowed.includes(sub));
 	});
@@ -234,7 +316,9 @@ export function createCommandPolicy(config: CommandPolicyConfig): CommandPolicy 
 		decide(command, args, cwd) {
 			const folder = validCwd(cwd);
 			if (!folder) { return { allowed: false, reason: 'cwd-outside-project' }; }
-			const denied = floor(command, args) as Exclude<PolicyDenial, 'needs-approval'> | undefined;
+			const floorVerdict = floor(command, args) as Exclude<PolicyDenial, 'needs-approval'> | undefined;
+			// With a project Harness that runs commands itself, how a command is written is that Harness' decision, not the IDE's.
+			const denied = floorVerdict === 'unusual-form' && config.delegate ? undefined : floorVerdict;
 			const approvable = !!denied && APPROVABLE.has(denied) && !!config.permissions;
 			if (denied && !approvable) { return { allowed: false, reason: denied }; }
 			const permitted = permit(config.permissions, command, args, folder, approvable);

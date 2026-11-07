@@ -373,7 +373,8 @@ function updatePlanCards(): void {
 /** What the outcome means for the user, in one line; runs stored before outcomes existed show none. */
 function outcomeHint(outcome: any): string | undefined {
 	if (!outcome) { return undefined; }
-	if (outcome.kind === 'blocked') { return format(L.outcomeHint.blocked, outcome.reason + (outcome.needs ? ' (' + L.needs[outcome.needs] + ')' : '')); }
+	// A block always says what to do next, so the user is never left with a dead end.
+	if (outcome.kind === 'blocked') { return format(L.outcomeHint.blocked, outcome.reason + (outcome.needs ? ' (' + L.needs[outcome.needs] + ')' : '')) + (outcome.needs ? ' ' + L.needsNext[outcome.needs] : ''); }
 	if (outcome.kind === 'unchanged') { return L.outcomeHint.unchanged; }
 	return outcome.reason ? L.outcomeHint[outcome.reason] : undefined;
 }
@@ -623,11 +624,12 @@ function renderApprovals(): void {
 		const card = el('div', 'approval'); card.setAttribute('role', 'group'); card.setAttribute('aria-labelledby', 'title-' + item.id); card.setAttribute('aria-describedby', 'rule-' + item.id);
 		const title = el('strong', 'approval-title', item.title); title.id = 'title-' + item.id;
 		const detail = el('ul', 'approval-detail'); for (const line of item.detail) { detail.append(el('li', undefined, line)); }
-		const rule = el('p', 'muted approval-rule', format(L.alwaysRule, item.rule, L.permissionsFile)); rule.id = 'rule-' + item.id;
-		rule.hidden = !item.rule;
+		// Without a rule the card says why it can only be allowed once, instead of silently hiding the other options.
+		const rule = el('p', 'muted approval-rule', item.rule ? format(L.alwaysRule, item.rule, L.permissionsFile) : (L.noRemember[item.noRemember] ?? '')); rule.id = 'rule-' + item.id;
+		rule.hidden = !rule.textContent;
 		const actions = el('div', 'approval-actions');
-		for (const [answer, label, className] of [['once', L.allowOnce, ''], ['always', L.allowAlways, 'secondary'], ['deny', L.denyApproval, 'secondary']]) {
-			if (answer === 'always' && !item.rule) { continue; }
+		for (const [answer, label, className] of [['once', L.allowOnce, ''], ['task', L.allowTask, 'secondary'], ['session', L.allowSession, 'secondary'], ['always', L.allowAlways, 'secondary'], ['deny', L.denyApproval, 'secondary']]) {
+			if (answer !== 'once' && answer !== 'deny' && !item.rule) { continue; }
 			const button = el('button', className, label) as HTMLButtonElement; button.type = 'button';
 			button.addEventListener('click', () => { button.disabled = true; api.postMessage({ action: 'approval', id: item.id, answer }); });
 			actions.append(button);

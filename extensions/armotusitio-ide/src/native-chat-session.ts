@@ -5,8 +5,9 @@
 /* One conversation per project. Sending only converses; code changes require approving the latest plan. */
 import { randomBytes } from 'node:crypto';
 import type { AgentOutcome } from './native-agent-execution.ts';
-import { APPROVAL_TIMEOUT_MS, type ApprovalDraft } from './native-approval.ts';
+import { APPROVAL_ANSWERS, APPROVAL_TIMEOUT_MS, REMEMBERING_ANSWERS, type ApprovalDraft } from './native-approval.ts';
 import type { ApprovalAnswer, ApprovalRequest } from './native-permissions-types.ts';
+import type { DoctorCheck } from './native-machine-doctor.ts';
 import type { NativeProvider } from './native-providers.ts';
 import type { ProviderUsage } from './native-provider-output.ts';
 import { liveQuota, mergeQuota, type ProviderQuota } from './native-quota.ts';
@@ -56,6 +57,8 @@ export interface ChatRuntime {
 	rememberApproval?(rule: string): Promise<void>;
 	/** Limits a provider keeps outside its run output (Codex rollouts); bounded and silent on failure. */
 	readQuota?(provider: NativeProvider): Promise<ProviderQuota | undefined>;
+	/** Local machine checks (Node, package manager, shell, git, gh), run before the first act turn of a session. */
+	preflight?(): Promise<DoctorCheck[]>;
 }
 export interface ChatActivity {
 	kind: 'thinking' | 'executing';
@@ -135,7 +138,6 @@ interface PendingApproval { request: ApprovalRequest; resolving?: boolean; settl
 /** Turn-only extras of a message (mentioned file content and its notice); a queued message keeps them until it runs. */
 interface SendAttachments { context?: string; notice?: string }
 
-const APPROVAL_ANSWERS: readonly ApprovalAnswer[] = ['once', 'always', 'deny'];
 
 const cancelledBeforeStart = (error: unknown): boolean => harnessErrorCode(error) === 'HARNESS_CANCELLED_BEFORE_START';
 
@@ -202,9 +204,15 @@ export class HarnessChatSession {
 	private loaded?: Promise<void>;
 	private revision = 0;
 	private readonly approvals = new Map<string, PendingApproval>();
+	/** Rules the user allowed for the current run ("esta tarea"); cleared when the run ends. */
+	private readonly taskGrants = new Set<string>();
+	/** Rules the user allowed until the IDE closes ("esta sesion"), in this project's conversation only. */
+	private readonly sessionGrants = new Set<string>();
 	private readonly queue: Array<{ id: string; text: string; mode: ChatMode; attachments: SendAttachments }> = [];
 	/** The turn that just ended finished cleanly, so the queue may continue. */
 	private turnOk = false;
+	/** The environment preflight runs once per session, before its first act turn. */
+	private preflighted = false;
 
 	private readonly store: ChatStore;
 	private readonly runtime: ChatRuntime;
@@ -375,7 +383,8 @@ export class HarnessChatSession {
 	async resolveApproval(id: string, answer: ApprovalAnswer): Promise<void> {
 		const pending = this.approvals.get(id);
 		if (!pending || pending.resolving || !APPROVAL_ANSWERS.includes(answer)) { return; }
-		if (answer === 'always' && (!pending.request.rule || !this.runtime.rememberApproval)) { return; }
+		if (REMEMBERING_ANSWERS.includes(answer) && !pending.request.rule) { return; }
+		if (answer === 'always' && !this.runtime.rememberApproval) { return; }
 		// Claim this card before asynchronous persistence; cancellation and timeout can still deny it.
 		pending.resolving = true;
 		let final = answer;
@@ -388,16 +397,24 @@ export class HarnessChatSession {
 				this.conversation.messages.push(chatMessage('notice', this.t('No se pudo guardar la regla \u00ab{0}\u00bb; se permiti\u00f3 solo esta vez.', redactSecrets(pending.request.rule)), { tone: 'error' }));
 			}
 		}
+		if (final === 'task' || final === 'session') {
+			(final === 'task' ? this.taskGrants : this.sessionGrants).add(pending.request.rule);
+			this.conversation.messages.push(chatMessage('notice', final === 'task'
+				? this.t('Permitido hasta que termine esta tarea: \u00ab{0}\u00bb.', redactSecrets(pending.request.rule))
+				: this.t('Permitido hasta que cierres el IDE, en este proyecto: \u00ab{0}\u00bb.', redactSecrets(pending.request.rule)), { tone: 'info' }));
+		}
 		if (this.approvals.get(id) === pending) { pending.settle(final); }
 		await this.persist();
 	}
 
 	private requestApproval(draft: ApprovalDraft): Promise<ApprovalAnswer> {
 		if (!this.activity || this.activity.cancelling || this.approvals.size >= 8) { return Promise.resolve('deny'); }
+		// Already allowed for this run or this session: no card, the same answer as before.
+		if (draft.rule && (this.taskGrants.has(draft.rule) || this.sessionGrants.has(draft.rule))) { return Promise.resolve('once'); }
 		const id = 'ap-' + randomBytes(8).toString('hex');
 		const titles: Record<ApprovalDraft['kind'], string> = {
 			run: this.t('Ejecutar un comando'), edit: this.t('Borrar o mover archivos del proyecto'), git_commit: this.t('Hacer commit'), git_push: this.t('Hacer push'),
-			git_branch_create: this.t('Crear una rama'), git_pr_upsert: this.t('Crear o actualizar un pull request')
+			git_branch_create: this.t('Crear una rama'), git_pr_upsert: this.t('Crear o actualizar un pull request'), git_fetch: this.t('Traer cambios del remoto (fetch)')
 		};
 		const title = titles[draft.kind];
 		return new Promise<ApprovalAnswer>(resolve => {
@@ -452,8 +469,11 @@ export class HarnessChatSession {
 			if (!this.context) { throw Error('HARNESS_CHAT_CONTEXT_UNAVAILABLE'); }
 			if (controller.signal.aborted) { throw Error('HARNESS_CANCELLED_BEFORE_START'); }
 			if (mode === 'act' && !this.writerBlockedReason(this.context.writer)) {
+				// The instruction is built first: it requires the user message to be the latest one, and the preflight adds a notice.
+				const instruction = withAttachments(buildDirectInstruction(this.conversation.messages, this.context));
+				await this.preflightOnce(provider);
 				this.finish();
-				await this.execute(directPlan(body), provider, withAttachments(buildDirectInstruction(this.conversation.messages, this.context)));
+				await this.execute(directPlan(body), provider, instruction);
 				return;
 			}
 			const current = latestPlanMessage(this.conversation.messages)?.plan;
@@ -479,6 +499,20 @@ export class HarnessChatSession {
 			await this.persist();
 			await this.drainQueue();
 		}
+	}
+
+	/**
+	 * Environment problems surface before the first act turn of the session, with their fix, instead of as raw errors
+	 * mid-turn. Warnings stay in /doctor; the turn still runs, because the user may know the problem does not apply.
+	 */
+	private async preflightOnce(provider: NativeProvider): Promise<void> {
+		if (this.preflighted || !this.runtime.preflight) { return; }
+		this.preflighted = true;
+		const problems = (await this.runtime.preflight()).filter(check => check.status === 'problem');
+		if (!problems.length) { return; }
+		const lines = problems.map(check => '- **' + check.title + '**: ' + check.detail + (check.action ? ' ' + check.action : ''));
+		this.conversation.messages.push(chatMessage('notice', this.t('Antes de empezar revis\u00e9 tu entorno y hay problemas que pueden trabar esta tarea (/doctor muestra el detalle; \u00abRevisar mi entorno\u00bb ofrece el arreglo):') + '\n\n' + lines.join('\n'), { tone: 'error', provider }));
+		await this.persist();
 	}
 
 	/** Take a queued message back before it starts. */
@@ -622,7 +656,7 @@ export class HarnessChatSession {
 
 	private finish(): void {
 		this.denyApprovals();
-		this.activity = undefined; this.cancelActive = undefined; this.conversation.pending = undefined;
+		this.activity = undefined; this.cancelActive = undefined; this.conversation.pending = undefined; this.taskGrants.clear();
 	}
 
 	private errorNotice(error: unknown): string { return describeFailure(this.t, error); }

@@ -9,7 +9,7 @@
  */
 import * as fs from 'node:fs/promises';
 import * as readline from 'node:readline';
-import { createCommandPolicy, type CommandPolicyConfig } from './native-command-policy.ts';
+import { createCommandPolicy, denialText, type CommandPolicyConfig } from './native-command-policy.ts';
 import { runCommand, MAX_COMMAND_TIMEOUT_SEC } from './native-command-runner.ts';
 import { callToolChannel } from './native-tool-server.ts';
 import { EDITOR_TOOLS } from './native-editor-tools.ts';
@@ -17,6 +17,7 @@ import { secretVariants } from './native-dev-secrets.ts';
 import { channelApprover, requestApproval, type ApprovalAsk } from './native-approval.ts';
 import { GIT_TOOLS, endsGitDelivery, handleGitTool } from './native-git-tools.ts';
 import { FILE_TOOLS, handleFileTool } from './native-file-tools.ts';
+import { APPROVE_TOOL, decidePermissionPrompt, type PromptDecision } from './native-approve-tool.ts';
 import { loadPermissions, type PermissionSet } from './native-permissions.ts';
 import type { PermissionPreset } from './native-permissions-types.ts';
 import { projectPermissionsDigest } from './native-run-integrity.ts';
@@ -41,6 +42,8 @@ export interface RunnerConfig {
 	git?: boolean;
 	/** Offers the structured delete/move tools; set only for runs that can ask the user (the chat). */
 	files?: boolean;
+	/** Offers `approve`, Claude's permission prompt tool (native transport pilot); set only for runs that can ask the user. */
+	approve?: boolean;
 	/** Integrity snapshots captured by the extension before the provider starts. */
 	projectPermissionsBaseline?: string;
 	repoBaseline?: string;
@@ -63,7 +66,7 @@ const TOOL = {
 		'and a project-relative `cwd` for subprojects (for example "apps/api"). No shell operators, inline code, git changes, publishing or deletions ' +
 		'(use the delete_path, move_path and git_* tools when they are listed). External CLIs (gh, aws, az, gcloud, docker, kubectl, terraform, curl, ...) ask the user first; ' +
 		'read-only gh queries (pr/issue/run view or list, pr checks) run directly; logins, tokens and secrets are never available. ' +
-		'A denied command returns `POLICY_DENIED: <reason>`; do not retry it in another form.',
+		'A denied command returns `POLICY_DENIED: <reason>` and a `Next:` line with what is still available; follow it, and never work around a safety denial.',
 	inputSchema: {
 		type: 'object',
 		properties: {
@@ -100,7 +103,7 @@ export async function handleRun(config: RunnerConfig, input: unknown, calls: num
 	}
 	if (decision.allowed === false) {
 		await fs.appendFile(config.logDirectory + '/commands.jsonl', JSON.stringify({ ...audit, denied: decision.reason }) + '\n').catch(() => undefined);
-		return { isError: true, text: 'POLICY_DENIED: ' + decision.reason };
+		return { isError: true, text: denialText(decision.reason) };
 	}
 	// Secrets allowed for this exact command come from the keychain through the channel, only into this process.
 	const secrets = config.channel ? await callToolChannel(config.channel.address, config.channel.token, 'secrets', { command: value.command, args, cwd: decision.cwd }).catch(() => ({})) as Record<string, string> : {};
@@ -156,15 +159,34 @@ export async function handleGit(config: RunnerConfig, name: string, input: unkno
 	return result;
 }
 
+/** Answer one Claude permission prompt (native transport pilot) with the run's policy and permissions; exported for tests. */
+export async function handleApprove(config: RunnerConfig, input: unknown, deps: RunnerDeps = {}): Promise<PromptDecision> {
+	if (!await permissionsUntouched(config)) { return { behavior: 'deny', message: 'POLICY_DENIED: project-permissions-changed' }; }
+	const permissions = await loadRunnerPermissions(config, deps);
+	const decision = await decidePermissionPrompt({ root: config.root, policy: createCommandPolicy({ ...config.policy, permissions }), permissions, ask: approverOf(config, deps) }, input);
+	const request = (input ?? {}) as { tool_name?: unknown };
+	await fs.appendFile(config.logDirectory + '/commands.jsonl', JSON.stringify({ at: new Date().toISOString(), tool: 'approve', for: String(request.tool_name).slice(0, 60), outcome: decision.behavior === 'allow' ? 'ALLOWED' : decision.message.split('\n', 1)[0] }) + '\n').catch(() => undefined);
+	return decision;
+}
+
 async function main(): Promise<void> {
 	const config = JSON.parse(await fs.readFile(process.argv[2], 'utf8')) as RunnerConfig;
 	if (config.schemaVersion !== 1 || typeof config.root !== 'string') { throw Error('HARNESS_CONFIG_SCHEMA'); }
-	if (((config.permissions || config.files) && typeof config.projectPermissionsBaseline !== 'string') || (config.git && typeof config.repoBaseline !== 'string')) { throw Error('HARNESS_CONFIG_SCHEMA'); }
+	if (((config.permissions || config.files || config.approve) && typeof config.projectPermissionsBaseline !== 'string') || (config.git && typeof config.repoBaseline !== 'string')) { throw Error('HARNESS_CONFIG_SCHEMA'); }
 	let calls = 0;
 	const send = (message: unknown): void => { process.stdout.write(JSON.stringify(message) + '\n'); };
 	const stopped = new AbortController();
 	let gitQueue = Promise.resolve();
 	let gitDenied = false;
+	// The user's "no" covers that exact call for the rest of the run: asking again for the same thing is not a new question.
+	// Any other call (another command, another branch) is still asked normally.
+	const refused = new Set<string>();
+	const callKey = (name: string, args: unknown): string => name + '\0' + JSON.stringify(args ?? {});
+	const ALREADY_REFUSED = { isError: true, text: 'DENIED: the user already refused this exact action in this run. Do something else or report it.' };
+	const remember = (key: string, result: { isError: boolean; text: string }): { isError: boolean; text: string } => {
+		if (result.text.startsWith('DENIED: the user did not allow it')) { refused.add(key); }
+		return result;
+	};
 	const input = readline.createInterface({ input: process.stdin });
 	input.on('close', () => stopped.abort());
 	input.on('line', async line => {
@@ -173,7 +195,7 @@ async function main(): Promise<void> {
 		if (request.id === undefined) { return; }
 		const reply = (result: unknown): void => send({ jsonrpc: '2.0', id: request.id, result });
 		if (request.method === 'initialize') { return reply({ protocolVersion: request.params?.protocolVersion ?? '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'ats-runner', version: '1.0.0' } }); }
-		if (request.method === 'tools/list') { return reply({ tools: [TOOL, ...(config.git ? GIT_TOOLS : []), ...(config.files ? FILE_TOOLS : []), ...(config.channel ? EDITOR_TOOLS : []), ...(config.channel ? config.mcpTools ?? [] : [])] }); }
+		if (request.method === 'tools/list') { return reply({ tools: [TOOL, ...(config.git ? GIT_TOOLS : []), ...(config.files ? FILE_TOOLS : []), ...(config.approve ? [APPROVE_TOOL] : []), ...(config.channel ? EDITOR_TOOLS : []), ...(config.channel ? config.mcpTools ?? [] : [])] }); }
 		if (request.method === 'ping') { return reply({}); }
 		if (request.method === 'tools/call' && config.channel && request.params?.name?.startsWith(MCP_TOOL_PREFIX) && config.mcpTools?.some(tool => tool.name === request.params!.name)) {
 			calls++;
@@ -187,7 +209,8 @@ async function main(): Promise<void> {
 			}
 		}
 		if (request.method === 'tools/call' && request.params?.name === TOOL.name) {
-			const result = await handleRun(config, request.params.arguments, ++calls);
+			const key = callKey(TOOL.name, request.params.arguments);
+			const result = refused.has(key) ? ALREADY_REFUSED : remember(key, await handleRun(config, request.params.arguments, ++calls));
 			return reply({ isError: result.isError, content: [{ type: 'text', text: result.text }] });
 		}
 		if (request.method === 'tools/call' && config.git && GIT_TOOLS.some(tool => tool.name === request.params?.name)) {
@@ -199,8 +222,10 @@ async function main(): Promise<void> {
 					await fs.appendFile(config.logDirectory + '/commands.jsonl', JSON.stringify({ at: new Date().toISOString(), tool: request.params!.name, isError: true, outcome: 'POLICY_DENIED' }) + '\n').catch(() => undefined);
 					return result;
 				}
-				const result = await handleGit(config, request.params!.name!, request.params!.arguments, {}, stopped.signal);
-				// A user denial or an integrity refusal is final; a correctable input refusal lets the agent fix its call.
+				const key = callKey(request.params!.name!, request.params!.arguments);
+				if (refused.has(key)) { return ALREADY_REFUSED; }
+				const result = remember(key, await handleGit(config, request.params!.name!, request.params!.arguments, {}, stopped.signal));
+				// An integrity refusal (config or hooks changed, a permission rule) ends git for the run; input refusals can be fixed.
 				if (endsGitDelivery(result.text)) { gitDenied = true; }
 				return result;
 			});
@@ -210,8 +235,17 @@ async function main(): Promise<void> {
 		}
 		if (request.method === 'tools/call' && config.files && FILE_TOOLS.some(tool => tool.name === request.params?.name)) {
 			calls++;
-			const result = await handleFiles(config, request.params!.name!, request.params!.arguments);
+			const key = callKey(request.params!.name!, request.params!.arguments);
+			const result = refused.has(key) ? ALREADY_REFUSED : remember(key, await handleFiles(config, request.params!.name!, request.params!.arguments));
 			return reply({ isError: result.isError, content: [{ type: 'text', text: result.text }] });
+		}
+		if (request.method === 'tools/call' && config.approve && request.params?.name === APPROVE_TOOL.name) {
+			// No turn is counted: the CLI asks, not the agent. A refused prompt is answered from memory, like any refused call.
+			const prompt = (request.params.arguments ?? {}) as { tool_name?: unknown; input?: unknown };
+			const key = callKey(APPROVE_TOOL.name, { tool_name: prompt.tool_name, input: prompt.input });
+			const decision: PromptDecision = refused.has(key) ? { behavior: 'deny', message: ALREADY_REFUSED.text } : await handleApprove(config, prompt);
+			if (decision.behavior === 'deny') { remember(key, { isError: true, text: decision.message }); }
+			return reply({ content: [{ type: 'text', text: JSON.stringify(decision) }] });
 		}
 		const editor = EDITOR_TOOLS.find(tool => tool.name === request.params?.name);
 		if (request.method === 'tools/call' && editor && config.channel) {

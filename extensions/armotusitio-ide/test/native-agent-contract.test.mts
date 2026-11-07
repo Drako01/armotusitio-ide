@@ -35,6 +35,21 @@ test('every agent prompt carries the contract that matches its provider and role
 	assert.equal(parseRunBlock(taught.replace('<what is missing, in the user\'s language>', 'Falta PostgreSQL').replace('service|credential|policy|decision|toolchain|disk', 'service'))?.needs, 'service');
 });
 
+test('the native transport pilot keeps Bash, Edit and Write behind the IDE approve tool, only for Claude writers', () => {
+	const launch = { command: 'node', args: ['ats-runner.js', 'runner.json'], env: {}, mcpConfigFile: '/storage/mcp.json', approve: true };
+	const draft = { schemaVersion: 1 as const, provider: 'claude' as const, role: 'implementer' as const, projectRoot: '/repo', instruction: 'x', readOnly: false };
+	const native = buildAgentInvocation(draft, [], launch);
+	const option = (args: string[], name: string) => args[args.indexOf(name) + 1];
+	assert.deepEqual({
+		mode: option(native.args, '--permission-mode'), prompts: option(native.args, '--permission-prompts'), tool: option(native.args, '--permission-prompt-tool'),
+		allowed: option(native.args, '--allowedTools'), denied: option(native.args, '--disallowedTools'), contract: native.stdin.includes('Your Bash tool is available in this run'),
+		reader: option(buildAgentInvocation({ ...draft, role: 'planner', readOnly: true }, [], launch).args, '--permission-mode'),
+		codex: buildAgentInvocation({ ...draft, provider: 'codex' }, [], launch).stdin.includes('Your Bash tool')
+	}, {
+		mode: 'default', prompts: 'host', tool: 'mcp__ats-runner__approve', allowed: 'Read,Glob,Grep,mcp__ats-runner', denied: 'WebFetch,WebSearch', contract: true, reader: 'plan', codex: false
+	});
+});
+
 test('the git tools are described only to writers that have them, and publishing stays forbidden', () => {
 	const chatWriter = buildAgentInvocation({ schemaVersion: 1, provider: 'claude', role: 'implementer', projectRoot: '/repo', instruction: 'x', readOnly: false },
 		[], { command: 'node', args: ['ats-runner.js', 'runner.json'], env: {}, mcpConfigFile: '/storage/mcp.json', git: true, files: true });

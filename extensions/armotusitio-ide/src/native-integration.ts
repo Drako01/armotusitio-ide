@@ -21,7 +21,7 @@ import { runCommand } from './native-command-runner.ts';
 import { openToolChannel } from './native-tool-server.ts';
 import { createWorkMcpBridge, type WorkMcpTool } from './native-mcp-bridge.ts';
 import { parseApprovalDraft, type ApprovalAsk } from './native-approval.ts';
-import { addUserRule, configuredPreset, loadPermissions } from './native-permissions.ts';
+import { addUserRule, configuredPreset, listUserRules, loadPermissions, removeUserRule } from './native-permissions.ts';
 import { repoFingerprint } from './native-git-tools.ts';
 import { projectPermissionsDigest } from './native-run-integrity.ts';
 import type { PermissionPreset } from './native-permissions-types.ts';
@@ -49,7 +49,7 @@ import { readAgentStatistics, recordAgentMetric } from './native-agent-metrics.t
 import { NativeAgentWorkflow, proposedWorkflow, workflowDigest, type WorkflowRun } from './native-agent-workflow.ts';
 import { createAgentWorktree, removeCleanAgentWorktree, listAgentWorktrees, type ManagedWorktree } from './native-agent-worktree.ts';
 import { describeEngine, probeProjectHandshake, readProjectCapabilities, compareHybridCapabilities, verifiedNativeCapabilities } from './native-engine-contract.ts';
-import { diagnoseProvider, probeWebSearch } from './native-provider-diagnostics.ts';
+import { diagnoseProvider, probeHostPermissionPrompts, probeWebSearch } from './native-provider-diagnostics.ts';
 import { summarizeGatePerformance } from './native-performance.ts';
 import { acquireSharedExecutionFence, inspectSharedExecutionFence, reconcileSharedExecutionFence, type SharedExecutionFence } from './native-shared-fence.ts';
 import { createWorktreeCheckpoint, readWorktreeCheckpoint, rollbackWorktreeCheckpoint, type WorktreeCheckpoint } from './native-worktree-checkpoint.ts';
@@ -263,6 +263,19 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 	const webSearchKey = (root: string): string => 'atsHarness.webSearch.' + projectKeyOf(root);
 	const webSearchOn = (root: string): boolean => context.globalState.get(webSearchKey(root), false) === true;
 	const searchSupport = new Map<NativeProvider, Promise<boolean>>();
+	let hostPromptSupport: Promise<boolean> | undefined;
+	/**
+	 * Native transport pilot: only for Claude, only in runs that can ask the user, and only when the installed CLI documents
+	 * host permission prompts; otherwise the run keeps the structured transport and the user is told once per window.
+	 */
+	const nativeTransport = async (provider: NativeProvider, canAsk: boolean): Promise<boolean> => {
+		if (provider !== 'claude' || !canAsk || vscode.workspace.getConfiguration('atsHarness').get('agentTransport', 'structured') !== 'native') { return false; }
+		if (!hostPromptSupport) {
+			hostPromptSupport = probeHostPermissionPrompts(provider).catch(() => false);
+			if (!await hostPromptSupport) { void vscode.window.showWarningMessage(vscode.l10n.t('La versi\u00f3n instalada de Claude no permite que el IDE responda sus permisos: el chat usa el canal estructurado.')); }
+		}
+		return hostPromptSupport;
+	};
 	/**
 	 * Per-run configuration of the `ats-runner` tool server, written in the IDE's storage (outside the project) and
 	 * removed after the run. A project Harness that declares `command-runner` runs each command itself (layer 2).
@@ -309,8 +322,9 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			if (method === 'secrets' && typeof input.command === 'string') { return devSecrets.forCommand(projectKeyOf(root), input.command, Array.isArray(input.args) ? input.args : [], input.cwd ?? '.'); }
 			throw Error('HARNESS_TOOL');
 		});
+		const native = await nativeTransport(provider, !!approve);
 		const config: RunnerConfig = {
-			schemaVersion: 1, root, policy, env, logDirectory: path.join(directory, 'logs'), maxTurns,
+			schemaVersion: 1, root, policy, env, logDirectory: path.join(directory, 'logs'), maxTurns, ...(native ? { approve: true } : {}),
 			channel: { address: channel.address, token: channel.token }, mcpTools,
 			...(approve ? {
 				git: true, files: true, permissions: { preset: permissionsPreset() },
@@ -321,7 +335,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 		};
 		const configFile = path.join(directory, 'runner.json');
 		await fs.writeFile(configFile, JSON.stringify(config), { mode: 0o600 });
-		const launch = { command: process.execPath, args: [path.join(context.extensionPath ?? context.extensionUri?.fsPath ?? '', 'dist', 'ats-runner.js'), configFile], env: { ELECTRON_RUN_AS_NODE: '1' }, mcpConfigFile: path.join(directory, 'mcp.json'), ...(approve ? { git: true, files: true } : {}) };
+		const launch = { command: process.execPath, args: [path.join(context.extensionPath ?? context.extensionUri?.fsPath ?? '', 'dist', 'ats-runner.js'), configFile], env: { ELECTRON_RUN_AS_NODE: '1' }, mcpConfigFile: path.join(directory, 'mcp.json'), ...(approve ? { git: true, files: true } : {}), ...(native ? { approve: true } : {}) };
 		await fs.writeFile(launch.mcpConfigFile, JSON.stringify({ mcpServers: { 'ats-runner': { type: 'stdio', command: launch.command, args: launch.args, env: launch.env } } }), { mode: 0o600 });
 		return {
 			launch, policy: createCommandPolicy(approve ? { ...policy, permissions: await loadPermissions(root, undefined, vscode.l10n.t, { preset: permissionsPreset() }) } : policy).describe(), ecosystems: describeEcosystems(subprojects),
@@ -473,7 +487,8 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 					onStarted: execution => hooks.started(() => execution.cancel()), onProgress: hooks.progress, onMessage: hooks.message, onStep: hooks.step, signal
 				});
 			},
-			rememberApproval: rule => addUserRule(rule, 'allow'),
+			rememberApproval: async rule => addUserRule(rule, 'allow', undefined, await rootOf()),
+			preflight: async () => doctorFor(await rootOf(), true),
 			readQuota: async provider => provider === 'codex' ? readLatestCodexQuota() : undefined,
 			async discard(diff) {
 				const root = await rootOf();
@@ -594,7 +609,13 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			(error, stdout, stderr) => resolve({ code: error ? (typeof error.code === 'number' ? error.code : 1) : 0, output: stdout + stderr })));
 	};
 	controller.systemExec = systemExec;
-	const doctorFor = async (root: string): Promise<DoctorCheck[]> => {
+	/** Where each agent run keeps its logs (`<run>/logs/commands.jsonl`), read by `/auditoria`. */
+	controller.runsDirectory = (root: string): string => path.join(metricsDirectory(root), 'runs');
+	/** `quick` keeps only local probes (no ports, toolchains or network clock), for checks that run before a turn. */
+	const doctorFor = async (root: string, quick = false): Promise<DoctorCheck[]> => {
+		const terminalProfile = vscode.workspace.getConfiguration('terminal.integrated').get('defaultProfile.windows');
+		const base = { exec: systemExec, platform: process.platform, projectRoot: root, node: () => resolveNodeRuntime(), terminalProfile: typeof terminalProfile === 'string' ? terminalProfile : undefined };
+		if (quick) { return runDoctor(base); }
 		const subprojects = await detectEcosystems(root);
 		const versions: Record<string, { command: string; args: string[]; label: string }> = {
 			go: { command: 'go', args: ['version'], label: 'Go' }, node: { command: 'node', args: ['--version'], label: 'Node' }, python: { command: 'python', args: ['--version'], label: 'Python' },
@@ -604,14 +625,31 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 		const toolchains = [...new Set(subprojects.map(project => project.ecosystem))].map(ecosystem => versions[ecosystem]).filter(Boolean);
 		const ports = (await detectServiceNeeds(root, process.env)).map(need => need.port);
 		const serverDate = async () => { const response = await fetch('https://api.github.com', { method: 'HEAD', signal: AbortSignal.timeout(3000) }); const date = response.headers.get('date'); return date ? Date.parse(date) : undefined; };
-		return runDoctor({ exec: systemExec, platform: process.platform, projectRoot: root, ports, toolchains, serverDate });
+		return runDoctor({ ...base, ports, toolchains, serverDate });
 	};
+	controller.doctorFor = doctorFor;
 	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.machineDoctor', async () => {
 		try {
 			const folder = (vscode.workspace.workspaceFolders || [])[0];
 			const checks = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: vscode.l10n.t('Revisando la m\u00e1quina\u2026') }, () => doctorFor(folder ? folder.uri.fsPath : process.cwd()));
 			const document = await vscode.workspace.openTextDocument({ language: 'markdown', content: doctorReport(checks) });
 			await vscode.window.showTextDocument(document);
+		} catch (error) { showError(error); }
+	}));
+	/** Saved permission rules with their decision and scope; the ones the user picks are revoked. */
+	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.managePermissions', async () => {
+		try {
+			const rules = await listUserRules();
+			if (!rules.length) { void vscode.window.showInformationMessage(vscode.l10n.t('No ten\u00e9s reglas de permisos guardadas.')); return; }
+			const decisions = { allow: vscode.l10n.t('Permitir'), ask: vscode.l10n.t('Preguntar'), deny: vscode.l10n.t('Denegar') };
+			const picked = await vscode.window.showQuickPick(rules.map(entry => ({
+				label: entry.rule, entry,
+				description: decisions[entry.decision] + ' \u00b7 ' + (entry.project ? vscode.l10n.t('solo el proyecto {0}', entry.project) : vscode.l10n.t('todos los proyectos')),
+				detail: vscode.l10n.t('Origen: ~/.armotusitio/permissions.json')
+			})), { canPickMany: true, title: vscode.l10n.t('Permisos guardados'), placeHolder: vscode.l10n.t('Marc\u00e1 las reglas que quer\u00e9s revocar') });
+			if (!picked?.length) { return; }
+			for (const item of picked) { await removeUserRule(item.entry.rule, undefined, item.entry.project); }
+			void vscode.window.showInformationMessage(vscode.l10n.t('Reglas revocadas: {0}. La pr\u00f3xima vez esas acciones se preguntan de nuevo.', String(picked.length)));
 		} catch (error) { showError(error); }
 	}));
 	/** Environment templates of a project (block W), kept in the IDE's storage; the user edits them as JSON. */

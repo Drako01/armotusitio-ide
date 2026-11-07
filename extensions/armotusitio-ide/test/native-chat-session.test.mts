@@ -439,6 +439,28 @@ test('Act mode runs the request directly as a writer, with no plan card; Ask mod
 	} finally { await s.cleanup(); }
 });
 
+test('the first act turn of a session reports environment problems with their fix before running, once; Ask never runs it', async () => {
+	const s = await session(['Respuesta.']);
+	let preflights = 0;
+	s.runtime.preflight = async () => {
+		preflights++;
+		return [
+			{ id: 'node', title: 'Node.js', status: 'problem', detail: 'No se encontr\u00f3 Node.js en el PATH.', action: 'Instal\u00e1 Node.js.' },
+			{ id: 'gh', title: 'GitHub CLI', status: 'warning', detail: 'Sin sesi\u00f3n.', action: 'gh auth login' }
+		];
+	};
+	try {
+		await s.chat.send('Una pregunta', 'ask');
+		await s.chat.send('Correg\u00ed el foco', 'act');
+		await s.chat.send('Y el borde', 'act');
+		const notices = s.chat.snapshot().messages.filter(message => message.role === 'notice').map(message => message.text);
+		assert.deepEqual({ preflights, kinds: s.calls.map(call => call.kind), notices }, {
+			preflights: 1, kinds: ['converse', 'implement', 'implement'],
+			notices: ['Antes de empezar revis\u00e9 tu entorno y hay problemas que pueden trabar esta tarea (/doctor muestra el detalle; \u00abRevisar mi entorno\u00bb ofrece el arreglo):\n\n- **Node.js**: No se encontr\u00f3 Node.js en el PATH. Instal\u00e1 Node.js.']
+		});
+	} finally { await s.cleanup(); }
+});
+
 /** A converse() that blocks until the test releases it, so messages can be sent while a turn runs. */
 function blocking(s: Awaited<ReturnType<typeof session>>, results: AgentOutcome[] = []) {
 	const gates: Array<() => void> = [];

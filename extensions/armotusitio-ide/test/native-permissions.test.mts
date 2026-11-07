@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { addUserRule, commandName, dependencyDecision, globMatches, loadPermissions, projectKey, removeUserRule, suggestRule, userRules } from '../src/native-permissions.ts';
+import { addUserRule, commandName, dependencyDecision, globMatches, loadPermissions, listUserRules, projectKey, removeUserRule, suggestRule, whyNotRemembered } from '../src/native-permissions.ts';
 import type { PermissionPreset, PermissionRequest } from '../src/native-permissions-types.ts';
 
 async function workspace(files: { user?: unknown; project?: unknown } = {}) {
@@ -26,6 +26,31 @@ const commit: PermissionRequest = { kind: 'git_commit', branch: 'main', files: [
 const push: PermissionRequest = { kind: 'git_push', branch: 'main', remote: 'origin' };
 const branch: PermissionRequest = { kind: 'git_branch_create', repo: 'Drako01/redevent', branch: 'feat/x', from: 'origin/qa' };
 const pr: PermissionRequest = { kind: 'git_pr_upsert', repo: 'Drako01/redevent', branch: 'feat/x', base: 'qa', title: 'Title', body: 'Body' };
+
+test('"always in this project" rules apply only to that project, can be listed and revoked, and a project file cannot declare them', async () => {
+	const space = await workspace();
+	const forged = await workspace({ project: { version: 1, projects: { x: { allow: ['run:mytool'] } } } });
+	try {
+		const other = path.join(space.base, 'other');
+		await fs.mkdir(other);
+		await addUserRule('run:mytool x', 'deny', space.home, space.root);
+		await addUserRule('git_fetch', 'allow', space.home, space.root);
+		const here = await loadPermissions(space.root, space.home);
+		const there = await loadPermissions(other, space.home);
+		const listed = await listUserRules(space.home);
+		const removed = await removeUserRule('run:mytool x', space.home, projectKey(space.root));
+		const after = await loadPermissions(space.root, space.home);
+		assert.deepEqual({
+			here: here.decide(run('mytool', 'x')).decision, there: there.decide(run('mytool', 'x')).decision, projectFileRejected: (await loadPermissions(forged.root, forged.home)).decide(run('mytool', 'x')).decision,
+			listed: listed.map(entry => entry.rule + (entry.project === projectKey(space.root) ? ' @here' : '')), removed, after: after.decide(run('mytool', 'x')).decision,
+			why: [whyNotRemembered(run('mytool', 'x'), space.root), whyNotRemembered(edit('a.ts'), space.root), whyNotRemembered(pr, space.root), whyNotRemembered(run('pnpm', 'add', 'x'), space.root)]
+		}, {
+			here: 'deny', there: 'allow', projectFileRejected: 'deny',
+			listed: ['run:mytool x @here', 'git_fetch @here'], removed: true, after: 'allow',
+			why: [undefined, 'irreversible', 'publication', 'dependency']
+		});
+	} finally { await space.cleanup(); await forged.cleanup(); }
+});
 
 test('glob matching is literal except for star, iterative, and immune to pathological patterns', () => {
 	const started = Date.now();
@@ -119,7 +144,7 @@ test('suggested rules persist only exact unambiguous commands and never dependen
 	const space = await workspace();
 	try {
 		const suggestions = [run('pnpm.cmd', 'test', '--run'), run('Make'), edit('src/a/b.ts'), edit('README.md'), commit, push, branch, pr,
-			run('pnpm', 'install', 'x'), run('npx', '-y', 'x'), run('node'), run('node', '*.js'), run('node', 'a b.js'), run('node', 'a?.js'), run('go', 'get', 'x'), run('python', '-m', 'pip', 'install', 'x')].map(request => suggestRule(request));
+		run('pnpm', 'install', 'x'), run('npx', '-y', 'x'), run('node'), run('node', '*.js'), run('node', 'a b.js'), run('node', 'a?.js'), run('go', 'get', 'x'), run('python', '-m', 'pip', 'install', 'x')].map(request => suggestRule(request));
 		assert.deepEqual(suggestions, ['run:pnpm test --run', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']);
 		await addUserRule(suggestions[0], 'allow', space.home);
 		const set = await loadPermissions(space.root, space.home, undefined, { preset: 'readonly' });
@@ -188,17 +213,17 @@ test('a project can still force a question over a remembered git rule, and a rev
 		await addUserRule(suggestRule(push, space.root), 'allow', space.home);
 		await addUserRule('run:make test', 'deny', space.home);
 		const before = await loadPermissions(space.root, space.home);
-		const listed = await userRules(space.home);
+		const listed = await listUserRules(space.home);
 		const removed = await removeUserRule(suggestRule(commit, space.root), space.home);
 		const missing = await removeUserRule('git_commit:/nowhere', space.home);
 		const after = await loadPermissions(space.root, space.home);
 		assert.deepEqual({
-			before: [before.decide(commit).decision, before.decide(push).decision], listed: [listed.allow.length, listed.deny], removed, missing,
+			before: [before.decide(commit).decision, before.decide(push).decision], listed: listed.map(entry => entry.decision + ' ' + entry.rule.split(':')[0]), removed, missing,
 			after: after.decide(commit).decision, file: JSON.parse(await fs.readFile(path.join(space.home, '.armotusitio', 'permissions.json'), 'utf8')).allow.length,
-			empty: await userRules(path.join(space.base, 'nobody'))
+			empty: await listUserRules(path.join(space.base, 'nobody'))
 		}, {
-			before: ['allow', 'ask'], listed: [2, ['run:make test']], removed: true, missing: false, after: 'ask', file: 1,
-			empty: { allow: [], ask: [], deny: [] }
+			before: ['allow', 'ask'], listed: ['deny run', 'allow git_commit', 'allow git_push'], removed: true, missing: false, after: 'ask', file: 1,
+			empty: []
 		});
 	} finally { await space.cleanup(); }
 });

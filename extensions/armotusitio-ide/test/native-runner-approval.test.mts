@@ -14,6 +14,7 @@ import { openToolChannel } from '../src/native-tool-server.ts';
 import type { PermissionSet } from '../src/native-permissions.ts';
 import type { ApprovalAnswer, PermissionDecision } from '../src/native-permissions-types.ts';
 import { projectPermissionsDigest } from '../src/native-run-integrity.ts';
+import { denialText } from '../src/native-command-policy.ts';
 
 const permissionsOf = (decision: PermissionDecision): PermissionSet => ({ preset: 'dev', warnings: [], describe: () => [], decide: () => ({ decision, source: 'user' }) });
 
@@ -76,7 +77,7 @@ test('allow runs without asking and deny never asks, and the floor still wins ov
 		const denied = await handleRun(config, { command: 'node', args: ['--version'] }, 2, { permissions: permissionsOf('deny'), ask });
 		const floor = await handleRun(config, { command: 'git', args: ['push'] }, 3, { permissions: permissionsOf('allow'), ask });
 		assert.deepEqual({ allowed: allowed.text.startsWith('exit 0'), denied, floor }, {
-			allowed: true, denied: { isError: true, text: 'POLICY_DENIED: not-allowed' }, floor: { isError: true, text: 'POLICY_DENIED: git-mutation' }
+			allowed: true, denied: { isError: true, text: denialText('not-allowed') }, floor: { isError: true, text: denialText('git-mutation') }
 		});
 	});
 });
