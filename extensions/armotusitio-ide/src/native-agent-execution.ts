@@ -123,17 +123,25 @@ export function buildAgentInvocation(draft: AgentDraft, writableRoots: readonly 
 	const resume = draft.resumeSession ? ['--resume', draft.resumeSession] : [];
 	// Only the IDE's server: `--strict-mcp-config` ignores user and project MCP configuration.
 	const server = runner ? ['--mcp-config', toolServer!.mcpConfigFile, '--strict-mcp-config'] : [];
-	// WebFetch is never allowed; WebSearch only when the project enabled it (D9).
-	// Native: Bash, Edit and Write are not pre-allowed, so every use reaches `approve` (`--permission-prompts host` is its target).
-	const tools = (draft.readOnly ? 'Read,Glob,Grep' : native ? 'Read,Glob,Grep,' + RUNNER_TOOL : 'Read,Glob,Grep,Edit,Write' + (runner ? ',' + RUNNER_TOOL : '')) + (draft.webSearch ? ',WebSearch' : '');
-	const denied = (native ? '' : 'Bash,') + (draft.webSearch ? 'WebFetch' : 'WebFetch,WebSearch');
-	const permissions = draft.readOnly ? ['--permission-mode', 'plan']
-		: native ? ['--permission-mode', 'default', '--permission-prompts', 'host', '--permission-prompt-tool', RUNNER_TOOL + '__approve'] : ['--permission-mode', 'dontAsk'];
+	const prompts = native ? ['--permission-prompts', 'host', '--permission-prompt-tool', RUNNER_TOOL + '__approve'] : [];
 	return {
 		executable: 'claude',
-		args: ['--print', ...resume, ...model, ...effort, ...server, ...permissions, '--allowedTools', tools, '--disallowedTools', denied, '--max-turns', String(draft.maxTurns ?? READ_ONLY_MAX_TURNS), '--output-format', 'stream-json', '--verbose'],
+		args: ['--print', ...resume, ...model, ...effort, ...server, ...prompts, ...claudeToolArgs({ readOnly: draft.readOnly, runner, native, webSearch: draft.webSearch }), '--max-turns', String(draft.maxTurns ?? READ_ONLY_MAX_TURNS), '--output-format', 'stream-json', '--verbose'],
 		stdin: draft.resumeSession ? draft.instruction : instruction
 	};
+}
+
+/**
+ * Claude's permission mode and tool lists, shared by one-shot runs and native sessions (r8). WebFetch is never allowed;
+ * WebSearch only when the project enabled it (D9). Native: Bash, Edit and Write are not pre-allowed, so every use reaches
+ * the IDE's `approve` tool, which also answers `AskUserQuestion` through the IDE's card.
+ */
+export function claudeToolArgs(options: { readOnly: boolean; runner: boolean; native: boolean; webSearch?: boolean }): string[] {
+	const { readOnly, runner, native, webSearch } = options;
+	const tools = (readOnly ? 'Read,Glob,Grep' : native ? 'Read,Glob,Grep,' + RUNNER_TOOL : 'Read,Glob,Grep,Edit,Write' + (runner ? ',' + RUNNER_TOOL : '')) + (webSearch ? ',WebSearch' : '');
+	const denied = (native ? '' : 'Bash,') + (webSearch ? 'WebFetch' : 'WebFetch,WebSearch');
+	const mode = readOnly ? 'plan' : native ? 'default' : 'dontAsk';
+	return ['--permission-mode', mode, '--allowedTools', tools, '--disallowedTools', denied];
 }
 
 /**

@@ -49,7 +49,7 @@ export async function withLock(directory, work) {
 	await record(['lock', directory]);
 	return work();
 }
-export async function requireActionsDisabled() {
+export async function requireIsolatedActions() {
 	await record(['actions-check']);
 	if (settings.actionsEnabled) throw new Error('Actions must be disabled.');
 }
@@ -72,6 +72,7 @@ async function fixture(settings: object, revision = 4, version = '1.143.1') {
 		'build/armotusitio/product-overrides.json': JSON.stringify({ quality: 'stable', armotusitioUpdate: { repository: 'example/ide', revision, publicKey: keys.publicKey }, armotusitioUpstream: { ref: version } }),
 		'scripts/ats-autoupdate.mts': runner,
 		'scripts/ats-release-state.mts': await readFile(path.join(root, 'scripts/ats-release-state.mts'), 'utf8'),
+		'scripts/ats-release-revision.mts': await readFile(path.join(root, 'scripts/ats-release-revision.mts'), 'utf8'),
 		'scripts/ats-release-check.mts': `import { run } from './ats-autoupdate.mts'; export const dryRun = async () => { await run('fixture-dry-run', []); };`,
 		'scripts/ats-build-all.mts': `import { main } from './ats-autoupdate.mts'; export const assertPackagedClosed = async () => {}; export const buildAll = async () => { await main(['build-all']); const { writeFile } = await import('node:fs/promises'); await writeFile('.build/ats-autoupdate/build-receipt.json', 'fixture receipt'); };`,
 		'src/vs/platform/update/common/armotusitioUpdate.ts': `export const armotusitioRepository = 'example/ide';`,

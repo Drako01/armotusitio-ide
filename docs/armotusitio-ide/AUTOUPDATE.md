@@ -1,4 +1,4 @@
-# Actualizaciones de ArmotuSitio IDE sin GitHub Actions
+# Actualizaciones de ArmotuSitio IDE
 
 El flujo usa releases oficiales de Microsoft, candidatos locales y GitHub Releases para distribuir ArmotuSitio.
 Windows x64 reutiliza el actualizador nativo del editor, con manifiestos Ed25519 y SHA-256 de los instaladores.
@@ -134,7 +134,7 @@ Antes de publicar, probá arranque, íconos, Open VSX, el inicio propio y los fl
 Probá la instalación y desinstalación en Windows limpio y la conservación de un perfil de prueba existente.
 La prueba del actualizador necesita dos releases distintas; no se considera realizada por pasar tests unitarios.
 
-Subí los commits revisados a `main` después de confirmar `enabled: false` en Actions.
+Subí los commits revisados a `main`. El release automático por merge se describe en [la guía de releases](../guia/07-releases.md).
 El script de publicación comprueba que el commit compilado ya pertenezca a `origin/main`.
 
 ```powershell
@@ -145,8 +145,8 @@ node scripts/ats-autoupdate.mts publish --approve
 `--approve` confirma que revisaste los artefactos y completaste los ensayos requeridos.
 La publicación crea un borrador, sube los archivos, verifica los digests remotos y publica al final como última estable.
 Nunca reemplaza assets de una release publicada. Un fallo deja el borrador sin anunciarlo a los clientes.
-Se comprueba Actions antes de cada mutación; una respuesta distinta de `enabled: false` detiene la operación.
-No se necesita un servidor propio ni workflows de Actions para este canal.
+Antes de cada mutación se comprueba Actions: o está desactivado, o solo están activos `ats-release.yml` y `ats-ide-extension.yml` y no hay un release de CI en curso. Cualquier otro estado detiene la operación.
+No se necesita un servidor propio para este canal.
 
 ## Cliente Windows y recuperación
 

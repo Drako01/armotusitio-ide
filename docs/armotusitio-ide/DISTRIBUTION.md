@@ -5,19 +5,7 @@ El alcance Enterprise AAA continúa pendiente según [el estado de entrega](DELI
 
 ## GitHub Actions
 
-GitHub Actions está desactivado a nivel del repositorio `Drako01/armotusitio-ide` por pedido del propietario.
-Se verificó `enabled: false` mediante la API antes de preparar el push.
-Los archivos YAML se conservan para futuras validaciones; no se renombran ni se eliminan sus controles.
-
-Antes de un push, comprobá que Actions siga desactivado:
-
-```powershell
-gh api repos/Drako01/armotusitio-ide/actions/permissions
-```
-
-Si devuelve `enabled: true`, detené el push y revisá la configuración del repositorio.
-El marcador `[skip ci]` agrega protección; la barrera principal es desactivar Actions en el repositorio.
-No vuelvas a habilitar Actions hasta que el propietario decida hacerlo.
+Actions puede estar desactivado o habilitado solo para los workflows propios (`ats-release.yml` y `ats-ide-extension.yml`); todos los workflows heredados de upstream deben quedar desactivados. La activación, el costo y la configuración están en [la guía de releases](../guia/07-releases.md).
 
 ## Generar los binarios localmente
 

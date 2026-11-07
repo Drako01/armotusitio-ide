@@ -150,6 +150,12 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, .log:focus-v
 .approval { padding: 12px 14px; margin-bottom: 8px; border: 1px solid var(--chat-accent); border-radius: var(--chat-radius-large); }
 .approval-detail { margin: 6px 0; padding-left: 18px; overflow-wrap: anywhere; }
 .approval-rule { margin: 6px 0; overflow-wrap: anywhere; }
+.approval-risk { margin: 4px 0; font-size: 0.9em; }
+.approval.risk-high { border-color: var(--vscode-inputValidation-errorBorder, var(--chat-accent)); }
+.approval.risk-high .approval-risk { color: var(--vscode-errorForeground); }
+.question-group { border: 0; margin: 0 0 8px; padding: 0; }
+.question-option { display: block; margin: 4px 0; }
+.question input[type="text"], .question input[type="password"] { box-sizing: border-box; width: 100%; margin-top: 4px; }
 .approval-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 
 /* Live activity */

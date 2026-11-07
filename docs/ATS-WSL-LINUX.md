@@ -92,7 +92,7 @@ node scripts/ats-autoupdate.mts publish --approve
 Nunca subas esa clave al repositorio ni la incluyas en un tarball, cache o artefacto del workflow.
 Se validan los recibos Linux contra el mismo commit y se firman también sus hashes.
 La publicación queda en draft si la verificación de un archivo falla.
-La publicación manual exige Actions desactivado y conserva las comprobaciones de validación existentes.
+La publicación manual exige Actions desactivado o limitado a los workflows propios sin un release de CI en curso, y conserva las comprobaciones de validación existentes.
 Después de publicar, verificá las URLs con `curl -I -L` sin headers de autenticación.
 
 ## Actualizaciones Linux
@@ -102,17 +102,14 @@ Una release inexistente se trata como ausencia de actualizaciones.
 Linux ofrece abrir la página pública de descargas: no ejecuta instaladores Windows ni modifica paquetes del sistema.
 La instalación de una nueva versión `.deb` o `.rpm` sigue siendo responsabilidad del gestor de paquetes del usuario.
 
-## Workflow preparado y desactivado
+## Release automático
 
-`.github/workflows/ats-release.yml.bak` no es descubierto por GitHub Actions.
-Los permisos de Actions del repositorio deben permanecer desactivados durante esta entrega.
-El workflow preparado usa tags, dependencias separadas por SO/arquitectura, cache y referencias fijadas de acciones.
+`.github/workflows/ats-release.yml` publica la siguiente revisión cuando se mergea a `main` un PR de este repositorio.
+Usa dependencias separadas por SO/arquitectura, cache y referencias fijadas de acciones.
 No incluye REH Windows ni clientes Linux arm64, que son extensiones opcionales del alcance.
 
-Una activación futura requiere autorización explícita: desactivar individualmente todos los workflows antiguos,
-configurar `ATS_RELEASE_SIGNING_KEY`, renombrar el archivo a `.yml`, revisar el costo y habilitar Actions.
-El publicador de CI rechaza tags incorrectos y cualquier ejecución con otro workflow activo.
-No habilites Actions solo por pushear o mergear este cambio.
+La activación (desactivar los workflows de upstream, configurar `ATS_RELEASE_SIGNING_KEY` y habilitar Actions) está en [la guía de releases](guia/07-releases.md).
+El publicador de CI rechaza un tag distinto del preparado y cualquier ejecución con un workflow de upstream activo.
 
 ## Comprobaciones de aceptación
 

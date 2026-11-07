@@ -34,6 +34,10 @@ const RUNNER = 'Run builds, tests and linters with the `run` tool of the `ats-ru
 const NATIVE_SHELL = 'Your Bash tool is available in this run: every call is checked by the IDE command policy and may ask the user. Write one plain command per call ' +
 	'(no operators, redirections, expansions, globs or cd); for a subfolder pass it to the tool (pnpm --dir apps/web lint) or use `run` with `cwd`. A denial comes with a `Next:` line: follow it.';
 
+/** Native Codex session (r8): its approval requests are answered by the IDE policy and the user, never auto-approved. */
+const NATIVE_CODEX_APPROVALS = 'Commands that Codex does not consider safe, and any request to go beyond the sandbox, are decided by the IDE command policy and may ask the user. ' +
+	'A declined request is final: do not retry it by another mechanism; follow the `Next:` line of a `POLICY_DENIED` answer or report what you needed.';
+
 /** What a writer of this provider can actually do, so neither the agent nor the planner counts on more. */
 function tools(provider: NativeProvider, role: AgentRole, runner: boolean): string {
 	if (role !== 'implementer') { return 'You have read-only tools (read, search). You cannot modify files or run commands.'; }
@@ -56,7 +60,7 @@ export function agentContract(input: { provider: NativeProvider; role: AgentRole
 	];
 	if (git) { lines.push(GIT_TOOLS_CONTRACT); }
 	if (input.files && input.role === 'implementer') { lines.push(FILE_TOOLS_CONTRACT); }
-	if (input.nativeShell && input.provider === 'claude' && input.role === 'implementer') { lines.push(NATIVE_SHELL); }
+	if (input.nativeShell && input.role === 'implementer') { lines.push(input.provider === 'claude' ? NATIVE_SHELL : NATIVE_CODEX_APPROVALS); }
 	if (input.webSearch) { lines.push(WEB_SEARCH); }
 	if (input.role === 'implementer') {
 		lines.push('Make only the changes the instruction requires; report files touched and validation.', RECOVERY, BLOCKED,

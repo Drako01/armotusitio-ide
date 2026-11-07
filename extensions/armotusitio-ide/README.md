@@ -269,6 +269,26 @@ Quien use VS Code común con el Harness propio del proyecto no ve ningún cambio
 
 Los tests automáticos nunca consumen cuota. La prueba de punta a punta con un proveedor autenticado existe pero está apagada: `ATS_E2E_PROVIDER=codex|claude`, `ATS_E2E_ACKNOWLEDGE_REAL_MODEL_CALLS=1` y, opcionalmente, `ATS_E2E_MAX_CALLS` (2 a 5, por defecto 3) corren el flujo completo en un proyecto descartable. `ATS_REAL_SANDBOX=1` ejecuta en Windows la medición del sandbox de Codex sin llamar a ningún modelo. La matriz manual para lectores de pantalla está en `docs/CHAT_HARNESS_ACCESSIBILITY_MATRIX.md`.
 
+## Sesiones nativas del chat (r8)
+
+Con `atsHarness.agentTransport` en `native` o `auto`, el chat usa una sesión persistente del proveedor, en lugar de lanzar un proceso por mensaje:
+
+- **Claude Code**: el CLI instalado con `--input-format stream-json`.
+- **Codex**: `codex app-server` sobre JSON-RPC.
+
+Qué cambia:
+
+- **Continuidad**: la conversación sigue en el proveedor entre mensajes y después de reiniciar el IDE (se reanuda por id), y cada mensaje manda solo lo nuevo.
+- **Tiempo real**: el texto llega en streaming, cada herramienta aparece en la línea de tiempo y el agente puede hacerte preguntas con una tarjeta.
+- **Permisos**: cada permiso lo decide la misma política del IDE. Las tarjetas muestran qué, dónde, el riesgo y por cuánto tiempo (una vez, esta tarea, esta sesión o siempre).
+
+Comandos:
+
+- `/permisos` lista los permisos temporales y `/permisos temporales quitar [REGLA]` los revoca.
+- `/bifurcar` continúa en una copia de la sesión del proveedor.
+
+Cambiar de proveedor crea una sesión nueva que recibe el historial como contexto. Si la versión instalada no es compatible, el chat usa el canal estructurado y te avisa. Arquitectura y evidencia: `docs/R8_ARCHITECTURE.md` y `docs/R8_TEST_EVIDENCE.md`.
+
 ## Chat Harness: modos, permisos y comandos
 
 ### Modo Actuar y modo Preguntar
@@ -294,7 +314,7 @@ Las herramientas del IDE aplican un **piso de comandos** (`native-command-policy
 - **Archivos (borrar y mover)**: el piso de comandos deniega `rm`/`del`/`mv`, así que el agente usa `delete_path` y `move_path`. Nunca tocan `.git`, `.armotusitio`, la raíz ni rutas fuera del proyecto (tampoco a través de enlaces o junctions), y `move_path` nunca pisa un destino. Borrar archivos versionados sin cambios locales no pregunta (git los recupera); borrar archivos sin versionar, con cambios locales o sensibles (`.env`, claves) siempre pide aprobación.
 - **Git**: el agente puede hacer commit y push con las herramientas estructuradas `git_commit` y `git_push`, siempre sujetas a los permisos y con su propio piso: sin `git add -A`, sin `--no-verify`, sin force-push, sin `reset --hard`, sin borrar ramas y sin push a la rama por defecto (`main`, `master`, `develop`, `trunk`), la rama indicada por `init.defaultBranch` ni los patrones de `atsHarness.protectedBranches`. `git_commit` sí puede crear commits en la rama actual, incluso en main. `git_fetch` actualiza solo las referencias remotas (sin tags, sin prune, sin tocar ramas locales ni archivos; permitido salvo en `readonly`). `git_branch_create` puede crear una rama desde `origin/<rama>` con cambios sin commitear si los archivos que difieren entre HEAD y esa base no se cruzan con tus cambios; si se cruzan, rechaza y lista cuáles. `git_commit` omite y reporta los archivos ignorados por git, y falla con un error corregible si todos lo están. Las herramientas rechazan cambios en la configuración y los hooks respecto del inicio de la corrida, y hooks del árbol de trabajo con cambios pendientes. `git_commit` y `git_push` ejecutan los hooks del proyecto (`pre-commit`, `pre-push`, `core.hooksPath`), así que un hook del repositorio corre con tus permisos; en Codex, además, la shell nativa del proveedor puede tener git propio fuera de estas herramientas.
 - **Alcance de la seguridad**: el piso y las reglas filtran lo que el agente pide ejecutar, pero no aíslan el proceso. Para código no confiable usá un contenedor o una VM.
-- **Transporte nativo (piloto, solo Claude)**: con `atsHarness.agentTransport: "native"` (preferencia de usuario; por defecto `structured`), Claude usa su propio Bash, Edit y Write, y cada pedido de permiso lo responde el IDE (`--permission-prompt-tool`) con las mismas reglas: un Bash se evalúa como el `run` (una línea simple por llamada; operadores, redirecciones, expansiones, globs y `cd` se deniegan), Edit y Write respetan las reglas `edit:` y nunca tocan `.git`, `.armotusitio` ni rutas fuera del proyecto, y lo que cae en `ask` muestra la misma tarjeta. Solo se activa en el chat (que puede preguntar) y si la versión instalada de Claude anuncia `--permission-prompts`; si no, se usa el estructurado y lo avisa. En el transporte estructurado Claude edita con sus herramientas nativas sin intercepción, como hasta ahora. Codex sigue en su canal actual (`app-server` queda para un PR posterior).
+- **Transporte nativo (piloto, solo Claude)**: con `atsHarness.agentTransport: "native"` (preferencia de usuario; por defecto `structured`), Claude usa su propio Bash, Edit y Write, y cada pedido de permiso lo responde el IDE (`--permission-prompt-tool`) con las mismas reglas: un Bash se evalúa como el `run` (una línea simple por llamada; operadores, redirecciones, expansiones, globs y `cd` se deniegan), Edit y Write respetan las reglas `edit:` y nunca tocan `.git`, `.armotusitio` ni rutas fuera del proyecto, y lo que cae en `ask` muestra la misma tarjeta. Solo se activa en el chat (que puede preguntar) y si la versión instalada de Claude anuncia `--permission-prompts`; si no, se usa el estructurado y lo avisa. En el transporte estructurado Claude edita con sus herramientas nativas sin intercepción, como hasta ahora. Con el transporte nativo, Codex usa `codex app-server` (ver [Sesiones nativas del chat](#sesiones-nativas-del-chat-r8)).
 
 Ejemplo completo de `~/.armotusitio/permissions.json`:
 

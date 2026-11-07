@@ -1,0 +1,189 @@
+# Builds, signs and publishes the next ArmotuSitio IDE release when a PR from this repository is merged into main.
+# The label probar-release on an open PR runs a rehearsal: same build, validation and signing, nothing committed or published.
+# Setup and costs: docs/guia/07-releases.md. The manual recipe (./release.sh) remains available.
+# Publication refuses to run while any workflow outside the ArmotuSitio allowlist is active.
+name: ArmotuSitio Release
+on:
+  pull_request:
+    types: [closed, labeled]
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  # Only real triggers share the queue; an unrelated label or an unmerged close must never replace a pending release.
+  group: >-
+    ${{ (github.event_name == 'workflow_dispatch' || (github.event.action == 'closed' && github.event.pull_request.merged == true)
+    || (github.event.action == 'labeled' && github.event.label.name == 'probar-release')) && 'ats-release' || format('ats-release-ignored-{0}', github.run_id) }}
+  cancel-in-progress: false
+env:
+  REHEARSAL: ${{ github.event.action == 'labeled' }}
+jobs:
+  prepare:
+    # PRs from this repository only; fork PRs never build. The label sin-release opts a merged PR out.
+    if: >-
+      github.event_name == 'workflow_dispatch' || (github.event.pull_request.head.repo.full_name == github.repository && (
+      (github.event.action == 'closed' && github.event.pull_request.merged == true && !contains(github.event.pull_request.labels.*.name, 'sin-release'))
+      || (github.event.action == 'labeled' && github.event.label.name == 'probar-release')))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.prepare.outputs.tag }}
+      commit: ${{ steps.prepare.outputs.commit }}
+    steps:
+      - name: Require the release signing key before hours of building
+        env:
+          HAS_SIGNING_KEY: ${{ secrets.ATS_RELEASE_SIGNING_KEY != '' }}
+        run: |
+          if [ "$HAS_SIGNING_KEY" != 'true' ]; then echo '::error::Configure the ATS_RELEASE_SIGNING_KEY secret (docs/guia/07-releases.md).'; exit 1; fi
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ env.REHEARSAL == 'true' && github.event.pull_request.head.sha || 'main' }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .nvmrc
+      - name: Select the next revision and commit it to main when needed
+        id: prepare
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ats-release-ci.mts prepare ${{ env.REHEARSAL == 'true' && '--rehearsal' || '' }}
+  linux:
+    needs: prepare
+    # Native runners per architecture: emulating arm64 on x64 would exceed the job time limit.
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 360
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-22.04
+          - arch: arm64
+            runner: ubuntu-22.04-arm
+    steps:
+      - name: Free disk space for the VS Code build
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL && df -h /
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .nvmrc
+      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684
+        with:
+          path: .build/cache/linux/${{ matrix.arch }}
+          key: ats-linux-${{ matrix.arch }}-${{ hashFiles('.nvmrc', 'package-lock.json', 'remote/package-lock.json', 'build/package-lock.json', 'remote/.npmrc') }}
+      - name: Build isolated Ubuntu 22.04 artifacts
+        env:
+          ATS_LINUX_BIND_CACHE: '1'
+          # Read-only token of this job, for the GitHub API rate limit of the sysroot download.
+          ATS_LINUX_SYSROOT_TOKEN: ${{ github.token }}
+        run: node scripts/ats-build-linux.mts --arch ${{ matrix.arch }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ats-linux-${{ matrix.arch }}
+          path: .build/releases/*
+          if-no-files-found: error
+          retention-days: 1
+  windows-and-publish:
+    needs: [prepare, linux]
+    runs-on: windows-2022
+    timeout-minutes: 360
+    permissions:
+      contents: write
+      actions: read
+    env:
+      ATS_RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+    steps:
+      - name: Git identity for validation fixtures
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email '41898282+github-actions[bot]@users.noreply.github.com'
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684
+        with:
+          path: |
+            **/node_modules
+            .build/npm
+          key: ats-windows-x64-${{ hashFiles('.nvmrc', '**/.npmrc', '**/package-lock.json', 'build/npm/**') }}
+      - name: Restore verified dependencies or install the exact lockfiles
+        shell: pwsh
+        env:
+          npm_config_arch: x64
+          npm_config_foreground_scripts: 'true'
+          VSCODE_ARCH: x64
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+          # Same as upstream CI: authenticated downloads avoid the GitHub API rate limit of shared runners.
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          node --input-type=module -e "import { isUpToDate } from './build/npm/installStateHash.ts'; process.exit(isUpToDate() ? 0 : 1)"
+          if ($LASTEXITCODE -eq 0) {
+            npm run install-fast
+            exit $LASTEXITCODE
+          }
+          node build/npm/preinstall.ts
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            npm ci --no-audit --no-fund
+            if ($LASTEXITCODE -eq 0) { exit 0 }
+            Write-Host "npm ci failed (attempt $attempt), retrying..."
+            Start-Sleep -Seconds 10
+          }
+          exit 1
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: ats-linux-*
+          path: .build/releases
+          merge-multiple: true
+      - name: Build Windows client
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/ats-package-windows.mts
+      - name: Prepare release signing key
+        shell: pwsh
+        env:
+          ATS_RELEASE_SIGNING_KEY: ${{ secrets.ATS_RELEASE_SIGNING_KEY }}
+        run: |
+          if (-not $env:ATS_RELEASE_SIGNING_KEY) { throw 'Missing release signing key' }
+          $keyPath = Join-Path $env:RUNNER_TEMP 'ats-release-private.pem'
+          [IO.File]::WriteAllText($keyPath, $env:ATS_RELEASE_SIGNING_KEY)
+          "ATS_IDE_SIGNING_KEY=$keyPath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Validate and sign
+        shell: pwsh
+        run: |
+          node scripts/ats-autoupdate.mts validate
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/ats-autoupdate.mts artifacts
+          exit $LASTEXITCODE
+      - name: Publish the prepared release
+        if: env.REHEARSAL != 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/ats-autoupdate.mts publish --approve
+          exit $LASTEXITCODE
+      - name: Keep the rehearsal installers for a smoke test
+        if: env.REHEARSAL == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ats-rehearsal-windows
+          path: .build/releases/*.exe
+          if-no-files-found: error
+          retention-days: 2
+      - name: Remove temporary signing key
+        if: always()
+        shell: pwsh
+        run: |
+          $keyPath = Join-Path $env:RUNNER_TEMP 'ats-release-private.pem'
+          if (Test-Path -LiteralPath $keyPath) { Remove-Item -LiteralPath $keyPath -Force }

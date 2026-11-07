@@ -63,7 +63,8 @@ export interface PermissionVerdict {
 /** Sent by the command runner to the extension when a verdict is `ask`; shown as an approval card in the chat. */
 export interface ApprovalRequest {
 	id: string;
-	kind: PermissionRequest['kind'];
+	/** `sandbox`: the provider asks to reach beyond its own sandbox (network, writes outside the project); never remembered. */
+	kind: PermissionRequest['kind'] | 'sandbox';
 	title: string;
 	/** Short lines (branch, files, message, command) shown verbatim; never secrets. */
 	detail: string[];
@@ -71,7 +72,11 @@ export interface ApprovalRequest {
 	rule: string;
 	/** Why the action cannot be remembered, when `rule` is empty; the card says so instead of hiding the options silently. */
 	noRemember?: NoRememberReason;
+	/** How much harm a wrong yes can do, shown on the card next to what, where and for how long. */
+	risk?: ApprovalRisk;
 }
+/** `high`: leaves the project or the sandbox, publishes, or cannot be undone with git. */
+export type ApprovalRisk = 'low' | 'medium' | 'high';
 /**
  * How far an approval reaches: this action only, the rest of the current run, the rest of the IDE session in this project,
  * or always in this project. Anything else is a denial.

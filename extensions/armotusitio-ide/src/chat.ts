@@ -203,6 +203,8 @@ function labels(t) {
 			publication: t('Solo una vez: publicar en GitHub se aprueba cada vez.'),
 			inexact: t('Solo una vez: este comando no se puede guardar como regla exacta.')
 		},
+		risk: { low: t('Riesgo bajo'), medium: t('Riesgo medio'), high: t('Riesgo alto: sale del proyecto o del sandbox, publica o no se deshace con git') },
+		questions: t('Preguntas del agente'), questionOther: t('Otra respuesta'), questionSend: t('Responder'), questionSkip: t('No responder'),
 		gate: { pending: t('Pendiente'), running: t('En curso'), passed: t('Pas\u00f3'), failed: t('Fall\u00f3'), cancelled: t('Cancelada') },
 		verification: t('Verificaciones'), verificationSkipped: t('Sin verificaciones configuradas'), duration: t('Duraci\u00f3n'), copy: t('Copiar'), copied: t('Copiado'),
 		copyMessage: t('Copiar respuesta'), partial: t('Respuesta en curso'), copyCode: t('Copiar c\u00f3digo'), activity: t('Actividad en curso'), idle: t('Sin actividad en curso'), cancelling: t('Deteniendo\u2026'),
@@ -468,6 +470,9 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 				if (await confirmDiscard()) { await session.discardRun(message.messageId); }
 			}
 			if (action === 'approval' && typeof message.id === 'string' && message.id.length <= 64 && APPROVAL_ANSWERS.includes(message.answer)) { await session.resolveApproval(message.id, message.answer); }
+			// The session validates every answer against the question it asked; anything else is ignored.
+			if (action === 'question' && typeof message.id === 'string' && message.id.length <= 64 && message.answers && typeof message.answers === 'object') { session.resolveQuestion(message.id, message.answers); }
+			if (action === 'questionSkip' && typeof message.id === 'string' && message.id.length <= 64) { session.skipQuestion(message.id); }
 			// Per-file requests name a file of a run the session knows; anything else is ignored, never trusted.
 			const runFile = typeof message.messageId === 'string' && message.messageId.length <= 64 && validRunPath(message.path) ? session.runFile(message.messageId, message.path) : undefined;
 			if (action === 'openDiff' && runFile) { await vscode.commands.executeCommand(RUN_DIFF_COMMAND, folder.uri.toString(), runFile.path, runFile.change, runFile.preexisting); }

@@ -70,6 +70,11 @@ export interface ChatConversation {
 	memory?: ChatMemory;
 	/** One entry per extension host with an operation in flight; windows never overwrite each other's markers. */
 	pending?: PendingOperation[];
+	/**
+	 * Identity of this conversation for native agent sessions (r8). A new conversation (reset) gets a new id, so its native
+	 * sessions start fresh; r7 histories get one on first load.
+	 */
+	conversationId?: string;
 }
 /** Project facts the assistant may rely on; digests prove what was referenced, never grant permissions. */
 export interface ChatProjectContext {
@@ -206,6 +211,29 @@ function contextLines(context: ChatProjectContext, compact = false): string[] {
 		context.verification ? 'Configured verification gates run automatically after implementation: ' + context.verification.gates.map(gate => gate.id + ' = ' + gate.command).join('; ') : 'No verification gates are configured for this project.',
 		context.writer ? '' : 'This project is governed by its own Harness: the IDE cannot apply changes here, so focus on analysis and plans.'
 	].filter(Boolean);
+}
+
+/**
+ * A follow-up turn of a persistent native session (r8): the provider already holds the rules and the conversation up to the
+ * message `since`, so only what is newer is sent: the user's new messages, outcomes of runs, and the current plan when it
+ * changed. Local notices stay local, as in the full instruction. `undefined` when `since` is no longer in the history.
+ */
+export function buildConversationDelta(messages: readonly ChatMessage[], context: ChatProjectContext, since: string, plan?: ChatPlan): string | undefined {
+	const latest = messages.at(-1);
+	if (!latest || latest.role !== 'user') { throw Error('HARNESS_CHAT_TURN_INVALID'); }
+	const index = messages.findIndex(message => message.id === since);
+	if (index === -1 || index >= messages.length - 1) { return undefined; }
+	const between = messages.slice(index + 1, -1);
+	// The provider wrote its own answers; only what it did not see (user messages it missed, run outcomes) is repeated.
+	const history = boundedHistory(between, Math.max(0, promptBudget(context) - bytes(latest.text) - 4096), ['user', 'run']);
+	const planChanged = !!plan && !messages.slice(0, index + 1).some(message => message.plan?.digest === plan.digest);
+	return [
+		'Same rules as before in this session: read-only conversation, answer the latest message, and include one complete harness-plan block only when proposing or revising a plan.',
+		...(context.writer ? [] : ['This project is governed by its own Harness: focus on analysis and plans.']),
+		...(planChanged ? ['Current plan (v' + plan!.version + '):\n' + planBlock(plan!)] : []),
+		...(history.lines.length ? ['Since your last answer:\n' + history.lines.join('\n\n')] : []),
+		'[user] ' + latest.text
+	].join('\n\n');
 }
 
 /** Read-only conversational turn. The model may inspect the repository but implementation needs a separate approval. */
@@ -397,7 +425,9 @@ export class ChatStore {
 		const pending = [...foreign, ...(conversation.pending ?? [])];
 		// Another window may have compacted further: the memory that covers more history wins. A new conversation has none.
 		const memory = [stored?.value.memory, conversation.memory].filter((item): item is ChatMemory => !!item).sort((left, right) => right.compacted - left.compacted)[0];
-		const value = { schemaVersion: 1, provider: conversation.provider, messages, ...(memory && !options.replace ? { memory } : {}), ...(pending.length ? { pending } : {}) };
+		// The conversation id that was stored first wins, so two windows never split one conversation into two native sessions.
+		const conversationId = options.replace ? conversation.conversationId : stored?.value.conversationId ?? conversation.conversationId;
+		const value = { schemaVersion: 1, provider: conversation.provider, messages, ...(memory && !options.replace ? { memory } : {}), ...(pending.length ? { pending } : {}), ...(conversationId ? { conversationId } : {}) };
 		await writeDurable(this.file, value, false, MAX_STATE_BYTES);
 		this.remember(JSON.stringify(value), messages);
 		return messages;
@@ -420,7 +450,8 @@ export class ChatStore {
 		// Earlier builds of this branch stored one marker object instead of a list.
 		if (value?.pending && !Array.isArray(value.pending)) { value.pending = [value.pending as unknown as PendingOperation]; }
 		if (value?.schemaVersion !== 1 || !PROVIDERS.includes(value.provider) || !Array.isArray(value.messages) ||
-			value.messages.length > MAX_MESSAGES || !value.messages.every(validMessage) || !validPending(value.pending) || (value.memory !== undefined && !validMemory(value.memory))) { throw Error('HARNESS_CHAT_STATE_INVALID'); }
+			value.messages.length > MAX_MESSAGES || !value.messages.every(validMessage) || !validPending(value.pending) || (value.memory !== undefined && !validMemory(value.memory)) ||
+			(value.conversationId !== undefined && !/^[a-f0-9-]{8,64}$/.test(value.conversationId))) { throw Error('HARNESS_CHAT_STATE_INVALID'); }
 		return { raw, value };
 	}
 	private async quarantine(): Promise<boolean> {
@@ -437,7 +468,7 @@ const LOCK_STALE_MS = 30000;
  * Cross-process mutual exclusion through an exclusively created file holding `<pid>:<token>`. Only the
  * owner deletes its lock; a lock is abandoned only when its owner process is gone. Waiting longer fails loudly.
  */
-async function withFileLock<T>(lock: string, work: () => Promise<T>): Promise<T> {
+export async function withFileLock<T>(lock: string, work: () => Promise<T>): Promise<T> {
 	const owner = process.pid + ':' + randomUUID();
 	const deadline = Date.now() + LOCK_WAIT_MS;
 	for (; ;) {
