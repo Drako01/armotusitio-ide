@@ -19,12 +19,13 @@ const { TtlCache } = require('./native-ttl-cache.ts');
 const { chatCommands, commandHelp, runSessionCommand } = require('./native-chat-commands.ts');
 const { resolveMentions, mentionNotice, suggestMentionFiles } = require('./native-chat-mentions.ts');
 const { configuredPreset } = require('./native-permissions.ts');
+const { APPROVAL_ANSWERS } = require('./native-approval.ts');
 const { indexProject, IGNORED } = require('./context.ts');
 
 /** The project file list for `@` autocomplete changes slowly; typing must not rescan the tree on every key. */
 const MENTION_INDEX_TTL_MS = 30 * 1000;
 const { buildSetupItems, setupIcon } = require('./native-setup-check.ts');
-const { runDoctor } = require('./native-machine-doctor.ts');
+const { doctorReport } = require('./native-machine-doctor.ts');
 const { registerRunDiffView, validRunPath, RUN_DIFF_COMMAND } = require('./native-run-diff-view.ts');
 
 /** Provider CLI evidence changes rarely; the explicit "verify providers" action always bypasses it. */
@@ -182,12 +183,26 @@ function labels(t) {
 		},
 		searches: t('B\u00fasquedas web de esta ejecuci\u00f3n ({0})', '{0}'),
 		needs: { service: t('un servicio'), credential: t('una credencial'), policy: t('un permiso'), decision: t('una decisi\u00f3n tuya'), toolchain: t('una herramienta'), disk: t('espacio en disco') },
+		needsNext: {
+			service: t('Levant\u00e1 el servicio (por ejemplo Docker) y toc\u00e1 Continuar.'),
+			credential: t('Inici\u00e1 sesi\u00f3n en esa herramienta (por ejemplo gh auth login) y toc\u00e1 Continuar.'),
+			policy: t('Revis\u00e1 /permisos: aprob\u00e1 la acci\u00f3n cuando la pida o quit\u00e1 la regla que la bloquea, y toc\u00e1 Continuar.'),
+			decision: t('Respond\u00e9 la pregunta en el chat y toc\u00e1 Continuar.'),
+			toolchain: t('Corr\u00e9 /doctor, segu\u00ed lo que indica y toc\u00e1 Continuar.'),
+			disk: t('Liber\u00e1 espacio (/doctor dice cu\u00e1nto queda) y toc\u00e1 Continuar.')
+		},
 		changedFiles: t('Archivos que cambi\u00f3 esta ejecuci\u00f3n ({0})', '{0}'), changedMore: t('y {0} m\u00e1s', '{0}'), preexisting: t('ya ten\u00eda cambios tuyos'),
 		change: { added: t('nuevo'), modified: t('modificado'), deleted: t('borrado') },
 		continueRun: t('Continuar'), retry: t('Reintentar'), continuedRun: t('Continuaci\u00f3n'), maxMessageChars: MAX_USER_MESSAGE_CHARS,
 		discardRun: t('Deshacer esta ejecuci\u00f3n'), openHome: t('Ver en Inicio'),
-		approvals: t('Aprobaciones pendientes'), allowOnce: t('Permitir una vez'), allowAlways: t('Permitir siempre'), denyApproval: t('Denegar'),
-		alwaysRule: t('Permitir siempre guarda la regla \u00ab{0}\u00bb en {1}.', '{0}', '{1}'), permissionsFile: '~/.armotusitio/permissions.json',
+		approvals: t('Aprobaciones pendientes'), allowOnce: t('Permitir una vez'), allowTask: t('Esta tarea'), allowSession: t('Esta sesi\u00f3n'), allowAlways: t('Siempre en este proyecto'), denyApproval: t('Denegar'),
+		alwaysRule: t('\u00abSiempre en este proyecto\u00bb guarda la regla \u00ab{0}\u00bb en {1}; \u00abEsta tarea\u00bb y \u00abEsta sesi\u00f3n\u00bb no guardan nada.', '{0}', '{1}'), permissionsFile: '~/.armotusitio/permissions.json',
+		noRemember: {
+			dependency: t('Solo una vez: instalar o cambiar dependencias se aprueba cada vez.'),
+			irreversible: t('Solo una vez: un cambio que git no puede deshacer se aprueba cada vez.'),
+			publication: t('Solo una vez: publicar en GitHub se aprueba cada vez.'),
+			inexact: t('Solo una vez: este comando no se puede guardar como regla exacta.')
+		},
 		gate: { pending: t('Pendiente'), running: t('En curso'), passed: t('Pas\u00f3'), failed: t('Fall\u00f3'), cancelled: t('Cancelada') },
 		verification: t('Verificaciones'), verificationSkipped: t('Sin verificaciones configuradas'), duration: t('Duraci\u00f3n'), copy: t('Copiar'), copied: t('Copiado'),
 		copyMessage: t('Copiar respuesta'), partial: t('Respuesta en curso'), copyCode: t('Copiar c\u00f3digo'), activity: t('Actividad en curso'), idle: t('Sin actividad en curso'), cancelling: t('Deteniendo\u2026'),
@@ -326,7 +341,7 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 		const root = folders()[0]?.uri.fsPath ?? process.cwd();
 		const items = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: t('Revisando tu entorno\u2026') }, async () => {
 			// Only the cheap probes: no ports, toolchains or network clock, which the full machine doctor adds.
-			const [codex, claude, doctor] = await Promise.all([inspectProvider('codex', false), inspectProvider('claude', false), controller.systemExec ? runDoctor({ exec: controller.systemExec, platform: process.platform, projectRoot: root }) : []]);
+			const [codex, claude, doctor] = await Promise.all([inspectProvider('codex', false), inspectProvider('claude', false), controller.doctorFor ? controller.doctorFor(root, true) : []]);
 			const settings = vscode.workspace.getConfiguration('atsHarness');
 			return buildSetupItems({
 				providers: { codex: codex.status, claude: claude.status }, doctor, mcp: await probeMcpConnection(vscode, mcp), trusted: !!vscode.workspace.isTrusted,
@@ -369,7 +384,9 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 	const sessionCommands = {
 		t, chatMode, setChatMode, confirmDiscard,
 		permissionsPreset: () => configuredPreset(vscode.workspace.getConfiguration('atsHarness').get('permissionsPreset')),
-		openFile: file => vscode.commands.executeCommand('vscode.open', vscode.Uri.file(file))
+		openFile: file => vscode.commands.executeCommand('vscode.open', vscode.Uri.file(file)),
+		runsDirectory: (root: string) => controller.runsDirectory?.(root),
+		doctor: async (root: string) => doctorReport(controller.doctorFor ? await controller.doctorFor(root) : [])
 	};
 	/** Project files matching what the user typed after `@`; the webview asks on every keystroke. */
 	const suggestFiles = async (folder, query: string) => {
@@ -450,7 +467,7 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 			if (action === 'discard' && typeof message.messageId === 'string' && message.messageId.length <= 64) {
 				if (await confirmDiscard()) { await session.discardRun(message.messageId); }
 			}
-			if (action === 'approval' && typeof message.id === 'string' && message.id.length <= 64 && ['once', 'always', 'deny'].includes(message.answer)) { await session.resolveApproval(message.id, message.answer); }
+			if (action === 'approval' && typeof message.id === 'string' && message.id.length <= 64 && APPROVAL_ANSWERS.includes(message.answer)) { await session.resolveApproval(message.id, message.answer); }
 			// Per-file requests name a file of a run the session knows; anything else is ignored, never trusted.
 			const runFile = typeof message.messageId === 'string' && message.messageId.length <= 64 && validRunPath(message.path) ? session.runFile(message.messageId, message.path) : undefined;
 			if (action === 'openDiff' && runFile) { await vscode.commands.executeCommand(RUN_DIFF_COMMAND, folder.uri.toString(), runFile.path, runFile.change, runFile.preexisting); }

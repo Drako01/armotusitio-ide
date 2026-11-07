@@ -18,7 +18,7 @@ test('ripgrep is available for navigation without allowing executable helpers', 
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { createCommandPolicy } from '../src/native-command-policy.ts';
+import { createCommandPolicy, denialText } from '../src/native-command-policy.ts';
 import { addUserRule, loadPermissions, type PermissionSet } from '../src/native-permissions.ts';
 import type { PermissionPreset } from '../src/native-permissions-types.ts';
 import { detectEcosystems } from '../src/native-ecosystems.ts';
@@ -103,7 +103,7 @@ test('the runner executes without a shell, bounds time and output, and the tool 
 		const ran = await handleRun(config, { command: 'node', args: ['print.js'], cwd: 'apps/web' }, 9);
 		const audit = (await fs.readFile(path.join(logs, 'commands.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
 		assert.deepEqual({ denied, ranExit: ran.text.startsWith('exit 3'), budget: /about 1 turns left/.test(ran.text), audit: audit.map(entry => entry.denied ?? entry.exitCode) },
-			{ denied: { isError: true, text: 'POLICY_DENIED: git-mutation' }, ranExit: true, budget: true, audit: ['git-mutation', 3] });
+			{ denied: { isError: true, text: denialText('git-mutation') }, ranExit: true, budget: true, audit: ['git-mutation', 3] });
 	} finally { await fs.rm(root, { recursive: true, force: true }); await fs.rm(logs, { recursive: true, force: true }); }
 });
 
@@ -205,7 +205,7 @@ test('exact toolchain information probes are available without a detected projec
 
 test('provider version probes preserve delegation and permission rules without allowing nested agents', async () => {
 	const deniedArgs = [[], ['--help'], ['-h'], ['-v'], ['-V'], ['--version=1'], ['--version', '--help'], ['--version', '-p', 'prompt'],
-		['exec', 'prompt'], ['-p', 'prompt'], ['login'], ['auth', 'login'], ['config'], ['--dangerously-skip-permissions'], ['--sandbox', 'danger-full-access']];
+	['exec', 'prompt'], ['-p', 'prompt'], ['login'], ['auth', 'login'], ['config'], ['--dangerously-skip-permissions'], ['--sandbox', 'danger-full-access']];
 	const trusted = await permissionsFor('trusted', { user: { version: 1, allow: ['run:*'] } });
 	const readonly = await permissionsFor('readonly', { project: { version: 1, deny: ['run:claude --version'], ask: ['run:codex --version'] } });
 	try {
@@ -240,8 +240,8 @@ test('external CLIs ask the user, read-only gh runs directly, credentials never,
 				.map(([command, ...args]) => verdict(policy, command, ...args)),
 			remembered: verdict(policy, 'aws', 'sts', 'get-caller-identity'),
 			credentials: [['aws', 'configure', 'export-credentials'], ['aws', '--profile', 'prod', 'sts', 'get-session-token'], ['aws', 'secretsmanager', 'get-secret-value', '--secret-id', 'x'],
-				['aws', 'ssm', 'get-parameter', '--name', 'x', '--with-decryption'], ['gh', 'auth', 'token'], ['az', 'account', 'get-access-token'], ['gcloud', 'auth', 'print-access-token'],
-				['docker', 'login'], ['heroku', 'auth:token'], ['kubectl', 'config', 'view', '--raw'], ['vercel', 'login']].map(([command, ...args]) => verdict(policy, command, ...args)),
+			['aws', 'ssm', 'get-parameter', '--name', 'x', '--with-decryption'], ['gh', 'auth', 'token'], ['az', 'account', 'get-access-token'], ['gcloud', 'auth', 'print-access-token'],
+			['docker', 'login'], ['heroku', 'auth:token'], ['kubectl', 'config', 'view', '--raw'], ['vercel', 'login']].map(([command, ...args]) => verdict(policy, command, ...args)),
 			hidden: [verdict(policy, 'pnpm', 'exec', 'aws', 's3', 'ls'), verdict(policy, '/usr/bin/aws', 's3', 'ls')],
 			noChannel: [verdict(plain, 'aws', 's3', 'ls'), verdict(plain, 'gh', 'pr', 'checks'), verdict(plain, 'gh', '--version')],
 			describe: policy.describe().some(line => line.includes('aws'))
@@ -259,5 +259,28 @@ test('external CLIs ask the user, read-only gh runs directly, credentials never,
 			const strict = createCommandPolicy({ subprojects: monorepo, delegate: false, extras: [], permissions: readonly.set });
 			assert.deepEqual([verdict(strict, 'aws', 's3', 'ls'), verdict(strict, 'gh', 'pr', 'checks')], ['external-cli', 'not-allowed']);
 		} finally { await readonly.cleanup(); }
+	} finally { await loaded.cleanup(); }
+});
+
+
+test('package-manager workspace flags are judged on their subcommand and folder; unknown forms ask, or go to the project Harness', async () => {
+	const loaded = await permissionsFor('dev');
+	try {
+		const ide = createCommandPolicy({ subprojects: monorepo, delegate: false, extras: [], permissions: loaded.set });
+		const project = createCommandPolicy({ subprojects: [], delegate: true, extras: [], permissions: loaded.set });
+		const noChannel = createCommandPolicy({ subprojects: monorepo, delegate: false, extras: [] });
+		const verdict = (target: typeof ide, command: string, ...args: string[]) => { const decision = target.decide(command, args, '.'); return decision.allowed ? 'allowed' : decision.reason; };
+		assert.deepEqual({
+			ide: [['--dir', 'apps/web', 'lint'], ['-C', 'apps/web', 'test'], ['--dir=apps/web', 'lint'], ['--filter', 'web', 'lint'], ['--dir', 'apps/web', 'add', 'left-pad'],
+			['--dir', '../outside', 'lint'], ['-g', 'add', 'x'], ['--weird-flag', 'lint'], ['--weird', 'exec', 'sh', '-c', 'x'], ['--dir', 'apps/web', 'publish']].map(args => verdict(ide, 'pnpm', ...args)),
+			uvHidden: verdict(ide, 'uv', '--project', '.', 'run', 'python', '-c', 'x'),
+			project: [['--weird-flag', 'lint'], ['--dir', 'apps/backoffice', 'lint'], ['--weird', 'exec', 'sh', '-c', 'x']].map(args => verdict(project, 'pnpm', ...args)),
+			noChannel: verdict(noChannel, 'pnpm', '--weird-flag', 'lint')
+		}, {
+			ide: ['allowed', 'allowed', 'allowed', 'needs-approval', 'needs-approval', 'cwd-outside-project', 'global-config', 'needs-approval', 'shell-operator', 'publish'],
+			uvHidden: 'inline-code',
+			project: ['allowed', 'allowed', 'shell-operator'],
+			noChannel: 'unusual-form'
+		});
 	} finally { await loaded.cleanup(); }
 });

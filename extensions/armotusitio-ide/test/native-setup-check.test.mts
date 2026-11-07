@@ -43,6 +43,21 @@ describe('setup check', () => {
 		assert.equal(items.find(item => item.id === 'docker')?.detail, 'Docker no responde. Inici\u00e1 Docker Desktop.');
 	});
 
+	test('Node, package manager, terminal and GitHub CLI problems each offer their fix', () => {
+		const doctor = [
+			{ id: 'node', title: 'Node.js', status: 'problem', detail: 'Sin Node.' },
+			{ id: 'package-manager', title: 'Gestor de paquetes', status: 'problem', detail: 'Otra mayor.' },
+			{ id: 'shell', title: 'Terminal', status: 'warning', detail: 'MSYS2.' },
+			{ id: 'gh', title: 'GitHub CLI', status: 'warning', detail: 'Sin sesi\u00f3n.' }
+		] as const;
+		assert.deepEqual(buildSetupItems({ ...healthy, doctor: [...doctor] }, t).filter(item => doctor.some(check => check.id === item.id)).map(item => [item.id, item.status, item.fix]), [
+			['node', 'missing', { kind: 'command', command: 'atsHarness.selectNodeRuntime', label: 'Elegir el ejecutable de Node.js' }],
+			['package-manager', 'missing', { kind: 'copy', text: 'corepack enable', label: 'Copiar el comando para usar la versi\u00f3n del proyecto' }],
+			['shell', 'warning', { kind: 'settings', setting: 'terminal.integrated.defaultProfile.windows', label: 'Elegir otra terminal predeterminada' }],
+			['gh', 'warning', { kind: 'copy', text: 'gh auth login', label: 'Copiar el comando para iniciar sesi\u00f3n' }]
+		]);
+	});
+
 	test('checks the machine did not run (WSL off Windows) are omitted, and icons map every status', () => {
 		assert.equal(buildSetupItems({ ...healthy, doctor: healthy.doctor.filter(check => check.id !== 'wsl') }, t).some(item => item.id === 'wsl'), false);
 		assert.deepEqual((['ok', 'warning', 'missing'] as const).map(setupIcon), ['$(check)', '$(warning)', '$(error)']);

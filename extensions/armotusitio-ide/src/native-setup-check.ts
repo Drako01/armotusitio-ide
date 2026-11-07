@@ -20,7 +20,7 @@ export type Translate = (message: string, ...args: string[]) => string;
 
 export interface SetupFacts {
 	providers: Record<'codex' | 'claude', { status: string; version?: string }>;
-	/** Output of `runDoctor`; only docker, wsl and git are read. */
+	/** Output of `runDoctor`; node, package-manager, shell, git, gh, docker and wsl are read. */
 	doctor: readonly DoctorCheck[];
 	mcp: { state: string; reason?: string };
 	trusted: boolean;
@@ -73,7 +73,11 @@ export function buildSetupItems(facts: SetupFacts, t: Translate = message => mes
 	const items: (SetupItem | undefined)[] = [
 		providerItem('claude', facts.providers.claude, t),
 		providerItem('codex', facts.providers.codex, t),
+		doctorItem(byId.get('node'), 'node', 'Node.js', { kind: 'command', command: 'atsHarness.selectNodeRuntime', label: t('Elegir el ejecutable de Node.js') }, t),
+		doctorItem(byId.get('package-manager'), 'package-manager', t('Gestor de paquetes'), { kind: 'copy', text: 'corepack enable', label: t('Copiar el comando para usar la versi\u00f3n del proyecto') }, t),
+		doctorItem(byId.get('shell'), 'shell', t('Terminal'), { kind: 'settings', setting: 'terminal.integrated.defaultProfile.windows', label: t('Elegir otra terminal predeterminada') }, t),
 		doctorItem(byId.get('git'), 'git', 'Git', { kind: 'docs', url: DOCS.git, label: t('Abrir la descarga de Git') }, t),
+		doctorItem(byId.get('gh'), 'gh', 'GitHub CLI', { kind: 'copy', text: 'gh auth login', label: t('Copiar el comando para iniciar sesi\u00f3n') }, t),
 		doctorItem(byId.get('docker'), 'docker', 'Docker', { kind: 'docs', url: DOCS.docker, label: t('Abrir la descarga de Docker') }, t),
 		doctorItem(byId.get('wsl'), 'wsl', 'WSL', { kind: 'copy', text: 'wsl --update', label: t('Copiar el comando de actualizaci\u00f3n') }, t),
 		mcpItem(facts.mcp, t),

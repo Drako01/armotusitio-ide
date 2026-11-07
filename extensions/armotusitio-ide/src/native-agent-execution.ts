@@ -75,6 +75,8 @@ export interface ToolServerLaunch {
 	git?: boolean;
 	/** The server also offers delete_path and move_path (chat runs with IDE approval). */
 	files?: boolean;
+	/** Native transport pilot (Claude): the server offers `approve`, and Claude's prompts go to it instead of being denied. */
+	approve?: boolean;
 }
 /** Every tool of the IDE's own server (commands and editor), and no other MCP server. */
 const RUNNER_TOOL = 'mcp__ats-runner';
@@ -90,7 +92,9 @@ export function buildAgentInvocation(draft: AgentDraft, writableRoots: readonly 
 	if (draft.role !== 'implementer' && !draft.readOnly) { throw Error('HARNESS_READ_ONLY_ROLE_REQUIRED'); }
 	if (draft.role === 'implementer' && draft.readOnly) { throw Error('HARNESS_IMPLEMENTER_MODE_MISMATCH'); }
 	const runner = !draft.readOnly && !!toolServer;
-	const instruction = agentContract({ provider: draft.provider, role: draft.role, maxTurns: draft.maxTurns, runner, webSearch: draft.webSearch, git: runner && !!toolServer?.git, files: runner && !!toolServer?.files }) + '\n\n' + draft.instruction;
+	// Native transport pilot: Claude keeps Bash, Edit and Write, and each permission prompt is answered by the IDE's `approve` tool.
+	const native = runner && draft.provider === 'claude' && !!toolServer?.approve;
+	const instruction = agentContract({ provider: draft.provider, role: draft.role, maxTurns: draft.maxTurns, runner, webSearch: draft.webSearch, git: runner && !!toolServer?.git, files: runner && !!toolServer?.files, nativeShell: native }) + '\n\n' + draft.instruction;
 	const model = draft.model ? ['--model', draft.model] : [];
 	// Keep effort as a reviewed, per-invocation override. Never modify CLI config files.
 	const effort = draft.effort ? draft.provider === 'codex'
@@ -120,11 +124,14 @@ export function buildAgentInvocation(draft: AgentDraft, writableRoots: readonly 
 	// Only the IDE's server: `--strict-mcp-config` ignores user and project MCP configuration.
 	const server = runner ? ['--mcp-config', toolServer!.mcpConfigFile, '--strict-mcp-config'] : [];
 	// WebFetch is never allowed; WebSearch only when the project enabled it (D9).
-	const tools = (draft.readOnly ? 'Read,Glob,Grep' : 'Read,Glob,Grep,Edit,Write' + (runner ? ',' + RUNNER_TOOL : '')) + (draft.webSearch ? ',WebSearch' : '');
-	const denied = draft.webSearch ? 'Bash,WebFetch' : 'Bash,WebFetch,WebSearch';
+	// Native: Bash, Edit and Write are not pre-allowed, so every use reaches `approve` (`--permission-prompts host` is its target).
+	const tools = (draft.readOnly ? 'Read,Glob,Grep' : native ? 'Read,Glob,Grep,' + RUNNER_TOOL : 'Read,Glob,Grep,Edit,Write' + (runner ? ',' + RUNNER_TOOL : '')) + (draft.webSearch ? ',WebSearch' : '');
+	const denied = (native ? '' : 'Bash,') + (draft.webSearch ? 'WebFetch' : 'WebFetch,WebSearch');
+	const permissions = draft.readOnly ? ['--permission-mode', 'plan']
+		: native ? ['--permission-mode', 'default', '--permission-prompts', 'host', '--permission-prompt-tool', RUNNER_TOOL + '__approve'] : ['--permission-mode', 'dontAsk'];
 	return {
 		executable: 'claude',
-		args: ['--print', ...resume, ...model, ...effort, ...server, '--permission-mode', draft.readOnly ? 'plan' : 'dontAsk', '--allowedTools', tools, '--disallowedTools', denied, '--max-turns', String(draft.maxTurns ?? READ_ONLY_MAX_TURNS), '--output-format', 'stream-json', '--verbose'],
+		args: ['--print', ...resume, ...model, ...effort, ...server, ...permissions, '--allowedTools', tools, '--disallowedTools', denied, '--max-turns', String(draft.maxTurns ?? READ_ONLY_MAX_TURNS), '--output-format', 'stream-json', '--verbose'],
 		stdin: draft.resumeSession ? draft.instruction : instruction
 	};
 }

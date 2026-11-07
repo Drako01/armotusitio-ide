@@ -49,7 +49,7 @@ test('the tools are described to the model with their immovable rules', () => {
 		names: GIT_TOOLS.map(tool => tool.name), required: commit.inputSchema.required, noProps: Object.keys(push.inputSchema.properties),
 		commitTold: /hooks always run/.test(commit.description) && /do not retry/.test(commit.description),
 		pushTold: /never forces/i.test(push.description) && /main, master, develop, trunk/.test(push.description) && /do not retry/.test(push.description)
-	}, { names: ['git_commit', 'git_push', 'git_branch_create', 'git_pr_upsert'], required: ['paths', 'message'], noProps: [], commitTold: true, pushTold: true });
+	}, { names: ['git_commit', 'git_push', 'git_branch_create', 'git_fetch', 'git_pr_upsert'], required: ['paths', 'message'], noProps: [], commitTold: true, pushTold: true });
 });
 
 test('sensitive paths are recognized wherever they sit', () => {
@@ -267,8 +267,8 @@ test('push protects configured patterns and init.defaultBranch without a remote 
 	});
 });
 
-test('only user denials and integrity refusals end git delivery; input refusals can be corrected', () => {
+test('only integrity refusals end git delivery; a user denial covers its own call and input refusals can be corrected', () => {
 	assert.deepEqual(['DENIED: the user did not allow it', 'POLICY_DENIED: repo-config-changed', 'POLICY_DENIED: hooks-modified', 'POLICY_DENIED: denied by permissions',
-		'POLICY_DENIED: protected-branch', 'POLICY_DENIED: path-not-found', 'POLICY_DENIED: invalid-message', 'COMMITTED abc on feat/x: 1 file(s)'].map(endsGitDelivery),
-	[true, true, true, true, false, false, false, false]);
+		'POLICY_DENIED: protected-branch', 'POLICY_DENIED: path-not-found', 'POLICY_DENIED: invalid-message', 'POLICY_DENIED: all-paths-ignored', 'COMMITTED abc on feat/x: 1 file(s)'].map(endsGitDelivery),
+		[false, true, true, true, false, false, false, false, false]);
 });

@@ -78,6 +78,37 @@ test('the machine doctor reports each problem with its action, and environments 
 	});
 });
 
+test('the doctor compares the package manager the project pins with the installed one', async () => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-doctor-pm-'));
+	try {
+		const statusFor = async (packageManager: string, installed: string, code = 0) => {
+			await fs.writeFile(path.join(root, 'package.json'), JSON.stringify({ packageManager }));
+			const exec: Exec = async command => command === 'pnpm' ? { code, output: installed } : { code: 0, output: 'x' };
+			const check = (await runDoctor({ exec, platform: 'linux', projectRoot: root })).find(entry => entry.id === 'package-manager');
+			return check && check.status + (check.action ? ' +action' : '');
+		};
+		assert.deepEqual([await statusFor('pnpm@11.23.0', '12.4.2\n'), await statusFor('pnpm@11.23.0', '11.24.1\n'), await statusFor('pnpm@11.23.0', 'EPERM 448', 1), await statusFor('bun@1.0.0', '1.0.0')],
+			['problem +action', 'ok', 'problem +action', undefined]);
+	} finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
+test('the doctor finds a missing Node, an MSYS2 terminal and a GitHub CLI without a session, each with its action', async () => {
+	const ghLoggedIn = (loggedIn: boolean): Exec => async (command, args) => command === 'gh' ? { code: args[0] === '--version' || loggedIn ? 0 : 1, output: '' } : { code: 0, output: 'x' };
+	const summary = (checks: Awaited<ReturnType<typeof runDoctor>>) => Object.fromEntries(checks.filter(check => ['node', 'shell', 'gh'].includes(check.id)).map(check => [check.id, check.status + (check.action ? ' +action' : '')]));
+	const base = { platform: 'win32' as const, projectRoot: os.tmpdir() };
+	assert.deepEqual([
+		summary(await runDoctor({ ...base, exec: ghLoggedIn(false), node: async () => ({ executable: 'Code.exe', embeddedNode: true }), terminalProfile: 'UCRT64' })),
+		summary(await runDoctor({ ...base, exec: ghLoggedIn(true), node: async () => { throw Error('HARNESS_NODE_EXECUTABLE_UNAVAILABLE'); }, terminalProfile: 'PowerShell' })),
+		summary(await runDoctor({ ...base, exec: ghLoggedIn(true), node: async () => ({ executable: 'C:\\node\\node.exe', embeddedNode: false }), terminalProfile: 'Git Bash' })),
+		summary(await runDoctor({ ...base, platform: 'linux', exec: async () => ({ code: 1, output: '' }), terminalProfile: 'MINGW64' }))
+	], [
+		{ node: 'problem +action', shell: 'warning +action', gh: 'warning +action' },
+		{ node: 'problem +action', gh: 'ok' },
+		{ node: 'ok', gh: 'ok' },
+		{}
+	]);
+});
+
 test('an ephemeral environment is created labeled, waits for its service, exports variables and leaves nothing behind', async () => {
 	const server = net.createServer(socket => socket.on('data', () => socket.write('N')));
 	await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));

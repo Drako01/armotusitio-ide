@@ -137,6 +137,37 @@ test('without a running turn there is nothing to approve', async () => {
 });
 
 
+test('"this task" lasts until the run ends and "this session" until the IDE closes; while they last the same rule is not asked again', async () => {
+	const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-chat-scopes-'));
+	const script: ApprovalAnswer[] = ['task', 'session'], answered = new Set<string>(), answers: ApprovalAnswer[][] = [];
+	// Each answer persists the conversation; the directory is removed only after every one of them settled.
+	const resolving: Promise<void>[] = [];
+	const runtime: ChatRuntime = {
+		async context() { return { root: '/repo', writer: true, skills: [], guides: [] }; },
+		async converse() { throw Error('unused'); },
+		rememberApproval: async () => undefined,
+		async implement(_request, hooks) {
+			hooks.started(() => undefined);
+			answers.push([await hooks.approval!(CARD), await hooks.approval!(CARD)]);
+			const agent = { status: 'passed' as const, exitCode: 0, durationMs: 1, output: 'listo', truncated: false };
+			return { agent, verification: { status: 'skipped' as const, gates: [] }, diff: { available: false, files: [], count: 0 } };
+		}
+	};
+	// The user answers each new card with the next scripted scope.
+	const chat: HarnessChatSession = new HarnessChatSession(new ChatStore(directory), runtime, snapshot => {
+		const card = snapshot.approvals?.find(entry => !answered.has(entry.id));
+		if (card) { answered.add(card.id); resolving.push(new Promise<void>(resolve => setImmediate(() => resolve(chat.resolveApproval(card.id, script.shift()!))))); }
+	}, t);
+	try {
+		await chat.open();
+		for (let turn = 0; turn < 3; turn++) { await chat.send('subi los cambios', 'act'); }
+		assert.deepEqual({ answers, cards: answered.size }, { answers: [['task', 'once'], ['session', 'once'], ['once', 'once']], cards: 2 });
+	} finally {
+		await Promise.allSettled(resolving);
+		await fs.rm(directory, { recursive: true, force: true });
+	}
+});
+
 test('git approvals without a rememberable rule reject always and still allow once', async () => {
 	const s = await actingSession({ card: { kind: 'git_push', title: 'Push', detail: ['branch: feat/x'], rule: '' } });
 	try {

@@ -31,6 +31,20 @@
 		"deny": {
 			"$ref": "#/definitions/rules",
 			"description": "Se rechaza siempre; gana sobre ask y allow."
+		},
+		"projects": {
+			"type": "object",
+			"maxProperties": 200,
+			"description": "Reglas que valen solo para un proyecto (solo archivo de usuario). La clave es la que muestra /permisos; 'Siempre en este proyecto' escribe aca.",
+			"additionalProperties": {
+				"type": "object",
+				"additionalProperties": false,
+				"properties": {
+					"allow": { "$ref": "#/definitions/rules" },
+					"ask": { "$ref": "#/definitions/rules" },
+					"deny": { "$ref": "#/definitions/rules" }
+				}
+			}
 		}
 	},
 	"definitions": {
@@ -40,8 +54,8 @@
 			"items": {
 				"type": "string",
 				"maxLength": 300,
-				"pattern": "^((git_commit|git_push|git_branch_create|git_pr_upsert)(:[^\u0000-\u001f\u007f]+)?|(run|edit):[^\u0000-\u001f\u007f]+)$",
-				"description": "run:<glob>, edit:<glob> (delete_path y move_path), git_commit, git_push, git_branch_create o git_pr_upsert; una regla git con :<glob> vale solo para los proyectos cuya raiz coincide.",
+				"pattern": "^((git_commit|git_push|git_branch_create|git_fetch|git_pr_upsert)(:[^\u0000-\u001f\u007f]+)?|(run|edit):[^\u0000-\u001f\u007f]+)$",
+				"description": "run:<glob>, edit:<glob> (delete_path y move_path), git_commit, git_push, git_branch_create, git_fetch o git_pr_upsert; una regla git con :<glob> vale solo para los proyectos cuya raiz coincide.",
 				"examples": [
 					"run:pnpm test*",
 					"git_commit",

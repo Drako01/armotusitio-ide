@@ -8,12 +8,12 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import * as readline from 'node:readline';
-import { execFileSync, spawn } from 'node:child_process';
-import { GIT_TOOLS, handleGitTool, repoFingerprint, type GitToolsContext } from '../src/native-git-tools.ts';
+import { execFileSync } from 'node:child_process';
+import { GIT_TOOLS, endsGitDelivery, handleGitTool, repoFingerprint, type GitToolsContext } from '../src/native-git-tools.ts';
 import { parseApprovalDraft, type ApprovalDraft } from '../src/native-approval.ts';
 import { projectPermissionsDigest } from '../src/native-run-integrity.ts';
 import { openToolChannel } from '../src/native-tool-server.ts';
+import { startRunner } from './native-runner-process.mts';
 import type { RunnerConfig } from '../src/ats-runner.ts';
 import type { PermissionDecision } from '../src/native-permissions-types.ts';
 
@@ -44,8 +44,10 @@ async function fixture(work: (state: {
 		const asked: ApprovalDraft[] = [];
 		const context: GitToolsContext = {
 			root,
-			env: { ...process.env, GIT_AUTHOR_NAME: 'Fixture', GIT_AUTHOR_EMAIL: 'fixture@example.test',
-				GIT_COMMITTER_NAME: 'Fixture', GIT_COMMITTER_EMAIL: 'fixture@example.test' },
+			env: {
+				...process.env, GIT_AUTHOR_NAME: 'Fixture', GIT_AUTHOR_EMAIL: 'fixture@example.test',
+				GIT_COMMITTER_NAME: 'Fixture', GIT_COMMITTER_EMAIL: 'fixture@example.test'
+			},
 			logDirectory: path.join(base, 'logs'),
 			repoBaseline: await repoFingerprint(root),
 			permissions: { decide: () => ({ decision, source: 'user' }) },
@@ -84,13 +86,15 @@ test('the local project base is explicit: dirty cross-base checkout, protected r
 		await fs.writeFile(path.join(root, 'README.md'), 'second\n');
 		git(root, 'add', 'README.md'); git(root, 'commit', '-qm', 'second');
 		git(root, 'update-ref', 'refs/remotes/origin/qa', seed);
-		await fs.writeFile(path.join(root, 'scratch.txt'), 'keep\n');
+		// The base changes README.md, which also has a local edit: switching would mix them, so it is refused.
+		await fs.writeFile(path.join(root, 'README.md'), 'local edit\n');
 		const before = git(root, 'status', '--porcelain');
-		assert.equal((await handleGitTool(context, 'git_branch_create', { branch: 'feat/from-qa', from: 'origin/qa' })).text, 'POLICY_DENIED: local-changes-on-base-switch');
+		const crossed = await handleGitTool(context, 'git_branch_create', { branch: 'feat/from-qa', from: 'origin/qa' });
+		assert.deepEqual([crossed.text, endsGitDelivery(crossed.text)], ['POLICY_DENIED: local-changes-on-base-switch\nFiles changed both locally and in origin/qa: README.md', false]);
 		assert.equal((await handleGitTool(context, 'git_branch_create', { branch: 'main' })).text, 'POLICY_DENIED: protected-branch');
 		assert.match((await handleGitTool(context, 'git_branch_create', { branch: '../escape' })).text, /^POLICY_DENIED:/);
 		assert.equal(git(root, 'status', '--porcelain'), before);
-		await fs.rm(path.join(root, 'scratch.txt'));
+		git(root, 'checkout', '--', 'README.md');
 		const linked = path.join(base, 'other-worktree');
 		git(root, 'worktree', 'add', '-qb', 'feat/occupied', linked, 'main');
 		assert.match((await handleGitTool(context, 'git_branch_create', { branch: 'feat/occupied' })).text, /^git switch failed/);
@@ -99,6 +103,38 @@ test('the local project base is explicit: dirty cross-base checkout, protected r
 		assert.equal(branch.isError, false);
 		assert.equal(git(root, 'rev-parse', 'HEAD'), seed);
 		assert.equal(asked.length, 2);
+	});
+});
+
+test('local changes travel to a new branch when the base does not touch them; commit skips ignored files; fetch is validated', async () => {
+	await fixture(async ({ root, base, context }) => {
+		const seed = git(root, 'rev-parse', 'HEAD');
+		await fs.writeFile(path.join(root, 'other.txt'), 'base\n');
+		git(root, 'add', 'other.txt'); git(root, 'commit', '-qm', 'other');
+		git(root, 'update-ref', 'refs/remotes/origin/qa', seed);
+		await fs.writeFile(path.join(root, 'README.md'), 'local edit\n');
+		const branch = await handleGitTool(context, 'git_branch_create', { branch: 'feat/carry', from: 'origin/qa' });
+		await fs.writeFile(path.join(root, '.gitignore'), 'spec.md\n');
+		await fs.writeFile(path.join(root, 'spec.md'), 'private\n');
+		const ignoredOnly = await handleGitTool(context, 'git_commit', { paths: ['spec.md'], message: 'docs: spec' });
+		const committed = await handleGitTool(context, 'git_commit', { paths: ['README.md', 'spec.md'], message: 'fix: readme' });
+		const remote = path.join(base, 'remote.git');
+		execFileSync('git', ['clone', '-q', '--bare', root, remote]);
+		git(root, 'remote', 'add', 'mirror', remote);
+		context.repoBaseline = await repoFingerprint(root); // The user, not the agent, added the remote.
+		const fetched = await handleGitTool(context, 'git_fetch', { remote: 'mirror', branch: 'feat/carry' });
+		const unknown = await handleGitTool(context, 'git_fetch', { remote: 'nowhere' });
+		assert.deepEqual({
+			branch: [branch.isError, git(root, 'branch', '--show-current'), git(root, 'rev-parse', 'HEAD~1') === seed],
+			ignoredOnly: ignoredOnly.text, committed: [committed.isError, /SKIPPED \(ignored[^\n]*spec\.md/.test(committed.text), git(root, 'show', '--name-only', '--format=', 'HEAD')],
+			fetched: [fetched.isError, fetched.text.split('\n')[0], git(root, 'rev-parse', 'refs/remotes/mirror/feat/carry') === git(root, 'rev-parse', 'HEAD')],
+			unknown: unknown.isError
+		}, {
+			branch: [false, 'feat/carry', true],
+			ignoredOnly: 'POLICY_DENIED: all-paths-ignored', committed: [false, true, 'README.md'],
+			fetched: [false, 'FETCHED mirror/feat/carry', true],
+			unknown: true
+		});
 	});
 });
 
@@ -150,9 +186,11 @@ test('PR delivery creates, reuses and updates exactly one real-shaped GitHub PR 
 			if (args[1] === 'list') { return outcome(JSON.stringify(pr ? [pr] : [])); }
 			const flag = (name: string) => args[args.indexOf(name) + 1];
 			if (args[1] === 'create') {
-				pr = { number: 42, headRefName: 'feat/work', baseRefName: flag('--base'), state: 'OPEN',
+				pr = {
+					number: 42, headRefName: 'feat/work', baseRefName: flag('--base'), state: 'OPEN',
 					title: flag('--title'), body: flag('--body'), url: 'https://github.com/Drako01/redevent/pull/42',
-					headRepositoryOwner: { login: 'Drako01' }, headRepository: { name: 'redevent' } };
+					headRepositoryOwner: { login: 'Drako01' }, headRepository: { name: 'redevent' }
+				};
 				return outcome(pr.url);
 			}
 			if (args[1] === 'edit' && pr) {
@@ -183,9 +221,11 @@ test('PR base is per project, and closed/other-base PRs or denied approvals cann
 	await fixture(async ({ root, context, set }) => {
 		git(root, 'remote', 'set-url', 'origin', 'https://github.com/Drako01/armotusitio2.0.git');
 		context.repoBaseline = await repoFingerprint(root);
-		const existing = { number: 9, headRefName: 'feat/work', baseRefName: 'main', state: 'OPEN',
+		const existing = {
+			number: 9, headRefName: 'feat/work', baseRefName: 'main', state: 'OPEN',
 			title: 'Prior', body: 'Prior body', url: 'https://github.com/Drako01/armotusitio2.0/pull/9',
-			headRepositoryOwner: { login: 'Drako01' }, headRepository: { name: 'armotusitio2.0' } };
+			headRepositoryOwner: { login: 'Drako01' }, headRepository: { name: 'armotusitio2.0' }
+		};
 		let mutations = 0;
 		context.ghRunner = async args => {
 			if (args[1] === 'list') { return outcome(JSON.stringify([existing])); }
@@ -210,31 +250,16 @@ test('the actual ats-runner stdio MCP process exposes and carries branch/commit 
 			return draft && !draft.detail.some(line => line.includes('feat/refused')) ? 'once' : 'deny';
 		});
 		const logs = path.join(base, 'runner-logs');
-		const config: RunnerConfig = { schemaVersion: 1, root, policy: { subprojects: [], delegate: false, extras: [] },
+		const config: RunnerConfig = {
+			schemaVersion: 1, root, policy: { subprojects: [], delegate: false, extras: [] },
 			env: context.env, logDirectory: logs, git: true, files: true, permissions: { preset: 'dev' },
 			repoBaseline: await repoFingerprint(root), projectPermissionsBaseline: await projectPermissionsDigest(root),
-			channel: { address: channel.address, token: channel.token } };
-		const configFile = path.join(base, 'runner.json');
-		await fs.writeFile(configFile, JSON.stringify(config));
-		const runner = spawn(process.execPath, [path.resolve(import.meta.dirname, '../src/ats-runner.ts'), configFile],
-			{ cwd: root, env: process.env, shell: false, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
-		type RpcResponse = { serverInfo?: { name: string }; tools?: Array<{ name: string }>; isError?: boolean; content?: Array<{ text: string }> };
-		const pending = new Map<number, { resolve: (value: RpcResponse) => void; reject: (error: Error) => void }>();
-		const lines = readline.createInterface({ input: runner.stdout! });
-		lines.on('line', line => {
-			const response = JSON.parse(line) as { id: number; result?: RpcResponse; error?: unknown };
-			const call = pending.get(response.id);
-			if (call) { pending.delete(response.id); response.error ? call.reject(Error(JSON.stringify(response.error))) : call.resolve(response.result ?? {}); }
-		});
-		let sequence = 0;
-		const rpc = (method: string, params: object = {}) => new Promise<RpcResponse>((resolve, reject) => {
-			const id = ++sequence;
-			pending.set(id, { resolve, reject });
-			runner.stdin!.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n');
-		});
+			channel: { address: channel.address, token: channel.token }
+		};
+		const runner = await startRunner(config, path.join(base, 'runner.json'), { cwd: root });
+		const rpc = runner.rpc;
 		try {
-			const initialized = await rpc('initialize', { protocolVersion: '2025-06-18' });
-			assert.equal(initialized.serverInfo?.name, 'ats-runner');
+			assert.equal(runner.serverName, 'ats-runner');
 			const listed = await rpc('tools/list');
 			assert.deepEqual(GIT_TOOLS.map(tool => tool.name).every(name => listed.tools?.some(tool => tool.name === name)), true);
 			const branch = await rpc('tools/call', { name: 'git_branch_create', arguments: { branch: 'feat/delivered' } });
@@ -257,14 +282,15 @@ test('the actual ats-runner stdio MCP process exposes and carries branch/commit 
 			const moved = await rpc('tools/call', { name: 'move_path', arguments: { from: 'transport.txt', to: 'moved/transport.txt' } });
 			const deleted = await rpc('tools/call', { name: 'delete_path', arguments: { path: 'moved' } });
 			const refused = await rpc('tools/call', { name: 'git_branch_create', arguments: { branch: 'feat/refused' } });
-			const noRetry = await rpc('tools/call', { name: 'git_branch_create', arguments: { branch: 'feat/other' } });
-			assert.deepEqual([moved, deleted, refused, noRetry].map(result => result.content?.[0]?.text),
-				['MOVED transport.txt -> moved/transport.txt', 'DELETED moved (2 entries)', 'DENIED: the user did not allow it', 'POLICY_DENIED: prior-git-denial']);
-			assert.equal(git(root, 'branch', '--show-current'), 'feat/alternate');
+			// The refusal covers that exact call only: asking the same again is answered from memory, another branch is asked normally.
+			const repeated = await rpc('tools/call', { name: 'git_branch_create', arguments: { branch: 'feat/refused' } });
+			const other = await rpc('tools/call', { name: 'git_branch_create', arguments: { branch: 'feat/other' } });
+			assert.deepEqual([moved, deleted, refused, repeated].map(result => result.content?.[0]?.text),
+				['MOVED transport.txt -> moved/transport.txt', 'DELETED moved (2 entries)', 'DENIED: the user did not allow it', 'DENIED: the user already refused this exact action in this run. Do something else or report it.']);
+			assert.match(other.content?.[0]?.text ?? '', /^BRANCH_CREATED feat\/other/);
+			assert.equal(git(root, 'branch', '--show-current'), 'feat/other');
 		} finally {
-			runner.stdin!.end();
-			await new Promise<void>(resolve => { if (runner.exitCode !== null) { resolve(); } else { runner.once('close', () => resolve()); runner.kill(); } });
-			lines.close();
+			await runner.close();
 			await channel.close();
 		}
 	});

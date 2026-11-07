@@ -185,6 +185,20 @@
 					"scope": "application",
 					"description": "Sandbox de Codex cuando modifica archivos. Se cambia desde el interruptor Acceso total del chat. Es una preferencia de usuario: un repositorio no puede activarla."
 				},
+				"atsHarness.agentTransport": {
+					"type": "string",
+					"enum": [
+						"structured",
+						"native"
+					],
+					"enumDescriptions": [
+						"Claude ejecuta comandos solo con la herramienta run del IDE; lo no permitido se pregunta o se deniega.",
+						"Piloto: Claude usa su propio Bash, Edit y Write, y cada pedido de permiso lo decide el IDE con las mismas reglas (y tu tarjeta cuando corresponde). Si la versión instalada de Claude no lo soporta, se usa el estructurado."
+					],
+					"default": "structured",
+					"scope": "application",
+					"description": "Canal de permisos del agente Claude en el chat (Actuar). Es una preferencia de usuario: un repositorio no puede activarla."
+				},
 				"atsHarness.otlpEndpoint": {
 					"type": "string",
 					"default": "",
@@ -413,6 +427,10 @@
 			{
 				"command": "atsHarness.machineDoctor",
 				"title": "ArmoTuSitio: Médico de la máquina"
+			},
+			{
+				"command": "atsHarness.managePermissions",
+				"title": "ArmoTuSitio: Gestionar permisos"
 			},
 			{
 				"command": "atsHarness.decisions",
@@ -699,7 +717,8 @@
 		"test": "node --test test/*.test.cts test/native-*.test.mts",
 		"check": "node ../../node_modules/@typescript/native/bin/tsc --project tsconfig.json && node check-resources.mts",
 		"vscode:prepublish": "npm run compile",
-		"check:native-package": "node check-native-package.mts"
+		"check:native-package": "node check-native-package.mts",
+		"check:conformance": "node check-conformance.mts"
 	},
 	"icon": "resources/logo.png",
 	"capabilities": {

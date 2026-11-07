@@ -10,7 +10,7 @@
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import type { PermissionDecision, PermissionPreset, PermissionRequest, PermissionSource, PermissionVerdict } from './native-permissions-types.ts';
+import type { NoRememberReason, PermissionDecision, PermissionPreset, PermissionRequest, PermissionSource, PermissionVerdict } from './native-permissions-types.ts';
 
 export interface PermissionSet {
 	readonly preset: PermissionPreset;
@@ -25,7 +25,8 @@ const MAX_RULES = 200;
 const MAX_RULE_LENGTH = 300;
 /** Longest subject matched; a longer one is denied outright, because a truncated match could skip a deny rule. */
 const MAX_SUBJECT_LENGTH = 2048;
-const FILE_KEYS = new Set(['version', 'preset', 'allow', 'ask', 'deny']);
+const FILE_KEYS = new Set(['version', 'preset', 'allow', 'ask', 'deny', 'projects']);
+const SECTION_KEYS = new Set(['allow', 'ask', 'deny']);
 const DECISIONS: readonly PermissionDecision[] = ['deny', 'ask', 'allow'];
 const PRESETS: readonly PermissionPreset[] = ['readonly', 'dev', 'trusted'];
 const READONLY_COMMANDS = new Set(['git', 'ls', 'dir', 'cat', 'type', 'head', 'tail', 'wc', 'grep', 'rg', 'pwd', 'whoami', 'hostname']);
@@ -33,9 +34,9 @@ const INFO_FLAGS = new Set(['--version', '-v', '-V', '--help', '-h']);
 
 /** `glob` is empty for a bare git rule, which applies in every project. */
 interface Rule { readonly text: string; readonly kind: PermissionRequest['kind']; readonly glob: string }
-const GIT_KINDS = new Set<string>(['git_commit', 'git_push', 'git_branch_create', 'git_pr_upsert']);
+const GIT_KINDS = new Set<string>(['git_commit', 'git_push', 'git_branch_create', 'git_pr_upsert', 'git_fetch']);
 /** Git tools whose "always" answer is remembered (per project); a PR publishes new content each time, so it is asked every time. */
-const REMEMBERED_GIT_KINDS = new Set<string>(['git_commit', 'git_push', 'git_branch_create']);
+const REMEMBERED_GIT_KINDS = new Set<string>(['git_commit', 'git_push', 'git_branch_create', 'git_fetch']);
 type Layer = Record<PermissionDecision, Rule[]>;
 
 const defaultTranslator: Translator = (text, ...args) => text.replace(/\{(\d+)\}/g, (_, index) => args[Number(index)] ?? '');
@@ -60,7 +61,7 @@ export function globMatches(glob: string, subject: string): boolean {
 function parseRule(text: unknown): Rule | undefined {
 	if (typeof text !== 'string' || !text || text.length > MAX_RULE_LENGTH || /[\u0000-\u001f\u007f]/.test(text)) { return undefined; }
 	if (GIT_KINDS.has(text)) { return { text, kind: text as PermissionRequest['kind'], glob: '' }; }
-	const match = /^(run|edit|git_commit|git_push|git_branch_create|git_pr_upsert):(.+)$/.exec(text);
+	const match = /^(run|edit|git_commit|git_push|git_branch_create|git_pr_upsert|git_fetch):(.+)$/.exec(text);
 	if (!match) { return undefined; }
 	return { text, kind: match[1] as PermissionRequest['kind'], glob: GIT_KINDS.has(match[1]) ? projectKey(match[2]) : match[2] };
 }
@@ -82,7 +83,11 @@ function subjectOf(request: PermissionRequest, root: string): { kind: Permission
 	}
 }
 
-function parseFile(raw: string, allowAllow: boolean, label: string, t: Translator, warnings: string[]): Layer | undefined {
+/**
+ * Parses one file. `projectKeyFor` (user file only) also takes the rules of `projects[projectKeyFor]`; every project section
+ * is validated, so a broken one fails the whole file closed, like any other invalid rule.
+ */
+function parseFile(raw: string, allowAllow: boolean, label: string, t: Translator, warnings: string[], projectKeyFor?: string): Layer | undefined {
 	const invalid = (why: string): undefined => { warnings.push(t('El archivo de permisos {0} se ignor\u00f3: {1}.', label, why)); return undefined; };
 	let data: unknown;
 	try { data = JSON.parse(raw); } catch { return invalid(t('no es JSON v\u00e1lido')); }
@@ -93,17 +98,33 @@ function parseFile(raw: string, allowAllow: boolean, label: string, t: Translato
 	if (unknown) { return invalid(t('clave desconocida "{0}"', unknown)); }
 	if (record.preset !== undefined && !PRESETS.includes(record.preset as PermissionPreset)) { return invalid(t('preset desconocido')); }
 	const layer = emptyLayer();
-	let total = 0;
-	for (const decision of DECISIONS) {
-		const list = record[decision];
-		if (list === undefined) { continue; }
-		if (!Array.isArray(list)) { return invalid(t('"{0}" debe ser una lista', decision)); }
-		total += list.length;
-		if (total > MAX_RULES) { return invalid(t('m\u00e1s de {0} reglas', String(MAX_RULES))); }
-		for (const entry of list) {
-			const rule = parseRule(entry);
-			if (!rule) { return invalid(t('regla inv\u00e1lida')); }
-			layer[decision].push(rule);
+	/** Adds one section's lists to `into`; the reason it is invalid otherwise. */
+	const readSection = (section: Record<string, unknown>, into: Layer | undefined): string | undefined => {
+		let total = 0;
+		for (const decision of DECISIONS) {
+			const list = section[decision];
+			if (list === undefined) { continue; }
+			if (!Array.isArray(list)) { return t('"{0}" debe ser una lista', decision); }
+			total += list.length;
+			if (total > MAX_RULES) { return t('m\u00e1s de {0} reglas', String(MAX_RULES)); }
+			for (const entry of list) {
+				const rule = parseRule(entry);
+				if (!rule) { return t('regla inv\u00e1lida'); }
+				into?.[decision].push(rule);
+			}
+		}
+		return undefined;
+	};
+	const topProblem = readSection(record, layer);
+	if (topProblem) { return invalid(topProblem); }
+	if (record.projects !== undefined) {
+		// A cloned repository must not carry per-project grants either: only the user's own file has this section.
+		if (!allowAllow) { return invalid(t('clave desconocida "{0}"', 'projects')); }
+		if (!record.projects || typeof record.projects !== 'object' || Array.isArray(record.projects)) { return invalid(t('"{0}" debe ser un objeto', 'projects')); }
+		for (const [key, section] of Object.entries(record.projects as Record<string, unknown>)) {
+			if (!section || typeof section !== 'object' || Array.isArray(section) || Object.keys(section).some(name => !SECTION_KEYS.has(name))) { return invalid(t('secci\u00f3n de proyecto inv\u00e1lida')); }
+			const problem = readSection(section as Record<string, unknown>, key === projectKeyFor ? layer : undefined);
+			if (problem) { return invalid(problem); }
 		}
 	}
 	if (!allowAllow && layer.allow.length) {
@@ -114,7 +135,7 @@ function parseFile(raw: string, allowAllow: boolean, label: string, t: Translato
 }
 
 /** Reads one permissions file without following symlinks and within the size bound; missing file means no rules. */
-async function readLayer(file: string, allowAllow: boolean, label: string, t: Translator, warnings: string[]): Promise<{ layer?: Layer; preset?: PermissionPreset; invalid?: boolean }> {
+async function readLayer(file: string, allowAllow: boolean, label: string, t: Translator, warnings: string[], projectKeyFor?: string): Promise<{ layer?: Layer; preset?: PermissionPreset; invalid?: boolean }> {
 	let handle: fs.FileHandle | undefined;
 	try {
 		for (const target of [path.dirname(file), file]) {
@@ -128,7 +149,7 @@ async function readLayer(file: string, allowAllow: boolean, label: string, t: Tr
 		const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
 		if (bytesRead > MAX_FILE_BYTES) { warnings.push(t('El archivo de permisos {0} se ignor\u00f3: supera los 16 KiB.', label)); return { invalid: true }; }
 		const raw = buffer.subarray(0, bytesRead).toString('utf8');
-		const layer = parseFile(raw, allowAllow, label, t, warnings);
+		const layer = parseFile(raw, allowAllow, label, t, warnings, projectKeyFor);
 		const preset = layer ? (JSON.parse(raw) as { preset?: PermissionPreset }).preset : undefined;
 		return { layer, preset, invalid: !layer };
 	} catch (error) {
@@ -143,6 +164,7 @@ function presetDecision(preset: PermissionPreset, request: PermissionRequest): P
 	switch (request.kind) {
 		case 'edit': return preset === 'readonly' ? 'deny' : 'allow';
 		case 'git_commit': return preset === 'readonly' ? 'deny' : preset === 'trusted' ? 'allow' : 'ask';
+		case 'git_fetch': return preset === 'readonly' ? 'deny' : 'allow';
 		case 'git_push':
 		case 'git_branch_create':
 		case 'git_pr_upsert': return preset === 'readonly' ? 'deny' : 'ask';
@@ -195,7 +217,7 @@ function createPermissionSet(root: string, preset: PermissionPreset, project: La
 
 export async function loadPermissions(root: string, home: string = os.homedir(), t: Translator = defaultTranslator, options: { preset?: PermissionPreset } = {}): Promise<PermissionSet> {
 	const warnings: string[] = [];
-	const user = await readLayer(path.join(home, '.armotusitio', 'permissions.json'), true, '~/.armotusitio/permissions.json', t, warnings);
+	const user = await readLayer(path.join(home, '.armotusitio', 'permissions.json'), true, '~/.armotusitio/permissions.json', t, warnings, projectKey(root));
 	const project = await readLayer(path.join(root, '.armotusitio', 'permissions.json'), false, '.armotusitio/permissions.json', t, warnings);
 	if (user.invalid || project.invalid) { warnings.push(t('Se denegaron las acciones hasta que se repare el archivo de permisos.')); }
 	return createPermissionSet(root, options.preset ?? user.preset ?? 'dev', project.layer ?? emptyLayer(), user.layer ?? emptyLayer(), warnings, user.invalid || project.invalid);
@@ -216,19 +238,30 @@ async function readUserFile(file: string): Promise<Record<string, unknown>> {
 }
 
 /** Appends a rule to the USER file (never the project one): atomic replace, no duplicates, the rest of the JSON preserved. */
-export async function addUserRule(rule: string, decision: PermissionDecision, home: string = os.homedir()): Promise<void> {
+export async function addUserRule(rule: string, decision: PermissionDecision, home: string = os.homedir(), projectRoot?: string): Promise<void> {
 	if (!parseRule(rule) || !DECISIONS.includes(decision)) { throw Error('PERMISSIONS_INVALID_RULE'); }
 	const directory = path.join(home, '.armotusitio');
 	const file = path.join(directory, 'permissions.json');
-	let data = await readUserFile(file);
-	const current = data[decision];
+	const data = await readUserFile(file);
+	// With a project, the rule goes to that project's section of the user file and applies nowhere else.
+	let section: Record<string, unknown> = data;
+	if (projectRoot) {
+		const projects = data.projects ?? {};
+		if (!projects || typeof projects !== 'object' || Array.isArray(projects)) { throw Error('PERMISSIONS_FILE_UNSAFE'); }
+		const key = projectKey(projectRoot);
+		const existing = (projects as Record<string, unknown>)[key] ?? {};
+		if (!existing || typeof existing !== 'object' || Array.isArray(existing)) { throw Error('PERMISSIONS_FILE_UNSAFE'); }
+		section = existing as Record<string, unknown>;
+		data.projects = { ...(projects as Record<string, unknown>), [key]: section };
+	}
+	const current = section[decision];
 	if (current !== undefined && !Array.isArray(current)) { throw Error('PERMISSIONS_FILE_UNSAFE'); }
 	const list = (current as unknown[] | undefined) ?? [];
 	if (list.includes(rule)) { return; }
-	const total = DECISIONS.reduce((sum, key) => sum + (Array.isArray(data[key]) ? (data[key] as unknown[]).length : 0), 0);
+	const total = DECISIONS.reduce((sum, key) => sum + (Array.isArray(section[key]) ? (section[key] as unknown[]).length : 0), 0);
 	if (total + 1 > MAX_RULES) { throw Error('PERMISSIONS_TOO_MANY_RULES'); }
-	data = { ...data, version: 1, [decision]: [...list, rule] };
-	await writeUserFile(directory, file, data);
+	section[decision] = [...list, rule];
+	await writeUserFile(directory, file, { ...data, version: 1 });
 }
 
 /** Atomic replace of the user file: a crash leaves either the old or the new content, never a partial one. */
@@ -244,27 +277,60 @@ async function writeUserFile(directory: string, file: string, data: Record<strin
 	}
 }
 
-/** Rules of the USER file, per decision, for listing and revoking; a missing file has none. */
-export async function userRules(home: string = os.homedir()): Promise<Record<PermissionDecision, string[]>> {
+/** One rule of the USER file with where it applies: every project (`project` undefined) or the project with that key. */
+export interface UserRule { rule: string; decision: PermissionDecision; project?: string }
+
+/** Every rule of the USER file, global ones first, for listing and revoking; a missing file has none. */
+export async function listUserRules(home: string = os.homedir()): Promise<UserRule[]> {
 	const data = await readUserFile(path.join(home, '.armotusitio', 'permissions.json'));
-	const list = (decision: PermissionDecision) => Array.isArray(data[decision]) ? (data[decision] as unknown[]).filter((rule): rule is string => typeof rule === 'string') : [];
-	return { allow: list('allow'), ask: list('ask'), deny: list('deny') };
+	const fromSection = (section: unknown, project?: string): UserRule[] => !section || typeof section !== 'object' ? [] : DECISIONS.flatMap(decision => {
+		const list = (section as Record<string, unknown>)[decision];
+		return Array.isArray(list) ? list.filter((rule): rule is string => typeof rule === 'string').map(rule => ({ rule, decision, ...(project ? { project } : {}) })) : [];
+	});
+	const projects = data.projects && typeof data.projects === 'object' ? Object.entries(data.projects as Record<string, unknown>) : [];
+	return [...fromSection(data), ...projects.flatMap(([key, section]) => fromSection(section, key))];
 }
 
-/** Removes a rule from every decision list of the USER file; `false` when it was not there. The rest of the JSON is preserved. */
-export async function removeUserRule(rule: string, home: string = os.homedir()): Promise<boolean> {
+/**
+ * Removes a rule from the USER file: from the global lists and, with `project` (a `projectKey`), from that project's section.
+ * `false` when it was in neither. The rest of the JSON is preserved.
+ */
+export async function removeUserRule(rule: string, home: string = os.homedir(), project?: string): Promise<boolean> {
 	const directory = path.join(home, '.armotusitio');
 	const file = path.join(directory, 'permissions.json');
 	const data = await readUserFile(file);
+	const projects = data.projects as Record<string, Record<string, unknown>> | undefined;
+	const sections = [data, ...(project && projects?.[project] ? [projects[project]] : [])];
 	let removed = false;
-	for (const decision of DECISIONS) {
-		const current = data[decision];
-		if (current === undefined) { continue; }
-		if (!Array.isArray(current)) { throw Error('PERMISSIONS_FILE_UNSAFE'); }
-		if (current.includes(rule)) { data[decision] = current.filter(entry => entry !== rule); removed = true; }
+	for (const section of sections) {
+		for (const decision of DECISIONS) {
+			const current = section[decision];
+			if (current === undefined) { continue; }
+			if (!Array.isArray(current)) { throw Error('PERMISSIONS_FILE_UNSAFE'); }
+			if (current.includes(rule)) { section[decision] = current.filter(entry => entry !== rule); removed = true; }
+		}
 	}
 	if (removed) { await writeUserFile(directory, file, data); }
 	return removed;
+}
+
+/** Package managers and launchers that can install dependencies or run another executable: their approvals are per action. */
+function installsOrLaunches(request: Extract<PermissionRequest, { kind: 'run' }>): boolean {
+	const name = commandName(request.command);
+	const sub = request.args[0]?.toLowerCase() ?? '';
+	if (['npm', 'pnpm', 'yarn', 'bun', 'npx', 'pnpx', 'bunx', 'pip', 'pip3', 'pipx', 'uv', 'poetry', 'conda', 'composer', 'gem', 'bundle'].includes(name) &&
+		!(['npm', 'pnpm', 'yarn', 'bun'].includes(name) && ['test', 'run', 'lint', 'typecheck'].includes(sub))) { return true; }
+	if (['python', 'python3', 'py'].includes(name) && sub === '-m' && ['pip', 'twine', 'ensurepip', 'http.server', 'venv'].includes(request.args[1])) { return true; }
+	return (name === 'go' && ['get', 'install'].includes(sub)) || (name === 'cargo' && ['install', 'add', 'remove', 'update'].includes(sub)) ||
+		(name === 'dotnet' && ['add', 'remove', 'tool', 'nuget'].includes(sub));
+}
+
+/** Why an action cannot be remembered (shown on its card); `undefined` when `suggestRule` has a rule for it. */
+export function whyNotRemembered(request: PermissionRequest, root?: string): NoRememberReason | undefined {
+	if (suggestRule(request, root)) { return undefined; }
+	if (request.kind === 'edit') { return 'irreversible'; }
+	if (request.kind === 'git_pr_upsert') { return 'publication'; }
+	return request.kind === 'run' && installsOrLaunches(request) ? 'dependency' : 'inexact';
 }
 
 /**
@@ -279,16 +345,9 @@ export function suggestRule(request: PermissionRequest, root?: string): string {
 		return key && !/[*\u0000-\u001f\u007f]/.test(key) && rule.length <= MAX_RULE_LENGTH ? rule : '';
 	}
 	if (request.kind !== 'run' || request.args.length === 0) { return ''; }
-	const name = commandName(request.command);
-	const sub = request.args[0].toLowerCase();
-	// Package managers and launchers can install dependencies or run another executable. Their approvals are per action.
-	if (['npm', 'pnpm', 'yarn', 'bun', 'npx', 'pnpx', 'bunx', 'pip', 'pip3', 'pipx', 'uv', 'poetry', 'conda', 'composer', 'gem', 'bundle'].includes(name) &&
-		!(['npm', 'pnpm', 'yarn', 'bun'].includes(name) && ['test', 'run', 'lint', 'typecheck'].includes(sub))) { return ''; }
-	if (['python', 'python3', 'py'].includes(name) && sub === '-m' && ['pip', 'twine', 'ensurepip', 'http.server', 'venv'].includes(request.args[1])) { return ''; }
-	if ((name === 'go' && ['get', 'install'].includes(sub)) || (name === 'cargo' && ['install', 'add', 'remove', 'update'].includes(sub)) ||
-		(name === 'dotnet' && ['add', 'remove', 'tool', 'nuget'].includes(sub))) { return ''; }
+	if (installsOrLaunches(request)) { return ''; }
 	// No escaping syntax exists in the glob grammar. Refuse metacharacters, empty arguments and argument-boundary ambiguity.
-	const parts = [name, ...request.args];
+	const parts = [commandName(request.command), ...request.args];
 	if (parts.some(part => !part || /[\s*?\u0000-\u001f\u007f]/.test(part))) { return ''; }
 	const rule = 'run:' + parts.join(' ');
 	return rule.length <= MAX_RULE_LENGTH ? rule : '';

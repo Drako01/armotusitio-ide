@@ -45,14 +45,22 @@ export async function auditRelease(root: string, publicKey: string, execute: typ
 	console.log(`PASS existing signed artifacts: ${tag}, source ${manifest.commit}. These are not a build of the current main.`);
 }
 
-/** Execute the actual recipe with isolated git/GitHub/build/signing fixtures. */
+/** Runs a Node entry point (tests or a check script) to completion; any non-zero exit fails with `failure`. */
+function runNode(args: string[], cwd: string, failure: string): Promise<void> {
+	return new Promise<void>((resolve, reject) => {
+		const child = spawn(process.execPath, args, { cwd, stdio: 'inherit', windowsHide: true });
+		child.once('error', reject);
+		child.once('close', code => code === 0 ? resolve() : reject(new Error(`${failure} (${code}).`)));
+	});
+}
+
+/** Execute the actual recipe with isolated git/GitHub/build/signing fixtures, and the chat conformance gate. */
 export async function dryRun(root: string, publicKey: string): Promise<void> {
 	await auditRelease(root, publicKey);
-	await new Promise<void>((resolve, reject) => {
-		const tests = ['ats-release-script.test.mts', 'ats-release-state.test.mts', 'ats-build-all.test.mts', 'ats-release-retry.test.mts', 'ats-release-check.test.mts'];
-		const child = spawn(process.execPath, ['--test', ...tests.map(file => path.join(root, 'scripts', file))], { cwd: root, stdio: 'inherit', windowsHide: true });
-		child.once('error', reject);
-		child.once('close', code => code === 0 ? resolve() : reject(new Error(`Isolated release orchestration failed (${code}).`)));
-	});
-	console.log('PASS dry-run: real preflight and isolated end-to-end orchestration. No production build, signing, tag, PR or publication was performed.');
+	const tests = ['ats-release-script.test.mts', 'ats-release-state.test.mts', 'ats-build-all.test.mts', 'ats-release-retry.test.mts', 'ats-release-check.test.mts'];
+	await runNode(['--test', ...tests.map(file => path.join(root, 'scripts', file))], root, 'Isolated release orchestration failed');
+	// Nothing is published while the chat flows that blocked real work fail.
+	const extension = path.join(root, 'extensions', 'armotusitio-ide');
+	await runNode([path.join(extension, 'check-conformance.mts')], extension, 'Chat conformance failed');
+	console.log('PASS dry-run: real preflight, isolated end-to-end orchestration and chat conformance. No production build, signing, tag, PR or publication was performed.');
 }

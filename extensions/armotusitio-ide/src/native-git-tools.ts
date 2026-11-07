@@ -94,6 +94,19 @@ export const GIT_TOOLS = [
 		}
 	},
 	{
+		name: 'git_fetch',
+		description: 'Fetch from a remote so its branches are current (for example before git_branch_create from origin/qa). Optional remote (default origin) and branch; ' +
+			'without branch it fetches the remote\'s configured branches. Never fetches tags, never prunes, never changes local branches or the working tree. ' + RETRY_RULE,
+		inputSchema: {
+			type: 'object',
+			properties: {
+				remote: { type: 'string', maxLength: 100 },
+				branch: { type: 'string', minLength: 1, maxLength: 200 }
+			},
+			additionalProperties: false
+		}
+	},
+	{
 		name: 'git_pr_upsert',
 		description: 'Create or update the GitHub pull request for the current, already pushed branch. Provide the explicit target base (never assumed globally), complete title and body. Reuse an existing open PR, never duplicate one or reopen a closed PR. No issue association, auto-merge, merge, actions or bypass. The IDE may ask for approval showing repository, head, base and exact content; DENIED is final.',
 		inputSchema: {
@@ -243,7 +256,14 @@ async function commit(context: GitToolsContext, input: { paths?: unknown; messag
 	if (typeof input.message !== 'string' || input.message.includes('\0')) { return refuse('invalid-message'); }
 	const message = input.message.trim();
 	if (message.length < 1 || message.length > MAX_MESSAGE_LENGTH) { return refuse('invalid-message'); }
-	const paths = [...new Set(await Promise.all(input.paths.map(entry => checkPath(root, entry))))];
+	const requested = [...new Set(await Promise.all(input.paths.map(entry => checkPath(root, entry))))];
+	// Untracked files the project ignores (for example `.harness/specs/`) are left out and reported, not a failure of the whole commit.
+	// `check-ignore` rejects `--literal-pathspecs` (GIT_BASE); the paths are validated and only exact matches are dropped. Exit 1
+	// means none is ignored.
+	const ignoredOutput = await gitOutput(root, ['-c', 'core.fsmonitor=false', 'check-ignore', '--', ...requested]).then(buffer => buffer.toString('utf8'), () => '');
+	const ignored = new Set(ignoredOutput.split(/\r?\n/).filter(Boolean));
+	const paths = requested.filter(file => !ignored.has(file));
+	if (!paths.length) { return refuse('all-paths-ignored'); }
 	const branch = await currentBranch(root);
 	await assertHooksUntouched(context, paths);
 	const denial = await authorize(context, { kind: 'git_commit', branch, files: paths, message }, 'Commit',
@@ -259,7 +279,15 @@ async function commit(context: GitToolsContext, input: { paths?: unknown; messag
 	const committed = await runGit(context, ['commit', '-m', message, '--', ...paths]);
 	if (committed.exitCode !== 0) { return failure('git commit', committed); }
 	const head = await git(root, ['rev-parse', '--short', 'HEAD']);
-	return { isError: false, text: 'COMMITTED ' + (head ?? '') + ' on ' + branch + ': ' + paths.length + ' file(s)\n' + (committed.output || '') };
+	const skipped = ignored.size ? 'SKIPPED (ignored by the project .gitignore, not committed): ' + [...ignored].join(', ') + '\n' : '';
+	return { isError: false, text: 'COMMITTED ' + (head ?? '') + ' on ' + branch + ': ' + paths.length + ' file(s)\n' + skipped + (committed.output || '') };
+}
+
+/** `remote` is a plain remote name configured in this repository; throws `invalid-remote` or `no-remote` otherwise. */
+async function assertKnownRemote(root: string, remote: unknown): Promise<string> {
+	if (typeof remote !== 'string' || !REMOTE_NAME.test(remote) || remote === '.') { return refuse('invalid-remote'); }
+	if (!(await git(root, ['remote']))?.split(/\r?\n/).includes(remote)) { return refuse('no-remote'); }
+	return remote;
 }
 
 /** Where `branch` would be pushed; throws when the target is anything but the same-named branch of a plain remote. */
@@ -275,8 +303,7 @@ async function pushTarget(root: string, branch: string, protectedBranches: reado
 		if (!configured || merge !== 'refs/heads/' + branch) { return refuse('upstream-mismatch'); }
 		remote = configured; setUpstream = false;
 	}
-	if (!REMOTE_NAME.test(remote) || remote === '.') { return refuse('invalid-remote'); }
-	if (!(await git(root, ['remote']))?.split(/\r?\n/).includes(remote)) { return refuse('no-remote'); }
+	await assertKnownRemote(root, remote);
 	// The remote's own default branch (origin/HEAD) is protected even when it is not called main.
 	const head = await git(root, ['symbolic-ref', '--short', '-q', 'refs/remotes/' + remote + '/HEAD']);
 	if (head === remote + '/' + branch) { return refuse('protected-branch'); }
@@ -303,6 +330,32 @@ function otherConfig(entries: string | undefined, branch: string): string[] {
 	return entries.split('\0').filter(entry => entry && !entry.startsWith('branch.' + branch + '.remote\n') && !entry.startsWith('branch.' + branch + '.merge\n')).sort();
 }
 
+/** Paths with local changes, including untracked files and both sides of a rename. */
+async function changedPaths(root: string): Promise<Set<string> | undefined> {
+	const status = await gitOutput(root, [...GIT_BASE, 'status', '--porcelain', '-z', '--untracked-files=all']).then(buffer => buffer.toString('utf8'), () => undefined);
+	if (status === undefined) { return undefined; }
+	const paths = new Set<string>();
+	const entries = status.split('\0');
+	for (let index = 0; index < entries.length; index++) {
+		const entry = entries[index];
+		if (entry.length < 4) { continue; }
+		paths.add(entry.slice(3));
+		// A rename or copy is followed by its original path, without a status prefix.
+		if (/^[RC]|^.[RC]/.test(entry) && entries[index + 1]) { paths.add(entries[++index]); }
+	}
+	return paths;
+}
+
+/**
+ * Files with local changes that switching from `head` to `start` would also change; `undefined` when that cannot be checked
+ * (which the caller treats as a conflict).
+ */
+async function localChangesTouchedByBase(root: string, head: string, start: string): Promise<string[] | undefined> {
+	const local = await changedPaths(root);
+	const differing = await gitOutput(root, [...GIT_BASE, 'diff', '--name-only', '-z', '--no-renames', head, start]).then(buffer => buffer.toString('utf8').split('\0').filter(Boolean), () => undefined);
+	return local && differing ? differing.filter(file => local.has(file)) : undefined;
+}
+
 async function branchCreate(context: GitToolsContext, input: Record<string, unknown>): Promise<GitToolResult> {
 	const { root } = context;
 	const branch = await validName(root, input.branch);
@@ -317,7 +370,14 @@ async function branchCreate(context: GitToolsContext, input: Record<string, unkn
 	if (!start) { return refuse('base-ref-missing'); }
 	const dirty = await git(root, ['status', '--porcelain', '--untracked-files=all']);
 	if (dirty === undefined) { return refuse('git-status-unavailable'); }
-	if (from !== 'HEAD' && start !== initialHead && dirty) { return refuse('local-changes-on-base-switch'); }
+	// Local changes travel to the new branch (as `git switch` does) unless the base changes one of those same files.
+	if (from !== 'HEAD' && start !== initialHead && dirty) {
+		const crossed = await localChangesTouchedByBase(root, initialHead, start);
+		if (!crossed || crossed.length) {
+			const files = !crossed ? '(could not be compared)' : crossed.slice(0, 20).join(', ') + (crossed.length > 20 ? ' (+' + (crossed.length - 20) + ')' : '');
+			throw new GitToolError('POLICY_DENIED: local-changes-on-base-switch\nFiles changed both locally and in ' + from + ': ' + files);
+		}
+	}
 	await assertHooksUntouched(context, []);
 	const exists = await git(root, ['show-ref', '--verify', '--quiet', 'refs/heads/' + branch]) !== undefined;
 	const existingHead = exists ? await git(root, ['rev-parse', '--verify', 'refs/heads/' + branch + '^{commit}']) : undefined;
@@ -410,6 +470,22 @@ async function prUpsert(context: GitToolsContext, input: Record<string, unknown>
 	return { isError: false, text: (old ? 'PR_UPDATED ' : 'PR_CREATED ') + verified.url + ' (' + branch + ' -> ' + base + ')' };
 }
 
+/** Updates remote-tracking refs only: no tags, no prune, no submodules, local branches and the working tree untouched. */
+async function fetchRemote(context: GitToolsContext, input: Record<string, unknown>): Promise<GitToolResult> {
+	const { root } = context;
+	const remote = await assertKnownRemote(root, input.remote === undefined ? 'origin' : input.remote);
+	const branch = input.branch === undefined ? undefined : await validName(root, input.branch);
+	await assertHooksUntouched(context, []);
+	const denial = await authorize(context, { kind: 'git_fetch', remote, ...(branch ? { branch } : {}) }, 'Fetch', ['remote: ' + remote, 'branch: ' + (branch ?? '(configured branches)')]);
+	if (denial) { return { isError: true, text: denial }; }
+	if (context.checkPermissions && !await context.checkPermissions()) { return refuse('project-permissions-changed'); }
+	// An explicit refspec updates exactly `refs/remotes/<remote>/<branch>`, which git_branch_create can then start from.
+	const refspec = branch ? ['refs/heads/' + branch + ':refs/remotes/' + remote + '/' + branch] : [];
+	const fetched = await runGit(context, ['-c', 'fetch.recurseSubmodules=false', 'fetch', '--no-tags', '--no-prune', remote, ...refspec], PUSH_TIMEOUT_SEC);
+	if (fetched.exitCode !== 0 || fetched.cancelled || fetched.timedOut) { return failure('git fetch', fetched); }
+	return { isError: false, text: 'FETCHED ' + remote + (branch ? '/' + branch : '') + '\n' + (fetched.output || '') };
+}
+
 async function push(context: GitToolsContext): Promise<GitToolResult> {
 	const branch = await currentBranch(context.root);
 	const { remote, setUpstream } = await pushTarget(context.root, branch, context.protectedBranches);
@@ -443,13 +519,13 @@ async function push(context: GitToolsContext): Promise<GitToolResult> {
  */
 const CORRECTABLE_REFUSALS = new Set(['absolute-path', 'directory-not-allowed', 'invalid-branch', 'invalid-message', 'invalid-path', 'invalid-paths',
 	'invalid-pr-content', 'invalid-start-point', 'path-not-found', 'path-outside-project', 'pr-base-is-head', 'protected-branch', 'sensitive-file',
-	'local-changes-on-base-switch', 'local-changes-on-branch-reuse', 'base-ref-missing']);
+	'local-changes-on-base-switch', 'local-changes-on-branch-reuse', 'base-ref-missing', 'all-paths-ignored', 'invalid-remote', 'no-remote']);
 
 /** True when a git tool result must stop further git calls in this run (see `CORRECTABLE_REFUSALS`). */
 export function endsGitDelivery(text: string): boolean {
-	if (text.startsWith('DENIED:')) { return true; }
-	// Any reason outside the correctable list (including a permission rule's own text) is final.
-	const refusal = /^POLICY_DENIED: (.+)$/.exec(text.trim());
+	// A user's "no" covers only that exact call; the runner remembers it per call (see ats-runner). Any reason outside the correctable list (including a permission rule's own text) is final.
+	// The reason is the first line; a refusal may add detail (such as the files involved) on the next ones.
+	const refusal = /^POLICY_DENIED: (.+)$/.exec(text.trim().split('\n', 1)[0]);
 	return !!refusal && !CORRECTABLE_REFUSALS.has(refusal[1]);
 }
 
@@ -461,6 +537,7 @@ export async function handleGitTool(context: GitToolsContext, name: string, inpu
 		if (name === 'git_push') { return await push(context); }
 		if (name === 'git_branch_create') { return await branchCreate(context, value); }
 		if (name === 'git_pr_upsert') { return await prUpsert(context, value); }
+		if (name === 'git_fetch') { return await fetchRemote(context, value); }
 		return { isError: true, text: 'Unknown tool' };
 	} catch (error) {
 		if (error instanceof GitToolError) { return { isError: true, text: error.message }; }

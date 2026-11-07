@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { runSessionCommand, type SessionCommandDeps } from '../src/native-chat-commands.ts';
+import { auditLines, runSessionCommand, type SessionCommandDeps } from '../src/native-chat-commands.ts';
 import { addUserRule, projectKey } from '../src/native-permissions.ts';
 import type { HarnessChatSession } from '../src/native-chat-session.ts';
 
@@ -40,4 +40,18 @@ test('/permisos lists the saved rules and /permisos quitar revokes one so the ac
 			allow: ['git_push:' + projectKey(root)]
 		});
 	} finally { await fs.rm(base, { recursive: true, force: true }); }
+});
+
+test('/auditoria lists the latest tool actions across runs, newest first, redacted, skipping torn lines', async () => {
+	const runs = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-audit-'));
+	try {
+		const write = async (run: string, lines: string[]) => { await fs.mkdir(path.join(runs, run, 'logs'), { recursive: true }); await fs.writeFile(path.join(runs, run, 'logs', 'commands.jsonl'), lines.join('\n')); };
+		await write('1-a', [JSON.stringify({ at: '2026-11-07T10:00:00.000Z', command: 'pnpm', args: ['lint'], cwd: '.', exitCode: 0 }), '{"at":']);
+		await write('2-b', [JSON.stringify({ at: '2026-11-07T11:00:00.000Z', command: 'curl', args: ['-H', 'Authorization: Bearer ghp_abcdefghijklmnopqrstuvwxyz0123456789'], cwd: '.', denied: 'network' }),
+		JSON.stringify({ at: '2026-11-07T11:05:00.000Z', tool: 'git_commit', isError: false, outcome: 'COMMITTED' })]);
+		const lines = await auditLines(runs);
+		assert.deepEqual({ count: lines.length, first: lines[0], last: lines[2], leaked: lines.some(line => line.includes('ghp_abcdef')) },
+			{ count: 3, first: '  2026-11-07 11:05:00  git_commit  -> COMMITTED', last: '  2026-11-07 10:00:00  pnpm lint  -> exit 0', leaked: false });
+		assert.deepEqual(await auditLines(path.join(runs, 'missing')), []);
+	} finally { await fs.rm(runs, { recursive: true, force: true }); }
 });

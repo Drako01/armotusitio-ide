@@ -30,17 +30,26 @@ test('a pending approval is a named, keyboard-operable card that answers with a 
 			};
 		});
 		assert.deepEqual(shown, {
-			name: 'Hacer commit', lines: card.detail, bold: 0, rule: 'Permitir siempre guarda la regla «git_commit» en ~/.armotusitio/permissions.json.',
-			buttons: ['Permitir una vez', 'Permitir siempre', 'Denegar'], focused: 'Permitir una vez'
+			name: 'Hacer commit', lines: card.detail, bold: 0, rule: '\u00abSiempre en este proyecto\u00bb guarda la regla \u00abgit_commit\u00bb en ~/.armotusitio/permissions.json; \u00abEsta tarea\u00bb y \u00abEsta sesi\u00f3n\u00bb no guardan nada.',
+			buttons: ['Permitir una vez', 'Esta tarea', 'Esta sesi\u00f3n', 'Siempre en este proyecto', 'Denegar'], focused: 'Permitir una vez'
 		});
 		// Progress updates keep the same card, so focus is not stolen from the button the user is on.
 		await page.keyboard.press('Tab');
 		await push(withApprovals([card]));
-		assert.equal(await page.evaluate(() => document.activeElement.textContent), 'Permitir siempre');
-		await page.keyboard.press('Enter');
-		assert.deepEqual(await page.evaluate(() => window.sent.at(-1)), { action: 'approval', id: card.id, answer: 'always' });
-		await page.click('#approvals button:last-child');
-		assert.deepEqual(await page.evaluate(() => window.sent.at(-1)), { action: 'approval', id: card.id, answer: 'deny' });
+		assert.equal(await page.evaluate(() => document.activeElement.textContent), 'Esta tarea');
+		const answers = [];
+		for (const label of ['Esta tarea', 'Esta sesi\u00f3n', 'Siempre en este proyecto', 'Denegar']) {
+			await page.click(`#approvals button:text-is("${label}")`);
+			answers.push(await page.evaluate(() => window.sent.at(-1).answer));
+		}
+		assert.deepEqual(answers, ['task', 'session', 'always', 'deny']);
+		// Without a rule the card offers only once/deny and says why it cannot be remembered.
+		const install = { id: 'ap-fedcba9876543210', kind: 'run', title: 'Instalar dependencias', detail: ['pnpm add left-pad'], noRemember: 'dependency' };
+		await push(withApprovals([install]));
+		assert.deepEqual(await page.evaluate(() => {
+			const group = document.querySelector('#approvals [role="group"]');
+			return { rule: document.getElementById(group.getAttribute('aria-describedby')).textContent, buttons: [...group.querySelectorAll('button')].map(button => button.textContent) };
+		}), { rule: 'Solo una vez: instalar o cambiar dependencias se aprueba cada vez.', buttons: ['Permitir una vez', 'Denegar'] });
 		await push(withApprovals([]));
 		assert.equal(await page.locator('#approvals').isHidden(), true);
 	} finally { await browser.close(); }

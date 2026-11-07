@@ -88,6 +88,16 @@ async function assertInside(root: string, relative: string): Promise<void> {
 	}
 }
 
+/**
+ * The file floor shared by every tool that changes project files (delete/move here, native Edit/Write approval): a validated
+ * project-relative path that does not leave the project through a link. Throws `POLICY_DENIED: <reason>`.
+ */
+export async function projectFilePath(root: string, raw: unknown): Promise<string> {
+	const relative = relativePath(raw);
+	await assertInside(root, relative);
+	return relative;
+}
+
 /** Entries under `absolute` without following links; refuses nested repositories and oversized trees. */
 async function inventory(absolute: string, relative: string): Promise<{ entries: number; sensitive: boolean }> {
 	let entries = 0, sensitive = false;
@@ -126,8 +136,7 @@ async function authorize(context: FileToolsContext, paths: string[], detail: str
 }
 
 async function deletePath(context: FileToolsContext, input: Record<string, unknown>): Promise<FileToolResult> {
-	const relative = relativePath(input.path);
-	await assertInside(context.root, relative);
+	const relative = await projectFilePath(context.root, input.path);
 	const absolute = path.join(context.root, relative);
 	const stat = await fs.lstat(absolute).catch(() => refuse('path-not-found'));
 	// A link is removed itself, never its target, so it needs no inventory of what it points to.

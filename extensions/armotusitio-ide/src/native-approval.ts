@@ -8,13 +8,15 @@
  * an explicit yes (no channel, no UI, timeout, cancellation, error) is a denial: this module fails closed.
  */
 import { callToolChannel } from './native-tool-server.ts';
-import { suggestRule } from './native-permissions.ts';
+import { suggestRule, whyNotRemembered } from './native-permissions.ts';
 import { redactSecrets } from './native-redact.ts';
 import type { ApprovalAnswer, ApprovalRequest, PermissionRequest } from './native-permissions-types.ts';
 
 /** Without an answer the request is denied after this long. */
 export const APPROVAL_TIMEOUT_MS = 10 * 60 * 1000;
-const ANSWERS: readonly ApprovalAnswer[] = ['once', 'always', 'deny'];
+export const APPROVAL_ANSWERS: readonly ApprovalAnswer[] = ['once', 'task', 'session', 'always', 'deny'];
+/** Answers that reach beyond this one action; each needs a rule to remember. */
+export const REMEMBERING_ANSWERS: readonly ApprovalAnswer[] = ['task', 'session', 'always'];
 
 /** What the tool server asks; the extension assigns the id. */
 export type ApprovalDraft = Omit<ApprovalRequest, 'id'>;
@@ -36,6 +38,7 @@ function subjectRequest(draft: Partial<ApprovalDraft> & ApprovalSubject): Permis
 		case 'edit': return typeof draft.path === 'string' && draft.path ? { kind: 'edit', path: draft.path } : undefined;
 		case 'git_commit': return { kind: 'git_commit', branch: '', files: [], message: '' };
 		case 'git_push': return { kind: 'git_push', branch: '', remote: '' };
+		case 'git_fetch': return { kind: 'git_fetch', remote: '' };
 		case 'git_branch_create': {
 			if (![draft.repo, draft.branch, draft.from].every(value => typeof value === 'string' && value.length > 0 && value.length <= 250)) { return undefined; }
 			return { kind: 'git_branch_create', repo: draft.repo!, branch: draft.branch!, from: draft.from! };
@@ -68,15 +71,17 @@ export function parseApprovalDraft(value: unknown, root?: string): ApprovalDraft
 				? ['repository: ' + request.repo, 'head: ' + request.branch, 'base: ' + request.base, 'action: ' + draft.action, 'title: ' + request.title,
 				...((request.body.match(/[\s\S]{1,300}/g) ?? ['']).map((part, index) => 'body ' + (index + 1) + ': ' + part))]
 				: draft.detail.map(line => line.slice(0, 400));
-	const rule = suggestRule(request, root);
-	return { kind: request.kind, title: redactSecrets(draft.title.slice(0, 200)), rule: redactSecrets(rule) === rule ? rule : '', detail: detail.map(redactSecrets) };
+	const suggested = suggestRule(request, root);
+	const rule = redactSecrets(suggested) === suggested ? suggested : '';
+	const noRemember = rule ? undefined : whyNotRemembered(request, root) ?? 'inexact';
+	return { kind: request.kind, title: redactSecrets(draft.title.slice(0, 200)), rule, detail: detail.map(redactSecrets), ...(noRemember ? { noRemember } : {}) };
 }
 
 /** Asks through the run's channel. The client waits slightly longer than the extension, which answers `deny` on its own timeout. */
 export function channelApprover(channel: { address: string; token: string }, timeoutMs = APPROVAL_TIMEOUT_MS): ApprovalAsk {
 	return async request => {
 		const answer = await callToolChannel(channel.address, channel.token, 'approval', request, timeoutMs + 5000);
-		return ANSWERS.includes(answer as ApprovalAnswer) ? answer as ApprovalAnswer : 'deny';
+		return APPROVAL_ANSWERS.includes(answer as ApprovalAnswer) ? answer as ApprovalAnswer : 'deny';
 	};
 }
 
@@ -85,7 +90,7 @@ export async function requestApproval(ask: ApprovalAsk | undefined, request: App
 	if (!ask) { return 'DENIED: this run has no way to ask the user'; }
 	try {
 		const answer = await ask(request);
-		return answer === 'once' || (answer === 'always' && !!request.rule) ? undefined : 'DENIED: the user did not allow it';
+		return answer === 'once' || (REMEMBERING_ANSWERS.includes(answer) && !!request.rule) ? undefined : 'DENIED: the user did not allow it';
 	} catch (error) {
 		return (error as Error).message === 'HARNESS_TIMEOUT' ? 'DENIED: the user did not answer in time' : 'DENIED: the approval could not be requested';
 	}

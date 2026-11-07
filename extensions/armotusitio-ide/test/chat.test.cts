@@ -326,7 +326,7 @@ test('slash commands: /ayuda is generated from the command table and the new com
 		await f.receive({ action: 'send', text: '/ayuda' });
 		const help = f.state().chat.messages.at(-1).text;
 		const names = chatCommands(text => text).map(command => command.name);
-		for (const name of ['ayuda', 'permisos', 'modo', 'deshacer', 'costo', 'estado', 'comentar']) { assert.ok(names.includes(name), name); }
+		for (const name of ['ayuda', 'permisos', 'modo', 'deshacer', 'doctor', 'auditoria', 'costo', 'estado', 'comentar']) { assert.ok(names.includes(name), name); }
 		for (const name of names) { assert.ok(help.includes('/' + name), name); }
 		// The autocomplete in the composer receives the same table.
 		assert.deepEqual(f.posted.find(item => item.type === 'init').labels.commandList.map(command => command.name), names);
