@@ -4,6 +4,8 @@ r7 base: `91d5d772ec2`. Branch: `feat/r8-native-runtime`. Evidence for every row
 
 **Global result: NOT PASS (10/14).** DoD-02, DoD-04 and DoD-12 are blocked for Codex because its account quota is exhausted until 2026-11-09; once it resets, rerun `node test/native-real-e2e.mts --provider codex --acknowledge-real-model-call`. DoD-08 fails its relative criterion.
 
+**Merge decision (2026-11-07):** the owner approved merging with these open items. The Codex real E2E runs after the quota resets, and any defect it finds is fixed in a follow-up PR. The default transport stays `structured`, so the native path is opt-in until then.
+
 | DoD | Criterion | Status | Evidence / reason |
 |---|---|---|---|
 | DoD-01 | Common contracts; provider change does not touch the chat core | PASS | `src/runtime/contracts.ts`. The chat sees only `AgentExecution`. Both adapters pass the same contract suite. |
@@ -26,4 +28,4 @@ r7 base: `91d5d772ec2`. Branch: `feat/r8-native-runtime`. Evidence for every row
 - **S13:** a native session against RedEvent (read-only) was not run. Delegation is unchanged from r7, whose live RedEvent check passed.
 - **S14:** the IDE Harness gates were not re-run under the native transport. The verification pipeline is shared and unchanged.
 - **UI:** there is no browser test for the question card. The approval-card browser test passes with the new risk line.
-- **Documentation:** the main README restructure and an automated release workflow were requested in the same session and are pending.
+- **Documentation and release CI:** done in this PR. The main README is now a Spanish guide (`docs/guia/`), and `.github/workflows/ats-release.yml` publishes on merge (rehearsal with the `probar-release` label).

@@ -72,6 +72,4 @@ Consultá [el estado y las evidencias](DELIVERY.md) antes de considerar esta dis
 
 Consultá [la guía de distribución local](DISTRIBUTION.md) para generar la aplicación y el instalador de Windows.
 
-Actions permanece desactivado en el fork por pedido del propietario.
-
-Consultá [el flujo de actualizaciones](AUTOUPDATE.md) para detectar upstream y publicar releases firmadas sin Actions.
+Consultá [el flujo de actualizaciones](AUTOUPDATE.md) para detectar upstream y publicar releases firmadas, y [la guía de releases](../guia/07-releases.md) para el release automático por merge.
