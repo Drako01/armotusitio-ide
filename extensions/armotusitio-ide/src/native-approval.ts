@@ -53,8 +53,9 @@ function subjectRequest(draft: Partial<ApprovalDraft> & ApprovalSubject): Permis
  * A value that can be shown as an approval card, or `undefined`. The extension validates what the runner process sends and
  * computes the "always" rule itself from the structured subject (a runner could otherwise show one thing and persist another).
  * An empty `rule` means the action cannot be remembered. A command's lines are rebuilt from the same subject so card and rule agree.
+ * `root` is the project the run belongs to, known by the extension: git approvals are remembered only for it.
  */
-export function parseApprovalDraft(value: unknown): ApprovalDraft | undefined {
+export function parseApprovalDraft(value: unknown, root?: string): ApprovalDraft | undefined {
 	const draft = (value ?? {}) as Partial<ApprovalDraft> & ApprovalSubject;
 	if (typeof draft.title !== 'string' || !Array.isArray(draft.detail) || draft.detail.length > 12 || !draft.detail.every(line => typeof line === 'string')) { return undefined; }
 	const request = subjectRequest(draft);
@@ -67,7 +68,7 @@ export function parseApprovalDraft(value: unknown): ApprovalDraft | undefined {
 				? ['repository: ' + request.repo, 'head: ' + request.branch, 'base: ' + request.base, 'action: ' + draft.action, 'title: ' + request.title,
 				...((request.body.match(/[\s\S]{1,300}/g) ?? ['']).map((part, index) => 'body ' + (index + 1) + ': ' + part))]
 				: draft.detail.map(line => line.slice(0, 400));
-	const rule = suggestRule(request);
+	const rule = suggestRule(request, root);
 	return { kind: request.kind, title: redactSecrets(draft.title.slice(0, 200)), rule: redactSecrets(rule) === rule ? rule : '', detail: detail.map(redactSecrets) };
 }
 

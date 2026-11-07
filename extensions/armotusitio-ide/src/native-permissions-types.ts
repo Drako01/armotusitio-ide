@@ -10,10 +10,12 @@
  * Rule grammar (case-sensitive, `*` matches any run of characters, no other wildcard):
  *   run:<glob>        a command line, `command arg1 arg2` joined by single spaces   e.g. `run:pnpm test*`
  *   edit:<glob>       RESERVED, not enforced yet: edits are made by the provider's native tools, which nothing here intercepts
- *   git_commit        the structured commit tool
- *   git_push          the structured push tool
- *   git_branch_create the structured branch creation tool
- *   git_pr_upsert     the structured GitHub PR create/update tool
+ *   edit:<glob>       also decides the structured delete_path / move_path tools (project-relative path)
+ *   git_commit        the structured commit tool, in every project
+ *   git_push          the structured push tool, in every project
+ *   git_branch_create the structured branch creation tool, in every project
+ *   git_pr_upsert     the structured GitHub PR create/update tool, in every project
+ *   <git rule>:<glob> the same tool only in projects whose root (`/` separators, lowercase on Windows) matches, e.g. `git_push:c:/work/app`
  * Precedence inside one layer: deny, then ask, then allow. Across layers: floor > project > user > preset; a project file can
  * only add `ask` / `deny` (its `allow` is ignored and reported), because a cloned repository must not grant itself permissions.
  */

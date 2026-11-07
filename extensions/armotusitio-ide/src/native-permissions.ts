@@ -31,7 +31,11 @@ const PRESETS: readonly PermissionPreset[] = ['readonly', 'dev', 'trusted'];
 const READONLY_COMMANDS = new Set(['git', 'ls', 'dir', 'cat', 'type', 'head', 'tail', 'wc', 'grep', 'rg', 'pwd', 'whoami', 'hostname']);
 const INFO_FLAGS = new Set(['--version', '-v', '-V', '--help', '-h']);
 
+/** `glob` is empty for a bare git rule, which applies in every project. */
 interface Rule { readonly text: string; readonly kind: PermissionRequest['kind']; readonly glob: string }
+const GIT_KINDS = new Set<string>(['git_commit', 'git_push', 'git_branch_create', 'git_pr_upsert']);
+/** Git tools whose "always" answer is remembered (per project); a PR publishes new content each time, so it is asked every time. */
+const REMEMBERED_GIT_KINDS = new Set<string>(['git_commit', 'git_push', 'git_branch_create']);
 type Layer = Record<PermissionDecision, Rule[]>;
 
 const defaultTranslator: Translator = (text, ...args) => text.replace(/\{(\d+)\}/g, (_, index) => args[Number(index)] ?? '');
@@ -55,19 +59,26 @@ export function globMatches(glob: string, subject: string): boolean {
 /** Parses one rule of the shared grammar; `undefined` when it is not valid. */
 function parseRule(text: unknown): Rule | undefined {
 	if (typeof text !== 'string' || !text || text.length > MAX_RULE_LENGTH || /[\u0000-\u001f\u007f]/.test(text)) { return undefined; }
-	if (text === 'git_commit' || text === 'git_push' || text === 'git_branch_create' || text === 'git_pr_upsert') { return { text, kind: text, glob: '' }; }
-	const match = /^(run|edit):(.+)$/.exec(text);
-	return match ? { text, kind: match[1] as 'run' | 'edit', glob: match[2] } : undefined;
+	if (GIT_KINDS.has(text)) { return { text, kind: text as PermissionRequest['kind'], glob: '' }; }
+	const match = /^(run|edit|git_commit|git_push|git_branch_create|git_pr_upsert):(.+)$/.exec(text);
+	if (!match) { return undefined; }
+	return { text, kind: match[1] as PermissionRequest['kind'], glob: GIT_KINDS.has(match[1]) ? projectKey(match[2]) : match[2] };
+}
+
+/** How a project root is written in a scoped git rule: `/` separators, no trailing slash, lowercase on Windows (case-insensitive paths). */
+export function projectKey(root: string, platform: NodeJS.Platform = process.platform): string {
+	const key = root.replace(/\\/g, '/').replace(/\/+$/, '');
+	return platform === 'win32' ? key.toLowerCase() : key;
 }
 
 const normalizePath = (value: string): string => value.replace(/\\/g, '/').replace(/^(\.\/)+/, '');
 
 /** The string rules match against, per request kind. */
-function subjectOf(request: PermissionRequest): { kind: PermissionRequest['kind']; subject: string } {
+function subjectOf(request: PermissionRequest, root: string): { kind: PermissionRequest['kind']; subject: string } {
 	switch (request.kind) {
 		case 'run': return { kind: 'run', subject: [commandName(request.command), ...request.args].join(' ') };
 		case 'edit': return { kind: 'edit', subject: normalizePath(request.path) };
-		default: return { kind: request.kind, subject: '' };
+		default: return { kind: request.kind, subject: projectKey(root) };
 	}
 }
 
@@ -148,11 +159,12 @@ export function dependencyDecision(preset: PermissionPreset): PermissionDecision
 	return preset === 'readonly' ? 'deny' : 'ask';
 }
 
-function createPermissionSet(preset: PermissionPreset, project: Layer, user: Layer, warnings: string[], invalid = false): PermissionSet {
+function createPermissionSet(root: string, preset: PermissionPreset, project: Layer, user: Layer, warnings: string[], invalid = false): PermissionSet {
 	const layers: Array<{ source: PermissionSource; layer: Layer }> = [{ source: 'project', layer: project }, { source: 'user', layer: user }];
 	const find = (decision: PermissionDecision, kind: PermissionRequest['kind'], subject: string) => {
 		for (const { source, layer } of layers) {
-			const rule = layer[decision].find(candidate => candidate.kind === kind && (kind.startsWith('git_') || globMatches(candidate.glob, subject)));
+			// A bare git rule (empty glob) covers every project; a scoped one only the projects its glob matches.
+			const rule = layer[decision].find(candidate => candidate.kind === kind && ((GIT_KINDS.has(kind) && !candidate.glob) || globMatches(candidate.glob, subject)));
 			if (rule) { return { source, rule: rule.text }; }
 		}
 		return undefined;
@@ -162,7 +174,7 @@ function createPermissionSet(preset: PermissionPreset, project: Layer, user: Lay
 		warnings,
 		decide(request) {
 			if (invalid) { return { decision: 'deny', source: 'default' }; }
-			const { kind, subject } = subjectOf(request);
+			const { kind, subject } = subjectOf(request, root);
 			if (subject.length > MAX_SUBJECT_LENGTH) { return { decision: 'deny', source: 'default' }; }
 			// A deny anywhere wins first, so a weaker layer can never turn a stronger deny into an ask.
 			for (const decision of DECISIONS) {
@@ -183,7 +195,21 @@ export async function loadPermissions(root: string, home: string = os.homedir(),
 	const user = await readLayer(path.join(home, '.armotusitio', 'permissions.json'), true, '~/.armotusitio/permissions.json', t, warnings);
 	const project = await readLayer(path.join(root, '.armotusitio', 'permissions.json'), false, '.armotusitio/permissions.json', t, warnings);
 	if (user.invalid || project.invalid) { warnings.push(t('Se denegaron las acciones hasta que se repare el archivo de permisos.')); }
-	return createPermissionSet(options.preset ?? user.preset ?? 'dev', project.layer ?? emptyLayer(), user.layer ?? emptyLayer(), warnings, user.invalid || project.invalid);
+	return createPermissionSet(root, options.preset ?? user.preset ?? 'dev', project.layer ?? emptyLayer(), user.layer ?? emptyLayer(), warnings, user.invalid || project.invalid);
+}
+
+/** The user file as a JSON object (`{ version: 1 }` when missing); anything unsafe or unparsable throws `PERMISSIONS_FILE_UNSAFE`. */
+async function readUserFile(file: string): Promise<Record<string, unknown>> {
+	try {
+		const stat = await fs.lstat(file);
+		if (!stat.isFile() || stat.size > MAX_FILE_BYTES) { throw Error('PERMISSIONS_FILE_UNSAFE'); }
+		const parsed: unknown = JSON.parse(await fs.readFile(file, 'utf8'));
+		if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) { throw Error('PERMISSIONS_FILE_UNSAFE'); }
+		return parsed as Record<string, unknown>;
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === 'ENOENT') { return { version: 1 }; }
+		throw error instanceof SyntaxError ? Error('PERMISSIONS_FILE_UNSAFE') : error;
+	}
 }
 
 /** Appends a rule to the USER file (never the project one): atomic replace, no duplicates, the rest of the JSON preserved. */
@@ -191,16 +217,7 @@ export async function addUserRule(rule: string, decision: PermissionDecision, ho
 	if (!parseRule(rule) || !DECISIONS.includes(decision)) { throw Error('PERMISSIONS_INVALID_RULE'); }
 	const directory = path.join(home, '.armotusitio');
 	const file = path.join(directory, 'permissions.json');
-	let data: Record<string, unknown> = { version: 1 };
-	try {
-		const stat = await fs.lstat(file);
-		if (!stat.isFile() || stat.size > MAX_FILE_BYTES) { throw Error('PERMISSIONS_FILE_UNSAFE'); }
-		const parsed: unknown = JSON.parse(await fs.readFile(file, 'utf8'));
-		if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) { throw Error('PERMISSIONS_FILE_UNSAFE'); }
-		data = parsed as Record<string, unknown>;
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code !== 'ENOENT') { throw error instanceof SyntaxError ? Error('PERMISSIONS_FILE_UNSAFE') : error; }
-	}
+	let data = await readUserFile(file);
 	const current = data[decision];
 	if (current !== undefined && !Array.isArray(current)) { throw Error('PERMISSIONS_FILE_UNSAFE'); }
 	const list = (current as unknown[] | undefined) ?? [];
@@ -208,6 +225,11 @@ export async function addUserRule(rule: string, decision: PermissionDecision, ho
 	const total = DECISIONS.reduce((sum, key) => sum + (Array.isArray(data[key]) ? (data[key] as unknown[]).length : 0), 0);
 	if (total + 1 > MAX_RULES) { throw Error('PERMISSIONS_TOO_MANY_RULES'); }
 	data = { ...data, version: 1, [decision]: [...list, rule] };
+	await writeUserFile(directory, file, data);
+}
+
+/** Atomic replace of the user file: a crash leaves either the old or the new content, never a partial one. */
+async function writeUserFile(directory: string, file: string, data: Record<string, unknown>): Promise<void> {
 	await fs.mkdir(directory, { recursive: true });
 	const temporary = file + '.' + process.pid + '.' + Date.now() + '.tmp';
 	try {
@@ -219,8 +241,40 @@ export async function addUserRule(rule: string, decision: PermissionDecision, ho
 	}
 }
 
-/** Exact rule for a repeatable command; an empty value means "always" must not be offered. */
-export function suggestRule(request: PermissionRequest): string {
+/** Rules of the USER file, per decision, for listing and revoking; a missing file has none. */
+export async function userRules(home: string = os.homedir()): Promise<Record<PermissionDecision, string[]>> {
+	const data = await readUserFile(path.join(home, '.armotusitio', 'permissions.json'));
+	const list = (decision: PermissionDecision) => Array.isArray(data[decision]) ? (data[decision] as unknown[]).filter((rule): rule is string => typeof rule === 'string') : [];
+	return { allow: list('allow'), ask: list('ask'), deny: list('deny') };
+}
+
+/** Removes a rule from every decision list of the USER file; `false` when it was not there. The rest of the JSON is preserved. */
+export async function removeUserRule(rule: string, home: string = os.homedir()): Promise<boolean> {
+	const directory = path.join(home, '.armotusitio');
+	const file = path.join(directory, 'permissions.json');
+	const data = await readUserFile(file);
+	let removed = false;
+	for (const decision of DECISIONS) {
+		const current = data[decision];
+		if (current === undefined) { continue; }
+		if (!Array.isArray(current)) { throw Error('PERMISSIONS_FILE_UNSAFE'); }
+		if (current.includes(rule)) { data[decision] = current.filter(entry => entry !== rule); removed = true; }
+	}
+	if (removed) { await writeUserFile(directory, file, data); }
+	return removed;
+}
+
+/**
+ * Exact rule for a repeatable action; an empty value means "always" must not be offered. Commit, push and branch creation
+ * are remembered only for the project they were approved in (`root`); without a root they are never remembered.
+ */
+export function suggestRule(request: PermissionRequest, root?: string): string {
+	if (REMEMBERED_GIT_KINDS.has(request.kind)) {
+		const key = root ? projectKey(root) : '';
+		const rule = request.kind + ':' + key;
+		// The glob grammar has no escaping: a root containing `*` or control characters cannot be written as an exact rule.
+		return key && !/[*\u0000-\u001f\u007f]/.test(key) && rule.length <= MAX_RULE_LENGTH ? rule : '';
+	}
 	if (request.kind !== 'run' || request.args.length === 0) { return ''; }
 	const name = commandName(request.command);
 	const sub = request.args[0].toLowerCase();

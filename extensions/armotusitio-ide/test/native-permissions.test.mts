@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { addUserRule, commandName, dependencyDecision, globMatches, loadPermissions, suggestRule } from '../src/native-permissions.ts';
+import { addUserRule, commandName, dependencyDecision, globMatches, loadPermissions, projectKey, removeUserRule, suggestRule, userRules } from '../src/native-permissions.ts';
 import type { PermissionPreset, PermissionRequest } from '../src/native-permissions-types.ts';
 
 async function workspace(files: { user?: unknown; project?: unknown } = {}) {
@@ -119,7 +119,7 @@ test('suggested rules persist only exact unambiguous commands and never dependen
 	const space = await workspace();
 	try {
 		const suggestions = [run('pnpm.cmd', 'test', '--run'), run('Make'), edit('src/a/b.ts'), edit('README.md'), commit, push, branch, pr,
-			run('pnpm', 'install', 'x'), run('npx', '-y', 'x'), run('node'), run('node', '*.js'), run('node', 'a b.js'), run('node', 'a?.js'), run('go', 'get', 'x'), run('python', '-m', 'pip', 'install', 'x')].map(suggestRule);
+			run('pnpm', 'install', 'x'), run('npx', '-y', 'x'), run('node'), run('node', '*.js'), run('node', 'a b.js'), run('node', 'a?.js'), run('go', 'get', 'x'), run('python', '-m', 'pip', 'install', 'x')].map(request => suggestRule(request));
 		assert.deepEqual(suggestions, ['run:pnpm test --run', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']);
 		await addUserRule(suggestions[0], 'allow', space.home);
 		const set = await loadPermissions(space.root, space.home, undefined, { preset: 'readonly' });
@@ -155,4 +155,50 @@ test('new structured delivery permissions are opt-in and project denials win', a
 		};
 		assert.deepEqual([await decisions('readonly'), await decisions('dev'), await decisions('trusted')], [['deny', 'deny'], ['ask', 'deny'], ['ask', 'deny']]);
 	} finally { await w.cleanup(); }
+});
+
+test('"always" for commit, push and branch creation is remembered only for the approving project; PRs are never remembered', async () => {
+	const space = await workspace();
+	try {
+		const other = path.join(space.base, 'other');
+		const suggestions = [commit, push, branch, pr].map(request => suggestRule(request, space.root));
+		for (const rule of suggestions.filter(Boolean)) { await addUserRule(rule, 'allow', space.home); }
+		const here = await loadPermissions(space.root, space.home);
+		const there = await loadPermissions(other, space.home);
+		assert.deepEqual({
+			suggestions: suggestions.map(rule => rule.replace(projectKey(space.root), '<root>')),
+			starRoot: suggestRule(push, path.join(space.base, 'a*b')),
+			here: [commit, push, branch, pr].map(request => here.decide(request).decision),
+			there: [commit, push, branch, pr].map(request => there.decide(request).decision),
+			windowsKey: projectKey(['C:', 'Work', 'App', ''].join('\\'), 'win32'), posixKey: projectKey('/Work/App/', 'linux')
+		}, {
+			suggestions: ['git_commit:<root>', 'git_push:<root>', 'git_branch_create:<root>', ''],
+			starRoot: '',
+			here: ['allow', 'allow', 'allow', 'ask'],
+			there: ['ask', 'ask', 'ask', 'ask'],
+			windowsKey: 'c:/work/app', posixKey: '/Work/App'
+		});
+	} finally { await space.cleanup(); }
+});
+
+test('a project can still force a question over a remembered git rule, and a revoked rule asks again', async () => {
+	const space = await workspace({ project: { version: 1, ask: ['git_push'] } });
+	try {
+		await addUserRule(suggestRule(commit, space.root), 'allow', space.home);
+		await addUserRule(suggestRule(push, space.root), 'allow', space.home);
+		await addUserRule('run:make test', 'deny', space.home);
+		const before = await loadPermissions(space.root, space.home);
+		const listed = await userRules(space.home);
+		const removed = await removeUserRule(suggestRule(commit, space.root), space.home);
+		const missing = await removeUserRule('git_commit:/nowhere', space.home);
+		const after = await loadPermissions(space.root, space.home);
+		assert.deepEqual({
+			before: [before.decide(commit).decision, before.decide(push).decision], listed: [listed.allow.length, listed.deny], removed, missing,
+			after: after.decide(commit).decision, file: JSON.parse(await fs.readFile(path.join(space.home, '.armotusitio', 'permissions.json'), 'utf8')).allow.length,
+			empty: await userRules(path.join(space.base, 'nobody'))
+		}, {
+			before: ['allow', 'ask'], listed: [2, ['run:make test']], removed: true, missing: false, after: 'ask', file: 1,
+			empty: { allow: [], ask: [], deny: [] }
+		});
+	} finally { await space.cleanup(); }
 });
