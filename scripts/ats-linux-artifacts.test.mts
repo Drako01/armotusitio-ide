@@ -58,13 +58,14 @@ test('Linux source exports preserve LF despite Windows autocrlf settings', async
 	} finally { await rm(directory, { recursive: true, force: true }); }
 });
 
-test('future release CI cannot publish from a branch, another repository, or alongside an active old workflow', () => {
-	const env = { GITHUB_ACTIONS: 'true', GITHUB_REPOSITORY: 'Drako01/armotusitio-ide', GITHUB_WORKFLOW: 'ArmotuSitio Release', GITHUB_REF: 'refs/tags/ats-v1.143.0-r2' };
-	const workflows = { total_count: 2, workflows: [{ state: 'active', path: '.github/workflows/ats-release.yml' }, { state: 'disabled_manually', path: '.github/workflows/old.yml' }] };
+test('release CI cannot publish another tag, from another repository, or alongside an active upstream workflow', () => {
+	const env = { GITHUB_ACTIONS: 'true', GITHUB_REPOSITORY: 'Drako01/armotusitio-ide', GITHUB_WORKFLOW: 'ArmotuSitio Release', ATS_RELEASE_TAG: 'ats-v1.143.0-r2' };
+	const workflows = { total_count: 3, workflows: [{ state: 'active', path: '.github/workflows/ats-release.yml' }, { state: 'active', path: '.github/workflows/ats-ide-extension.yml' }, { state: 'disabled_manually', path: '.github/workflows/old.yml' }] };
 	assert.equal(exclusiveReleaseWorkflow(env, workflows), true);
-	for (const changed of [{ GITHUB_ACTIONS: 'false' }, { GITHUB_REPOSITORY: 'other/repo' }, { GITHUB_WORKFLOW: 'Other' }, { GITHUB_REF: 'refs/heads/main' }]) { assert.equal(exclusiveReleaseWorkflow({ ...env, ...changed }, workflows), false); }
+	for (const changed of [{ GITHUB_ACTIONS: 'false' }, { GITHUB_REPOSITORY: 'other/repo' }, { GITHUB_WORKFLOW: 'Other' }, { ATS_RELEASE_TAG: 'main' }, { ATS_RELEASE_TAG: undefined }]) { assert.equal(exclusiveReleaseWorkflow({ ...env, ...changed }, workflows), false); }
 	assert.equal(exclusiveReleaseWorkflow(env, { ...workflows, total_count: 101 }), false);
-	assert.equal(exclusiveReleaseWorkflow(env, { total_count: 2, workflows: workflows.workflows.map(entry => ({ ...entry, state: 'active' })) }), false);
+	assert.equal(exclusiveReleaseWorkflow(env, { total_count: 3, workflows: workflows.workflows.map(entry => ({ ...entry, state: 'active' })) }), false);
+	assert.equal(exclusiveReleaseWorkflow(env, { total_count: 1, workflows: [{ state: 'disabled_manually', path: '.github/workflows/ats-release.yml' }] }), false);
 });
 
 test('RPM selection ignores rpmbuild staging copies but rejects multiple published packages', async () => {

@@ -12,8 +12,8 @@ set -euo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
 exec node --input-type=module - "$@" <<'NODE'
 import path from 'node:path';
-import { readFile, writeFile, access, rename, rm } from 'node:fs/promises';
-import { createPublicKey, randomUUID } from 'node:crypto';
+import { readFile, writeFile, access } from 'node:fs/promises';
+import { createPublicKey } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 
 const flags = process.argv.slice(2);
@@ -47,9 +47,9 @@ if (flags.includes('--plan') && flags.includes('--dry-run')) {
 const planning = flags.includes('--plan');
 const checking = flags.includes('--dry-run');
 const root = process.cwd();
-const metadata = 'build/armotusitio/product-overrides.json';
 const json = async file => JSON.parse(await readFile(path.join(root, file), 'utf8'));
-const { run, main: update, withLock, requireActionsDisabled } = await import(pathToFileURL(path.join(root, 'scripts/ats-autoupdate.mts')).href);
+const { run, main: update, withLock, requireIsolatedActions } = await import(pathToFileURL(path.join(root, 'scripts/ats-autoupdate.mts')).href);
+const { releaseMetadataPath: metadata, assertReleaseMetadata, planReleaseRevision, writeReleaseRevision } = await import(pathToFileURL(path.join(root, 'scripts/ats-release-revision.mts')).href);
 const { armotusitioRepository: repository } = await import(pathToFileURL(path.join(root, 'src/vs/platform/update/common/armotusitioUpdate.ts')).href);
 
 // Capture command failures without echoing stdout/stderr that could contain credentials.
@@ -75,38 +75,13 @@ async function cleanMain() {
 
 async function configuration() {
 	const [pkg, product, overrides] = await Promise.all([json('package.json'), json('product.json'), json(metadata)]);
-	if (!/^\d+\.\d+\.\d+$/.test(pkg.version) || (product.version !== undefined && product.version !== pkg.version)
-		|| overrides.armotusitioUpstream?.ref?.replace(/^v/, '') !== pkg.version
-		|| overrides.armotusitioUpdate?.repository !== repository || overrides.quality !== 'stable'
-		|| !Number.isSafeInteger(overrides.armotusitioUpdate?.revision) || overrides.armotusitioUpdate.revision < 1
-		|| typeof overrides.armotusitioUpdate.publicKey !== 'string') {
-		throw new Error('Release version, upstream, stable channel or trusted update metadata is inconsistent.');
-	}
+	assertReleaseMetadata(pkg, product, overrides, repository);
 	return { version: pkg.version, revision: overrides.armotusitioUpdate.revision, overrides,
 		fingerprint: JSON.stringify([pkg, product, overrides]) };
 }
 
 async function releasePlan(version) {
-	const pages = JSON.parse(await gh('api', '--paginate', '--slurp', `repos/${repository}/releases?per_page=100`));
-	if (!Array.isArray(pages) || pages.some(page => !Array.isArray(page))) { throw new Error('Invalid paginated release response.'); }
-	const releases = pages.flat();
-	let maximum = 0;
-	for (const release of releases) {
-		if (typeof release?.tag_name !== 'string' || typeof release.draft !== 'boolean') { throw new Error('Invalid release metadata.'); }
-		if (release.draft) { continue; }
-		const match = /^ats-v(\d+\.\d+\.\d+)-r([1-9]\d*)$/.exec(release.tag_name);
-		if (!match || match[1] !== version) { continue; }
-		if (typeof release.published_at !== 'string' || !Number.isFinite(Date.parse(release.published_at)) || !Number.isSafeInteger(Number(match[2]))) {
-			throw new Error('Published release has invalid revision or publication date.');
-		}
-		maximum = Math.max(maximum, Number(match[2]));
-	}
-	const revision = maximum + 1;
-	if (!Number.isSafeInteger(revision)) { throw new Error('Release revision overflow.'); }
-	const tag = `ats-v${version}-r${revision}`;
-	const matching = releases.filter(release => release.tag_name === tag);
-	if (matching.length > 1) { throw new Error('Ambiguous release tag.'); }
-	return { revision, tag, draft: matching[0], previous: maximum ? `ats-v${version}-r${maximum}` : undefined };
+	return planReleaseRevision(JSON.parse(await gh('api', '--paginate', '--slurp', `repos/${repository}/releases?per_page=100`)), version);
 }
 
 async function currentRemote(commit) {
@@ -126,7 +101,7 @@ async function recipe() {
 	await currentRemote(commit);
 	let config = await configuration();
 	const selected = await releasePlan(config.version);
-	await requireActionsDisabled();
+	await requireIsolatedActions();
 	console.log(`Release ${selected.tag}\nRepository: ${repository}\nSource: ${commit}\nMetadata revision: ${config.revision} -> ${selected.revision}\nMode: ${checking ? 'safe end-to-end dry-run' : planning ? 'read-only plan' : flags.includes('--no-publish') ? 'build and sign' : 'build, sign and publish'}`);
 	// What this release adds over the last published revision; a missing local tag is reported, never guessed.
 	if (selected.previous) {
@@ -170,7 +145,7 @@ async function recipe() {
 		if (await cleanMain() !== commit || (await configuration()).fingerprint !== config.fingerprint) { throw new Error('Source or release metadata changed during this recipe. Restart from a reviewed clean main.'); }
 		if ((await releasePlan(config.version)).tag !== selected.tag) { throw new Error('Published releases changed during this recipe. Recalculate and review the revision before retrying.'); }
 		await currentRemote(commit);
-		await requireActionsDisabled();
+		await requireIsolatedActions();
 	}
 	await unchanged();
 	if (config.revision !== selected.revision) {
@@ -180,12 +155,7 @@ async function recipe() {
 			// The existing revision CLI only permits increases. A new base version may
 			// require resetting to r1; change only this field under the same lock.
 			if ((await configuration()).fingerprint !== config.fingerprint) { throw new Error('Metadata changed before revision preparation.'); }
-			config.overrides.armotusitioUpdate.revision = selected.revision;
-			const temporary = path.join(root, `${metadata}.${randomUUID()}.tmp`);
-			try {
-				await writeFile(temporary, JSON.stringify(config.overrides, null, '\t') + '\n', { flag: 'wx' });
-				await rename(temporary, path.join(root, metadata));
-			} finally { await rm(temporary, { force: true }); }
+			await writeReleaseRevision(root, config.overrides, selected.revision);
 		});
 		if ((await git('diff', '--name-only')).trim() !== metadata || await git('diff', '--cached', '--name-only')) { throw new Error('Unexpected source/index changes. Review the retained metadata branch.'); }
 		await git('add', '--', metadata);
@@ -194,11 +164,11 @@ async function recipe() {
 		const metadataCommit = await git('rev-parse', 'HEAD');
 		if (await git('status', '--porcelain', '--untracked-files=no')) { throw new Error('Source changed during the metadata commit.'); }
 		await currentRemote(commit);
-		await requireActionsDisabled();
+		await requireIsolatedActions();
 		await git('push', '--set-upstream', 'origin', branch);
-		await requireActionsDisabled();
+		await requireIsolatedActions();
 		await gh('pr', 'create', '--repo', repository, '--base', 'main', '--head', branch, '--title', `chore(release): prepare ${selected.tag}`, '--body', `Prepare only the update revision for ${selected.tag}. The release recipe will validate, build and sign from clean main after this PR is merged.`);
-		await requireActionsDisabled();
+		await requireIsolatedActions();
 		await gh('pr', 'merge', branch, '--repo', repository, '--squash', '--match-head-commit', metadataCommit);
 		const pr = JSON.parse(await gh('pr', 'view', branch, '--repo', repository, '--json', 'state'));
 		if (pr.state !== 'MERGED') { throw new Error('Metadata PR is not merged. Complete required reviews/checks, merge it, then return to clean updated main and retry.'); }

@@ -12,11 +12,12 @@ import { createReadStream, createWriteStream } from 'node:fs';
 import { pipeline } from 'node:stream/promises';
 import { createHash, createPublicKey, generateKeyPairSync, randomUUID, sign, verify } from 'node:crypto';
 import { armotusitioManifestName, armotusitioReleaseTag, armotusitioRepository, compareArmotusitioVersions, isUpdateRecord, parseArmotusitioManifest, type ArmotusitioAsset } from '../src/vs/platform/update/common/armotusitioUpdate.ts';
+import { releaseMetadataPath } from './ats-release-revision.mts';
 
 const execute = promisify(execFile);
 export const repositoryRoot = path.resolve(import.meta.dirname, '..');
 const stateRoot = path.join(repositoryRoot, '.build', 'ats-autoupdate');
-const overridesPath = path.join(repositoryRoot, 'build', 'armotusitio', 'product-overrides.json');
+const overridesPath = path.join(repositoryRoot, releaseMetadataPath);
 const github = `https://api.github.com/repos/${armotusitioRepository}`;
 const privateKeyPath = process.env.ATS_IDE_SIGNING_KEY ? path.resolve(process.env.ATS_IDE_SIGNING_KEY) : path.join(stateRoot, 'signing', 'private.pem');
 
@@ -201,27 +202,49 @@ async function prepare(): Promise<unknown> {
 	return result;
 }
 
-/** Future CI is permitted only for the explicitly enabled release workflow, with all others disabled. */
+/** Workflows that may stay active once Actions is enabled; every upstream workflow must be disabled. */
+export const allowedActiveWorkflows = ['.github/workflows/ats-release.yml', '.github/workflows/ats-ide-extension.yml'];
+const releaseWorkflowPath = allowedActiveWorkflows[0];
+
+/** True when the workflow listing is complete and only allowlisted workflows are active. */
+export function onlyAllowedWorkflowsActive(workflows: any): boolean {
+	return Number.isSafeInteger(workflows?.total_count) && workflows.total_count > 0 && workflows.total_count <= 100 && Array.isArray(workflows.workflows)
+		&& workflows.workflows.length === workflows.total_count
+		&& workflows.workflows.every((entry: any) => entry.state !== 'active' || allowedActiveWorkflows.includes(entry.path));
+}
+
+/** Release CI may publish only the tag it prepared, from the release workflow, with upstream workflows disabled. */
 export function exclusiveReleaseWorkflow(environment: NodeJS.ProcessEnv, workflows: any): boolean {
 	return environment.GITHUB_ACTIONS === 'true' && environment.GITHUB_REPOSITORY === armotusitioRepository
 		&& environment.GITHUB_WORKFLOW === 'ArmotuSitio Release'
-		&& /^refs\/tags\/ats-v\d+\.\d+\.\d+-r[1-9]\d*$/.test(environment.GITHUB_REF || '')
-		&& Number.isSafeInteger(workflows?.total_count) && workflows.total_count > 0 && workflows.total_count <= 100 && Array.isArray(workflows.workflows)
-		&& workflows.workflows.length === workflows.total_count
-		&& workflows.workflows.filter((entry: any) => entry.state === 'active').length === 1
-		&& workflows.workflows.some((entry: any) => entry.state === 'active' && entry.path === '.github/workflows/ats-release.yml');
+		&& /^ats-v\d+\.\d+\.\d+-r[1-9]\d*$/.test(environment.ATS_RELEASE_TAG || '')
+		&& onlyAllowedWorkflowsActive(workflows)
+		&& workflows.workflows.some((entry: any) => entry.state === 'active' && entry.path === releaseWorkflowPath);
 }
 
-/** Local publication always requires Actions disabled; CI additionally requires an exclusive release workflow. */
-export async function requireActionsDisabled(): Promise<void> {
+/**
+ * Publication guard. CI requires an exclusive release workflow. Locally, Actions must be disabled, or limited
+ * to the allowlist with no release run queued or in progress, so release.sh and the CI never publish together.
+ */
+export async function requireIsolatedActions(): Promise<void> {
+	const workflowList = async () => JSON.parse(await run('gh', ['api', `repos/${armotusitioRepository}/actions/workflows?per_page=100`]));
 	if (process.env.GITHUB_ACTIONS === 'true') {
-		const workflows = JSON.parse(await run('gh', ['api', `repos/${armotusitioRepository}/actions/workflows?per_page=100`]));
-		if (!exclusiveReleaseWorkflow(process.env, workflows)) { throw new Error('Publication stopped: release CI is not exclusive or the tag is invalid.'); }
+		if (!exclusiveReleaseWorkflow(process.env, await workflowList())) { throw new Error('Publication stopped: release CI is not exclusive or the tag is invalid.'); }
 		return;
 	}
 	const permissions = JSON.parse(await run('gh', ['api', `repos/${armotusitioRepository}/actions/permissions`]));
-	if (permissions.enabled !== false) {
-		throw new Error('Publication stopped: GitHub Actions is not confirmed disabled.');
+	if (permissions.enabled === false) {
+		return;
+	}
+	const workflows = await workflowList();
+	if (!onlyAllowedWorkflowsActive(workflows)) {
+		throw new Error('Publication stopped: GitHub Actions has active workflows outside the ArmotuSitio allowlist. Disable them first.');
+	}
+	if (workflows.workflows.some((entry: any) => entry.path === releaseWorkflowPath)) {
+		for (const status of ['in_progress', 'queued']) {
+			const runs = JSON.parse(await run('gh', ['api', `repos/${armotusitioRepository}/actions/workflows/${path.basename(releaseWorkflowPath)}/runs?status=${status}&per_page=1`]));
+			if (runs.total_count !== 0) { throw new Error('Publication stopped: the release CI is running. Wait for it to finish before publishing locally.'); }
+		}
 	}
 }
 
@@ -366,7 +389,7 @@ async function validate(): Promise<unknown> {
 		await run(process.execPath, [npmCLI, ...args], repositoryRoot, 1800000);
 	}
 	await run(process.execPath, [path.join(repositoryRoot, 'node_modules', '@typescript', 'native', 'bin', 'tsc'), '--project', 'extensions/armotusitio-ide/tsconfig.json', '--noEmit', '--pretty', 'false']);
-	await run(process.execPath, ['--test', 'scripts/ats-autoupdate.test.mts', 'scripts/ats-release-script.test.mts', 'scripts/ats-release-state.test.mts', 'scripts/ats-build-all.test.mts', 'scripts/ats-release-retry.test.mts', 'scripts/ats-release-check.test.mts'], repositoryRoot, 120000);
+	await run(process.execPath, ['--test', 'scripts/ats-autoupdate.test.mts', 'scripts/ats-release-script.test.mts', 'scripts/ats-release-state.test.mts', 'scripts/ats-build-all.test.mts', 'scripts/ats-release-retry.test.mts', 'scripts/ats-release-check.test.mts', 'scripts/ats-release-ci.test.mts'], repositoryRoot, 120000);
 	const result = { status: 'validated', commit: await run('git', ['rev-parse', 'HEAD']), checkedAt: new Date().toISOString(), buildExecuted: false };
 	await saveJSON(path.join(stateRoot, 'validation.json'), result);
 	return result;
@@ -405,7 +428,7 @@ async function publish(approved: boolean): Promise<unknown> {
 	if (!approved) {
 		throw new Error('Review and smoke-test the installer first. Publication requires publish --approve.');
 	}
-	await requireActionsDisabled();
+	await requireIsolatedActions();
 	await applicationInfo();
 	const directory = path.join(repositoryRoot, '.build', 'releases');
 	const envelope = await jsonFile(path.join(directory, armotusitioManifestName));
@@ -422,7 +445,7 @@ async function publish(approved: boolean): Promise<unknown> {
 	await run('git', ['fetch', 'origin', 'main']);
 	await run('git', ['merge-base', '--is-ancestor', manifest.commit, 'origin/main']);
 	const tag = armotusitioReleaseTag(manifest);
-	if (process.env.GITHUB_ACTIONS === 'true' && process.env.GITHUB_REF !== `refs/tags/${tag}`) { throw new Error('Release tag does not match the signed manifest revision.'); }
+	if (process.env.GITHUB_ACTIONS === 'true' && process.env.ATS_RELEASE_TAG !== tag) { throw new Error('Release tag does not match the signed manifest revision.'); }
 	const remoteTags = (await run('git', ['ls-remote', '--tags', 'origin', `refs/tags/${tag}`, `refs/tags/${tag}^{}`])).split(/\r?\n/).filter(Boolean);
 	if (remoteTags.length) {
 		const target = (remoteTags.find(ref => ref.endsWith('^{}')) ?? remoteTags[0]).split(/\s+/)[0];
@@ -443,7 +466,7 @@ async function publish(approved: boolean): Promise<unknown> {
 		throw new Error('Release already exists or points at another commit; never replace published assets.');
 	}
 	if (!existing) {
-		await requireActionsDisabled();
+		await requireIsolatedActions();
 		await run('gh', ['release', 'create', tag, '--repo', armotusitioRepository, '--target', manifest.commit, '--draft', '--title', `ArmotuSitio IDE ${manifest.baseVersion} r${manifest.revision}`, '--notes', `Windows x64, Linux x64 (.deb/.rpm/archive), Linux x64/arm64 remote servers. Source: ${manifest.commit}. Signed update manifest; Windows executables may be unsigned.`]);
 		existing = await waitForReleaseByTag(tag);
 	}
@@ -453,7 +476,7 @@ async function publish(approved: boolean): Promise<unknown> {
 	validateDraftRelease(draft, tag, manifest.commit);
 	for (const file of files) {
 		if (!draft.assets.some((asset: any) => asset.name === path.basename(file))) {
-			await requireActionsDisabled();
+			await requireIsolatedActions();
 			await run('gh', ['release', 'upload', tag, file, '--repo', armotusitioRepository], repositoryRoot, 1800000);
 		}
 	}
@@ -465,7 +488,7 @@ async function publish(approved: boolean): Promise<unknown> {
 			throw new Error(`Remote digest does not match ${path.basename(file)}. Release remains a draft.`);
 		}
 	}
-	await requireActionsDisabled();
+	await requireIsolatedActions();
 	await run('gh', ['release', 'edit', tag, '--repo', armotusitioRepository, '--draft=false', '--latest']);
 	await saveJSON(path.join(stateRoot, 'published', `${tag}.json`), { tag, commit: manifest.commit, publishedAt: new Date().toISOString() });
 	return { status: 'published', tag, url: `https://github.com/${armotusitioRepository}/releases/tag/${tag}` };
@@ -475,7 +498,7 @@ async function withdraw(tag: string, approved: boolean): Promise<unknown> {
 	if (!approved || !/^ats-v\d+\.\d+\.\d+-r[1-9]\d*$/.test(tag)) {
 		throw new Error('Expected withdraw <release-tag> --approve.');
 	}
-	await requireActionsDisabled();
+	await requireIsolatedActions();
 	await run('gh', ['release', 'edit', tag, '--repo', armotusitioRepository, '--prerelease', '--latest=false']);
 	return { status: 'withdrawn-from-stable', tag, recovery: 'Publish a correction with a higher revision; clients never downgrade automatically.' };
 }
@@ -549,7 +572,7 @@ export async function main(args = process.argv.slice(2)): Promise<unknown> {
 		throw new Error('Unknown option.');
 	}
 	if (command === 'help') {
-		return { commands: ['detect [--dry-run] [--prepare]', 'prepare [--dry-run]', 'init-signing', 'revision <positive-integer>', 'validate', 'artifacts', 'publish --approve', 'withdraw <tag> --approve', 'cleanup [--approve]'], build: 'node scripts/ats-package-windows.mts', policy: 'No GitHub Actions. No automatic build or publication.' };
+		return { commands: ['detect [--dry-run] [--prepare]', 'prepare [--dry-run]', 'init-signing', 'revision <positive-integer>', 'validate', 'artifacts', 'publish --approve', 'withdraw <tag> --approve', 'cleanup [--approve]'], build: 'node scripts/ats-package-windows.mts', policy: 'Publication runs locally (release.sh) or in the exclusive ArmotuSitio Release workflow; never both at once.' };
 	}
 	return withLock(stateRoot, async () => {
 		switch (command) {

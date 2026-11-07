@@ -3,20 +3,30 @@ on:
   pull_request:
     paths:
       - 'extensions/armotusitio-ide/**'
-      - '.github/workflows/ats-ide-extension.yml'
+      - 'scripts/ats-*'
+      - 'release.sh'
+      - '.github/workflows/ats-*.yml'
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: ats-ide-extension-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   contract:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: '24'
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Install the pinned TypeScript toolchain and Node types (no install scripts)
+        run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Syntax checks
         run: npm run check --prefix extensions/armotusitio-ide
       - name: Contract tests
         run: npm test --prefix extensions/armotusitio-ide
+      - name: Release tooling tests
+        run: node --test scripts/ats-release-ci.test.mts
