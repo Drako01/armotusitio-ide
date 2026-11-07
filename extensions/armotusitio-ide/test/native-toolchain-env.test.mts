@@ -14,7 +14,8 @@ test('the agent environment keeps what toolchains need and never a credential', 
 	const source = {
 		PATH: 'C:\\bin', USERPROFILE: 'C:\\Users\\dev', SystemRoot: 'C:\\Windows', GOFLAGS: '-mod=mod', XDG_CONFIG_HOME: 'C:\\cfg', ANTHROPIC_API_KEY: 'provider-auth',
 		GITHUB_TOKEN: 'x', NPM_TOKEN: 'x', AWS_ACCESS_KEY_ID: 'x', AZURE_CLIENT_SECRET: 'x', GOOGLE_APPLICATION_CREDENTIALS: 'x', DATABASE_URL: 'x', STRIPE_SECRET: 'x', MY_PASSWORD: 'x',
-		HTTPS_PROXY: 'http://user:pass@proxy:8080', GOPROXY: 'https://user:pass@goproxy.local', UNRELATED: 'x'
+		HTTPS_PROXY: 'http://user:pass@proxy:8080', GOPROXY: 'https://user:pass@goproxy.local', UNRELATED: 'x',
+		AWS_PROFILE: 'dev', AWS_REGION: 'us-east-1', AWS_SECRET_ACCESS_KEY: 'x', AWS_SESSION_TOKEN: 'x', KUBECONFIG: 'C:\\kube\\config', DOCKER_HOST: 'tcp://user:pass@host:2376'
 	};
 	const caches = new Set(['C:\\Users\\dev\\AppData\\Local\\go-build', 'C:\\Users\\dev\\go\\pkg\\mod']);
 	const profile = await buildToolchainEnvironment(source, 'win32', async folder => caches.has(folder));
@@ -22,7 +23,9 @@ test('the agent environment keeps what toolchains need and never a credential', 
 		env: {
 			PATH: 'C:\\bin', USERPROFILE: 'C:\\Users\\dev', SystemRoot: 'C:\\Windows', GOFLAGS: '-mod=mod', XDG_CONFIG_HOME: 'C:\\cfg', ANTHROPIC_API_KEY: 'provider-auth',
 			LOCALAPPDATA: 'C:\\Users\\dev\\AppData\\Local', APPDATA: 'C:\\Users\\dev\\AppData\\Roaming',
-			GIT_TERMINAL_PROMPT: '0', COREPACK_ENABLE_DOWNLOAD_PROMPT: '0', npm_config_manage_package_manager_versions: 'false', pnpm_config_manage_package_manager_versions: 'false'
+			GIT_TERMINAL_PROMPT: '0', COREPACK_ENABLE_DOWNLOAD_PROMPT: '0', npm_config_manage_package_manager_versions: 'false', pnpm_config_manage_package_manager_versions: 'false',
+			GH_PROMPT_DISABLED: '1', GH_NO_UPDATE_NOTIFIER: '1', GH_PAGER: '', AWS_PAGER: '', AWS_CLI_AUTO_PROMPT: 'off', CLOUDSDK_CORE_DISABLE_PROMPTS: '1',
+			AWS_PROFILE: 'dev', AWS_REGION: 'us-east-1', KUBECONFIG: 'C:\\kube\\config'
 		},
 		writableRoots: ['C:\\Users\\dev\\AppData\\Local\\go-build', 'C:\\Users\\dev\\go\\pkg\\mod']
 	});

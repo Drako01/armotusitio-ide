@@ -164,7 +164,10 @@ function createPermissionSet(root: string, preset: PermissionPreset, project: La
 	const find = (decision: PermissionDecision, kind: PermissionRequest['kind'], subject: string) => {
 		for (const { source, layer } of layers) {
 			// A bare git rule (empty glob) covers every project; a scoped one only the projects its glob matches.
-			const rule = layer[decision].find(candidate => candidate.kind === kind && ((GIT_KINDS.has(kind) && !candidate.glob) || globMatches(candidate.glob, subject)));
+			// The most specific (longest) matching rule is reported: the decision is the same, but callers such as the
+			// external CLI check can tell an exact `run:aws ...` rule from a blanket `run:*`.
+			const rule = layer[decision].filter(candidate => candidate.kind === kind && ((GIT_KINDS.has(kind) && !candidate.glob) || globMatches(candidate.glob, subject)))
+				.reduce<Rule | undefined>((best, candidate) => !best || candidate.text.length > best.text.length ? candidate : best, undefined);
 			if (rule) { return { source, rule: rule.text }; }
 		}
 		return undefined;

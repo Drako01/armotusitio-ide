@@ -22,6 +22,9 @@ const SYSTEM = ['PATH', 'Path', 'PATHEXT', 'SystemRoot', 'WINDIR', 'ComSpec', 'T
 	// Corporate or local certificate authorities, so HTTPS keeps working behind an inspecting proxy.
 	'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'SSL_CERT_DIR', 'REQUESTS_CA_BUNDLE', 'CURL_CA_BUNDLE'];
 const TOOLCHAINS = ['GOPATH', 'GOBIN', 'GOCACHE', 'GOMODCACHE', 'GOROOT', 'GOFLAGS', 'GOPROXY', 'GOPRIVATE', 'CARGO_HOME', 'RUSTUP_HOME', 'JAVA_HOME', 'GRADLE_USER_HOME', 'MAVEN_OPTS', 'DOTNET_ROOT', 'NUGET_PACKAGES', 'PNPM_HOME', 'NVM_HOME', 'NVM_SYMLINK', 'VOLTA_HOME', 'PYENV_ROOT', 'VIRTUAL_ENV', 'CONDA_PREFIX', 'COMPOSER_HOME', 'ANDROID_HOME'];
+/** Which profile, region and config files cloud CLIs use: settings, never secrets (keys stay in their own credential stores). */
+const CLI_SETTINGS = ['AWS_PROFILE', 'AWS_DEFAULT_PROFILE', 'AWS_REGION', 'AWS_DEFAULT_REGION', 'AWS_CONFIG_FILE', 'AWS_SHARED_CREDENTIALS_FILE', 'AZURE_CONFIG_DIR', 'CLOUDSDK_CONFIG',
+	'CLOUDSDK_CORE_PROJECT', 'KUBECONFIG', 'GH_HOST', 'DOCKER_CONFIG', 'DOCKER_HOST'];
 /** Provider authentication the CLIs already used before this profile existed. */
 const PROVIDER_AUTH = ['CODEX_HOME', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY'];
 const FORBIDDEN_NAME = /TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|PRIVATE_KEY|API_KEY|^AWS_|^AZURE_|^GCP_|^GOOGLE_APPLICATION_CREDENTIALS$|^DATABASE_URL$/i;
@@ -32,11 +35,16 @@ const EMBEDDED_CREDENTIALS = /^[a-z][a-z0-9+.-]*:\/\/[^/\s@]+@/i;
  * pnpm switches to the version a project pins (`packageManager`) through a junction in `PNPM_HOME/.tools`; a sandboxed Codex
  * process cannot cross it (Windows error 448, untrusted mount point), so no Harness preflight could run. Use the pnpm on PATH.
  */
-const AGENT_DEFAULTS = { GIT_TERMINAL_PROMPT: '0', COREPACK_ENABLE_DOWNLOAD_PROMPT: '0', npm_config_manage_package_manager_versions: 'false', pnpm_config_manage_package_manager_versions: 'false' };
+const AGENT_DEFAULTS = {
+	GIT_TERMINAL_PROMPT: '0', COREPACK_ENABLE_DOWNLOAD_PROMPT: '0', npm_config_manage_package_manager_versions: 'false', pnpm_config_manage_package_manager_versions: 'false',
+	// External CLIs must print and exit: no pager, prompt or update check waiting on a terminal nobody sees.
+	GH_PROMPT_DISABLED: '1', GH_NO_UPDATE_NOTIFIER: '1', GH_PAGER: '', AWS_PAGER: '', AWS_CLI_AUTO_PROMPT: 'off', CLOUDSDK_CORE_DISABLE_PROMPTS: '1'
+};
 
 /** Whether a variable may reach an agent; provider authentication is the only named exception. */
 export function allowedVariable(name: string, value: string): boolean {
 	if (PROVIDER_AUTH.includes(name)) { return true; }
+	if (CLI_SETTINGS.includes(name)) { return !EMBEDDED_CREDENTIALS.test(value); }
 	return !FORBIDDEN_NAME.test(name) && !EMBEDDED_CREDENTIALS.test(value);
 }
 
@@ -46,7 +54,7 @@ export function allowedVariable(name: string, value: string): boolean {
  */
 export async function buildToolchainEnvironment(source: NodeJS.ProcessEnv, platform: NodeJS.Platform, exists: (folder: string) => Promise<boolean>, realFolder: (folder: string) => Promise<string> = async folder => folder): Promise<ToolchainEnvironment> {
 	const env: NodeJS.ProcessEnv = { ...AGENT_DEFAULTS };
-	const names = [...SYSTEM, ...TOOLCHAINS, ...PROVIDER_AUTH, ...Object.keys(source).filter(name => name.startsWith('XDG_'))];
+	const names = [...SYSTEM, ...TOOLCHAINS, ...CLI_SETTINGS, ...PROVIDER_AUTH, ...Object.keys(source).filter(name => name.startsWith('XDG_'))];
 	for (const name of names) {
 		if (platform === 'win32' && name === 'Path') { continue; }
 		const key = platform === 'win32' ? Object.keys(source).find(key => key.toLowerCase() === name.toLowerCase()) : name;

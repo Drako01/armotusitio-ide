@@ -60,8 +60,9 @@ const permissionsUntouched = async (config: RunnerConfig): Promise<boolean> => c
 const TOOL = {
 	name: 'run',
 	description: 'Run one command in the project, without a shell, under the IDE command policy. Pass the executable in `command`, each argument separately in `args`, ' +
-		'and a project-relative `cwd` for subprojects (for example "apps/api"). No shell operators, inline code, git changes, publishing, network tools or deletions ' +
-		'(use the delete_path, move_path and git_* tools when they are listed). ' +
+		'and a project-relative `cwd` for subprojects (for example "apps/api"). No shell operators, inline code, git changes, publishing or deletions ' +
+		'(use the delete_path, move_path and git_* tools when they are listed). External CLIs (gh, aws, az, gcloud, docker, kubectl, terraform, curl, ...) ask the user first; ' +
+		'read-only gh queries (pr/issue/run view or list, pr checks) run directly; logins, tokens and secrets are never available. ' +
 		'A denied command returns `POLICY_DENIED: <reason>`; do not retry it in another form.',
 	inputSchema: {
 		type: 'object',
