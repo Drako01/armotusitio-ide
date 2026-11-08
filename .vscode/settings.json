@@ -221,5 +221,6 @@
 		".github/skills/.local": true,
 		".agents/skills/.local": true,
 		".claude/skills/.local": true,
-	}
+	},
+	"postman.settings.dotenv-detection-notification-visibility": false
 }
