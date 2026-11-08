@@ -18,6 +18,7 @@ import { claudeToolArgs } from '../native-agent-execution.ts';
 import { ClaudeEventAccumulator, validSessionId } from '../native-provider-output.ts';
 import { resolveNativeCommand } from '../native-runtime.ts';
 import { RuntimeError, type AdapterHost, type AgentAdapter, type AgentConnection, type RuntimeCapabilities, type SessionOpenOptions, type ToolCall, type TurnInput, type TurnResult } from './contracts.ts';
+import { MAX_TEXT_CHARS } from './event-bridge.ts';
 import { ProviderRequestError } from './json-rpc.ts';
 import { startProviderProcess, type ProviderProcess } from './provider-process.ts';
 
@@ -81,6 +82,8 @@ interface ActiveTurn {
 	accumulator: ClaudeEventAccumulator;
 	itemId: string;
 	partial: string;
+	/** The streamed text reached `MAX_TEXT_CHARS`; later deltas of this message are dropped. */
+	truncated: boolean;
 	interrupted: boolean;
 }
 
@@ -156,7 +159,7 @@ class ClaudeConnection implements AgentConnection {
 		const child = this.process!;
 		return new Promise<TurnResult>(resolve => {
 			this.turn = {
-				clientTurnId: input.clientTurnId, resolve, itemId: 'm' + ++this.messages, partial: '', interrupted: false,
+				clientTurnId: input.clientTurnId, resolve, itemId: 'm' + ++this.messages, partial: '', truncated: false, interrupted: false,
 				accumulator: new ClaudeEventAccumulator(undefined, undefined, undefined)
 			};
 			this.host.emit({ turnId: input.clientTurnId, payload: { type: 'turn.started' } });
@@ -232,10 +235,16 @@ class ClaudeConnection implements AgentConnection {
 		switch (event.type) {
 			case 'stream_event': {
 				const inner = (event.event ?? {}) as { type?: string; delta?: { type?: string; text?: string } };
-				if (inner.type === 'message_start') { turn.itemId = 'm' + ++this.messages; turn.partial = ''; }
+				if (inner.type === 'message_start') { turn.itemId = 'm' + ++this.messages; turn.partial = ''; turn.truncated = false; }
 				if (inner.type === 'content_block_delta' && inner.delta?.type === 'text_delta' && typeof inner.delta.text === 'string') {
-					turn.partial += inner.delta.text;
+					if (turn.truncated) { return; }
+					// Bounded before it grows: a runaway stream cannot hold more than one limit plus one delta in memory.
+					turn.partial = (turn.partial + inner.delta.text).slice(0, MAX_TEXT_CHARS);
 					this.host.emit({ turnId, payload: { type: 'message.delta', itemId: turn.itemId, text: turn.partial } });
+					if (turn.partial.length >= MAX_TEXT_CHARS) {
+						turn.truncated = true;
+						this.host.emit({ turnId, payload: { type: 'diagnostic', source: 'claude', text: 'message-truncated' } });
+					}
 				}
 				return;
 			}
