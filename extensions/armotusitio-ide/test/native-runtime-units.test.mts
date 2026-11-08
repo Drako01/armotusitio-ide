@@ -95,6 +95,21 @@ test('session store: journal survives, lost turns are marked, corrupt files are 
 	} finally { await fs.rm(directory, { recursive: true, force: true }); }
 });
 
+test('session store: a corrupt registry that cannot be archived is kept byte for byte and the failure is reported', async () => {
+	const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-store-'));
+	try {
+		const file = path.join(directory, 'agent-sessions.json');
+		const results: unknown[] = [];
+		for (const code of ['EACCES', 'EXDEV']) {
+			await fs.writeFile(file, '{broken');
+			const store = new AgentSessionStore(directory, async () => { throw Object.assign(new Error('rename failed'), { code }); });
+			await assert.rejects(store.get('k'), error => (error as Error).message === 'RUNTIME_STORE_QUARANTINE_FAILED' && ((error as Error).cause as NodeJS.ErrnoException).code === code);
+			results.push({ code, bytes: await fs.readFile(file, 'utf8'), quarantined: store.quarantined, files: (await fs.readdir(directory)).filter(name => !name.endsWith('.lock')) });
+		}
+		assert.deepEqual(results, ['EACCES', 'EXDEV'].map(code => ({ code, bytes: '{broken', quarantined: false, files: ['agent-sessions.json'] })));
+	} finally { await fs.rm(directory, { recursive: true, force: true }); }
+});
+
 test('approval broker: scopes, expiry, revocation and audit, never across projects', () => {
 	let now = 1000;
 	const audit: string[] = [];
