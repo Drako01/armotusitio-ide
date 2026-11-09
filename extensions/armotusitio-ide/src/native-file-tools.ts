@@ -35,7 +35,8 @@ export const FILE_TOOLS = [
 	{
 		name: 'delete_path',
 		description: 'Delete a file or folder (recursively) inside the project. Use this instead of rm/del, which the command policy denies. ' +
-			'Deleting untracked, locally modified or sensitive files asks the user first. Refused for .git, .armotusitio and paths outside the project.',
+			'Deleting untracked, locally modified or sensitive files asks the user first. Refused for .git, .armotusitio and paths outside the project. ' +
+				'A git-ignored node_modules next to a lockfile can be deleted whole, whatever its size: use it to repair a corrupt install, then run the package manager install.',
 		inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'Project-relative path, e.g. "src/old.ts".' } }, required: ['path'], additionalProperties: false }
 	},
 	{
@@ -115,6 +116,25 @@ async function inventory(absolute: string, relative: string): Promise<{ entries:
 	return { entries, sensitive };
 }
 
+/** Dependency folders a package manager rebuilds from a lockfile; deleting one loses nothing. */
+const DEPENDENCY_FOLDERS = new Set(['node_modules']);
+const LOCKFILES = ['pnpm-lock.yaml', 'package-lock.json', 'yarn.lock', 'bun.lock', 'bun.lockb', 'npm-shrinkwrap.json'];
+
+/**
+ * A git-ignored dependency folder whose project has a lockfile next to it: reinstalling restores it exactly, so it is recoverable
+ * like a tracked file and exempt from the entry cap (a healthy `node_modules` holds tens of thousands of files). Without this the
+ * agent can never repair a corrupt install and sends the user to do it by hand.
+ */
+async function reinstallable(root: string, relative: string): Promise<boolean> {
+	if (!DEPENDENCY_FOLDERS.has(path.posix.basename(relative).toLowerCase())) { return false; }
+	const folder = path.join(root, path.dirname(relative));
+	const locked = await Promise.all(LOCKFILES.map(name => exists(path.join(folder, name))));
+	if (!locked.includes(true)) { return false; }
+	// check-ignore rejects `--literal-pathspecs` (part of GIT_BASE); the path is already validated and passed after `--`.
+	return gitOutput(root, GIT_BASE.filter(arg => arg !== '--literal-pathspecs').concat('check-ignore', '-q', '--', relative)).then(() => true, () => false);
+}
+const exists = (file: string): Promise<boolean> => fs.lstat(file).then(() => true, () => false);
+
 /** True only when git can restore every file under `relative` exactly: tracked, and no local change, untracked or ignored file. */
 async function recoverable(root: string, relative: string): Promise<boolean> {
 	const read = (args: string[]) => gitOutput(root, [...GIT_BASE, ...args]).then(buffer => buffer.toString('utf8'), () => undefined);
@@ -140,13 +160,17 @@ async function deletePath(context: FileToolsContext, input: Record<string, unkno
 	const absolute = path.join(context.root, relative);
 	const stat = await fs.lstat(absolute).catch(() => refuse('path-not-found'));
 	// A link is removed itself, never its target, so it needs no inventory of what it points to.
-	const { entries, sensitive } = stat.isSymbolicLink() ? { entries: 1, sensitive: false } : await inventory(absolute, relative);
-	const safe = !sensitive && await recoverable(context.root, relative);
-	const denial = await authorize(context, [relative], ['delete: ' + relative + (stat.isDirectory() ? '/ (' + entries + ' entries)' : ''), safe ? 'recoverable with git' : 'NOT recoverable with git'], !safe);
+	// A dependency folder is not walked: it is big, rebuilt from the lockfile, and never holds a protected path.
+	const dependencies = stat.isDirectory() && await reinstallable(context.root, relative);
+	const { entries, sensitive } = stat.isSymbolicLink() ? { entries: 1, sensitive: false } : dependencies ? { entries: 0, sensitive: false } : await inventory(absolute, relative);
+	const safe = !sensitive && (dependencies || await recoverable(context.root, relative));
+	const size = dependencies ? ' (dependencies)' : stat.isDirectory() ? ' (' + entries + ' entries)' : '';
+	const denial = await authorize(context, [relative], ['delete: ' + relative + (stat.isDirectory() ? '/' : '') + size, dependencies ? 'recoverable by reinstalling from the lockfile' : safe ? 'recoverable with git' : 'NOT recoverable with git'], !safe);
 	if (denial) { return { isError: true, text: denial }; }
 	// Re-validate after the (possibly long) approval wait: the tree may have changed meanwhile.
 	await assertInside(context.root, relative);
-	await fs.rm(absolute, { recursive: true, force: false });
+	// Retries ride out the short file locks a Windows antivirus or indexer holds on freshly installed packages.
+	await fs.rm(absolute, { recursive: true, force: false, maxRetries: 10, retryDelay: 200 });
 	return { isError: false, text: 'DELETED ' + relative + (entries > 1 ? ' (' + entries + ' entries)' : '') };
 }
 
