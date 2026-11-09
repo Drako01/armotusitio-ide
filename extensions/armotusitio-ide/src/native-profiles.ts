@@ -122,6 +122,17 @@ export class ProfileRegistry {
 		return file.profiles.find(profile => profile.id === id && profile.provider === provider);
 	}
 
+	/** Which profile is the provider default and which one this workspace uses, for listings. */
+	async placement(root?: string): Promise<{ defaults: Assignment; workspace: Assignment }> {
+		const file = await this.read();
+		return { defaults: { ...file.defaults }, workspace: root ? { ...file.assignments[projectKey(root)] } : {} };
+	}
+
+	/** Terminal environment for signing in: the profile directory set, every other credential variable removed (`null` unsets). */
+	terminalEnvironment(profile: AiProfile): Record<string, string | null> {
+		return { ...Object.fromEntries(INHERITED_CREDENTIALS.map(name => [name, null])), [CONFIG_VARIABLE[profile.provider]]: this.configDirectory(profile) };
+	}
+
 	/** Environment for one profile's process: nothing inherited from the IDE can carry another account's credentials. */
 	environment(profile: AiProfile, base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 		const env: NodeJS.ProcessEnv = {};

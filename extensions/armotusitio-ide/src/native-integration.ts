@@ -22,6 +22,7 @@ import { openToolChannel } from './native-tool-server.ts';
 import { createWorkMcpBridge, type WorkMcpTool } from './native-mcp-bridge.ts';
 import { parseApprovalDraft, type ApprovalAsk } from './native-approval.ts';
 import { ProfileRegistry } from './native-profiles.ts';
+import { registerProfileCommands } from './native-profile-commands.ts';
 import { NativeChatTransport, parseAgentQuestions, parseTransportSetting, type NativeTurnHooks } from './native-agent-transport.ts';
 import type { SessionRole } from './runtime/contracts.ts';
 import { addUserRule, configuredPreset, listUserRules, loadPermissions, removeUserRule } from './native-permissions.ts';
@@ -371,6 +372,15 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 	const profiles = new ProfileRegistry(path.join(context.globalStorageUri.fsPath, 'ai-profiles'), (provider, env) => new Promise(resolve => {
 		resolveNativeCommand(provider, provider === 'claude' ? ['auth', 'status'] : ['login', 'status'], env).then(resolved => execFile(resolved.executable, resolved.args, { env, timeout: 15_000, windowsHide: true, maxBuffer: 64 * 1024 }, (error, stdout, stderr) => resolve({ code: error ? 1 : 0, output: stdout + stderr })), () => resolve(undefined));
 	}));
+	registerProfileCommands(context, vscode, {
+		registry: profiles,
+		rootOf: async () => {
+			const folders: Host[] = vscode.workspace.workspaceFolders ?? [];
+			const folder = folders.length > 1 ? await vscode.window.showWorkspaceFolderPick() : folders[0];
+			return folder ? fs.realpath(folder.uri.fsPath) : undefined;
+		},
+		showError: error => showError(error)
+	});
 	/** Environment transform of the AI profile this project uses for the provider, for the one-shot (structured) transport. */
 	const profileEnvironment = async (root: string, provider: NativeProvider): Promise<((base: NodeJS.ProcessEnv) => NodeJS.ProcessEnv) | undefined> => {
 		const profile = await profiles.resolve(provider, root);

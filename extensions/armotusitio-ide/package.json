@@ -12,6 +12,8 @@
 	"activationEvents": [
 		"onView:atsHarness.tasks",
 		"onCommand:atsHarness.execute",
+		"onCommand:atsHarness.accounts.add",
+		"onCommand:atsHarness.accounts.manage",
 		"onCommand:atsHarness.cancelTask",
 		"onCommand:atsHarness.reviewPlan",
 		"onCommand:atsIde.worktrees",
@@ -433,6 +435,14 @@
 			{
 				"command": "atsHarness.managePermissions",
 				"title": "ArmoTuSitio: Gestionar permisos"
+			},
+			{
+				"command": "atsHarness.accounts.add",
+				"title": "ArmoTuSitio: Agregar cuenta de IA"
+			},
+			{
+				"command": "atsHarness.accounts.manage",
+				"title": "ArmoTuSitio: Cuentas de IA"
 			},
 			{
 				"command": "atsHarness.decisions",
