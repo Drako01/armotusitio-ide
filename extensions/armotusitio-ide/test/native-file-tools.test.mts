@@ -137,3 +137,71 @@ test('without a way to ask the user, an irreversible deletion is denied instead 
 		assert.deepEqual([result.text, await exists(path.join(root, 'scratch.txt'))], ['DENIED: this run has no way to ask the user', true]);
 	});
 });
+
+test('a corrupt, git-ignored node_modules with a lockfile can be deleted whatever its size, so the agent can repair an install', async () => {
+	await withProject(async ({ root, context, asked }) => {
+		await fs.writeFile(path.join(root, '.gitignore'), 'node_modules\n');
+		await fs.mkdir(path.join(root, 'node_modules', 'pkg'), { recursive: true });
+		await Promise.all(Array.from({ length: 2100 }, (_, index) => fs.writeFile(path.join(root, 'node_modules', 'pkg', index + '.js'), 'x')));
+		// Without a lockfile the folder is not provably reinstallable, so the entry cap still applies.
+		const noLockfile = await handleFileTool(context, 'delete_path', { path: 'node_modules' });
+		await fs.writeFile(path.join(root, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n');
+		const repaired = await handleFileTool(context, 'delete_path', { path: 'node_modules' });
+		assert.deepEqual({ noLockfile: noLockfile.text, repaired: repaired.text, asked: asked.length, left: await exists(path.join(root, 'node_modules')) },
+			{ noLockfile: 'POLICY_DENIED: too-many-entries', repaired: 'DELETED node_modules', asked: 0, left: false });
+	});
+});
+
+test('a node_modules that git does not ignore is still capped, because reinstalling would not restore local changes', async () => {
+	await withProject(async ({ root, context }) => {
+		await fs.mkdir(path.join(root, 'node_modules', 'pkg'), { recursive: true });
+		await Promise.all(Array.from({ length: 2100 }, (_, index) => fs.writeFile(path.join(root, 'node_modules', 'pkg', index + '.js'), 'x')));
+		await fs.writeFile(path.join(root, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n');
+		const result = await handleFileTool(context, 'delete_path', { path: 'node_modules' });
+		assert.deepEqual([result.text, await exists(path.join(root, 'node_modules'))], ['POLICY_DENIED: too-many-entries', true]);
+	});
+});
+
+test('a dependency folder is refused when a protected folder hides inside it, accepted with the lockfile at a workspace root, and links are never followed', async () => {
+	await withProject(async ({ root, base, context }) => {
+		await fs.writeFile(path.join(root, '.gitignore'), 'node_modules\n');
+		await fs.writeFile(path.join(root, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n');
+		await fs.mkdir(path.join(root, 'node_modules', '.pnpm', 'dep@1', 'node_modules', 'dep', '.git'), { recursive: true });
+		const nested = await handleFileTool(context, 'delete_path', { path: 'node_modules' });
+		await fs.rm(path.join(root, 'node_modules'), { recursive: true });
+
+		const outside = path.join(base, 'outside');
+		await fs.mkdir(outside);
+		await fs.writeFile(path.join(outside, 'keep.txt'), 'mine');
+		await fs.mkdir(path.join(root, 'apps', 'web', 'node_modules'), { recursive: true });
+		await fs.symlink(outside, path.join(root, 'apps', 'web', 'node_modules', 'linked'), 'junction');
+		const workspace = await handleFileTool(context, 'delete_path', { path: 'apps/web/node_modules' });
+		assert.deepEqual({
+			nested: nested.text,
+			workspace: workspace.text,
+			kept: await exists(path.join(outside, 'keep.txt')),
+			gone: !await exists(path.join(root, 'apps', 'web', 'node_modules'))
+		}, { nested: 'POLICY_DENIED: protected-path', workspace: 'DELETED apps/web/node_modules', kept: true, gone: true });
+	});
+});
+
+test('on Windows an alternate data stream, a trailing dot or space and a short name cannot reach a protected folder', { skip: process.platform !== 'win32' }, async () => {
+	await withProject(async ({ root, context }) => {
+		const aliases = ['.git::$INDEX_ALLOCATION', '.git.', '.git ', 'GIT~1', '.armotusitio::$INDEX_ALLOCATION', 'src/a.ts:hidden'];
+		const results = await Promise.all(aliases.map(alias => handleFileTool(context, 'delete_path', { path: alias })));
+		const moved = await handleFileTool(context, 'move_path', { from: 'src/a.ts', to: '.git::$DATA' });
+		assert.deepEqual({ results: results.map(result => result.text), moved: moved.text, git: await exists(path.join(root, '.git')), file: await exists(path.join(root, 'src/a.ts')) },
+			{ results: aliases.map(() => 'POLICY_DENIED: invalid-path'), moved: 'POLICY_DENIED: invalid-path', git: true, file: true });
+	});
+});
+
+test('a protected folder planted in a dependency folder while the approval is pending stops the deletion', async () => {
+	await withProject(async ({ root, context, set }) => {
+		await fs.writeFile(path.join(root, '.gitignore'), 'node_modules\n');
+		await fs.writeFile(path.join(root, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n');
+		await fs.mkdir(path.join(root, 'node_modules', 'pkg'), { recursive: true });
+		set('ask');
+		const result = await handleFileTool({ ...context, ask: async () => { await fs.mkdir(path.join(root, 'node_modules', 'pkg', '.git')); return 'once'; } }, 'delete_path', { path: 'node_modules' });
+		assert.deepEqual([result.text, await exists(path.join(root, 'node_modules', 'pkg', '.git'))], ['POLICY_DENIED: protected-path', true]);
+	});
+});

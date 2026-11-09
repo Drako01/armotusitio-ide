@@ -128,7 +128,9 @@ const refuse = (reason: string): never => { throw new GitToolError('POLICY_DENIE
 /** True for a project path the agent must never commit. */
 export function isSensitiveGitPath(relative: string): boolean {
 	const segments = relative.split('/');
-	return segments.some(segment => SENSITIVE_SEGMENTS.has(segment.toLowerCase())) || SECRET_NAME.test(segments[segments.length - 1]) ||
+	// NTFS reaches `.ssh` through `.ssh::$DATA`, `.ssh.` or `.ssh `: compare the name the file system resolves to.
+	const folderName = (segment: string): string => segment.replace(/:.*$/, '').replace(/[. ]+$/, '').toLowerCase();
+	return segments.some(segment => SENSITIVE_SEGMENTS.has(folderName(segment))) || SECRET_NAME.test(segments[segments.length - 1]) ||
 		/^(?:\.git-credentials|\.htpasswd|kubeconfig|.*\.(?:jks|keystore|tfstate(?:\.backup)?|tfvars(?:\.json)?))$/i.test(segments[segments.length - 1]);
 }
 

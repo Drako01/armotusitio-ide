@@ -34,3 +34,14 @@ test('path equality follows the host file system: case-insensitive only on Windo
 		samePath('/Users/dev', '/Users/dev', 'darwin')
 	], [true, true, false, true]);
 });
+
+test('credentials in URLs, private key blocks and more provider token shapes are redacted', () => {
+	// Fixtures are assembled at run time so no literal credential-shaped text sits in the repository.
+	const url = (scheme: string, user: string, secret: string, host: string): string => scheme + '://' + user + ':' + secret + '@' + host;
+	const pem = (kind: string, part: 'BEGIN' | 'END'): string => '-' + '----' + part + ' ' + kind + 'PRIVATE KEY' + '-' + '----';
+	const dummy = 'x'.repeat(8);
+	const input = [url('postgres', 'user', dummy, 'db.host:5432/app'), url('https', 'u', dummy, 'github.com/x/y.git'), pem('RSA ', 'BEGIN') + '\nbody\n' + pem('RSA ', 'END') + ' after',
+	'glpat' + '-' + 'a'.repeat(20), 'AIza' + 'a'.repeat(35), 'sk_' + 'live_' + 'a'.repeat(24), 'aws_secret_access_key = ' + dummy, 'https://example.com/a:b/c', 'cut ' + pem('', 'BEGIN') + '\nbody'].join('\n');
+	assert.equal(redactSecrets(input), [url('postgres', 'user', '[redacted]', 'db.host:5432/app'), url('https', 'u', '[redacted]', 'github.com/x/y.git'), '[redacted private key] after',
+		'[redacted]', '[redacted]', '[redacted]', 'aws_secret_access_key = [redacted]', 'https://example.com/a:b/c', 'cut [redacted private key]'].join('\n'));
+});

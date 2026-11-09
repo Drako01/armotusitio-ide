@@ -232,6 +232,9 @@ function floor(command: string, args: readonly string[], depth = 0): PolicyDenia
 	}
 	if (name === 'npx' || name === 'pnpx' || name === 'bunx') {
 		if (hasFlag(args, '-y', '--yes', '-p', '--package')) { return 'dependency-change'; }
+		// Without a terminal npx assumes --yes: an unknown name is downloaded from the registry and run. Only the project's own tools, or an explicit --no-install, are exempt.
+		const tool = args.find(arg => !arg.startsWith('-'));
+		if (name === 'npx' && !hasFlag(args, '--no-install', '--no') && !(tool && LOCAL_NPX_TOOLS.has(tool))) { return 'dependency-change'; }
 	}
 	if (name === 'go') {
 		if (sub === 'env' && hasFlag(args, '-w', '-u')) { return 'global-config'; }
@@ -247,6 +250,9 @@ function floor(command: string, args: readonly string[], depth = 0): PolicyDenia
 	if (['gem', 'bundle'].includes(name) && ['install', 'add', 'update', 'push', 'config'].includes(sub ?? '')) { return sub === 'push' ? 'publish' : 'dependency-change'; }
 	return undefined;
 }
+
+/** Tools the Node preset already allows by name; `npx` may start them without asking. */
+const LOCAL_NPX_TOOLS = new Set(['tsc', 'eslint', 'vitest', 'jest', 'prettier']);
 
 /** Commands each ecosystem may run: executable \u2192 allowed first argument (`*` any), or true for any arguments. */
 function presets(project: Subproject): Record<string, true | readonly string[]> {

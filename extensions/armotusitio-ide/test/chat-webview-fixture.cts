@@ -41,15 +41,16 @@ function launchBrowser() {
 }
 
 /** Load the webview in a page and return a `push` that delivers host messages like VS Code does. */
-async function mountChat(page, themeCss) {
+async function mountChat(page, themeCss, savedState) {
 	await page.setContent(themeCss ? html.replace(theme, themeCss) : html);
-	await page.evaluate(code => {
+	await page.evaluate(({ code, saved }) => {
 		window.sent = [];
-		window.acquireVsCodeApi = () => ({ postMessage: value => window.sent.push(value) });
+		window.savedState = saved;
+		window.acquireVsCodeApi = () => ({ postMessage: value => window.sent.push(value), getState: () => window.savedState, setState: value => { window.savedState = value; } });
 		const cache = {};
 		const load = name => { if (cache[name]) { return cache[name].exports; } const module = { exports: {} }; cache[name] = module; new Function('module', 'require', code[name])(module, load); return module.exports; };
 		load('./chat.ts');
-	}, sources);
+	}, { code: sources, saved: savedState });
 	const push = async value => { await page.evaluate(message => window.postMessage(message, '*'), value); await page.evaluate(() => new Promise(resolve => requestAnimationFrame(resolve))); };
 	await push({ type: 'init', labels: labels(t) });
 	return push;

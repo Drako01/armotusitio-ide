@@ -102,3 +102,9 @@ test('bundled controls accept only fixed commands scoped to a currently open roo
 	await h.receive({ action: 'native', root: '/generic', command: 'arbitrary-shell' });
 	assert.deepEqual(h.calls.filter(call => typeof call === 'string'), ['atsHarness.nativeStatus']);
 });
+
+test('the welcome screen footer credits the author with a link to the site', async () => {
+	const h = harness();
+	await h.receive({ action: 'ready' });
+	assert.match(h.panel.webview.html, /<footer>Desarrollado por Alejandro Daniel Di Stefano &middot; <a href="https:\/\/armotusitio\.com\.ar" target="_blank" rel="noopener noreferrer">ArmoTuSitio\.com\.ar<\/a><\/footer>/);
+});
