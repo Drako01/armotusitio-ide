@@ -1,0 +1,20 @@
+name: tmp windows extension tests
+on:
+  pull_request:
+    paths: ['.github/workflows/tmp-windows-tests.yml']
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .nvmrc
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Extension tests with per-test timeout and spec output
+        working-directory: extensions/armotusitio-ide
+        shell: bash
+        run: node --test --test-timeout=240000 --test-reporter=spec test/*.test.cts test/native-*.test.mts 2>&1 | tail -150
