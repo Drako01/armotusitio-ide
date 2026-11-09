@@ -29,6 +29,7 @@ p { margin: 0; }
 .workspaces { font-size: 12px; overflow-wrap: anywhere; }
 .actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
 .empty { padding: 20px; border: 1px dashed var(--vscode-panel-border, rgba(128, 128, 128, .35)); border-radius: 6px; display: flex; flex-direction: column; gap: 6px; }
+select { min-height: 28px; max-width: 220px; font: inherit; color: var(--vscode-dropdown-foreground); background: var(--vscode-dropdown-background); border: 1px solid var(--vscode-dropdown-border, transparent); border-radius: 4px; padding: 2px 6px; }
 button { box-sizing: border-box; min-height: 28px; max-width: 100%; padding: 4px 12px; font: inherit; cursor: pointer; border: 1px solid transparent; border-radius: 4px; color: var(--vscode-button-foreground); background: var(--vscode-button-background); }
 button:not(:disabled):hover { background: var(--vscode-button-hoverBackground); }
 button:focus-visible { outline: 2px solid var(--vscode-focusBorder, #007fd4); outline-offset: 2px; }

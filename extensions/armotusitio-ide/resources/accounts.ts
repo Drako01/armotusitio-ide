@@ -61,6 +61,16 @@ function render(): void {
 	document.getElementById('accounts-description')!.textContent = labels.description;
 	const total = current.providers.reduce((sum: number, provider: any) => sum + provider.accounts.length, 0);
 	document.getElementById('accounts-summary')!.textContent = current.root ? format(labels.summary, total, current.providers.length) + ' \u00b7 ' + current.root : format(labels.summary, total, current.providers.length);
+	const picker = document.getElementById('folder') as HTMLSelectElement;
+	const folders: Array<{ path: string; name: string }> = current.folders ?? [];
+	picker.hidden = !folders.length;
+	if (folders.length) {
+		picker.textContent = '';
+		picker.setAttribute('aria-label', labels.folder);
+		for (const folder of folders) { const item = el('option', undefined, folder.name) as HTMLOptionElement; item.value = folder.path; picker.append(item); }
+		const none = el('option', undefined, labels.folder) as HTMLOptionElement; none.value = ''; picker.prepend(none);
+		picker.value = current.rootPath;
+	}
 	const add = document.getElementById('add') as HTMLButtonElement; add.textContent = labels.add;
 	const refresh = document.getElementById('refresh') as HTMLButtonElement; refresh.textContent = labels.refresh; refresh.disabled = loading; refresh.setAttribute('aria-busy', String(loading));
 	const root = document.getElementById('providers')!;
@@ -87,6 +97,7 @@ window.addEventListener('message', event => {
 	if (message?.type === 'busy') { loading = true; render(); }
 	if (message?.type === 'state') { current = message; loading = false; render(); }
 });
+document.getElementById('folder')!.addEventListener('change', event => vscodeApi.postMessage({ action: 'root', path: (event.target as HTMLSelectElement).value }));
 document.getElementById('add')!.addEventListener('click', () => vscodeApi.postMessage({ action: 'add' }));
 document.getElementById('refresh')!.addEventListener('click', () => vscodeApi.postMessage({ action: 'refresh' }));
 vscodeApi.postMessage({ action: 'ready' });

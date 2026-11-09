@@ -72,3 +72,15 @@ test('operations are a closed set on a profile id, the default button is disable
 		});
 	} finally { await browser.close(); }
 });
+
+test('a window with several folders shows a folder picker and tells the host which one to manage', async () => {
+	const browser = await launchBrowser();
+	try {
+		const { tab, push } = await mount(browser, 900, false);
+		const single = await tab.evaluate(() => document.getElementById('folder').hidden);
+		await push({ type: 'state', root: 'api', rootPath: '/w/api', folders: [{ name: 'web', path: '/w/web' }, { name: 'api', path: '/w/api' }], providers: providers(false) });
+		await tab.selectOption('#folder', '/w/web');
+		const shown = await tab.evaluate(() => ({ hidden: document.getElementById('folder').hidden, label: document.getElementById('folder').getAttribute('aria-label'), options: [...document.getElementById('folder').options].map(option => option.textContent), sent: window.sent.at(-1) }));
+		assert.deepEqual({ single, shown }, { single: true, shown: { hidden: false, label: 'Carpeta que se administra', options: ['Carpeta que se administra', 'web', 'api'], sent: { action: 'root', path: '/w/web' } } });
+	} finally { await browser.close(); }
+});

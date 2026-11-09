@@ -22,7 +22,7 @@ export type AccountOperation = typeof ACCOUNT_OPERATIONS[number];
 
 export interface AccountsLabels {
 	title: string; description: string; add: string; refresh: string; summary: string; workspace: string; noWorkspace: string; here: string; isDefault: string; checking: string; empty: string; emptyHint: string;
-	signIn: string; makeDefault: string; useHere: string; stopHere: string; rename: string; remove: string; states: Record<AuthState, string>; workspaces: string;
+	signIn: string; makeDefault: string; useHere: string; stopHere: string; rename: string; remove: string; states: Record<AuthState, string>; workspaces: string; folder: string;
 }
 
 /** Static page: strict CSP with a nonce, no inline handlers, all content drawn by the script from state messages. */
@@ -33,7 +33,7 @@ export function accountsHtml(t: (text: string) => string, cspSource: string, non
 <link rel="stylesheet" href="${cssUri}"><title>AI Accounts</title></head>
 <body><main aria-labelledby="accounts-title">
 <header class="page-header"><div><h1 id="accounts-title">${t('AI Accounts')}</h1><p id="accounts-description" class="subtitle"></p><p id="accounts-summary" class="muted" role="status" aria-live="polite"></p></div>
-<div class="toolbar"><button id="refresh" class="quiet" type="button"></button><button id="add" type="button"></button></div></header>
+<div class="toolbar"><select id="folder" hidden></select><button id="refresh" class="quiet" type="button"></button><button id="add" type="button"></button></div></header>
 <div id="providers"></div>
 </main><script nonce="${nonce}" src="${scriptUri}"></script></body></html>`;
 }
@@ -43,7 +43,7 @@ export function accountsLabels(t: (text: string) => string): AccountsLabels {
 		title: t('AI Accounts'), description: t('Varias cuentas por proveedor, cada una con su sesi\u00f3n aislada. Eleg\u00ed cu\u00e1l usa cada proyecto.'), add: t('Agregar cuenta'), refresh: t('Actualizar'),
 		summary: t('{0} cuentas en {1} proveedores'), workspace: t('Workspaces'), noWorkspace: t('Ning\u00fan workspace'), here: t('Este workspace'), isDefault: t('Predeterminada'), checking: t('Comprobando\u2026'),
 		empty: t('Sin cuentas'), emptyHint: t('Se usa la sesi\u00f3n del IDE. Agreg\u00e1 una cuenta para separar personal y trabajo.'),
-		signIn: t('Iniciar sesi\u00f3n'), makeDefault: t('Hacer predeterminada'), useHere: t('Usar aqu\u00ed'), stopHere: t('Dejar de usar aqu\u00ed'), rename: t('Renombrar'), remove: t('Eliminar'), workspaces: t('Workspaces'),
+		signIn: t('Iniciar sesi\u00f3n'), makeDefault: t('Hacer predeterminada'), useHere: t('Usar aqu\u00ed'), stopHere: t('Dejar de usar aqu\u00ed'), rename: t('Renombrar'), remove: t('Eliminar'), workspaces: t('Workspaces'), folder: t('Carpeta que se administra'),
 		states: {
 			authenticated: t('Autenticada'), 'not-authenticated': t('Sin sesi\u00f3n'), unknown: t('Estado desconocido'), 'cli-unavailable': t('CLI no disponible'),
 			'connection-failed': t('Fall\u00f3 la conexi\u00f3n'), connecting: t('Conectando\u2026')
@@ -54,20 +54,27 @@ export function accountsLabels(t: (text: string) => string): AccountsLabels {
 export function registerAccountsPanel(context: Host, vscode: Host, deps: ProfileCommandDeps): void {
 	const t: (text: string) => string = vscode.l10n.t;
 	let panel: Host;
+	/** The folder the screen manages when the window has several; chosen in the screen, never guessed. */
+	let pickedRoot: string | undefined;
+	const folders = (): Array<{ name: string; path: string }> => (vscode.workspace.workspaceFolders ?? []).map((folder: Host) => ({ name: folder.name, path: folder.uri.fsPath }));
+	const currentRoot = async (): Promise<string | undefined> => {
+		const all = folders();
+		return all.find(folder => folder.path === pickedRoot)?.path ?? (all.length > 1 ? undefined : await deps.rootOf());
+	};
 	const previous = deps.onSignInEnded;
 	deps.onSignInEnded = () => { previous?.(); void publish(); };
 	const actions = profileActions(vscode, deps);
 
 	/** One state message: profiles with their real login state (asked to each CLI), grouped by provider. */
 	async function state(): Promise<unknown> {
-		const root = await deps.rootOf();
+		const root = await currentRoot();
 		const [profiles, placement] = await Promise.all([deps.registry.list(), deps.registry.placement(root)]);
 		const accounts = await Promise.all(profiles.map(async profile => ({
 			id: profile.id, alias: profile.alias, provider: profile.provider, state: signingInOf(deps).has(profile.id) ? 'connecting' : await deps.registry.authState(profile, process.env),
 			isDefault: placement.defaults[profile.provider] === profile.id, here: placement.workspace[profile.provider] === profile.id,
 			workspaces: (await deps.registry.workspacesOf(profile.id)).map(key => path.basename(key) || key)
 		})));
-		return { type: 'state', root: root ? path.basename(root) : null, providers: PROVIDERS.map(id => ({ id, label: PROVIDER_LABEL[id], accounts: accounts.filter(account => account.provider === id) })) };
+		return { type: 'state', root: root ? path.basename(root) : null, folders: folders().length > 1 ? folders().map(folder => ({ path: folder.path, name: folder.name })) : [], rootPath: root ?? '', providers: PROVIDERS.map(id => ({ id, label: PROVIDER_LABEL[id], accounts: accounts.filter(account => account.provider === id) })) };
 	}
 
 	const publish = async (): Promise<void> => {
@@ -79,7 +86,7 @@ export function registerAccountsPanel(context: Host, vscode: Host, deps: Profile
 	async function run(operation: AccountOperation, id: string): Promise<void> {
 		const profile = await deps.registry.get(id);
 		if (!profile) { throw Error('HARNESS_PROFILE_NOT_FOUND'); }
-		const root = await deps.rootOf();
+		const root = await currentRoot();
 		switch (operation) {
 			case 'signIn': await actions.signIn(profile); break;
 			case 'default': await deps.registry.setDefault(id); break;
@@ -97,10 +104,11 @@ export function registerAccountsPanel(context: Host, vscode: Host, deps: Profile
 		const current = panel;
 		const nonce = randomBytes(24).toString('base64');
 		current.webview.html = accountsHtml(t, current.webview.cspSource, nonce, current.webview.asWebviewUri(vscode.Uri.joinPath(resources, 'accounts.css')).toString(), current.webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'dist', 'accounts.js')).toString());
-		const subscription = current.webview.onDidReceiveMessage(async (message: { action?: unknown; op?: unknown; id?: unknown }) => {
+		const subscription = current.webview.onDidReceiveMessage(async (message: { action?: unknown; op?: unknown; id?: unknown; path?: unknown }) => {
 			try {
 				if (message?.action === 'ready') { void current.webview.postMessage({ type: 'init', labels: accountsLabels(t) }); await publish(); }
 				else if (message?.action === 'refresh') { await publish(); }
+				else if (message?.action === 'root' && typeof message.path === 'string') { pickedRoot = folders().find(folder => folder.path === message.path)?.path; await publish(); }
 				else if (message?.action === 'add') { await vscode.commands.executeCommand('atsHarness.accounts.add'); await publish(); }
 				else if (message?.action === 'op' && typeof message.id === 'string' && message.id.length <= 64 && (ACCOUNT_OPERATIONS as readonly unknown[]).includes(message.op)) {
 					await run(message.op as AccountOperation, message.id); await publish();
