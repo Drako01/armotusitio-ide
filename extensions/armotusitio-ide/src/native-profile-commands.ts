@@ -41,6 +41,20 @@ export interface ProfileCommandDeps {
 const signingIn = new WeakMap<ProfileCommandDeps, Set<string>>();
 export function signingInOf(deps: ProfileCommandDeps): ReadonlySet<string> { return signingIn.get(deps) ?? new Set(); }
 
+/** Last onboarding steps: ask the provider CLI what the terminal achieved, then offer the scope (this workspace) or the recovery (retry). */
+async function verifySignIn(vscode: Host, deps: ProfileCommandDeps, profile: AiProfile): Promise<void> {
+	const t = vscode.l10n.t;
+	if (await deps.registry.authState(profile, process.env) === 'authenticated') {
+		const root = await deps.rootOf();
+		const here = root ? t('Usar en este workspace') : undefined;
+		const choice = await vscode.window.showInformationMessage(t('La cuenta {0} qued\u00f3 autenticada.', profile.alias), ...(here ? [here] : []));
+		if (choice && root) { await deps.registry.assign(root, profile.id); deps.onSignInEnded?.(); }
+		return;
+	}
+	const retry = t('Reintentar');
+	if (await vscode.window.showWarningMessage(t('No se detect\u00f3 una sesi\u00f3n en la cuenta {0}. Si cerraste el terminal antes de terminar, pod\u00e9s reintentar.', profile.alias), retry) === retry) { await openSignIn(vscode, deps, profile); }
+}
+
 async function openSignIn(vscode: Host, deps: ProfileCommandDeps, profile: AiProfile): Promise<void> {
 	const t = vscode.l10n.t;
 	// A terminal with the profile directory and without any other account's credentials: the provider does its own OAuth.
@@ -52,6 +66,7 @@ async function openSignIn(vscode: Host, deps: ProfileCommandDeps, profile: AiPro
 		open.delete(profile.id);
 		closed.dispose();
 		deps.onSignInEnded?.();
+		void verifySignIn(vscode, deps, profile).catch(error => deps.showError(error));
 	});
 	terminal.show();
 	terminal.sendText(LOGIN_COMMAND[profile.provider]);

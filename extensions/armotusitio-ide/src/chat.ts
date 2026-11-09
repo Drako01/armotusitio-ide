@@ -237,6 +237,8 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 	const providers = { codex: { status: 'checking' }, claude: { status: 'checking' } };
 	// Discovered from each CLI's own configuration; the choice itself lives in `atsHarness.<provider>Model`.
 	const models = { codex: { options: [] }, claude: { options: [] } };
+	/** What the IDE's own account shows; an AI profile reads its own configuration directory instead. */
+	const defaultModels = { codex: { options: [] }, claude: { options: [] } };
 	// AI accounts per provider for the project in view: each option carries the real login state of its directory.
 	const profiles = controller.profiles;
 	const ranWith: Record<string, string> = {};
@@ -339,6 +341,9 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 		for (const provider of ['codex', 'claude']) {
 			const options = await Promise.all(list.filter(profile => profile.provider === provider).map(async profile => ({ id: profile.id, alias: profile.alias, state: await profiles.authState(profile, process.env) })));
 			accounts[provider] = { options, selected: placement.workspace[provider] ?? placement.defaults[provider] ?? '' };
+			// The model list and default come from the selected account's own settings (its CLAUDE_CONFIG_DIR / CODEX_HOME).
+			const chosen = list.find(profile => profile.id === accounts[provider].selected && profile.provider === provider);
+			models[provider] = chosen ? await listModels(provider, profiles.environment(chosen, process.env)).catch(() => ({ options: [] })) : defaultModels[provider];
 		}
 		publish(folder);
 	};
@@ -346,7 +351,7 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 		void refreshAccounts().catch(() => undefined);
 		providers.codex = { status: 'checking' }; providers.claude = { status: 'checking' }; publish();
 		const [codex, claude] = await Promise.all([inspectProvider('codex', force), inspectProvider('claude', force)]);
-		providers.codex = codex.status; providers.claude = claude.status; models.codex = codex.models; models.claude = claude.models; publish();
+		providers.codex = codex.status; providers.claude = claude.status; defaultModels.codex = codex.models; defaultModels.claude = claude.models; models.codex = codex.models; models.claude = claude.models; void refreshAccounts().catch(() => undefined); publish();
 	};
 	/** Run the one fix of a setup item; every kind reuses an existing VS Code surface. */
 	const applySetupFix = async fix => {
