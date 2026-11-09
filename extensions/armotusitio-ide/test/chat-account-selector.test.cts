@@ -44,3 +44,20 @@ test('the account selector names each login state in words, keeps the selection 
 		assert.deepEqual(await page.evaluate(() => [...document.getElementById('account').options].map(option => option.textContent)), ['Cuenta del IDE', 'Administrar cuentas\u2026']);
 	} finally { await browser.close(); }
 });
+
+test('the chat says when the conversation keeps one account but the next message will use another', async () => {
+	const browser = await launchBrowser();
+	try {
+		const page = await browser.newPage({ viewport: { width: 700, height: 800 }, reducedMotion: 'reduce' });
+		const push = await mountChat(page);
+		const value = accountsState();
+		value.chat.provider = 'claude';
+		value.ranWith = { claude: 'a' };
+		await push(value);
+		const split = await page.evaluate(() => document.getElementById('account-note').textContent);
+		value.ranWith = { claude: 'b' };
+		await push(value);
+		const same = await page.evaluate(() => document.getElementById('account-note').textContent);
+		assert.deepEqual({ split, same }, { split: 'Esta conversación sigue con Personal; el próximo mensaje usará Trabajo con un nombre bastante largo.', same: '' });
+	} finally { await browser.close(); }
+});

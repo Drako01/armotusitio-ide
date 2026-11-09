@@ -195,7 +195,7 @@ function labels(t) {
 		change: { added: t('nuevo'), modified: t('modificado'), deleted: t('borrado') },
 		continueRun: t('Continuar'), retry: t('Reintentar'), continuedRun: t('Continuaci\u00f3n'), maxMessageChars: MAX_USER_MESSAGE_CHARS,
 		discardRun: t('Deshacer esta ejecuci\u00f3n'), openHome: t('Ver en Inicio'),
-		approvals: t('Aprobaciones pendientes'), allowOnce: t('Permitir una vez'), allowTask: t('Esta tarea'), allowSession: t('Esta sesi\u00f3n'), account: t('Cuenta de {0}', '{0}'), accountIde: t('Cuenta del IDE'), accountManage: t('Administrar cuentas\u2026'), authState: { authenticated: t('Autenticada'), 'not-authenticated': t('Sin sesi\u00f3n'), unknown: t('Estado desconocido'), 'cli-unavailable': t('CLI no disponible') }, allowAlways: t('Siempre en este proyecto'), allowGlobal: t('En todos mis proyectos'), globalRule: t('\u00abEn todos mis proyectos\u00bb se ofrece solo para comandos de inspecci\u00f3n y vale en cualquier proyecto.'), denyApproval: t('Denegar'),
+		approvals: t('Aprobaciones pendientes'), allowOnce: t('Permitir una vez'), allowTask: t('Esta tarea'), allowSession: t('Esta sesi\u00f3n'), account: t('Cuenta de {0}', '{0}'), accountIde: t('Cuenta del IDE'), accountManage: t('Administrar cuentas\u2026'), accountSplit: t('Esta conversaci\u00f3n sigue con {0}; el pr\u00f3ximo mensaje usar\u00e1 {1}.', '{0}', '{1}'), authState: { authenticated: t('Autenticada'), 'not-authenticated': t('Sin sesi\u00f3n'), unknown: t('Estado desconocido'), 'cli-unavailable': t('CLI no disponible') }, allowAlways: t('Siempre en este proyecto'), allowGlobal: t('En todos mis proyectos'), globalRule: t('\u00abEn todos mis proyectos\u00bb se ofrece solo para comandos de inspecci\u00f3n y vale en cualquier proyecto.'), denyApproval: t('Denegar'),
 		alwaysRule: t('\u00abSiempre en este proyecto\u00bb guarda la regla \u00ab{0}\u00bb en {1}; \u00abEsta tarea\u00bb y \u00abEsta sesi\u00f3n\u00bb no guardan nada.', '{0}', '{1}'), permissionsFile: '~/.armotusitio/permissions.json',
 		noRemember: {
 			dependency: t('Solo una vez: instalar o cambiar dependencias se aprueba cada vez.'),
@@ -239,6 +239,7 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 	const models = { codex: { options: [] }, claude: { options: [] } };
 	// AI accounts per provider for the project in view: each option carries the real login state of its directory.
 	const profiles = controller.profiles;
+	const ranWith: Record<string, string> = {};
 	const accounts: Record<string, { options: Array<{ id: string; alias: string; state: string }>; selected: string }> = { codex: { options: [], selected: '' }, claude: { options: [], selected: '' } };
 	const modelSetting = provider => provider + 'Model';
 	const effortSetting = provider => provider + 'Effort';
@@ -286,7 +287,7 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 		// The webview drops its history whenever it receives no chat, so the next one must be complete.
 		else { posted = chat ? { key, revision: chat.revision } : { key: undefined, revision: -1 }; }
 		post({
-			type: 'state', trusted: !!vscode.workspace.isTrusted, providers, models: chosenModels(), accounts, efforts: chosenEfforts(), chatMode: chatMode(), codexFullAccess: codexFullAccess(), mcp: { ...mcpStatus, endpoint: new URL(endpoint).host, enabled: !!mcp.enabled?.() },
+			type: 'state', trusted: !!vscode.workspace.isTrusted, providers, models: chosenModels(), accounts, ranWith, efforts: chosenEfforts(), chatMode: chatMode(), codexFullAccess: codexFullAccess(), mcp: { ...mcpStatus, endpoint: new URL(endpoint).host, enabled: !!mcp.enabled?.() },
 			project: folder ? { name: folder.name, id: key } : null,
 			projects: folders().map(item => ({ name: item.name, id: item.uri.toString() })),
 			chat
@@ -476,6 +477,7 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 					await session.note(t('{0} no est\u00e1 instalado en este equipo. Eleg\u00ed el otro proveedor y reenvi\u00e1 tu mensaje: {1}', selected === 'claude' ? 'Claude Code' : 'Codex', '\u00ab' + text.slice(0, 500) + '\u00bb'), 'error');
 					return;
 				}
+				ranWith[selected] = accounts[selected].selected;
 				const mentions = await resolveMentions(folder.uri.fsPath, text, IGNORED);
 				await session.send(text, chatMode(), { context: mentions.context, notice: mentionNotice(mentions, t) });
 			}
@@ -522,6 +524,7 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 				publish(folder);
 			}
 			if (action === 'reset' && !session.busy) {
+				for (const key of Object.keys(ranWith)) { delete ranWith[key]; }
 				const confirm = t('Empezar de nuevo');
 				if (await vscode.window.showWarningMessage(t('\u00bfEmpezar una conversaci\u00f3n nueva? El historial actual de este proyecto se borra.'), { modal: true }, confirm) === confirm) { await session.reset(); }
 			}

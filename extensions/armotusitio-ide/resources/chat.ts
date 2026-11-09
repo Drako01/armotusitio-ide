@@ -107,6 +107,7 @@ function shell(): void {
 		if (account.value === '__manage') { account.value = state?.accounts?.[state?.chat?.provider]?.selected ?? ''; api.postMessage({ action: 'accounts' }); return; }
 		api.postMessage({ action: 'account', provider: state?.chat?.provider, profileId: account.value });
 	});
+	const accountNote = el('span', 'account-note'); accountNote.id = 'account-note'; accountNote.setAttribute('role', 'status');
 	const model = el('select', 'model-select') as HTMLSelectElement; model.id = 'model';
 	model.addEventListener('change', () => api.postMessage({ action: 'model', provider: state?.chat?.provider, model: model.value }));
 	const effort = el('select', 'effort-select') as HTMLSelectElement; effort.id = 'effort';
@@ -128,7 +129,7 @@ function shell(): void {
 	more.addEventListener('click', () => toggle('menu', more));
 	const quota = el('span', 'quota'); quota.id = 'quota'; quota.hidden = true; quota.setAttribute('role', 'group'); quota.tabIndex = 0;
 	quota.append(el('span', 'quota-icon'), el('span', 'quota-text'));
-	controls.append(switcher, account, quota, model, effort, mode, sandbox, mcp, more);
+	controls.append(switcher, account, accountNote, quota, model, effort, mode, sandbox, mcp, more);
 	header.append(brand, controls);
 
 	const details = el('section', 'popover mcp-details'); details.id = 'mcp-details'; details.hidden = true; details.setAttribute('aria-label', L.mcp);
@@ -301,6 +302,11 @@ function renderAccount(provider: string | undefined): void {
 	select.value = info.options.some((account: any) => account.id === info.selected) ? info.selected : '';
 	select.disabled = !state.chat || busy();
 	select.title = format(L.account, providerName(provider)) + ': ' + (select.selectedOptions[0]?.textContent ?? '');
+	// A session keeps the account it started with: say so when the selection now points elsewhere.
+	const note = document.getElementById('account-note') as HTMLElement;
+	const ran: string | undefined = state.ranWith?.[provider!];
+	const name = (id: string) => info.options.find((account: any) => account.id === id)?.alias ?? L.accountIde;
+	note.textContent = ran !== undefined && ran !== select.value ? format(L.accountSplit, name(ran), name(select.value)) : '';
 }
 
 /** Models of the selected provider; the empty value is the CLI default, named when its configuration says which. */
