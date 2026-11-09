@@ -11,8 +11,9 @@ import { runMcpCommand, type McpCommandDeps } from './native-mcp-command.ts';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import type { ChatMode } from './native-chat.ts';
+import { harnessErrorCode, type ChatMode } from './native-chat.ts';
 import type { HarnessChatSession } from './native-chat-session.ts';
+import type { EngineLease, EngineLeaseState } from './native-hybrid-writer.ts';
 import { listUserRules, loadPermissions, projectKey, removeUserRule } from './native-permissions.ts';
 import type { PermissionPreset } from './native-permissions-types.ts';
 import type { ProviderQuota } from './native-quota.ts';
@@ -52,6 +53,7 @@ export function chatCommands(t: CommandTranslator): ChatCommand[] {
 		{ name: 'bifurcar', description: t('Contin\u00faa en una copia de la sesi\u00f3n nativa del proveedor; la original queda guardada sin cambios.'), session: true },
 		{ name: 'modo', usage: '[actuar|preguntar]', description: t('Muestra o cambia el modo del chat.'), session: true },
 		{ name: 'deshacer', description: t('Descarta los cambios de la \u00faltima ejecuci\u00f3n.'), session: true },
+		{ name: 'lease', usage: '[liberar]', description: t('Estado del lease de escritura del Harness propio del proyecto; "liberar" lo retira cuando el IDE muri\u00f3 con \u00e9l.'), session: true },
 		{ name: 'doctor', description: t('Revisa la m\u00e1quina y el proyecto (Node, gestor de paquetes, git, Docker, disco) y dice c\u00f3mo arreglar cada problema.'), session: true },
 		{ name: 'auditoria', description: t('\u00daltimas acciones de las herramientas del agente en este proyecto (comandos, git, archivos) y su resultado.'), session: true },
 		{ name: 'costo', description: t('Muestra los tokens que inform\u00f3 el proveedor en el \u00faltimo turno.'), session: true },
@@ -136,6 +138,34 @@ export interface SessionCommandDeps {
 	home?: string;
 	/** User-added MCP servers (`/mcp`); absent where the transport cannot use them. */
 	mcp?: McpCommandDeps;
+	/** The writer lease of a project that has its own Harness (`/lease`); absent when the project has none. */
+	lease?: { status(): Promise<EngineLease>; clear(): Promise<EngineLeaseState>; confirmClear(): Promise<boolean> };
+}
+
+const LEASE_TEXT: Record<EngineLeaseState, (t: CommandTranslator, until?: string) => string> = {
+	none: t => t('El Harness del proyecto no tiene un lease de escritura del IDE: nada que liberar.'),
+	valid: (t, until) => t('El IDE tiene el lease de escritura del Harness del proyecto{0}. Si el IDE ya no est\u00e1 ejecutando, liberalo con /lease liberar.', until ? ' (' + t('vence {0}', until) + ')' : ''),
+	expired: t => t('El lease de escritura venci\u00f3; el motor lo retira solo en su pr\u00f3ximo comando. Tambi\u00e9n pod\u00e9s liberarlo con /lease liberar.'),
+	foreign: t => t('Hay un lease de escritura de otro entorno en este clon. Si ya no corre nada all\u00e1, liberalo con /lease liberar.'),
+	invalid: t => t('El archivo del lease de escritura est\u00e1 ilegible. Liberalo con /lease liberar.')
+};
+
+/** `/lease` shows the engine's lease state; `/lease liberar` removes a lease left behind by an IDE that died holding it. */
+async function runLeaseCommand(deps: SessionCommandDeps, words: string[]): Promise<string> {
+	const { t, lease } = deps;
+	if (!lease) { return t('Este proyecto no tiene un Harness propio con lease de escritura.'); }
+	if (words.length > 1 || (words.length === 1 && words[0] !== 'liberar')) { return t('Uso: /lease [liberar]'); }
+	const current = await lease.status().catch((error: unknown) => {
+		// Without an engine entrypoint of its own the project has no lease to show.
+		if (harnessErrorCode(error) === 'HARNESS_HYBRID_WRITER_ENTRY_UNAVAILABLE') { return undefined; }
+		throw error;
+	});
+	if (!current) { return t('Este proyecto no tiene un Harness propio con lease de escritura.'); }
+	if (words[0] !== 'liberar') { return LEASE_TEXT[current.state](t, current.expiresAt); }
+	if (current.state === 'none') { return LEASE_TEXT.none(t); }
+	if (!await lease.confirmClear()) { return t('No liber\u00e9 el lease.'); }
+	const previous = await lease.clear();
+	return t('Liber\u00e9 el lease de escritura (estaba: {0}). El Harness del proyecto vuelve a aceptar tareas.', previous);
 }
 
 /** Runs a command that needs the conversation; `undefined` when `action` is not one of them. */
@@ -143,6 +173,7 @@ export async function runSessionCommand(deps: SessionCommandDeps, action: string
 	const { t } = deps;
 	const home = deps.home ?? os.homedir();
 	if (action === 'mcp' && deps.mcp) { return await runMcpCommand(deps.mcp, words); }
+	if (action === 'lease') { return await runLeaseCommand(deps, words); }
 	if (action === 'permisos') {
 		const target = (words[0] ?? '').toLowerCase();
 		if (target === 'usuario' || target === 'proyecto') {

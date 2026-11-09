@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { armotusitioProduct as product } from '../build/lib/armotusitioProduct.ts';
 import { validateIdentity, findLinuxPackage, writeLinuxReceipt } from './ats-linux-artifacts.mts';
-import { exclusiveReleaseWorkflow } from './ats-autoupdate.mts';
+import { exclusiveReleaseWorkflow, strayWorkflows } from './ats-autoupdate.mts';
 import { archiveLinuxSources, linuxBuildAttempts, shareWithBuildUser } from './ats-build-linux.mts';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -96,4 +96,13 @@ test('the CI runner opens the bind-mounted output and log folders to the contain
 
 test('CI retries the Linux container on transient download failures; a local build runs once', () => {
 	assert.deepEqual([linuxBuildAttempts(true), linuxBuildAttempts(false)], [6, 1]);
+});
+
+test('a workflow whose file was deleted does not block a release, and a live stray one is named', () => {
+	const env = { GITHUB_ACTIONS: 'true', GITHUB_REPOSITORY: 'Drako01/armotusitio-ide', GITHUB_WORKFLOW: 'ArmotuSitio Release', ATS_RELEASE_TAG: 'ats-v1.143.0-r2' };
+	const listed = { total_count: 3, workflows: [{ state: 'active', path: '.github/workflows/ats-release.yml' }, { state: 'active', path: '.github/workflows/tmp-diagnosis.yml' }, { state: 'active', path: '.github/workflows/upstream.yml' }] };
+	const deleted = (workflowPath: string): boolean => workflowPath !== '.github/workflows/tmp-diagnosis.yml';
+	assert.deepEqual({ all: strayWorkflows(listed), withoutDeleted: strayWorkflows(listed, deleted), blocked: exclusiveReleaseWorkflow(env, listed, deleted) },
+		{ all: ['.github/workflows/tmp-diagnosis.yml', '.github/workflows/upstream.yml'], withoutDeleted: ['.github/workflows/upstream.yml'], blocked: false });
+	assert.equal(exclusiveReleaseWorkflow(env, { total_count: 2, workflows: listed.workflows.slice(0, 2) }, deleted), true);
 });

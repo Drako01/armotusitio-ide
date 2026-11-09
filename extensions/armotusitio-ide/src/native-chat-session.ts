@@ -22,7 +22,7 @@ import type { ActivityActionId, ActivityItem } from './native-activity-feed.ts';
 import type { RunDiffSummary, RunFileChange } from './native-run-diff.ts';
 import { summarizeSteps, upsertStep, type ChatStep } from './native-run-steps.ts';
 import {
-	buildContinuationInstruction, buildConversationDelta, buildConversationInstruction, buildDirectInstruction, buildImplementationInstruction, chatMessage, DIRECT_PLAN_VERSION, directPlan, extractChatPlan, harnessErrorCode, latestPlanMessage, MAX_USER_MESSAGE_CHARS, pendingAlive, samePlanContent,
+	buildContinuationInstruction, buildConversationDelta, buildConversationInstruction, buildDirectInstruction, buildImplementationInstruction, chatMessage, DIRECT_PLAN_VERSION, directPlan, extractChatPlan, harnessErrorCode, harnessErrorDetail, latestPlanMessage, MAX_USER_MESSAGE_CHARS, pendingAlive, samePlanContent,
 	type ChatConversation, type ChatMessage, type ChatMode, type ChatPlan, type ChatProjectContext, type ChatRunSummary, type ChatStore, type GateSummary, type RunStatus
 } from './native-chat.ts';
 
@@ -183,7 +183,9 @@ const cancelledBeforeStart = (error: unknown): boolean => harnessErrorCode(error
 /** User-facing failure: a safe error code plus what to do next. Shared by the session and its host. */
 export function describeFailure(t: Translate, error: unknown): string {
 	const code = harnessErrorCode(error);
-	return t('No se pudo completar la operaci\u00f3n ({0}). {1}', code, recoveryHint(t, code));
+	const detail = harnessErrorDetail(error);
+	const base = t('No se pudo completar la operaci\u00f3n ({0}). {1}', code, recoveryHint(t, code));
+	return detail ? base + ' ' + t('El Harness del proyecto respondi\u00f3: \u00ab{0}\u00bb', detail) : base;
 }
 
 /** Runs of one project shown in the feed; older ones stay in the conversation. */

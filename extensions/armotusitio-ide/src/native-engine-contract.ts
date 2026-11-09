@@ -8,6 +8,19 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { spawn } from 'node:child_process';
 import { randomBytes, createHash } from 'node:crypto';
+import { redactSecrets } from './native-redact.ts';
+
+/** A project-engine entrypoint that exited non-zero; `detail` is what the engine itself said, redacted and bounded. */
+export class ProjectEngineError extends Error {
+	detail: string;
+	exitCode: number | undefined;
+	constructor(code: string, detail: string, exitCode: number | undefined) { super(code); this.detail = detail; this.exitCode = exitCode; }
+}
+const MAX_ENGINE_DETAIL_CHARS = 300;
+/** The last lines the engine wrote to stderr (or stdout when it wrote nothing there), single-line and without secrets. */
+export function engineDetail(stderr: string, stdout: string): string {
+	return redactSecrets((stderr.trim() || stdout.trim()).split(/\r?\n/).filter(Boolean).slice(-3).join(' ')).slice(0, MAX_ENGINE_DETAIL_CHARS);
+}
 
 export const ENGINE_CONTRACT_VERSION = 2 as const;
 export type Capability =
@@ -189,7 +202,7 @@ export async function runProjectEntry(
 		const child = spawn(process.execPath, [entry, ...args], {
 			cwd, shell: false, windowsHide: true, env, stdio: ['ignore', 'pipe', 'pipe']
 		});
-		let buffer = '', size = 0, finished = false, exited = false;
+		let buffer = '', errors = '', size = 0, finished = false, exited = false;
 		let settle: (() => void) | undefined;
 		// Settle only after the process exited, so a caller never releases the
 		// shared fence while a cancelled or timed-out engine is still running.
@@ -213,8 +226,8 @@ export async function runProjectEntry(
 			else if (keep) { buffer += part.toString('utf8'); }
 		};
 		child.stdout?.on('data', (part: Buffer) => oversized(part, true));
-		child.stderr?.on('data', (part: Buffer) => oversized(part, false));
+		child.stderr?.on('data', (part: Buffer) => { oversized(part, false); if (errors.length < 2048) { errors += part.toString('utf8'); } });
 		child.once('error', () => { exited = true; finish(Error(`${scope}_PROCESS`)); });
-		child.once('close', code => finish(code === 0 ? undefined : Error(`${scope}_FAILED`)));
+		child.once('close', code => finish(code === 0 ? undefined : new ProjectEngineError(`${scope}_FAILED`, engineDetail(errors, buffer), code ?? undefined)));
 	});
 }

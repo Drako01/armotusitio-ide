@@ -50,12 +50,33 @@ jobs:
         run: npm test --prefix extensions/armotusitio-ide
       - name: Release tooling tests
         run: node --test scripts/ats-release-ci.test.mts
+  # The extension runs on Windows, and Windows-only failures (the "Path" spelling of PowerShell, 8.3 temp folders, folders still held by
+  # a child process) used to surface only in the release job, after an hour of compiling. Same shell as the release validation (pwsh).
+  contract-windows:
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true'
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Install the pinned TypeScript toolchain and Node types (no install scripts)
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Extension tests on Windows
+        shell: pwsh
+        env:
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+        run: npm test --prefix extensions/armotusitio-ide
   # Required status check. A skipped contract job is fine only when `changes` found nothing relevant; a failed, cancelled or
   # skipped-by-error dependency fails the gate.
   gate:
     name: ATS gate
     if: always()
-    needs: [changes, contract]
+    needs: [changes, contract, contract-windows]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -64,11 +85,13 @@ jobs:
           CHANGES: ${{ needs.changes.result }}
           RELEVANT: ${{ needs.changes.outputs.relevant }}
           CONTRACT: ${{ needs.contract.result }}
+          CONTRACT_WINDOWS: ${{ needs.contract-windows.result }}
         run: |
-          echo "changes=$CHANGES relevant=$RELEVANT contract=$CONTRACT"
+          echo "changes=$CHANGES relevant=$RELEVANT contract=$CONTRACT contract-windows=$CONTRACT_WINDOWS"
           [ "$CHANGES" = 'success' ] || { echo '::error::Change detection did not succeed.'; exit 1; }
           if [ "$RELEVANT" = 'true' ]; then
             [ "$CONTRACT" = 'success' ] || { echo '::error::Contract suite did not pass.'; exit 1; }
+            [ "$CONTRACT_WINDOWS" = 'success' ] || { echo '::error::Windows contract suite did not pass.'; exit 1; }
           else
-            [ "$CONTRACT" = 'skipped' ] || { echo '::error::Contract suite should have been skipped.'; exit 1; }
+            [ "$CONTRACT" = 'skipped' ] && [ "$CONTRACT_WINDOWS" = 'skipped' ] || { echo '::error::Contract suites should have been skipped.'; exit 1; }
           fi

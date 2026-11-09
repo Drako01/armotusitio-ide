@@ -7,7 +7,9 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { acquireWriterLease } from '../src/native-hybrid-writer.ts';
+import { acquireWriterLease, clearWriterLease, readWriterLease } from '../src/native-hybrid-writer.ts';
+import { describeFailure } from '../src/native-chat-session.ts';
+import { harnessErrorDetail } from '../src/native-chat.ts';
 import { acquireSharedExecutionFence, type SharedExecutionFence } from '../src/native-shared-fence.ts';
 import { referenceEngine, REFERENCE_CAPABILITIES, type EngineMode } from './native-reference-engine.mts';
 
@@ -90,4 +92,56 @@ test('work the engine does during the lease is detected as a coordination violat
 		});
 		assert.deepEqual(REFERENCE_CAPABILITIES.includes('writer-lease'), true);
 	} finally { await Promise.all([rogue.cleanup(), mutating.cleanup()]); }
+});
+
+const format = (text: string, ...args: string[]): string => text.replace(/\{(\d+)\}/g, (_, index: string) => args[Number(index)]);
+
+test('what the engine said when it refused reaches the chat, bounded and without secrets', async () => {
+	const engine = await referenceEngine({ mode: 'refuse-lease' });
+	try {
+		await withFence(engine.root, async fence => {
+			const failure = await acquireWriterLease(engine.root, true, () => true, fence).then(() => undefined, (error: unknown) => error);
+			const shown = describeFailure(format, failure);
+			assert.deepEqual({ code: (failure as Error).message, detail: harnessErrorDetail(failure), mentionsCode: shown.includes('HARNESS_HYBRID_WRITER_FAILED'), mentionsEngine: shown.includes('Protocolo IDE no soportado: 3'), leaked: shown.includes('sk-secret') },
+				{ code: 'HARNESS_HYBRID_WRITER_FAILED', detail: 'Protocolo IDE no soportado: 3 token=[redacted]', mentionsCode: true, mentionsEngine: true, leaked: false });
+		});
+	} finally { await engine.cleanup(); }
+});
+
+test('a lease the engine no longer has does not discard the run: it is reported as lost and the checks still apply', async () => {
+	const engine = await referenceEngine();
+	try {
+		await withFence(engine.root, async fence => {
+			const lease = await acquireWriterLease(engine.root, true, () => true, fence);
+			// A long agent run: the lease outlives its time-to-live and the engine removes it when a command runs.
+			await engine.command('expire-lease');
+			const evidence = await lease.release();
+			assert.deepEqual({ lost: evidence.leaseLost, before: evidence.tasksBefore, after: evidence.tasksAfter }, { lost: true, before: [], after: [] });
+		});
+		// Work the engine did meanwhile is still a violation, lease or not.
+		const rogue = await referenceEngine({ mode: 'ignore-lease' });
+		try {
+			await withFence(rogue.root, async fence => {
+				const lease = await acquireWriterLease(rogue.root, true, () => true, fence);
+				await rogue.command('start-task');
+				await rogue.command('expire-lease');
+				await assert.rejects(lease.release(), /HARNESS_HYBRID_WRITER_COORDINATION_VIOLATED|HARNESS_HYBRID_WRITER_PROJECT_BUSY/);
+			});
+		} finally { await rogue.cleanup(); }
+	} finally { await engine.cleanup(); }
+});
+
+test('the lease state comes from the engine, and clearing one left by a dead IDE needs the shared fence', async () => {
+	const engine = await referenceEngine();
+	try {
+		await withFence(engine.root, async fence => {
+			const before = (await readWriterLease(engine.root, () => true)).state;
+			await acquireWriterLease(engine.root, true, () => true, fence);
+			const held = await readWriterLease(engine.root, () => true);
+			const previous = await clearWriterLease(engine.root, () => true, fence);
+			const after = (await readWriterLease(engine.root, () => true)).state;
+			assert.deepEqual({ before, held, previous, after, untrusted: await readWriterLease(engine.root, () => false).then(() => 'read', (error: Error) => error.message) },
+				{ before: 'none', held: { state: 'valid', expiresAt: '2099-01-01T00:00:00' }, previous: 'valid', after: 'none', untrusted: 'HARNESS_UNTRUSTED_WORKSPACE' });
+		});
+	} finally { await engine.cleanup(); }
 });

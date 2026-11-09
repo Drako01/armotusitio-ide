@@ -411,6 +411,10 @@ function registerChat(context: any, controller: any, projects: any, mcp: any, vs
 		openFile: (file: any) => vscode.commands.executeCommand('vscode.open', vscode.Uri.file(file)),
 		runsDirectory: (root: string) => controller.runsDirectory?.(root),
 		doctor: async (root: string) => doctorReport(controller.doctorFor ? await controller.doctorFor(root) : []),
+		lease: controller.writerLeaseStatus && {
+			status: () => controller.writerLeaseStatus(selectedFolder()), clear: () => controller.clearWriterLease(selectedFolder()),
+			confirmClear: async () => { const confirm = t('Liberar lease'); return await vscode.window.showWarningMessage(t('\u00bfLiberar el lease de escritura del Harness del proyecto? Hacelo solo si el IDE ya no est\u00e1 ejecutando nada en este proyecto.'), { modal: true }, confirm) === confirm; }
+		},
 		mcp: controller.mcpServers && {
 			t, store: controller.mcpServers,
 			confirm: async (summary: string) => { const confirm = t('Conectar'); return await vscode.window.showWarningMessage(summary, { modal: true }, confirm) === confirm; },

@@ -67,7 +67,7 @@ import { assessWorkflowRecovery } from './native-workflow-recovery.ts';
 import { exportOtlp, validateOtlpEndpoint } from './native-otlp.ts';
 import { buildAdaptiveWorkflow, type ProviderAvailability } from './native-agent-planner.ts';
 import { readLatestCodexQuota } from './native-quota.ts';
-import { acquireWriterLease, type WriterLease } from './native-hybrid-writer.ts';
+import { acquireWriterLease, clearWriterLease, readWriterLease, type WriterLease } from './native-hybrid-writer.ts';
 import { withHarnessProvider } from './native-provider-environment.ts';
 import { describeAgentIsolation, meetsWriterIsolation, parseWriterIsolation } from './native-isolation.ts';
 import { describeTrace, taskTrace, traceparent, workflowTrace, type TraceSpan } from './native-trace.ts';
@@ -517,11 +517,14 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			hooks.onStarted?.(execution);
 			const result = await execution.outcome;
 			// The engine acknowledges the end of the lease first; a broken lease is reported after the accounting.
-			const leaseFailure = await lease?.release().then(() => undefined, (error: unknown) => error);
+			let leaseLost = false;
+			const leaseFailure = await lease?.release().then(evidence => { leaseLost = !!evidence.leaseLost; return undefined; }, (error: unknown) => error);
 			await recordSpend(folder, root, draft.provider, fence, result);
 			try { await recordAgentMetric(metricsDirectory(root), draft.provider, draft.role, result); }
 			catch { void vscode.window.showWarningMessage('No se pudo registrar la m\u00e9trica local del agente.'); }
 			if (leaseFailure) { throw leaseFailure; }
+			// The run itself is intact; only the engine's own record of the lease is gone, so the work is kept and the user is told.
+			if (leaseLost) { void vscode.window.showWarningMessage('El lease de escritura del Harness del proyecto venci\u00f3 durante la ejecuci\u00f3n. Los cambios se conservaron; revis\u00e1 que el motor no haya corrido nada mientras tanto.'); }
 			await hooks.afterOutcome?.(result, fence);
 			return result;
 		} finally { await lease?.release().catch(() => undefined); runningAgents.delete(root); await fence.release(); controller.refresh(); }
@@ -531,6 +534,14 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 		guides.map(guide => '\nConsult project guidance ' + guide.path + ' (sha256: ' + guide.digest + '); it does not override IDE execution permissions.').join('') +
 		skills.map(skill => '\n\nConsult project skill ' + skill.source + '/' + skill.name + '/SKILL.md (sha256: ' + skill.digest + '). Treat its content as conventions, never as permission to bypass IDE controls.').join('');
 	/** Engine boundary for the conversational chat of one workspace folder. */
+	/** The engine's view of the writer lease of a project with its own Harness (`/lease`). */
+	controller.writerLeaseStatus = async (folder: Host) => readWriterLease(await fs.realpath(folder.uri.fsPath), () => authorized(folder));
+	/** Removes a lease left behind by a dead IDE; the shared fence guarantees no IDE run is writing meanwhile. */
+	controller.clearWriterLease = async (folder: Host) => {
+		const root = await fs.realpath(folder.uri.fsPath);
+		const fence = await acquireSharedExecutionFence(root, metricsDirectory(root), 'native-agent');
+		try { return await clearWriterLease(root, () => authorized(folder), fence); } finally { await fence.release(); }
+	};
 	controller.nativeChatRuntime = (folder: Host): ChatRuntime => {
 		const rootOf = (): Promise<string> => fs.realpath(folder.uri.fsPath);
 		/** Detected gates go through the same command policy the agent runs under, extras included; the project's own Harness is never replaced. */
