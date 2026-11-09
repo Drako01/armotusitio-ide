@@ -119,19 +119,52 @@ async function inventory(absolute: string, relative: string): Promise<{ entries:
 /** Dependency folders a package manager rebuilds from a lockfile; deleting one loses nothing. */
 const DEPENDENCY_FOLDERS = new Set(['node_modules']);
 const LOCKFILES = ['pnpm-lock.yaml', 'package-lock.json', 'yarn.lock', 'bun.lock', 'bun.lockb', 'npm-shrinkwrap.json'];
+/** Directory-only scan budget for a dependency folder: deep enough for pnpm's `.pnpm/<id>/node_modules/@scope/pkg/<dir>`, bounded in count. */
+const DEPENDENCY_SCAN_DEPTH = 7;
+const DEPENDENCY_SCAN_DIRECTORIES = 50_000;
+
+/** A lockfile in the folder that owns the dependencies or in an ancestor up to the project root (workspaces keep it at the root). */
+async function hasLockfile(root: string, relative: string): Promise<boolean> {
+	for (let folder = path.posix.dirname(relative); ; folder = path.posix.dirname(folder)) {
+		const found = await Promise.all(LOCKFILES.map(name => exists(path.join(root, folder, name))));
+		if (found.includes(true)) { return true; }
+		if (folder === '.') { return false; }
+	}
+}
 
 /**
- * A git-ignored dependency folder whose project has a lockfile next to it: reinstalling restores it exactly, so it is recoverable
- * like a tracked file and exempt from the entry cap (a healthy `node_modules` holds tens of thousands of files). Without this the
- * agent can never repair a corrupt install and sends the user to do it by hand.
+ * Directories only (a file cannot be a protected folder), never following a link: refuses a protected folder (`.git`, `.armotusitio`,
+ * which would mean a nested repository or IDE state living inside the dependencies) and a tree beyond the budget. Links are not
+ * entered; removing one never touches its target.
+ */
+async function assertDependencyTreeIsDisposable(absolute: string): Promise<void> {
+	let level = [absolute], directories = 0;
+	for (let depth = 0; level.length && depth < DEPENDENCY_SCAN_DEPTH; depth++) {
+		const next: string[] = [];
+		for (const folder of level) {
+			if (++directories > DEPENDENCY_SCAN_DIRECTORIES) { refuse('too-many-entries'); }
+			for (const entry of await fs.readdir(folder, { withFileTypes: true })) {
+				if (FORBIDDEN_SEGMENTS.has(entry.name.toLowerCase())) { refuse('protected-path'); }
+				if (entry.isDirectory()) { next.push(path.join(folder, entry.name)); }
+			}
+		}
+		level = next;
+	}
+	// Anything deeper than the budget is not inspected, which is why only dependency folders qualify, never arbitrary trees.
+}
+
+/**
+ * A git-ignored dependency folder with a lockfile (beside it or in an ancestor) and no protected folder inside: reinstalling restores
+ * it, so it is recoverable like a tracked file and exempt from the entry cap (a healthy `node_modules` holds tens of thousands of
+ * files). Without this the agent can never repair a corrupt install and sends the user to do it by hand.
  */
 async function reinstallable(root: string, relative: string): Promise<boolean> {
-	if (!DEPENDENCY_FOLDERS.has(path.posix.basename(relative).toLowerCase())) { return false; }
-	const folder = path.join(root, path.dirname(relative));
-	const locked = await Promise.all(LOCKFILES.map(name => exists(path.join(folder, name))));
-	if (!locked.includes(true)) { return false; }
+	if (!DEPENDENCY_FOLDERS.has(path.posix.basename(relative).toLowerCase()) || !await hasLockfile(root, relative)) { return false; }
 	// check-ignore rejects `--literal-pathspecs` (part of GIT_BASE); the path is already validated and passed after `--`.
-	return gitOutput(root, GIT_BASE.filter(arg => arg !== '--literal-pathspecs').concat('check-ignore', '-q', '--', relative)).then(() => true, () => false);
+	const ignored = await gitOutput(root, GIT_BASE.filter(arg => arg !== '--literal-pathspecs').concat('check-ignore', '-q', '--', relative)).then(() => true, () => false);
+	if (!ignored) { return false; }
+	await assertDependencyTreeIsDisposable(path.join(root, relative));
+	return true;
 }
 const exists = (file: string): Promise<boolean> => fs.lstat(file).then(() => true, () => false);
 
@@ -160,7 +193,7 @@ async function deletePath(context: FileToolsContext, input: Record<string, unkno
 	const absolute = path.join(context.root, relative);
 	const stat = await fs.lstat(absolute).catch(() => refuse('path-not-found'));
 	// A link is removed itself, never its target, so it needs no inventory of what it points to.
-	// A dependency folder is not walked: it is big, rebuilt from the lockfile, and never holds a protected path.
+	// A dependency folder is not inventoried entry by entry: it is big and rebuilt from the lockfile; it is scanned for protected folders instead.
 	const dependencies = stat.isDirectory() && await reinstallable(context.root, relative);
 	const { entries, sensitive } = stat.isSymbolicLink() ? { entries: 1, sensitive: false } : dependencies ? { entries: 0, sensitive: false } : await inventory(absolute, relative);
 	const safe = !sensitive && (dependencies || await recoverable(context.root, relative));

@@ -140,25 +140,15 @@ test('without a way to ask the user, an irreversible deletion is denied instead 
 
 test('a corrupt, git-ignored node_modules with a lockfile can be deleted whatever its size, so the agent can repair an install', async () => {
 	await withProject(async ({ root, context, asked }) => {
-		const populate = async (folder: string) => {
-			await fs.mkdir(path.join(root, folder, 'pkg'), { recursive: true });
-			await Promise.all(Array.from({ length: 2100 }, (_, index) => fs.writeFile(path.join(root, folder, 'pkg', index + '.js'), 'x')));
-		};
-		await fs.writeFile(path.join(root, '.gitignore'), 'node_modules\nlib/node_modules\n');
-		await populate('node_modules');
-		await populate('lib/node_modules');
+		await fs.writeFile(path.join(root, '.gitignore'), 'node_modules\n');
+		await fs.mkdir(path.join(root, 'node_modules', 'pkg'), { recursive: true });
+		await Promise.all(Array.from({ length: 2100 }, (_, index) => fs.writeFile(path.join(root, 'node_modules', 'pkg', index + '.js'), 'x')));
+		// Without a lockfile the folder is not provably reinstallable, so the entry cap still applies.
+		const noLockfile = await handleFileTool(context, 'delete_path', { path: 'node_modules' });
 		await fs.writeFile(path.join(root, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n');
-		git(root, 'add', '.');
-		git(root, 'commit', '-qm', 'lock');
-		// Without a lockfile beside it the folder is not provably reinstallable, so the entry cap still applies.
-		const noLockfile = await handleFileTool(context, 'delete_path', { path: 'lib/node_modules' });
 		const repaired = await handleFileTool(context, 'delete_path', { path: 'node_modules' });
-		assert.deepEqual({
-			noLockfile: noLockfile.text,
-			repaired: repaired.text,
-			asked: asked.length,
-			left: await Promise.all(['node_modules', 'lib/node_modules'].map(folder => exists(path.join(root, folder))))
-		}, { noLockfile: 'POLICY_DENIED: too-many-entries', repaired: 'DELETED node_modules', asked: 0, left: [false, true] });
+		assert.deepEqual({ noLockfile: noLockfile.text, repaired: repaired.text, asked: asked.length, left: await exists(path.join(root, 'node_modules')) },
+			{ noLockfile: 'POLICY_DENIED: too-many-entries', repaired: 'DELETED node_modules', asked: 0, left: false });
 	});
 });
 
@@ -169,5 +159,28 @@ test('a node_modules that git does not ignore is still capped, because reinstall
 		await fs.writeFile(path.join(root, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n');
 		const result = await handleFileTool(context, 'delete_path', { path: 'node_modules' });
 		assert.deepEqual([result.text, await exists(path.join(root, 'node_modules'))], ['POLICY_DENIED: too-many-entries', true]);
+	});
+});
+
+test('a dependency folder is refused when a protected folder hides inside it, accepted with the lockfile at a workspace root, and links are never followed', async () => {
+	await withProject(async ({ root, base, context }) => {
+		await fs.writeFile(path.join(root, '.gitignore'), 'node_modules\n');
+		await fs.writeFile(path.join(root, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n');
+		await fs.mkdir(path.join(root, 'node_modules', '.pnpm', 'dep@1', 'node_modules', 'dep', '.git'), { recursive: true });
+		const nested = await handleFileTool(context, 'delete_path', { path: 'node_modules' });
+		await fs.rm(path.join(root, 'node_modules'), { recursive: true });
+
+		const outside = path.join(base, 'outside');
+		await fs.mkdir(outside);
+		await fs.writeFile(path.join(outside, 'keep.txt'), 'mine');
+		await fs.mkdir(path.join(root, 'apps', 'web', 'node_modules'), { recursive: true });
+		await fs.symlink(outside, path.join(root, 'apps', 'web', 'node_modules', 'linked'), 'junction');
+		const workspace = await handleFileTool(context, 'delete_path', { path: 'apps/web/node_modules' });
+		assert.deepEqual({
+			nested: nested.text,
+			workspace: workspace.text,
+			kept: await exists(path.join(outside, 'keep.txt')),
+			gone: !await exists(path.join(root, 'apps', 'web', 'node_modules'))
+		}, { nested: 'POLICY_DENIED: protected-path', workspace: 'DELETED apps/web/node_modules', kept: true, gone: true });
 	});
 });
