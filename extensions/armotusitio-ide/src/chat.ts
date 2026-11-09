@@ -404,7 +404,13 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 		permissionsPreset: () => configuredPreset(vscode.workspace.getConfiguration('atsHarness').get('permissionsPreset')),
 		openFile: file => vscode.commands.executeCommand('vscode.open', vscode.Uri.file(file)),
 		runsDirectory: (root: string) => controller.runsDirectory?.(root),
-		doctor: async (root: string) => doctorReport(controller.doctorFor ? await controller.doctorFor(root) : [])
+		doctor: async (root: string) => doctorReport(controller.doctorFor ? await controller.doctorFor(root) : []),
+		mcp: controller.mcpServers && {
+			t, store: controller.mcpServers,
+			confirm: async (summary: string) => { const confirm = t('Conectar'); return await vscode.window.showWarningMessage(summary, { modal: true }, confirm) === confirm; },
+			askSecret: (prompt: string) => vscode.window.showInputBox({ title: prompt, password: true, ignoreFocusOut: true }),
+			workManagement: async () => mcp.enabled() ? handle('/mcp', new vscode.CancellationTokenSource().token) : undefined
+		}
 	};
 	/** Project files matching what the user typed after `@`; the webview asks on every keystroke. */
 	const suggestFiles = async (folder, query: string) => {

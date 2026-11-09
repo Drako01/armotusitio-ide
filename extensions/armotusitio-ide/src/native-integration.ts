@@ -31,6 +31,7 @@ import { repoFingerprint } from './native-git-tools.ts';
 import { projectPermissionsDigest } from './native-run-integrity.ts';
 import type { PermissionPreset } from './native-permissions-types.ts';
 import { runEditorTool, type EditorBackend } from './native-editor-tools.ts';
+import { McpServerStore } from './native-mcp-servers.ts';
 import { KeychainDevSecrets } from './native-dev-secrets.ts';
 import { doctorReport, runDoctor, type DoctorCheck, type Exec } from './native-machine-doctor.ts';
 import { collectOrphans, validateTemplate, type EnvironmentTemplate } from './native-ephemeral-env.ts';
@@ -351,10 +352,13 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			} : {}),
 			...(delegate ? { delegateEntry: path.join(root, authority.entry!) } : {})
 		};
+		// User-added MCP servers only reach a native conversation that can ask the user: each of their tools goes through `approve`.
+		const userServers = native && approve ? await mcpServers.launchEntries() : {};
+		if (Object.keys(userServers).length) { config.mcpServers = Object.keys(userServers); }
 		const configFile = path.join(directory, 'runner.json');
 		await fs.writeFile(configFile, JSON.stringify(config), { mode: 0o600 });
 		const launch = { command: process.execPath, args: [path.join(context.extensionPath ?? context.extensionUri?.fsPath ?? '', 'dist', 'ats-runner.js'), configFile], env: { ELECTRON_RUN_AS_NODE: '1' }, mcpConfigFile: path.join(directory, 'mcp.json'), ...(writerTools ? { git: true, files: true } : {}), ...(native ? { approve: true } : {}) };
-		await fs.writeFile(launch.mcpConfigFile, JSON.stringify({ mcpServers: { 'ats-runner': { type: 'stdio', command: launch.command, args: launch.args, env: launch.env } } }), { mode: 0o600 });
+		await fs.writeFile(launch.mcpConfigFile, JSON.stringify({ mcpServers: { ...userServers, 'ats-runner': { type: 'stdio', command: launch.command, args: launch.args, env: launch.env } } }), { mode: 0o600 });
 		return {
 			launch, policy: createCommandPolicy(approve ? { ...policy, permissions: await loadPermissions(root, undefined, vscode.l10n.t, { preset: permissionsPreset() }) } : policy).describe(), ecosystems: describeEcosystems(subprojects),
 			// The configuration goes; the command logs and audit stay with the run for the report.
@@ -370,11 +374,14 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 	 * (structured | native | auto); an incompatible CLI keeps the structured transport and says why once per provider.
 	 */
 	// Each AI profile is a private config directory (CLAUDE_CONFIG_DIR / CODEX_HOME) under the IDE storage, never inside a project.
+	/** MCP servers the user connected with `/mcp`; credentials stay in the IDE's secret storage. */
+	const mcpServers = new McpServerStore(path.join(context.globalStorageUri.fsPath, 'mcp-servers'), context.secrets);
 	const profiles = new ProfileRegistry(path.join(context.globalStorageUri.fsPath, 'ai-profiles'), (provider, env) => new Promise(resolve => {
 		resolveNativeCommand(provider, provider === 'claude' ? ['auth', 'status'] : ['login', 'status'], env).then(resolved => execFile(resolved.executable, resolved.args, { env, timeout: 15_000, windowsHide: true, maxBuffer: 64 * 1024 }, (error, stdout, stderr) => resolve({ code: error ? 1 : 0, output: stdout + stderr })), () => resolve(undefined));
 	}));
 	// The chat reads and assigns accounts through the same registry the commands use.
 	controller.profiles = profiles;
+	controller.mcpServers = mcpServers;
 	const profileDeps = {
 		registry: profiles,
 		rootOf: async () => {
