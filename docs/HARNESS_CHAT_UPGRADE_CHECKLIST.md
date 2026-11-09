@@ -116,7 +116,7 @@ Next, in this order:
 2. **W1 remainder:** permissions management screen (list, revoke, audit) inside the chat or as a tab sharing the accounts panel pattern; invalidate grants on security-context change; E2E restart through the real chat.
 3. **W4 `/mcp`:** the chat already has a `/mcp` command for the ArmotuSitio integration only. Needed: store server definitions per user/project (secrets in SecretStorage), per-server trust consent through the permission broker, inject into the Claude `--mcp-config` (today `--strict-mcp-config` allows only `ats-runner`) and into Codex config, allow `mcp` tool calls per tool in `decideProviderCall` (today every `mcp` call from a provider is denied as `tool-unavailable`), `/mcp list|add|remove|status`.
 4. **W2 tool inventory** versus Claude Code and Codex, then close the gaps through the central approval path.
-5. **AUD-P1-004:** two-writer and crash E2E (20 consecutive cancel/crash runs), then `strict:true`, DoD-08, Codex streaming bound audit.
+5. **AUD-P1-004:** two-writer and crash E2E (20 consecutive cancel/crash runs), then `strict:true`, DoD-08, Codex streaming bound (DONE: the Codex adapter accumulated `item/agentMessage/delta` without limit; now bounded at `MAX_TEXT_CHARS`, stops emitting and reports `message-truncated` once; the runaway-stream conformance test now runs for both providers, PASS) audit.
 6. **Owner actions:** Codex real runs (after quota reset), second real account per provider to unblock the real two-account checks, "Require branches to be up to date" in the ruleset, `sin-release` label before merge if no release is wanted.
 
 ## Blocked or owned by the repository owner

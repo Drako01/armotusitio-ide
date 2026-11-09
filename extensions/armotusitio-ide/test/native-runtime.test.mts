@@ -69,22 +69,20 @@ for (const provider of ['codex', 'claude'] as const) {
 			} finally { await h.close(); }
 		});
 
-		if (provider === 'claude') {
-			test('a runaway stream stops accumulating at the event bound and says so (AUD-P2-004)', async () => {
-				const h = await harness(provider);
-				try {
-					const session = await h.session();
-					const events = record(session);
-					const result = await session.runTurn('FLOOD 30000', 'conversation');
-					const deltaLengths = events.filter(event => event.payload.type === 'message.delta').map(event => (event.payload as { text: string }).text.length);
-					assert.deepEqual({
-						status: result.status, outputBound: result.output.length <= MAX_TEXT_CHARS, reachedBound: Math.max(...deltaLengths) === MAX_TEXT_CHARS,
-						deltasBound: deltaLengths.every(length => length <= MAX_TEXT_CHARS), stoppedEarly: deltaLengths.length < 30000,
-						truncationReported: events.filter(event => event.payload.type === 'diagnostic' && event.payload.text === 'message-truncated').length
-					}, { status: 'completed', outputBound: true, reachedBound: true, deltasBound: true, stoppedEarly: true, truncationReported: 1 });
-				} finally { await h.close(); }
-			});
-		}
+		test('a runaway stream stops accumulating at the event bound and says so (AUD-P2-004)', async () => {
+			const h = await harness(provider);
+			try {
+				const session = await h.session();
+				const events = record(session);
+				const result = await session.runTurn('FLOOD 30000', 'conversation');
+				const deltaLengths = events.filter(event => event.payload.type === 'message.delta').map(event => (event.payload as { text: string }).text.length);
+				assert.deepEqual({
+					status: result.status, outputBound: result.output.length <= MAX_TEXT_CHARS, reachedBound: Math.max(...deltaLengths) === MAX_TEXT_CHARS,
+					deltasBound: deltaLengths.every(length => length <= MAX_TEXT_CHARS), stoppedEarly: deltaLengths.length < 30000,
+					truncationReported: events.filter(event => event.payload.type === 'diagnostic' && event.payload.text === 'message-truncated').length
+				}, { status: 'completed', outputBound: true, reachedBound: true, deltasBound: true, stoppedEarly: true, truncationReported: 1 });
+			} finally { await h.close(); }
+		});
 
 		test('approvals decide execution: deny, once, and the floor without a card (S05/S06)', async () => {
 			const h = await harness(provider);

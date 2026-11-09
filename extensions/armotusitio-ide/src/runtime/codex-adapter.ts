@@ -21,6 +21,7 @@ import {
 	type TurnSteerResponse, type UserInput
 } from './codex-protocol.generated.ts';
 import { RuntimeError, type AdapterHost, type AgentAdapter, type AgentConnection, type AgentQuestion, type RuntimeCapabilities, type SessionOpenOptions, type SessionRole, type ToolCall, type TurnInput, type TurnResult } from './contracts.ts';
+import { MAX_TEXT_CHARS } from './event-bridge.ts';
 import { JsonRpcConnection, ProviderRequestError } from './json-rpc.ts';
 import { startProviderProcess, type ProviderProcess } from './provider-process.ts';
 
@@ -222,8 +223,13 @@ class CodexConnection implements AgentConnection {
 			}
 			case 'item/agentMessage/delta': {
 				const { itemId, delta } = value as { itemId: string; delta: string };
-				this.messages.set(itemId, (this.messages.get(itemId) ?? '') + delta);
-				this.host.emit({ turnId, payload: { type: 'message.delta', itemId, text: this.messages.get(itemId)! } });
+				// A runaway stream stops growing at the event bound (like the Claude adapter) and says so once.
+				const before = this.messages.get(itemId) ?? '';
+				if (before.length >= MAX_TEXT_CHARS) { return; }
+				const text = (before + delta).slice(0, MAX_TEXT_CHARS);
+				this.messages.set(itemId, text);
+				this.host.emit({ turnId, payload: { type: 'message.delta', itemId, text } });
+				if (text.length >= MAX_TEXT_CHARS) { this.host.emit({ turnId, payload: { type: 'diagnostic', source: 'codex', text: 'message-truncated' } }); }
 				return;
 			}
 			case 'item/commandExecution/outputDelta': {
