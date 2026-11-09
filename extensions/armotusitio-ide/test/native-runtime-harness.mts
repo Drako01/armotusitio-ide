@@ -69,8 +69,10 @@ export async function harness(provider: Provider, extraEnv: Record<string, strin
 	execFileSync('git', ['init', '-q', '-b', 'main', root]);
 	await fs.writeFile(path.join(root, 'README.md'), 'seed\n');
 	if (fake) { await installFakeCli(bin, provider, provider === 'codex' ? FAKE_CODEX : FAKE_CLAUDE); }
+	// Windows names the variable "Path" in PowerShell and "PATH" in Git Bash; writing a second spelling would leave the original first.
+	const pathKey = Object.keys(process.env).find(key => key.toLowerCase() === 'path') ?? 'PATH';
 	// Real providers keep the user's HOME (their login lives there); fakes get a throwaway one.
-	const env: NodeJS.ProcessEnv = fake ? { ...process.env, PATH: bin + path.delimiter + (process.env.PATH ?? ''), FAKE_STATE_DIR: state, HOME: home, USERPROFILE: home, ...extraEnv } : { ...process.env, ...extraEnv };
+	const env: NodeJS.ProcessEnv = fake ? { ...process.env, [pathKey]: bin + path.delimiter + (process.env.PATH ?? ''), FAKE_STATE_DIR: state, HOME: home, USERPROFILE: home, ...extraEnv } : { ...process.env, ...extraEnv };
 	const cards: ApprovalDraft[] = [];
 	const mediated: ToolCall[] = [];
 	const asked: AgentQuestion[][] = [];
