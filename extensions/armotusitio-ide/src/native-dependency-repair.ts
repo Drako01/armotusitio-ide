@@ -30,6 +30,8 @@ export interface RepairDeps {
 	remove(relative: string): Promise<RepairStepResult>;
 	root: string;
 	sleep?(ms: number): Promise<void>;
+	/** Aborted when the user or the run cancels the repair: no further step starts. */
+	signal?: AbortSignal;
 }
 export interface RepairInput { path?: unknown; mode?: unknown }
 interface Diagnosis { installed: boolean; missing: string[]; unreadable: string[] }
@@ -62,6 +64,8 @@ async function diagnose(root: string, projectPath: string): Promise<Diagnosis> {
 }
 
 const tail = (text: string): string => redactSecrets(text.trim()).slice(-TAIL_CHARS);
+
+const cancelled = (projectPath: string, attempts: string[]): RepairStepResult => ({ isError: true, text: 'CANCELLED ' + projectPath + '. Attempts: ' + (attempts.join('; ') || 'none') + '. Nothing else was started.' });
 
 function failed(projectPath: string, attempts: string[], last: RepairStepResult): RepairStepResult {
 	const failure = classifyFailure(last.text);
@@ -131,9 +135,11 @@ export async function repairDependencies(deps: RepairDeps, input: RepairInput): 
 	// Do not delete what a policy refused to touch, what needs the user, or what a full disk will not fix.
 	if (first.isError && SKIP_DELETE_CLASSES.includes(classifyFailure(first.text).class)) { return failed(projectPath, attempts, first); }
 
+	if (deps.signal?.aborted) { return cancelled(projectPath, attempts); }
 	const removed = await deps.remove(path.posix.join(projectPath, 'node_modules'));
 	attempts.push('delete node_modules ' + (removed.isError ? 'refused' : 'done'));
 	if (removed.isError) { return failed(projectPath, attempts, removed); }
+	if (deps.signal?.aborted) { return cancelled(projectPath, attempts); }
 	const second = await runInstall('clean install');
 	return await verified('clean reinstall', second) ?? failed(projectPath, attempts, second);
 }

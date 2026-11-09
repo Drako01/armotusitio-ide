@@ -97,9 +97,12 @@ test('provider stdio discovers and invokes the Work Management tool through ats-
 	const child = spawn(process.execPath, [runnerEntry, configFile], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
 	const lines = readline.createInterface({ input: child.stdout });
 	let id = 0;
-	const rpc = (method: string, params = {}): Promise<any> => new Promise((resolve, reject) => {
+	// A cold start loads every runner module and, inside the parallel suite, competes with hundreds of other processes: the process gets a long
+	// budget to answer its first request (`initialize`), and every later call keeps the strict one, so a real hang is still caught fast.
+	const START_MS = 60_000, CALL_MS = 5000;
+	const rpc = (method: string, params = {}, budget = CALL_MS): Promise<any> => new Promise((resolve, reject) => {
 		const current = ++id;
-		const timer = setTimeout(() => { lines.off('line', receive); reject(Error('stdio timeout')); }, 5000);
+		const timer = setTimeout(() => { lines.off('line', receive); reject(Error('stdio timeout after ' + budget + ' ms (' + method + ')')); }, budget);
 		const receive = (line: string): void => {
 			const response = JSON.parse(line);
 			if (response.id === current) { clearTimeout(timer); lines.off('line', receive); resolve(response.result); }
@@ -108,6 +111,7 @@ test('provider stdio discovers and invokes the Work Management tool through ats-
 		child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: current, method, params }) + '\n');
 	});
 	try {
+		await rpc('initialize', { protocolVersion: '2025-06-18' }, START_MS);
 		const tools = await rpc('tools/list');
 		assert.ok(tools.tools.some((t: { name: string }) => t.name === 'armotusitio__get_issue_context'));
 		assert.ok(!JSON.stringify(tools).includes(channel.token));

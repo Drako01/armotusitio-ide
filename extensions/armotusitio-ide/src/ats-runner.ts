@@ -21,6 +21,7 @@ import { GIT_TOOLS, endsGitDelivery, handleGitTool } from './native-git-tools.ts
 import { FILE_TOOLS, handleFileTool } from './native-file-tools.ts';
 import { repairDependencies } from './native-dependency-repair.ts';
 import { createCallGuard } from './native-call-guard.ts';
+import { MAX_RUNNING_REPAIRS, RepairTable, type RepairSnapshot } from './native-repair-table.ts';
 import { acquireInstallLock } from './native-install-lock.ts';
 import { detectEcosystems } from './native-ecosystems.ts';
 import { syncCommands } from './native-dependency-sync.ts';
@@ -70,7 +71,7 @@ export interface RunnerConfig {
 }
 
 /** Seams for tests; in production the permissions come from the files and approvals from the channel. */
-export interface RunnerDeps { permissions?: PermissionSet; ask?: ApprovalAsk; question?: ApproveContext['question']; terminal?: TerminalRunner; jobs?: JobTable; /** Silence before a prompt stops a command; for tests. */ promptIdleMs?: number }
+export interface RunnerDeps { permissions?: PermissionSet; ask?: ApprovalAsk; question?: ApproveContext['question']; terminal?: TerminalRunner; jobs?: JobTable; repairs?: RepairTable; /** Silence before a prompt stops a command; for tests. */ promptIdleMs?: number }
 
 /** What the extension needs to start one policy-approved command in the visible IDE terminal. */
 export interface TerminalRequest { command: string; args: string[]; cwd: string; timeoutSec?: number; delegate: boolean }
@@ -242,7 +243,7 @@ const REPAIR_TOOL = {
 	name: 'repair_dependencies',
 	description: 'Diagnose and repair the dependency install of a project (Node: corrupt or incomplete node_modules, missing packages; Go, Rust, .NET, Python uv, PHP: a lockfile reinstall) with the least invasive step: ' +
 		'nothing if healthy, a lockfile-exact reinstall in place, and only if that fails one approved deletion of node_modules plus a clean install. ' +
-		'It runs under the same command and file policies and approvals as `run` and `delete_path`, never loops, and reports the cause, the attempts and the next step. Use it instead of asking the user to delete node_modules.',
+		'A diagnosis answers at once; a repair runs in the background and returns an id: keep working on independent tasks and read the result with `repair_status`, and do not call the dependencies repaired until it says SUCCEEDED. It runs under the same command and file policies and approvals as `run` and `delete_path`, never loops, and reports the cause, the attempts and the next step. Use it instead of asking the user to delete node_modules.',
 	inputSchema: {
 		type: 'object',
 		properties: {
@@ -253,6 +254,11 @@ const REPAIR_TOOL = {
 	}
 };
 const REPAIR_INSTALL_TIMEOUT_SEC = 900;
+const REPAIR_STATUS_TOOL = {
+	name: 'repair_status',
+	description: 'Read the outcome of a background `repair_dependencies` (state RUNNING, SUCCEEDED, FAILED or CANCELLED, plus its result text), list all repairs, or stop one with stop=true. A repair is finished only when the state is SUCCEEDED.',
+	inputSchema: { type: 'object', properties: { id: { type: 'string', description: 'The repair id returned by repair_dependencies; omit to list.' }, stop: { type: 'boolean', description: 'Stop that repair.' } }, additionalProperties: false }
+};
 
 /** Answer one `repair_dependencies` call: every effect is delegated to the policy-checked handlers above. Exported for tests. */
 /**
@@ -260,32 +266,62 @@ const REPAIR_INSTALL_TIMEOUT_SEC = 900;
  * id and a log in the run folder, a timeout, a cap of running jobs and is stopped when the run ends. The wait is on the job's end, not a
  * poll, and success is the exit code, never the absence of output.
  */
-export async function runAsJob(config: RunnerConfig, input: { command: string; args: string[]; cwd: string; timeoutSec: number }, calls: number, deps: RunnerDeps): Promise<{ isError: boolean; text: string }> {
+export async function runAsJob(config: RunnerConfig, input: { command: string; args: string[]; cwd: string; timeoutSec: number }, calls: number, deps: RunnerDeps, signal?: AbortSignal): Promise<{ isError: boolean; text: string }> {
 	const started = await handleRun(config, input, calls, deps, 'job');
 	const id = /^started (job-\d+)/.exec(started.text)?.[1];
 	if (started.isError || !id) { return started; }
-	const job = await (deps.jobs ?? JOBS).wait(id);
-	const ok = job?.state === 'exited' && job.exitCode === 0;
-	return { isError: !ok, text: (job?.state === 'timed-out' ? 'timed out after ' + input.timeoutSec + ' s. ' : '') + (job ? describeJob(job) : 'The background job ' + id + ' disappeared.') };
+	const jobs = deps.jobs ?? JOBS;
+	// Cancelling the repair stops the install process tree; the wait below then ends at once.
+	const onAbort = (): void => { void jobs.stop(id); };
+	if (signal?.aborted) { onAbort(); } else { signal?.addEventListener('abort', onAbort, { once: true }); }
+	try {
+		const job = await jobs.wait(id);
+		const ok = job?.state === 'exited' && job.exitCode === 0;
+		return { isError: !ok, text: (job?.state === 'timed-out' ? 'timed out after ' + input.timeoutSec + ' s. ' : '') + (job ? describeJob(job) : 'The background job ' + id + ' disappeared.') };
+	} finally { signal?.removeEventListener('abort', onAbort); }
 }
 
+const REPAIRS = new RepairTable();
+
+/**
+ * `repair_dependencies`. A diagnosis answers at once. A repair starts in the background and returns its id: the agent keeps working and
+ * reads the outcome with `repair_status`. The folder lock is held until the repair ends, however long the installs take. Exported for tests.
+ */
 export async function handleRepair(config: RunnerConfig, input: unknown, calls: number, deps: RunnerDeps = {}): Promise<{ isError: boolean; text: string }> {
 	if (!config.files) { return { isError: true, text: 'Unknown tool' }; }
 	const subprojects = await detectEcosystems(config.root);
-	const wanted = input as { path?: unknown; mode?: unknown } | null;
+	const wanted = (input ?? {}) as { path?: unknown; mode?: unknown };
+	if (wanted.mode !== undefined && wanted.mode !== 'repair') { return await repairWithLock(config, input, calls, deps, subprojects); }
 	// A repair rewrites a dependency folder: only one process (this run, another agent, another IDE window) may do it at a time.
-	const lock = wanted?.mode === 'diagnose' ? undefined : await acquireInstallLock(path.resolve(config.root, typeof wanted?.path === 'string' ? wanted.path : '.'));
-	if (!lock && wanted?.mode !== 'diagnose') { return { isError: true, text: 'BLOCKED install-in-progress: another process is already repairing or installing this folder. Wait for it to finish, then run the repair again.' }; }
-	try {
-		return await repairWithLock(config, input, calls, deps, subprojects);
-	} finally { await lock?.release(); }
+	const project = typeof wanted.path === 'string' && wanted.path.trim() ? wanted.path : '.';
+	const lock = await acquireInstallLock(path.resolve(config.root, project));
+	if (!lock) { return { isError: true, text: 'BLOCKED install-in-progress: another process is already repairing or installing this folder. Wait for it to finish, then run the repair again.' }; }
+	const repairs = deps.repairs ?? REPAIRS;
+	const id = repairs.start(project, async signal => {
+		try { return await repairWithLock(config, input, calls, deps, subprojects, signal); } finally { await lock.release(); }
+	});
+	if (id === 'limit') { await lock.release(); return { isError: true, text: 'Too many repairs are running (max ' + MAX_RUNNING_REPAIRS + '). Wait for one to finish or stop it with repair_status.' }; }
+	const started = { isError: false, text: 'STARTED ' + id + ' for "' + project + '". It runs in the background. Keep working on independent tasks and read the outcome with repair_status {"id":"' + id + '"}. Do not report the dependencies as repaired until it says REPAIRED.' };
+	await auditTool(config, REPAIR_TOOL.name, started);
+	return started;
 }
 
-async function repairWithLock(config: RunnerConfig, input: unknown, calls: number, deps: RunnerDeps, subprojects: Awaited<ReturnType<typeof detectEcosystems>>): Promise<{ isError: boolean; text: string }> {
+/** `repair_status`: list repairs, read one, or stop it. Exported for tests. */
+export async function handleRepairStatus(input: unknown, deps: RunnerDeps = {}): Promise<{ isError: boolean; text: string }> {
+	const repairs = deps.repairs ?? REPAIRS;
+	const value = (input ?? {}) as { id?: unknown; stop?: unknown };
+	if ((value.id !== undefined && typeof value.id !== 'string') || (value.stop !== undefined && typeof value.stop !== 'boolean')) { return { isError: true, text: 'Invalid input: { id?: string, stop?: boolean }' }; }
+	const describe = (repair: RepairSnapshot): string => repair.id + ' ' + repair.project + ' ' + repair.state.toUpperCase() + ' (' + repair.runningSec + ' s)' + (repair.text ? '\n' + repair.text : '');
+	if (value.id === undefined) { const all = repairs.list(); return { isError: false, text: all.length ? all.map(describe).join('\n\n') : 'No repairs.' }; }
+	const repair = value.stop ? await repairs.stop(value.id) : repairs.status(value.id);
+	return repair ? { isError: repair.state === 'failed' || repair.state === 'cancelled', text: describe(repair) } : { isError: true, text: 'No repair ' + value.id + '.' };
+}
+
+async function repairWithLock(config: RunnerConfig, input: unknown, calls: number, deps: RunnerDeps, subprojects: Awaited<ReturnType<typeof detectEcosystems>>, signal?: AbortSignal): Promise<{ isError: boolean; text: string }> {
 	const result = await repairDependencies({
-		root: config.root, subprojects,
+		root: config.root, subprojects, signal,
 		installCommands: () => syncCommands(config.root, subprojects),
-		run: (command, args, cwd) => runAsJob(config, { command, args, cwd, timeoutSec: REPAIR_INSTALL_TIMEOUT_SEC }, calls, deps),
+		run: (command, args, cwd) => runAsJob(config, { command, args, cwd, timeoutSec: REPAIR_INSTALL_TIMEOUT_SEC }, calls, deps, signal),
 		remove: relative => handleFiles(config, 'delete_path', { path: relative }, deps)
 	}, (input ?? {}) as Record<string, unknown>);
 	await auditTool(config, REPAIR_TOOL.name, result);
@@ -323,7 +359,6 @@ async function main(): Promise<void> {
 	const send = (message: unknown): void => { process.stdout.write(JSON.stringify(message) + '\n'); };
 	const stopped = new AbortController();
 	let gitQueue = Promise.resolve();
-	let repairQueue = Promise.resolve();
 	let gitDenied = false;
 	// The user's "no" covers that exact call for the rest of the run (or of the turn, in a native session): asking again for
 	// the same thing is not a new question. Any other call (another command, another branch) is still asked normally.
@@ -355,14 +390,14 @@ async function main(): Promise<void> {
 		return ++calls;
 	};
 	const input = readline.createInterface({ input: process.stdin });
-	input.on('close', () => { stopped.abort(); void JOBS.stopAll(); });
+	input.on('close', () => { stopped.abort(); void JOBS.stopAll(); void REPAIRS.stopAll(); });
 	input.on('line', async line => {
 		let request: { id?: unknown; method?: string; params?: { name?: string; arguments?: unknown; protocolVersion?: string } };
 		try { request = JSON.parse(line); } catch { return; }
 		if (request.id === undefined) { return; }
 		const reply = (result: unknown): void => send({ jsonrpc: '2.0', id: request.id, result });
 		if (request.method === 'initialize') { return reply({ protocolVersion: request.params?.protocolVersion ?? '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'ats-runner', version: '1.0.0' } }); }
-		if (request.method === 'tools/list') { return reply({ tools: [TOOL, ...(config.terminal ? [TERMINAL_TOOL] : []), ...(config.jobs ? JOB_TOOLS : []), ...(config.git ? GIT_TOOLS : []), ...(config.files ? [...FILE_TOOLS, REPAIR_TOOL] : []), ...(config.approve ? [APPROVE_TOOL] : []), ...(config.channel ? EDITOR_TOOLS : []), ...(config.channel ? config.mcpTools ?? [] : [])] }); }
+		if (request.method === 'tools/list') { return reply({ tools: [TOOL, ...(config.terminal ? [TERMINAL_TOOL] : []), ...(config.jobs ? JOB_TOOLS : []), ...(config.git ? GIT_TOOLS : []), ...(config.files ? [...FILE_TOOLS, REPAIR_TOOL, REPAIR_STATUS_TOOL] : []), ...(config.approve ? [APPROVE_TOOL] : []), ...(config.channel ? EDITOR_TOOLS : []), ...(config.channel ? config.mcpTools ?? [] : [])] }); }
 		if (request.method === 'ping') { return reply({}); }
 		if (request.method === 'tools/call' && config.channel && request.params?.name?.startsWith(MCP_TOOL_PREFIX) && config.mcpTools?.some(tool => tool.name === request.params!.name)) {
 			calls++;
@@ -413,13 +448,14 @@ async function main(): Promise<void> {
 			const result = await task;
 			return reply({ isError: result.isError, content: [{ type: 'text', text: result.text }] });
 		}
+		if (request.method === 'tools/call' && config.files && request.params?.name === REPAIR_STATUS_TOOL.name) {
+			const result = await handleRepairStatus(request.params.arguments);
+			return reply({ isError: result.isError, content: [{ type: 'text', text: result.text }] });
+		}
 		if (request.method === 'tools/call' && config.files && request.params?.name === REPAIR_TOOL.name) {
 			calls++;
 			const key = callKey(REPAIR_TOOL.name, request.params.arguments);
-			// One repair at a time in this run: two installs on the same folder would corrupt each other.
-			const task = repairQueue.then(() => attempt(key, () => handleRepair(config, request.params!.arguments, calls)));
-			repairQueue = task.then(() => undefined, () => undefined);
-			const result = await task;
+			const result = await attempt(key, () => handleRepair(config, request.params!.arguments, calls));
 			return reply({ isError: result.isError, content: [{ type: 'text', text: result.text }] });
 		}
 		if (request.method === 'tools/call' && config.files && FILE_TOOLS.some(tool => tool.name === request.params?.name)) {

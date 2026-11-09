@@ -105,3 +105,15 @@ test('a long install runs as a job whose exit code decides the result, with a ti
 		}, { ok: [false, true, true], failed: [true, true], timedOut: [true, true], running: 0 });
 	});
 });
+
+test('cancelling a background repair stops the install process tree', async () => {
+	await withProject(async ({ config }) => {
+		const jobs = new JobTable();
+		const abort = new AbortController();
+		const running = runAsJob(config, { command: 'node', args: ['server.cjs'], cwd: '.', timeoutSec: 60 }, 1, { jobs }, abort.signal);
+		await until(() => jobs.list().some(job => job.state === 'running'));
+		abort.abort();
+		const result = await running;
+		assert.deepEqual([result.isError, /stopped/.test(result.text), jobs.list().filter(job => job.state === 'running').length], [true, true, 0]);
+	});
+});

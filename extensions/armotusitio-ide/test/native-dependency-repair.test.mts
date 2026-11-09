@@ -10,7 +10,8 @@ import * as path from 'node:path';
 import { repairDependencies, type RepairDeps, type RepairStepResult } from '../src/native-dependency-repair.ts';
 import { classifyFailure } from '../src/native-failure-class.ts';
 import { acquireInstallLock } from '../src/native-install-lock.ts';
-import { handleRepair, type RunnerConfig } from '../src/ats-runner.ts';
+import { handleRepair, handleRepairStatus, type RunnerConfig } from '../src/ats-runner.ts';
+import { RepairTable } from '../src/native-repair-table.ts';
 
 const OK: RepairStepResult = { isError: false, text: 'done' };
 const fail = (text: string): RepairStepResult => ({ isError: true, text });
@@ -120,17 +121,37 @@ test('the runner tool detects the project itself and is unavailable unless the f
 	});
 });
 
-test('a repair is refused while another process holds the folder, and diagnose is not', async () => {
+test('a repair starts in the background, is read with repair_status, frees the folder at its end, and is refused while another process holds it', async () => {
 	await withProject({}, async h => {
 		await fs.writeFile(path.join(h.root, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n');
 		const base: RunnerConfig = { schemaVersion: 1, root: h.root, env: {}, logDirectory: h.root, policy: { subprojects: [], delegate: false, extras: [] }, permissions: {}, files: true };
+		const repairs = new RepairTable();
 		const held = await acquireInstallLock(h.root);
-		const blocked = await handleRepair(base, {}, 0);
-		const diagnosed = await handleRepair(base, { mode: 'diagnose' }, 0);
+		const blocked = await handleRepair(base, {}, 0, { repairs });
+		const diagnosed = await handleRepair(base, { mode: 'diagnose' }, 0, { repairs });
 		await held?.release();
-		const after = await handleRepair(base, {}, 0);
-		assert.deepEqual([blocked.text.split(':')[0], diagnosed.text.slice(0, 9), after.text.startsWith('BLOCKED install-in-progress')], ['BLOCKED install-in-progress', 'DIAGNOSIS', false]);
+		const started = await handleRepair(base, {}, 0, { repairs });
+		const id = /STARTED (repair-\d+)/.exec(started.text)?.[1] ?? '';
+		const finished = await repairs.wait(id);
+		const status = await handleRepairStatus({ id }, { repairs });
+		const again = await acquireInstallLock(h.root);
+		await again?.release();
+		assert.deepEqual({ blocked: blocked.text.split(':')[0], diagnosed: diagnosed.text.slice(0, 9), started: started.isError, tellsNotToClaim: /Do not report/.test(started.text), final: finished?.state, status: status.text.startsWith(id + ' . FAILED'), freed: !!again, unknown: (await handleRepairStatus({ id: 'repair-99' }, { repairs })).text, invalid: (await handleRepairStatus({ id: 3 }, { repairs })).isError },
+			{ blocked: 'BLOCKED install-in-progress', diagnosed: 'DIAGNOSIS', started: false, tellsNotToClaim: true, final: 'failed', status: true, freed: true, unknown: 'No repair repair-99.', invalid: true });
 	});
+});
+
+test('the repair table caps running repairs, reports success, and stop cancels the work and its next step', async () => {
+	const table = new RepairTable();
+	const open: Array<(result: RepairStepResult) => void> = [];
+	const blocked = (signal: AbortSignal) => new Promise<RepairStepResult>(resolve => { open.push(resolve); signal.addEventListener('abort', () => resolve({ isError: true, text: 'CANCELLED x' })); });
+	const first = table.start('a', blocked), second = table.start('b', blocked), third = table.start('c', blocked);
+	const running = table.list().map(repair => repair.state);
+	open[0]({ isError: false, text: 'REPAIRED a' });
+	const done = await table.wait(first as string);
+	const stopped = await table.stop(second as string);
+	const gone = await table.stop('repair-99');
+	assert.deepEqual({ third, running, done: [done?.state, done?.text], stopped: stopped?.state, gone }, { third: 'limit', running: ['running', 'running'], done: ['succeeded', 'REPAIRED a'], stopped: 'cancelled', gone: undefined });
 });
 
 test('other ecosystems are repaired by their lockfile install, judged by the exit code, and never by deleting anything', async () => {
