@@ -36,7 +36,7 @@ export const FILE_TOOLS = [
 		name: 'delete_path',
 		description: 'Delete a file or folder (recursively) inside the project. Use this instead of rm/del, which the command policy denies. ' +
 			'Deleting untracked, locally modified or sensitive files asks the user first. Refused for .git, .armotusitio and paths outside the project. ' +
-				'A git-ignored node_modules next to a lockfile can be deleted whole, whatever its size: use it to repair a corrupt install, then run the package manager install.',
+			'A git-ignored node_modules next to a lockfile can be deleted whole, whatever its size: use it to repair a corrupt install, then run the package manager install.',
 		inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'Project-relative path, e.g. "src/old.ts".' } }, required: ['path'], additionalProperties: false }
 	},
 	{
