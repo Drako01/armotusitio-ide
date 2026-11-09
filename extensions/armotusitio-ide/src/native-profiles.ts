@@ -30,8 +30,11 @@ export interface AiProfile { id: string; provider: NativeProvider; alias: string
 type Assignment = Partial<Record<NativeProvider, string>>;
 interface ProfilesFile { schemaVersion: number; profiles: AiProfile[]; defaults: Assignment; assignments: Record<string, Assignment> }
 
-/** What the real CLI says about a profile; `unknown` when it could not be told (never assumed to be logged in). */
-export type AuthState = 'authenticated' | 'not-authenticated' | 'unknown' | 'cli-unavailable';
+/**
+ * What the real CLI says about a profile; `unknown` when it could not be told (never assumed to be logged in).
+ * `connection-failed`: the status command ran and failed or timed out. `connecting`: a sign-in terminal is open (set by the UI, never by the CLI).
+ */
+export type AuthState = 'authenticated' | 'not-authenticated' | 'unknown' | 'cli-unavailable' | 'connection-failed' | 'connecting';
 /** Runs the provider's own login-status command with the given environment; `undefined` when the CLI is not installed. */
 export type ProfileExec = (provider: NativeProvider, env: NodeJS.ProcessEnv) => Promise<{ code: number; output: string } | undefined>;
 
@@ -148,7 +151,8 @@ export class ProfileRegistry {
 
 	/** The real login state of the profile's directory, asked to the provider CLI. */
 	async authState(profile: AiProfile, base: NodeJS.ProcessEnv): Promise<AuthState> {
-		const result = await this.exec(profile.provider, this.environment(profile, base)).catch(() => undefined);
+		let result: Awaited<ReturnType<ProfileExec>>;
+		try { result = await this.exec(profile.provider, this.environment(profile, base)); } catch { return 'connection-failed'; }
 		if (!result) { return 'cli-unavailable'; }
 		if (profile.provider === 'claude') {
 			try { return (JSON.parse(result.output) as { loggedIn?: unknown }).loggedIn === true ? 'authenticated' : 'not-authenticated'; } catch { return 'unknown'; }

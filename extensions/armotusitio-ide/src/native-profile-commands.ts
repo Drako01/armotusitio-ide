@@ -23,6 +23,8 @@ export function authStateLabel(t: (text: string) => string, state: AuthState): s
 		case 'not-authenticated': return '$(warning) ' + t('Sin sesi\u00f3n');
 		case 'cli-unavailable': return '$(error) ' + t('CLI no disponible');
 		case 'unknown': return '$(question) ' + t('Estado desconocido');
+		case 'connection-failed': return '$(error) ' + t('Fall\u00f3 la conexi\u00f3n');
+		case 'connecting': return '$(sync) ' + t('Conectando\u2026');
 	}
 }
 
@@ -31,12 +33,26 @@ export interface ProfileCommandDeps {
 	/** The workspace root the chat works on (asks when there are several). */
 	rootOf(): Promise<string | undefined>;
 	showError(error: unknown): void;
+	/** Called when a sign-in terminal closes, so open screens re-check the real state. */
+	onSignInEnded?(): void;
 }
+
+/** Profiles whose sign-in terminal is open, per command surface: reported as `connecting` until the terminal closes. */
+const signingIn = new WeakMap<ProfileCommandDeps, Set<string>>();
+export function signingInOf(deps: ProfileCommandDeps): ReadonlySet<string> { return signingIn.get(deps) ?? new Set(); }
 
 async function openSignIn(vscode: Host, deps: ProfileCommandDeps, profile: AiProfile): Promise<void> {
 	const t = vscode.l10n.t;
 	// A terminal with the profile directory and without any other account's credentials: the provider does its own OAuth.
 	const terminal = vscode.window.createTerminal({ name: t('Cuenta {0}', profile.alias), env: deps.registry.terminalEnvironment(profile) });
+	const open = signingIn.get(deps) ?? new Set<string>();
+	signingIn.set(deps, open.add(profile.id));
+	const closed = vscode.window.onDidCloseTerminal((closing: unknown) => {
+		if (closing !== terminal) { return; }
+		open.delete(profile.id);
+		closed.dispose();
+		deps.onSignInEnded?.();
+	});
 	terminal.show();
 	terminal.sendText(LOGIN_COMMAND[profile.provider]);
 }

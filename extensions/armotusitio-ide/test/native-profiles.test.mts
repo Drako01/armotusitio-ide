@@ -90,7 +90,8 @@ test('authentication state is what the provider CLI reports for that profile, ne
 		const codex = await registry.add('codex', 'y');
 		const garbled = new ProfileRegistry(directory, async () => ({ code: 0, output: 'not json' }));
 		const missing = new ProfileRegistry(directory, never);
-		const states = [await registry.authState(claude, {}), await registry.authState(codex, {}), await garbled.authState(claude, {}), await missing.authState(claude, {})];
-		assert.deepEqual({ states, isolated: seen.every((value, index) => value === registry.configDirectory(index === 0 ? claude : codex)) }, { states: ['not-authenticated', 'not-authenticated', 'unknown', 'cli-unavailable'], isolated: true });
+		const broken = new ProfileRegistry(directory, async () => { throw Error('timeout'); });
+			const states = [await registry.authState(claude, {}), await registry.authState(codex, {}), await garbled.authState(claude, {}), await missing.authState(claude, {}), await broken.authState(claude, {})];
+		assert.deepEqual({ states, isolated: seen.every((value, index) => value === registry.configDirectory(index === 0 ? claude : codex)) }, { states: ['not-authenticated', 'not-authenticated', 'unknown', 'cli-unavailable', 'connection-failed'], isolated: true });
 	});
 });

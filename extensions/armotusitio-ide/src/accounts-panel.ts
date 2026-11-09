@@ -8,7 +8,7 @@
  */
 import * as path from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { profileActions, type ProfileCommandDeps } from './native-profile-commands.ts';
+import { profileActions, signingInOf, type ProfileCommandDeps } from './native-profile-commands.ts';
 import type { AuthState } from './native-profiles.ts';
 import type { NativeProvider } from './native-providers.ts';
 
@@ -45,22 +45,25 @@ export function accountsLabels(t: (text: string) => string): AccountsLabels {
 		empty: t('Sin cuentas'), emptyHint: t('Se usa la sesi\u00f3n del IDE. Agreg\u00e1 una cuenta para separar personal y trabajo.'),
 		signIn: t('Iniciar sesi\u00f3n'), makeDefault: t('Hacer predeterminada'), useHere: t('Usar aqu\u00ed'), stopHere: t('Dejar de usar aqu\u00ed'), rename: t('Renombrar'), remove: t('Eliminar'), workspaces: t('Workspaces'),
 		states: {
-			authenticated: t('Autenticada'), 'not-authenticated': t('Sin sesi\u00f3n'), unknown: t('Estado desconocido'), 'cli-unavailable': t('CLI no disponible')
+			authenticated: t('Autenticada'), 'not-authenticated': t('Sin sesi\u00f3n'), unknown: t('Estado desconocido'), 'cli-unavailable': t('CLI no disponible'),
+			'connection-failed': t('Fall\u00f3 la conexi\u00f3n'), connecting: t('Conectando\u2026')
 		}
 	};
 }
 
 export function registerAccountsPanel(context: Host, vscode: Host, deps: ProfileCommandDeps): void {
 	const t: (text: string) => string = vscode.l10n.t;
-	const actions = profileActions(vscode, deps);
 	let panel: Host;
+	const previous = deps.onSignInEnded;
+	deps.onSignInEnded = () => { previous?.(); void publish(); };
+	const actions = profileActions(vscode, deps);
 
 	/** One state message: profiles with their real login state (asked to each CLI), grouped by provider. */
 	async function state(): Promise<unknown> {
 		const root = await deps.rootOf();
 		const [profiles, placement] = await Promise.all([deps.registry.list(), deps.registry.placement(root)]);
 		const accounts = await Promise.all(profiles.map(async profile => ({
-			id: profile.id, alias: profile.alias, provider: profile.provider, state: await deps.registry.authState(profile, process.env),
+			id: profile.id, alias: profile.alias, provider: profile.provider, state: signingInOf(deps).has(profile.id) ? 'connecting' : await deps.registry.authState(profile, process.env),
 			isDefault: placement.defaults[profile.provider] === profile.id, here: placement.workspace[profile.provider] === profile.id,
 			workspaces: (await deps.registry.workspacesOf(profile.id)).map(key => path.basename(key) || key)
 		})));

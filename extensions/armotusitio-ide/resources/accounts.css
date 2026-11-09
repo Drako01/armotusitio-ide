@@ -25,7 +25,7 @@ p { margin: 0; }
 .symbol { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border: 1px solid currentColor; border-radius: 50%; font-size: 11px; line-height: 1; flex-shrink: 0; }
 .state-authenticated { color: var(--vscode-testing-iconPassed, var(--vscode-foreground, inherit)); }
 .state-not-authenticated { color: var(--vscode-editorWarning-foreground, var(--vscode-foreground, inherit)); }
-.state-cli-unavailable { color: var(--vscode-errorForeground, var(--vscode-foreground, inherit)); }
+.state-cli-unavailable, .state-connection-failed { color: var(--vscode-errorForeground, var(--vscode-foreground, inherit)); }
 .workspaces { font-size: 12px; overflow-wrap: anywhere; }
 .actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
 .empty { padding: 20px; border: 1px dashed var(--vscode-panel-border, rgba(128, 128, 128, .35)); border-radius: 6px; display: flex; flex-direction: column; gap: 6px; }
