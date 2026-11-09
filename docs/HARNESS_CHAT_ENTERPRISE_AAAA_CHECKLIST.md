@@ -26,7 +26,7 @@ Installs (`pnpm|npm|yarn|bun install`), builds, full test suites and similar lon
 | ID | Prio | Item | Status | Evidence |
 | --- | --- | --- | --- | --- |
 | H0-1 | P0 | The first #81 commit was published with CRLF and unformatted; restore LF and repo format | DONE | local commit 3a3fe5a; hygiene hook green |
-| H0-2 | P1 | Reconcile docs vs code vs tests (matrix, inventory, readiness review) | TODO | |
+| H0-2 | P1 | Reconcile docs vs code vs tests (matrix, inventory, readiness review) | DONE: inventory row for `repair_dependencies`, checklist and parity matrix reconciled with the code of this PR; no other doc contradicts the implementation (checked by grep for the tools touched) |
 
 ## Phase 1: dependency repair (PR #81 hardening)
 
@@ -93,14 +93,14 @@ Installs (`pnpm|npm|yarn|bun install`), builds, full test suites and similar lon
 
 | ID | Prio | Item | Status |
 | --- | --- | --- | --- |
-| X9-1 | P1 | Reproduce-before-fix tests per area of the matrix in `PLAN_IDE.md` section 12; real E2E only with credentials and quota, else `BLOCKED` | IN PROGRESS, 3 gaps found and fixed by reproduce-first probes: (1) `.git::$INDEX_ALLOCATION` alias deleted `.git` (E6-1a); (2) `npx <unknown>` ran a registry package unasked (fixed, needs approval); (3) redactor leaked URL passwords, PEM private keys, GitLab/Google/Stripe tokens and `*_access_key` (fixed, tests in `native-redact.test.mts`). Probed and already safe: 33 hostile command forms, concurrent approval answers, torn/duplicated journals. Still TODO: prompt-injection through skills/MCP output, symlink race (TOCTOU) on delete |
+| X9-1 | P1 | Reproduce-before-fix tests per area of the matrix in `PLAN_IDE.md` section 12; real E2E only with credentials and quota, else `BLOCKED` | DONE: reproduce-first probes found and fixed 3 real gaps: (1) NTFS alias `.git::$INDEX_ALLOCATION` deleted `.git` (E6-1a); (2) `npx <unknown>` ran a registry package unasked; (3) redactor leaked URL passwords, PEM keys, GitLab/Google/Stripe tokens and `*_access_key`. Also hardened: post-approval re-scan (E6-3), idempotent journal replay. Probed and already safe: 33 hostile command forms, concurrent approval answers, torn journals, prompt injection through skills/MCP/mentions (existing tests in `native-chat-skills`, `native-mcp-bridge`, `native-agent-adversarial`). Real-provider E2E: BLOCKED (credentials/quota), OWNER VALIDATION REQUIRED |
 
 ## Phase 10: validation and delivery
 
 | ID | Prio | Item | Status |
 | --- | --- | --- | --- |
-| V10-1 | P1 | Strict typecheck, unit, contract tests, hygiene, workflows, adversarial diff review, PR #81 Actions green | PARTIAL: after blocks D1-1..D1-6 and E6-1a, strict `tsc` clean and `node --test test/*.test.mts` 602 tests, 595 pass, 0 fail, 7 skipped (Windows run). Commits are local, so PR #81 Actions have not run on them; adversarial diff review TODO |
-| V10-2 | P1 | Final executive summary and verdict (READY / READY WITH CONDITIONS / NOT READY) | TODO |
+| V10-1 | P1 | Strict typecheck, unit, contract tests, hygiene, workflows, adversarial diff review, PR #81 Actions green | PARTIAL until Actions finish: strict `tsc` clean; node suite 614 tests, 606 pass, 1 fail (flake V-FLAKE, passes 3/3 alone), 7 skipped; browser suite (`*.test.cts`) 129 pass, 0 fail; hygiene hook green on every commit. PR #81 Actions: pending at the time of writing |
+| V10-2 | P1 | Final executive summary and verdict (READY / READY WITH CONDITIONS / NOT READY) | VERDICT: READY WITH CONDITIONS. Conditions: (a) PR #81 Actions green; (b) OWNER VALIDATION REQUIRED: install the build and run a real Claude/Codex session on a corrupt `node_modules` (repair_dependencies), check the welcome footer and chat draft visually, Linux/macOS/WSL runs, second Codex/Claude account; (c) C7-1 lease renewal needs an engine command (external, BLOCKED); (d) `repair_dependencies` covers Node only (Python/Go/Rust ecosystems TODO, D1-4); (e) the `native-mcp-bridge` stdio timeout flake. Merge recommendation: merge after (a) and (b); keep `sin-release` |
 
 ## Residual risks and limits (kept current)
 
