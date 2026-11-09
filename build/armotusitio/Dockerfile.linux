@@ -6,7 +6,9 @@ ARG TARGETARCH
 # Package mirrors drop connections now and then; retry instead of failing a multi-hour build.
 RUN echo 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/80-ats-retries && echo 'Acquire::http::Timeout "30";' >> /etc/apt/apt.conf.d/80-ats-retries
 # archive.ubuntu.com is sometimes unreachable from GitHub runners (every index is ignored); fall back to other amd64 mirrors.
-RUN set -eu; if [ "$TARGETARCH" = amd64 ]; then ok=; for host in archive.ubuntu.com azure.archive.ubuntu.com mirrors.edge.kernel.org; do \n      sed -i -E "s#http://[^/]+/ubuntu#http://$host/ubuntu#g" /etc/apt/sources.list; apt-get update || true; \n      if apt-cache policy ca-certificates | grep -q "Candidate: [0-9]"; then ok=1; break; fi; echo "[ats] apt mirror $host unreachable"; done; [ -n "$ok" ]; fi
+RUN set -eu; if [ "$TARGETARCH" = amd64 ]; then ok=; for host in archive.ubuntu.com azure.archive.ubuntu.com mirrors.edge.kernel.org; do \
+      sed -i -E "s#http://[^/]+/ubuntu#http://$host/ubuntu#g" /etc/apt/sources.list; apt-get update || true; \
+      if apt-cache policy ca-certificates | grep -q "Candidate: [0-9]"; then ok=1; break; fi; echo "[ats] apt mirror $host unreachable"; done; [ -n "$ok" ]; fi
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl git xz-utils unzip zip build-essential g++-12 python3 pkg-config ccache \
     libx11-dev libxkbfile-dev libsecret-1-dev libkrb5-dev libssl-dev libudev-dev \
