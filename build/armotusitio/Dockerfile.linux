@@ -3,6 +3,8 @@ FROM ubuntu:22.04
 ARG DEBIAN_FRONTEND=noninteractive
 ARG NODE_VERSION
 ARG TARGETARCH
+# Package mirrors drop connections now and then; retry instead of failing a multi-hour build.
+RUN echo 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/80-ats-retries && echo 'Acquire::http::Timeout "30";' >> /etc/apt/apt.conf.d/80-ats-retries
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl git xz-utils unzip zip build-essential g++-12 python3 pkg-config ccache \
     libx11-dev libxkbfile-dev libsecret-1-dev libkrb5-dev libssl-dev libudev-dev \
