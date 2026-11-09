@@ -128,3 +128,10 @@ Next, in this order:
 ## Commits
 
 None yet. Commits and pushes are made only on the owner's explicit request.
+
+## W4 `/mcp` (user-added MCP servers) - status
+
+- **DONE, PASS:** `/mcp`, `/mcp add NAME URL|COMMAND [--token] [--env VAR]`, `/mcp remove|enable|disable NAME` in the Chat Harness (`native-mcp-command.ts`). Definitions in private IDE storage (`native-mcp-servers.ts`, shared locked-JSON helper with profiles); tokens and env values only in `SecretStorage`, typed through a masked prompt, never echoed or stored in the file. One modal confirmation shows exactly what will run or be contacted. Unit tests: `native-mcp-servers`, `native-mcp-command`.
+- **Per-call consent:** new permission kind `mcp` (`mcp:<server>/<tool>` rules, default `ask`, `readonly` denies, no preset allows). Claude's `mcp__server__tool` calls reach `approve`; unknown servers stay `tool-unavailable`. Test: `native-approve-tool.test.mts`.
+- **Real Claude 2.1.319, scenario M02 PASS** (`docs/r8-evidence/w4-mcp-real-claude.json`): the denied call never ran (marker empty), the allowed call ran, both produced an `mcp` card.
+- **Limits:** only Claude Code uses the servers (Codex wiring NOT IMPLEMENTED, needs Codex quota to verify); a server is used from the next conversation (Empezar de nuevo); http servers with OAuth flows are not supported (bearer token only).

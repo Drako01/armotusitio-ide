@@ -39,6 +39,8 @@ export interface User {
 }
 
 export interface Harness {
+	/** User-added MCP servers wired into every session this harness prepares (set by a scenario before it opens one). */
+	extraMcp: Record<string, unknown>;
 	provider: Provider;
 	root: string;
 	state: string;
@@ -108,7 +110,7 @@ export async function harness(provider: Provider, extraEnv: Record<string, strin
 			const directory = path.join(base, 'runs', String(++runs));
 			await fs.mkdir(directory, { recursive: true });
 			const config: RunnerConfig = {
-				schemaVersion: 1, root, env, logDirectory: path.join(directory, 'logs'), maxTurns: 50, approve: provider === 'claude', turnEpochs: true, permissions: { preset: 'dev' },
+				schemaVersion: 1, root, env, logDirectory: path.join(directory, 'logs'), maxTurns: 50, approve: provider === 'claude', turnEpochs: true, permissions: { preset: 'dev' }, ...(Object.keys(self.extraMcp).length ? { mcpServers: Object.keys(self.extraMcp) } : {}),
 				...(role === 'writer' ? { git: true, files: true, repoBaseline: await repoFingerprint(root) } : {}),
 				policy: { subprojects: [], delegate: false, extras: [] }, projectPermissionsBaseline: await projectPermissionsDigest(root),
 				channel: { address: channel.address, token: channel.token }
@@ -117,7 +119,7 @@ export async function harness(provider: Provider, extraEnv: Record<string, strin
 			await fs.writeFile(configFile, JSON.stringify(config));
 			// The runner reads permissions from a throwaway HOME, so the user's own rules never change a scenario's verdicts.
 			const toolServer = { command: process.execPath, args: [RUNNER, configFile], env: fake ? {} : { HOME: home, USERPROFILE: home }, mcpConfigFile: path.join(directory, 'mcp.json') };
-			await fs.writeFile(toolServer.mcpConfigFile, JSON.stringify({ mcpServers: { 'ats-runner': { type: 'stdio', command: toolServer.command, args: toolServer.args, env: toolServer.env } } }));
+			await fs.writeFile(toolServer.mcpConfigFile, JSON.stringify({ mcpServers: { ...self.extraMcp, 'ats-runner': { type: 'stdio', command: toolServer.command, args: toolServer.args, env: toolServer.env } } }));
 			// Real providers get the same session contract as the IDE; fakes only need a marker.
 			const instructions = fake ? 'IDE contract (' + role + ')' : agentContract({ provider, role: role === 'writer' ? 'implementer' : 'planner', maxTurns: 40, runner: true, git: role === 'writer', files: role === 'writer', nativeShell: true });
 			// An AI profile gives the provider its own private config directory, like the IDE's environment builder does.
@@ -132,7 +134,7 @@ export async function harness(provider: Provider, extraEnv: Record<string, strin
 	};
 	const identity: SessionIdentity = { root, worktree: root, provider, conversationId: 'c1' };
 	const self: Harness = {
-		provider, root, state, identity, store, cards, mediated, asked, user, base, home,
+		extraMcp: {}, provider, root, state, identity, store, cards, mediated, asked, user, base, home,
 		manager() {
 			const manager = new AgentSessionManager(store, [new ClaudeAdapter(), new CodexAdapter()], services, { retryDelayMs: 50 });
 			managers.push(manager);

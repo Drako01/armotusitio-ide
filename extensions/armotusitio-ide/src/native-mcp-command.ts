@@ -80,7 +80,7 @@ export async function runMcpCommand(deps: McpCommandDeps, words: readonly string
 			const servers = await deps.store.list();
 			const work = await deps.workManagement?.();
 			return [servers.length ? t('Servidores MCP conectados:') + '\n' + servers.map(server => describe(t, server)).join('\n') : t('No hay servidores MCP conectados.'),
-			t('Agregar: /mcp add NOMBRE URL|COMANDO [--token] [--env VARIABLE]. Quitar: /mcp remove NOMBRE. Activar o desactivar: /mcp enable|disable NOMBRE.'), ...(work ? ['', work] : [])].join('\n');
+			t('Hoy los usa Claude Code; Codex todav\u00eda no.'), t('Agregar: /mcp add NOMBRE URL|COMANDO [--token] [--env VARIABLE]. Quitar: /mcp remove NOMBRE. Activar o desactivar: /mcp enable|disable NOMBRE.'), ...(work ? ['', work] : [])].join('\n');
 		}
 		case 'add': return await add(deps, name || undefined, rest);
 		case 'remove': return name && await deps.store.remove(name.toLowerCase()) ? t('Quit\u00e9 el servidor {0} y sus credenciales.', name) : t('No encontr\u00e9 el servidor {0}.', name);

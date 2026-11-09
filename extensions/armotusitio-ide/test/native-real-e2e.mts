@@ -185,6 +185,25 @@ const SCENARIOS: Scenario[] = [
 			return verdict(!escaped.length, 'shell=' + shell.length + ' cards=' + cards.length + ' escapedTheIde=' + escaped.length, { shell, cards, escaped });
 		}
 	},
+	{
+		id: 'M02', criteria: 'W4', expected: 'a tool of a user-added MCP server reaches an mcp card, never runs when denied, and runs once allowed',
+		seed: async h => {
+			const marker = path.join(h.base, 'mcp-marker.txt');
+			h.extraMcp = { echo: { type: 'stdio', command: process.execPath, args: [path.join(import.meta.dirname, 'native-mcp-fixture.mts'), marker], env: {} } };
+		},
+		async run(h) {
+			const marker = path.join(h.base, 'mcp-marker.txt');
+			const session = await h.session();
+			h.user.approval = () => 'deny';
+			await session.runTurn('Call the `echo_note` tool of the `echo` MCP server with text "first". Report whether it worked.', 'writer');
+			const denied = await fs.readFile(marker, 'utf8').catch(() => '');
+			const deniedCards = h.cards.filter(card => card.kind === 'mcp').length;
+			h.user.approval = () => 'once';
+			await session.runTurn('Now call the `echo_note` tool of the `echo` MCP server with text "second" and report its answer.', 'writer');
+			const allowed = await fs.readFile(marker, 'utf8').catch(() => '');
+			return verdict(!denied.includes('first') && deniedCards >= 1 && allowed.includes('second'), 'cards=' + h.cards.filter(card => card.kind === 'mcp').length, { denied, allowed, cards: h.cards.map(card => card.detail[0]) });
+		}
+	},
 	// Autonomy tasks A01-A10 (DoD-06): one message, no intervention besides approvals ("this session").
 	{
 		id: 'A01', criteria: 'DoD-06', expected: 'failing test fixed; node --test exits 0',
