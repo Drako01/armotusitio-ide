@@ -110,7 +110,7 @@ test('local Codex subprocess receives per-run effort while preserving shell-free
 		assert.match(result.output, /model_reasoning_effort=\\"low\\"/);
 	} finally {
 		if (oldPath === undefined) { delete process.env.PATH; } else { process.env.PATH = oldPath; }
-		await fs.rm(folder, { recursive: true, force: true });
+		await fs.rm(folder, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 	}
 });
 
@@ -134,7 +134,7 @@ test('approved agent runs a fake CLI without shell or provider network', async (
 		assert.match(result.output, /true/);
 	} finally {
 		if (originalPath === undefined) { delete process.env.PATH; } else { process.env.PATH = originalPath; }
-		await fs.rm(folder, { recursive: true, force: true });
+		await fs.rm(folder, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 	}
 });
 
@@ -161,7 +161,7 @@ test('Git read-only role fails closed on unauthorized modification', async () =>
 		assert.equal(await fs.readFile(path.join(folder, 'tracked.txt'), 'utf8'), 'after');
 	} finally {
 		if (oldPath === undefined) { delete process.env.PATH; } else { process.env.PATH = oldPath; }
-		await fs.rm(folder, { recursive: true, force: true });
+		await fs.rm(folder, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 	}
 });
 
@@ -189,7 +189,7 @@ test('structured Codex provider usage flows through real local subprocess transp
 		assert.deepEqual(outcome.usage, { inputTokens: 90, outputTokens: 12, cachedInputTokens: 40 });
 	} finally {
 		if (oldPath === undefined) { delete process.env.PATH; } else { process.env.PATH = oldPath; }
-		await fs.rm(root, { recursive: true, force: true });
+		await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 	}
 });
 
@@ -211,7 +211,7 @@ test('provider progress exposes only bounded byte counts, never secrets or promp
 		assert.ok(observed.every(event => !JSON.stringify(event).includes('SECRET-DO-NOT-EMIT')));
 	} finally {
 		if (previousPath === undefined) { delete process.env.PATH; } else { process.env.PATH = previousPath; }
-		await fs.rm(root, { recursive: true, force: true });
+		await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 	}
 });
 
@@ -231,6 +231,6 @@ test('a profile environment reaches the one-shot CLI with its own directory and 
 	} finally {
 		if (oldPath === undefined) { delete process.env.PATH; } else { process.env.PATH = oldPath; }
 		if (oldKey === undefined) { delete process.env.OPENAI_API_KEY; } else { process.env.OPENAI_API_KEY = oldKey; }
-		await fs.rm(folder, { recursive: true, force: true });
+		await fs.rm(folder, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 	}
 });
