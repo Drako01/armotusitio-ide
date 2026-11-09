@@ -14,10 +14,10 @@ jobs:
         with:
           node-version-file: .nvmrc
       - run: npm ci --ignore-scripts --no-audit --no-fund
-      - name: Surface the swallowed session error
+      - name: Full extension suite with the canonical temp folder
         working-directory: extensions/armotusitio-ide
         shell: bash
-        run: |
-          sed -i "s/const report = (folder: any, error: any) => {/&console.log(\"REPORT\", error);/" src/chat.ts
-          grep -n "REPORT" src/chat.ts
-          timeout 120 node --test --test-timeout=30000 --test-name-pattern="converse, revise" test/chat.test.cts 2>&1 | grep -B2 -A12 "REPORT" | head -60 || true
+        env:
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+        run: node --test --test-timeout=240000 --test-reporter=spec test/*.test.cts test/native-*.test.mts 2>&1 | grep -v "^s*✔" | tail -120
