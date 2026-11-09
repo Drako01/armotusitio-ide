@@ -95,5 +95,5 @@ test('the CI runner opens the bind-mounted output and log folders to the contain
 });
 
 test('CI retries the Linux container on transient download failures; a local build runs once', () => {
-	assert.deepEqual([linuxBuildAttempts(true), linuxBuildAttempts(false)], [4, 1]);
+	assert.deepEqual([linuxBuildAttempts(true), linuxBuildAttempts(false)], [6, 1]);
 });
