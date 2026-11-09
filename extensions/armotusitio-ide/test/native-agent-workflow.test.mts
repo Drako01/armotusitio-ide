@@ -30,7 +30,7 @@ test('rejects forged approval before running anything', async () => {
 		await assert.rejects(flow.start(plan, 'wrong', () => true), /HARNESS_WORKFLOW_APPROVAL_CHANGED/);
 		assert.deepEqual(await flow.history(), []);
 		await assert.rejects(flow.start(plan, workflowDigest(await fs.realpath(root), plan), () => false), /HARNESS_UNTRUSTED_WORKSPACE/);
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('executes three stages in order with fake provider; persists only metadata', async () => {
@@ -77,7 +77,7 @@ test('executes three stages in order with fake provider; persists only metadata'
 	} finally {
 		if (oldPath === undefined) { delete process.env.PATH; } else { process.env.PATH = oldPath; }
 		await fs.rm(traceFile, { force: true });
-		await fs.rm(root, { recursive: true, force: true });
+		await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 	}
 });
 
@@ -106,7 +106,7 @@ test('interrupted workflow cannot replay an uncertain writer or use a changed pl
 		assert.equal((await workflow.history())[0].status, 'interrupted');
 		await assert.rejects(workflow.restartInterrupted(id, plan, 'forged', () => true), /HARNESS_WORKFLOW_APPROVAL_CHANGED/);
 		await assert.rejects(workflow.restartInterrupted('../outside', plan, digest, () => true), /HARNESS_RESUME_ID_INVALID/);
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('workflow history refuses injected fields inside persisted lifecycle events', async () => {
@@ -126,7 +126,7 @@ test('workflow history refuses injected fields inside persisted lifecycle events
 		await fs.writeFile(path.join(dir, id + '.json'), JSON.stringify(record));
 		const workflow = new NativeAgentWorkflow(canonical, dir);
 		await assert.rejects(workflow.history(), /HARNESS_WORKFLOW_INVALID_STATE/);
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('workflow rejects calls beyond the five invocations explicitly approved in the IDE', async () => {
@@ -144,7 +144,7 @@ test('workflow rejects calls beyond the five invocations explicitly approved in 
 		const flow = new NativeAgentWorkflow(canonical, path.join(root, 'private'));
 		await assert.rejects(flow.start(plan, workflowDigest(canonical, plan), () => true), /HARNESS_WORKFLOW_CALL_BUDGET_EXCEEDED/);
 		assert.deepEqual(await flow.history(), []);
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('persisted workflow rejects undeclared top-level and step content without rewriting evidence', async () => {
@@ -180,7 +180,7 @@ test('persisted workflow rejects undeclared top-level and step content without r
 		const history = await workflow.history();
 		assert.equal(history.length, 1);
 		assert.equal(history[0].status, 'interrupted');
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('reconciliation preserves stale lock when persisted history is corrupt', async () => {
@@ -198,7 +198,7 @@ test('reconciliation preserves stale lock when persisted history is corrupt', as
 		await assert.rejects(workflow.reconcile(), /HARNESS_WORKFLOW_INVALID_STATE/);
 		assert.equal(await fs.readFile(lockFile, 'utf8'), lock);
 		await assert.rejects(workflow.history(), /HARNESS_WORKFLOW_INVALID_STATE/);
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('reconciliation scans older running workflows beyond the 40-record UI window', async () => {
@@ -228,7 +228,7 @@ test('reconciliation scans older running workflows beyond the 40-record UI windo
 		assert.equal(recovered.status, 'interrupted');
 		assert.equal(recovered.steps[0].status, 'interrupted');
 		assert.equal((await workflow.history()).length, 40);
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('reconciliation releases stale execution lock only after successful state recovery', async () => {
@@ -254,7 +254,7 @@ test('reconciliation releases stale execution lock only after successful state r
 		const recovered = (await workflow.history())[0];
 		assert.equal(recovered.status, 'interrupted');
 		assert.equal(recovered.steps[0].status, 'interrupted');
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('failed final state persistence keeps the execution lock for explicit repair', async () => {
@@ -280,7 +280,7 @@ test('failed final state persistence keeps the execution lock for explicit repai
 			await assert.rejects(workflow.start(plan, workflowDigest(canonical, plan), () => true),
 				/HARNESS_WORKFLOW_RECONCILIATION_REQUIRED/);
 		} finally { unsubscribe(); }
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('history rejects mismatched file identity without overwriting another workflow', async () => {
@@ -305,7 +305,7 @@ test('history rejects mismatched file identity without overwriting another workf
 		await assert.rejects(workflow.reconcile(), /HARNESS_WORKFLOW_INVALID_STATE/);
 		assert.equal(await fs.readFile(file, 'utf8'), raw);
 		await assert.rejects(fs.stat(path.join(state, id + '.json')), { code: 'ENOENT' });
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('reconciliation refuses workflow records from another project without removing lock', async () => {
@@ -328,7 +328,7 @@ test('reconciliation refuses workflow records from another project without remov
 		await assert.rejects(flow.reconcile(), /HARNESS_WORKFLOW_FOREIGN_PROJECT_STATE/);
 		assert.equal(await fs.readFile(lockFile, 'utf8'), lock);
 		assert.equal((await flow.history())[0].status, 'running');
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('restart locates old interrupted records outside 40 most recent UI entries', async () => {
@@ -355,7 +355,7 @@ test('restart locates old interrupted records outside 40 most recent UI entries'
 		assert.equal((await flow.history()).some(record => record.id === oldId), false);
 		await assert.rejects(flow.restartInterrupted(oldId, plan, digest, () => true),
 			/HARNESS_RESUME_WRITE_UNCERTAIN/);
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('workflow storage refuses a symlink to an unrelated directory', async (t) => {
@@ -380,7 +380,7 @@ test('workflow storage refuses a symlink to an unrelated directory', async (t) =
 		await assert.rejects(flow.start(plan, workflowDigest(canonical, plan), () => true),
 			/HARNESS_WORKFLOW_UNSAFE_STORAGE/);
 		assert.deepEqual(await fs.readdir(target), []);
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('workflow state path refuses an ordinary file before writing a lock', async () => {
@@ -394,7 +394,7 @@ test('workflow state path refuses an ordinary file before writing a lock', async
 		await assert.rejects(flow.history(), /HARNESS_WORKFLOW_UNSAFE_STORAGE/);
 		await assert.rejects(flow.start(plan, workflowDigest(canonical, plan), () => true));
 		assert.equal(await fs.readFile(storage, 'utf8'), 'USER_EVIDENCE');
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('completed workflow does not unlink a lock replaced by another execution', async () => {
@@ -419,7 +419,7 @@ test('completed workflow does not unlink a lock replaced by another execution', 
 			await assert.rejects(flow.start(plan, workflowDigest(canonical, plan), () => true),
 				/HARNESS_WORKFLOW_RECONCILIATION_REQUIRED/);
 		} finally { unsubscribe(); }
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('exclusive recovery guard blocks a second reconciler and new provider execution', async () => {
@@ -438,7 +438,7 @@ test('exclusive recovery guard blocks a second reconciler and new provider execu
 			/HARNESS_WORKFLOW_RECONCILIATION_ACTIVE/);
 		assert.equal(await fs.readFile(guard, 'utf8'), evidence);
 		await assert.rejects(fs.stat(path.join(state, 'execution.lock')), { code: 'ENOENT' });
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('successful explicit reconciliation releases its own guard without touching foreign state', async () => {
@@ -449,7 +449,7 @@ test('successful explicit reconciliation releases its own guard without touching
 		const workflow = new NativeAgentWorkflow(canonical, state);
 		assert.equal(await workflow.reconcile(), 0);
 		await assert.rejects(fs.stat(path.join(state, 'reconcile.guard')), { code: 'ENOENT' });
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('recovery resolves only already committed workflow state intents without replaying providers', async () => {
@@ -478,7 +478,7 @@ test('recovery resolves only already committed workflow state intents without re
 		assert.equal(await flow.reconcile(), 1);
 		await assert.rejects(fs.stat(path.join(state, id + '.json.intent')), { code: 'ENOENT' });
 		assert.equal((await flow.history())[0].status, 'interrupted');
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('uncommitted workflow intent preserves evidence and blocks execution and reconciliation', async () => {
@@ -512,7 +512,7 @@ test('uncommitted workflow intent preserves evidence and blocks execution and re
 		await assert.rejects(flow.start(plan, workflowDigest(canonical, plan), () => true),
 			/HARNESS_WORKFLOW_PENDING_JOURNAL/);
 		await assert.rejects(fs.stat(path.join(state, 'reconcile.guard')), { code: 'ENOENT' });
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('normal workflow journal lifecycle leaves no pending intent after fake provider execution', async () => {
@@ -527,7 +527,7 @@ test('normal workflow journal lifecycle leaves no pending intent after fake prov
 		const outcome = await run.result;
 		assert.equal(outcome.status, 'cancelled');
 		assert.deepEqual((await fs.readdir(state)).filter(name => name.endsWith('.json.intent')), []);
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('reconciliation refuses a committed journal belonging to another project', async () => {
@@ -558,7 +558,7 @@ test('reconciliation refuses a committed journal belonging to another project', 
 		assert.equal(await fs.readFile(file, 'utf8'), raw);
 		assert.ok((await fs.readFile(intent, 'utf8')).includes('"after"'));
 		assert.ok((await fs.readFile(lockFile, 'utf8')).includes('99999999'));
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('workflow does not record passed after workspace trust is revoked inside verification', async () => {
@@ -586,7 +586,7 @@ test('workflow does not record passed after workspace trust is revoked inside ve
 		assert.equal((await flow.history())[0].status, 'cancelled');
 	} finally {
 		if (oldPath === undefined) { delete process.env.PATH; } else { process.env.PATH = oldPath; }
-		await fs.rm(root, { recursive: true, force: true });
+		await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 	}
 });
 
@@ -622,7 +622,7 @@ test('workflow quota blocks the next provider before invoking its CLI', async ()
 	} finally {
 		if (oldPath === undefined) { delete process.env.PATH; } else { process.env.PATH = oldPath; }
 		await fs.rm(trace, { force: true });
-		await fs.rm(root, { recursive: true, force: true });
+		await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 	}
 });
 
@@ -655,7 +655,7 @@ test('revoked trust during provider preflight never starts a provider CLI', asyn
 	} finally {
 		if (oldPath === undefined) { delete process.env.PATH; } else { process.env.PATH = oldPath; }
 		await fs.rm(trace, { force: true });
-		await fs.rm(root, { recursive: true, force: true });
+		await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 	}
 });
 

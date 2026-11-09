@@ -12,7 +12,7 @@ import { NativeHarness, approvalDigest, validateNativePlan, selectNativeWave } f
 async function fixture() {
 	const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-native-test-'));
 	const project = path.join(dir, 'project'); await fs.mkdir(project);
-	return { project, engine: new NativeHarness(project, path.join(dir, 'state')), cleanup: () => fs.rm(dir, { recursive: true, force: true }) };
+	return { project, engine: new NativeHarness(project, path.join(dir, 'state')), cleanup: () => fs.rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }) };
 }
 test('plan rejects cycles and invalid commands', () => {
 	assert.throws(() => validateNativePlan({ schemaVersion: 1, gates: [{ id: 'a', executable: 'node', args: [], dependsOn: ['b'] }, { id: 'b', executable: 'node', args: [], dependsOn: ['a'] }] }), /HARNESS_CYCLE/);
@@ -325,5 +325,5 @@ test('resume reuses passed gates from a safe checkpoint and re-runs only the fai
 		await engine.execute(task.id, approval, () => true);
 		await fs.writeFile(path.join(root, 'input.txt'), 'v2');
 		assert.equal(await engine.resumableGates(task.id), null);
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });

@@ -18,7 +18,7 @@ function memorySecrets(): McpSecrets & { map: Map<string, string> } {
 async function withStore(run: (store: McpServerStore, secrets: ReturnType<typeof memorySecrets>, directory: string) => Promise<void>): Promise<void> {
 	const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-mcp-servers-'));
 	try { const secrets = memorySecrets(); await run(new McpServerStore(directory, secrets), secrets, directory); }
-	finally { await fs.rm(directory, { recursive: true, force: true }); }
+	finally { await fs.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 }
 
 test('words after the name are a URL or a command, never both', () => {

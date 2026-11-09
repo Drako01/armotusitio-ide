@@ -38,7 +38,7 @@ test('native gate and workflow refuse a competing per-project process fence', as
 			assert.equal((await inspectSharedExecutionFence(canonical, state)).owner, 'native-task');
 		} finally { await nativeLease.release(); }
 	} finally {
-		await fs.rm(root, { recursive: true, force: true });
-		await fs.rm(state, { recursive: true, force: true });
+		await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+		await fs.rm(state, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 	}
 });

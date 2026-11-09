@@ -113,7 +113,7 @@ test('workflow launches two independent read-only providers before exclusive imp
 	} finally {
 		if (oldPath === undefined) { delete process.env.PATH; } else { process.env.PATH = oldPath; }
 		await fs.rm(traceFile, { force: true });
-		await fs.rm(root, { recursive: true, force: true });
+		await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 	}
 });
 
@@ -153,6 +153,6 @@ test('workflow providers run inside the account directory of the profile, not th
 		assert.deepEqual({ status: result.status, homes }, { status: 'passed', homes: ['home=' + profileDir, 'home=' + profileDir] });
 	} finally {
 		if (oldPath === undefined) { delete process.env.PATH; } else { process.env.PATH = oldPath; }
-		await fs.rm(root, { recursive: true, force: true });
+		await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 	}
 });

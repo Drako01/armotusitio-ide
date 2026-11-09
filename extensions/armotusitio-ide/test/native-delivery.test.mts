@@ -40,5 +40,5 @@ test('a delivery works on its own branch without touching the user\'s uncommitte
 		await discardDelivery(second);
 		assert.deepEqual({ suffix: second.branch, branches: git('branch', '--list', 'harness/*').split('\n').map(line => line.trim()).filter(Boolean) },
 			{ suffix: 'harness/subi-la-cobertura-de-apps-api-2', branches: ['harness/subi-la-cobertura-de-apps-api'] });
-	} finally { await fs.rm(root, { recursive: true, force: true }); await fs.rm(storage, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); await fs.rm(storage, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });

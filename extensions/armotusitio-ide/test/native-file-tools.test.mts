@@ -37,7 +37,7 @@ async function withProject(work: (fixture: Fixture) => Promise<void>): Promise<v
 			ask: async request => { asked.push(request); return answer; }
 		};
 		await work({ root, base, context, asked, set: (next, reply = 'once') => { decision = next; answer = reply; } });
-	} finally { await fs.rm(base, { recursive: true, force: true }); }
+	} finally { await fs.rm(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 }
 
 test('the file tools are described to the model as the replacement for shell deletions and moves', () => {

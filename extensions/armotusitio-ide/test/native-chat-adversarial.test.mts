@@ -73,6 +73,6 @@ test('cancelling an agent stops its child processes: nothing keeps running in th
 		assert.equal(await size(), stopped, 'the heartbeat stopped growing after cancellation');
 	} finally {
 		if (originalPath === undefined) { delete process.env.PATH; } else { process.env.PATH = originalPath; }
-		await fs.rm(directory, { recursive: true, force: true });
+		await fs.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 	}
 });

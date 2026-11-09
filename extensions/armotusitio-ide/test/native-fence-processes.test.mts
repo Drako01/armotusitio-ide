@@ -54,7 +54,7 @@ test('twenty rounds of competing and killed writers never produce two writers or
 		assert.deepEqual(rounds, Array.from({ length: ROUNDS }, (_, index) => ({ round: index + 1, held: true, refusedChild: true, refusedParent: true, inheritedDead: false, recovered: true, monotonic: true })));
 		assert.deepEqual(await inspectSharedExecutionFence(root, storage), { held: false, epoch: null });
 	} finally {
-		await fs.rm(root, { recursive: true, force: true });
-		await fs.rm(storage, { recursive: true, force: true });
+		await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+		await fs.rm(storage, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 	}
 });

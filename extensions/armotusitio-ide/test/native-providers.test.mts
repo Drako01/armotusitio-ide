@@ -51,7 +51,7 @@ test('inventory excludes hidden files and links', async () => {
 		await fs.writeFile(path.join(root, '.env'), 'secret');
 		await fs.symlink(path.join(root, 'README.md'), path.join(root, 'alias'));
 		assert.deepEqual((await inspectAgentWorkspace(root)).topLevel, ['README.md']);
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('verification plans must satisfy native validation', () => {

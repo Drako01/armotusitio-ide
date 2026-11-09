@@ -23,7 +23,7 @@ test('project guidance inventory includes Codex and Claude metadata but not inst
 		await validateProjectGuides(canonical, guides);
 		await fs.writeFile(path.join(root, 'AGENTS.md'), 'Changed instructions');
 		await assert.rejects(validateProjectGuides(canonical, guides), /HARNESS_PROJECT_GUIDANCE_CHANGED/);
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('project guidance refuses oversized files without returning their contents', async () => {
@@ -31,7 +31,7 @@ test('project guidance refuses oversized files without returning their contents'
 	try {
 		await fs.writeFile(path.join(root, 'AGENTS.md'), 'X'.repeat(64 * 1024 + 1));
 		await assert.rejects(listProjectGuides(await fs.realpath(root)), /HARNESS_PROJECT_GUIDE_UNSAFE/);
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('linked nested guidance directory cannot escape the project', async (t) => {
@@ -50,7 +50,7 @@ test('linked nested guidance directory cannot escape the project', async (t) => 
 		}
 		await assert.rejects(listProjectGuides(await fs.realpath(root)), /HARNESS_PROJECT_GUIDE_UNSAFE/);
 	} finally {
-		await fs.rm(root, { recursive: true, force: true });
-		await fs.rm(outside, { recursive: true, force: true });
+		await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+		await fs.rm(outside, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 	}
 });

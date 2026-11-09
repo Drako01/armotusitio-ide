@@ -46,7 +46,7 @@ async function session(replies: Array<string | AgentOutcome>, context: Partial<C
 	const store = new ChatStore(directory);
 	const chat = new HarnessChatSession(store, fake.runtime, snapshot => snapshots.push(snapshot), t);
 	await chat.open();
-	return { chat, ...fake, snapshots, store, cleanup: () => fs.rm(directory, { recursive: true, force: true }) };
+	return { chat, ...fake, snapshots, store, cleanup: () => fs.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }) };
 }
 
 test('Send converses, revises the plan and never implements; Approve runs only the latest plan digest', async () => {
@@ -261,7 +261,7 @@ test('an execution interrupted by an IDE crash is reported once after restart an
 		const again = new HarnessChatSession(store, fake.runtime, () => undefined, t);
 		await again.open();
 		assert.equal(again.snapshot().messages.filter(message => /se interrumpi\u00f3/.test(message.text)).length, 1);
-	} finally { await fs.rm(directory, { recursive: true, force: true }); }
+	} finally { await fs.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('writers receive only the approved plan and user requirements; secrets typed by the user are never stored or sent', async () => {
@@ -389,7 +389,7 @@ test('review #3: Stop pressed as soon as it appears prevents the writer from sta
 		await chat.approve(chat.snapshot().plan!.digest);
 		const last = chat.snapshot().messages.at(-1)!;
 		assert.deepEqual({ signalAtEntry, tone: last.tone, hint: /no se modific/.test(last.text) }, { signalAtEntry: true, tone: 'info', hint: true });
-	} finally { await fs.rm(directory, { recursive: true, force: true }); }
+	} finally { await fs.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('review #5: a live operation of another window is neither reported as interrupted nor erased', async () => {
@@ -414,7 +414,7 @@ test('review #5: a live operation of another window is neither reported as inter
 		assert.equal(after.snapshot().messages.filter(message => /interrumpi/.test(message.text)).length, 1);
 	} finally {
 		other.kill();
-		await fs.rm(directory, { recursive: true, force: true });
+		await fs.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 	}
 });
 

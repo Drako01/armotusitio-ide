@@ -45,8 +45,8 @@ test('durable provider quota rejects over-budget concurrent readers before CLI l
 				{ used: 1, remaining: 0 });
 		} finally { await fence.release(); }
 	} finally {
-		await fs.rm(root, { recursive: true, force: true });
-		await fs.rm(storage, { recursive: true, force: true });
+		await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+		await fs.rm(storage, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 	}
 });
 
@@ -75,8 +75,8 @@ test('provider quota fails closed on invalid policy, corrupt state or a lost fen
 			await fence.release().catch(() => { });
 		}
 	} finally {
-		await fs.rm(root, { recursive: true, force: true });
-		await fs.rm(storage, { recursive: true, force: true });
+		await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+		await fs.rm(storage, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 	}
 });
 
@@ -88,8 +88,8 @@ async function withBudgetStorage(work: (storage: string, fence: Awaited<ReturnTy
 		try { await work(storage, fence); }
 		finally { await fence.release(); }
 	} finally {
-		await fs.rm(root, { recursive: true, force: true });
-		await fs.rm(storage, { recursive: true, force: true });
+		await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+		await fs.rm(storage, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 	}
 }
 

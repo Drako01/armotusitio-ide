@@ -14,7 +14,7 @@ const never: ProfileExec = async () => undefined;
 
 async function withStorage(work: (directory: string) => Promise<void>): Promise<void> {
 	const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-profiles-'));
-	try { await work(path.join(directory, 'storage')); } finally { await fs.rm(directory, { recursive: true, force: true }); }
+	try { await work(path.join(directory, 'storage')); } finally { await fs.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 }
 
 test('profiles are managed by stable id: add, rename, duplicate and invalid aliases, remove with its private directory', async () => {

@@ -52,5 +52,5 @@ test('project and global rules persist across a restart, stay in their scope and
 		assert.deepEqual({ before, projectOnly, everywhere, afterRestart, revoked }, {
 			before: ['deny', 'deny'], projectOnly: ['allow', 'deny'], everywhere: ['allow', 'allow'], afterRestart: ['allow', 'allow'], revoked: ['deny', 'deny']
 		});
-	} finally { await fs.rm(base, { recursive: true, force: true }); }
+	} finally { await fs.rm(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });

@@ -38,5 +38,5 @@ export async function fixture() {
 	};
 	const controller = { refresh() { }, nativeProjects: async () => [] };
 	registerNativeHarness(context, vscode, controller);
-	return { roots, vscode, documents, notices, controller, invoke: (command: string, root: string) => commands.get('atsHarness.' + command)(root), cleanup: async () => { for (const disposable of context.subscriptions) { disposable.dispose(); } await fs.rm(directory, { recursive: true, force: true }); } };
+	return { roots, vscode, documents, notices, controller, invoke: (command: string, root: string) => commands.get('atsHarness.' + command)(root), cleanup: async () => { for (const disposable of context.subscriptions) { disposable.dispose(); } await fs.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); } };
 }

@@ -42,6 +42,6 @@ test('one corrective cycle is bounded and requires independent reviewer reapprov
 	} finally {
 		if (originalPath === undefined) { delete process.env.PATH; } else { process.env.PATH = originalPath; }
 		await fs.rm(traceFile, { force: true });
-		await fs.rm(root, { recursive: true, force: true });
+		await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 	}
 });

@@ -22,7 +22,7 @@ test('the selected Codex npm binary is discoverable by project children and over
 			{ host: 'codex', first: path.dirname(binary), alias: undefined, custom: source.HARNESS_AGENT_COMMAND });
 		assert.equal(source.HARNESS_HOST, 'claude');
 		assert.equal(source.Path, root);
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('the selected Claude native installation is visible to a project even without a GUI PATH entry', async () => {
@@ -37,7 +37,7 @@ test('the selected Claude native installation is visible to a project even witho
 		assert.equal(env.PATH?.split(path.delimiter)[0], bin);
 		assert.equal(source.PATH, '');
 		assert.equal(source.HARNESS_HOST, 'codex');
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('a version-named Claude target keeps its executable alias visible to project children', { skip: process.platform === 'win32' }, async () => {
@@ -52,5 +52,5 @@ test('a version-named Claude target keeps its executable alias visible to projec
 		const env = await withHarnessProvider({ PATH: '', HOME: root }, 'claude');
 		assert.ok(env.PATH?.split(path.delimiter).includes(bin));
 		assert.equal(env.HARNESS_HOST, 'claude');
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });

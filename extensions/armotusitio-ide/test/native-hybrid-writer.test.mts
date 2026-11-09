@@ -15,7 +15,7 @@ async function withFence<T>(root: string, work: (fence: SharedExecutionFence) =>
 	const storage = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-writer-lease-state-'));
 	const fence = await acquireSharedExecutionFence(root, storage, 'native-agent');
 	try { return await work(fence); }
-	finally { await fence.release(); await fs.rm(storage, { recursive: true, force: true }); }
+	finally { await fence.release(); await fs.rm(storage, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 }
 
 test('an honest engine grants an exclusive lease, refuses its own work during it and resumes afterwards', async () => {
@@ -51,7 +51,7 @@ test('a lease is refused without consent, trust, a declared capability or an idl
 		try {
 			await fs.mkdir(path.join(bare, '.claude'));
 			await withFence(await fs.realpath(bare), async fence => assert.rejects(acquireWriterLease(await fs.realpath(bare), true, () => true, fence), /HARNESS_HYBRID_WRITER_ENTRY_UNAVAILABLE/));
-		} finally { await fs.rm(bare, { recursive: true, force: true }); }
+		} finally { await fs.rm(bare, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 	} finally { await Promise.all([missing.cleanup(), busy.cleanup(), ok.cleanup()]); }
 });
 

@@ -51,7 +51,7 @@ test('an offline sandbox gate fails closed on unsupported hosts instead of runni
 		const result = await engine.execute(gate.id, await engine.reviewDigest(gate.plan), () => true);
 		assert.equal(result.attempts.at(-1)?.status, 'failed');
 		assert.equal(result.attempts.at(-1)?.results[0].output, 'HARNESS_OS_SANDBOX_UNAVAILABLE');
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('macOS Seatbelt policy denies by default, blocks network and limits writes to private scratch', () => {
@@ -90,7 +90,7 @@ test('portable policy selects a host backend and never runs unsandboxed on Windo
 			assert.deepEqual({ status: result.attempts.at(-1)?.status, output: result.attempts.at(-1)?.results[0].output },
 				{ status: 'failed', output: 'HARNESS_OS_SANDBOX_UNAVAILABLE' });
 		}
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 const kernelSandbox = (process.platform === 'linux' && (existsSync('/usr/bin/bwrap') || existsSync('/bin/bwrap'))) ||
@@ -119,7 +119,7 @@ test('kernel-enforced sandbox lets a gate read the workspace but denies writes i
 		// The write must fail because the kernel denied it, not because the sandbox was unavailable.
 		assert.doesNotMatch(JSON.stringify(results.at(-1)), /HARNESS_OS_SANDBOX_UNAVAILABLE|HARNESS_EXECUTABLE_UNAVAILABLE/);
 	} finally {
-		await fs.rm(root, { recursive: true, force: true });
-		await fs.rm(state, { recursive: true, force: true });
+		await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+		await fs.rm(state, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 	}
 });

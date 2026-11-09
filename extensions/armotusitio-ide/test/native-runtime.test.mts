@@ -14,7 +14,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { MAX_TEXT_CHARS } from '../src/runtime/event-bridge.ts';
 import type { RecoveryNotice } from '../src/runtime/session-manager.ts';
-import { harness, record, settledPids } from './native-runtime-harness.mts';
+import { harness, pathKey, record, settledPids } from './native-runtime-harness.mts';
 
 for (const provider of ['codex', 'claude'] as const) {
 	describe('native runtime contract: ' + provider, () => {
@@ -304,7 +304,7 @@ test('an installed CLI that speaks another protocol version keeps the structured
 		try {
 			const transport = new NativeChatTransport({
 				storageFor: () => h.base, setting: () => 'auto', trusted: () => true,
-				environment: async () => ({ env: { ...process.env, PATH: path.join(h.base, 'bin') + path.delimiter + process.env.PATH, FAKE_STATE_DIR: h.state, HOME: h.home, USERPROFILE: h.home, ...env }, writableRoots: [] }),
+				environment: async () => ({ env: { ...process.env, [pathKey]: path.join(h.base, 'bin') + path.delimiter + process.env.PATH, FAKE_STATE_DIR: h.state, HOME: h.home, USERPROFILE: h.home, ...env }, writableRoots: [] }),
 				toolServer: async () => { throw Error('unused'); }, policy: async () => { throw Error('unused'); }, instructions: async () => '',
 				model: () => undefined, effort: () => undefined, codexFullAccess: () => false, maxTurns: () => 10, webSearch: () => false, clientVersion: '0'
 			});

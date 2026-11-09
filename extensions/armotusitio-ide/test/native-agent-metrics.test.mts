@@ -30,7 +30,7 @@ test('records bounded metrics without prompts, paths, outputs or credentials', a
 		assert.equal(result.measuredInputTokens, 1500);
 		assert.equal(result.measuredOutputTokens, 250);
 		assert.equal(result.estimatedCostUsd, 0.023);
-	} finally { await fs.rm(directory, { recursive: true, force: true }); }
+	} finally { await fs.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('rejects oversized or corrupted metrics rather than rewriting them', async () => {
@@ -38,5 +38,5 @@ test('rejects oversized or corrupted metrics rather than rewriting them', async 
 	try {
 		await fs.writeFile(path.join(directory, 'agent-metrics.json'), JSON.stringify([{ fake: 'secret' }]));
 		await assert.rejects(readAgentStatistics(directory), /HARNESS_METRICS_INVALID/);
-	} finally { await fs.rm(directory, { recursive: true, force: true }); }
+	} finally { await fs.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });

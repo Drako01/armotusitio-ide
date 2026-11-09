@@ -43,7 +43,7 @@ test('adding an account and signing in opens the provider login in a terminal th
 			alias: profile.alias, names: [...handlers.keys()].sort(), terminal: terminal.name, sent: terminal.sent,
 			dir: terminal.env.CLAUDE_CONFIG_DIR === registry.configDirectory(profile), cleared: [terminal.env.ANTHROPIC_API_KEY, terminal.env.CODEX_HOME, terminal.env.OPENAI_API_KEY], during, after: signingInOf(deps).has(profile.id), ended
 		}, { alias: 'Trabajo', names: ['atsHarness.accounts.add', 'atsHarness.accounts.manage'], terminal: 'Cuenta Trabajo', sent: ['claude auth login'], dir: true, cleared: [null, null, null], during: true, after: false, ended: 1 });
-	} finally { await fs.rm(base, { recursive: true, force: true }); }
+	} finally { await fs.rm(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('every authentication state has a distinct label with an icon, so color is never the only signal', () => {
@@ -84,7 +84,7 @@ test('after the sign-in terminal closes the account is verified: authenticated o
 				? { shown: ['info:La cuenta Work quedó autenticada.'], assigned: true }
 				: { shown: ['warn:No se detectó una sesión en la cuenta Work. Si cerraste el terminal antes de terminar, podés reintentar.'], assigned: false });
 		}
-	} finally { await fs.rm(base, { recursive: true, force: true }); }
+	} finally { await fs.rm(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('managing accounts lists them without asking for a folder; only the workspace actions ask', async () => {
@@ -109,5 +109,5 @@ test('managing accounts lists them without asking for a folder; only the workspa
 		pickedActions.shift();
 		await handlers.get('atsHarness.accounts.manage')!();
 		assert.deepEqual({ afterDefault, asksAfterWorkspace: folderAsks, assigned: (await registry.resolve('claude', path.join(base, 'project')))?.id === profile.id }, { afterDefault: { asks: 0, isDefault: true }, asksAfterWorkspace: 1, assigned: true });
-	} finally { await fs.rm(base, { recursive: true, force: true }); }
+	} finally { await fs.rm(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });

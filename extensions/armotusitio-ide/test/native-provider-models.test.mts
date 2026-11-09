@@ -20,5 +20,5 @@ test('Claude offers published model versions without calling the provider or pre
 		assert.equal(models.options.some(item => item.id === 'sonnet'), true);
 		assert.equal(models.options.some(item => item.id === 'claude-sonnet-5-5'), true);
 		assert.equal(models.options.some(item => item.id === 'claude-haiku-5-5'), true);
-	} finally { await fs.rm(home, { recursive: true, force: true }); }
+	} finally { await fs.rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });

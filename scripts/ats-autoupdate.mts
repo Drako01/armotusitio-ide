@@ -386,7 +386,13 @@ async function validate(): Promise<unknown> {
 	await access(npmCLI);
 	for (const args of [['run', 'hygiene'], ['run', 'typecheck-client'], ['run', 'check', '--prefix', 'extensions/armotusitio-ide'], ['test', '--prefix', 'extensions/armotusitio-ide']]) {
 		console.log(`Validating: npm ${args.join(' ')}`);
-		await run(process.execPath, [npmCLI, ...args], repositoryRoot, 1800000);
+		try { await run(process.execPath, [npmCLI, ...args], repositoryRoot, 1800000); }
+		catch (error) {
+			// The failing check's own output is the only diagnosis available on a hosted runner.
+			const failure = Object(error);
+			console.error(String(Reflect.get(failure, 'stdout') ?? '').concat(String(Reflect.get(failure, 'stderr') ?? '')).slice(-8000));
+			throw error;
+		}
 	}
 	await run(process.execPath, [path.join(repositoryRoot, 'node_modules', '@typescript', 'native', 'bin', 'tsc'), '--project', 'extensions/armotusitio-ide/tsconfig.json', '--noEmit', '--pretty', 'false']);
 	await run(process.execPath, ['--test', 'scripts/ats-autoupdate.test.mts', 'scripts/ats-release-script.test.mts', 'scripts/ats-release-state.test.mts', 'scripts/ats-build-all.test.mts', 'scripts/ats-release-retry.test.mts', 'scripts/ats-release-check.test.mts', 'scripts/ats-release-ci.test.mts'], repositoryRoot, 120000);

@@ -23,7 +23,7 @@ async function fixture(forbid: boolean): Promise<{ root: string; cleanup(): Prom
 		(forbid ? 'true' : 'false') + ',tasks:[{id:"task_1",status:"running"}]}));'
 	].join('\n');
 	await fs.writeFile(path.join(folder, 'core.mjs'), script);
-	return { root: await fs.realpath(root), cleanup: () => fs.rm(root, { recursive: true, force: true }) };
+	return { root: await fs.realpath(root), cleanup: () => fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }) };
 }
 
 test('project status transport requires consent, nonce, exact schema and never grants writer authority', async () => {
@@ -74,7 +74,7 @@ async function gateEngine(mode: 'ok' | 'fail' | 'ignore-fence' | 'slow' | 'mutat
 		'}'
 	].join('\n');
 	await fs.writeFile(path.join(folder, 'core.mjs'), script);
-	return { root: await fs.realpath(root), cleanup: () => fs.rm(root, { recursive: true, force: true }) };
+	return { root: await fs.realpath(root), cleanup: () => fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }) };
 }
 
 async function withFence<T>(root: string, work: (fence: SharedExecutionFence) => Promise<T>): Promise<T> {
@@ -83,7 +83,7 @@ async function withFence<T>(root: string, work: (fence: SharedExecutionFence) =>
 	try { return await work(fence); }
 	finally {
 		await fence.release();
-		await fs.rm(storage, { recursive: true, force: true });
+		await fs.rm(storage, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 	}
 }
 

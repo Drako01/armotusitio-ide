@@ -15,7 +15,7 @@ Hay dos formas de publicar una versión. Las dos producen exactamente lo mismo: 
 El workflow [`ats-release.yml`](../../.github/workflows/ats-release.yml) hace esto:
 
 1. **Prepara** (`prepare`): calcula la próxima revisión (`ats-v<versión>-r<N+1>`) a partir de las releases publicadas. Si hace falta, commitea en `main` solo el cambio de revisión en `build/armotusitio/product-overrides.json`, como `github-actions[bot]`.
-2. **Linux** (`linux`): compila x64 y arm64 en paralelo.
+2. **Linux** (`linux`): compila x64 y arm64 en paralelo, cada uno en su runner nativo. Un fallo de una arquitectura no cancela la otra. El arm64 se compila con el compilador de la imagen (Ubuntu 22.04), así que sus módulos nativos exigen como mínimo glibc 2.35; el x64 sigue usando el sysroot de glibc 2.28.
 3. **Windows y publicación** (`windows-and-publish`): compila el cliente de Windows, corre las validaciones (higiene, typecheck, tests), firma el manifiesto y publica la release como **Latest**.
 
 La versión base (por ejemplo `1.145.2`) sale de `package.json`. La revisión sube sola en cada release.

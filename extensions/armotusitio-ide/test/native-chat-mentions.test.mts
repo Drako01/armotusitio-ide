@@ -22,7 +22,7 @@ async function project(files: Record<string, string | Buffer>) {
 		await fs.writeFile(path.join(root, name), content);
 	}
 	await fs.mkdir(root, { recursive: true });
-	return { base, root, cleanup: () => fs.rm(base, { recursive: true, force: true }) };
+	return { base, root, cleanup: () => fs.rm(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }) };
 }
 const reasons = (rejected: Array<{ mention: string; reason: string }>) => Object.fromEntries(rejected.map(item => [item.mention, item.reason]));
 

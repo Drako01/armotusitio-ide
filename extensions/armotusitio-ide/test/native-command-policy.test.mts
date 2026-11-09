@@ -40,7 +40,7 @@ test('unknown development tools ask for consent and a persisted user grant survi
 		assert.equal((await policyFor()).decide('custom-tool', ['other'], '.').allowed, false);
 		await addUserRule('run:custom-tool check', 'deny', home);
 		assert.deepEqual((await policyFor()).decide(...request), { allowed: false, reason: 'not-allowed' });
-	} finally { await fs.rm(base, { recursive: true, force: true }); }
+	} finally { await fs.rm(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('the IDE floor rejects what no preset, project or user extra can allow', () => {
@@ -82,7 +82,7 @@ test('a monorepo is detected completely, skipping dependency folders, with each 
 			['.', 'node', 'pnpm', ['build'], undefined], ['apps/api', 'go', undefined, undefined, undefined], ['apps/web', 'node', 'pnpm', ['test', 'lint'], undefined],
 			['services/jobs', 'python', undefined, undefined, undefined], ['tools', 'java', undefined, undefined, 'gradlew']
 		]);
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('the runner executes without a shell, bounds time and output, and the tool server answers denials as POLICY_DENIED', async () => {
@@ -104,7 +104,7 @@ test('the runner executes without a shell, bounds time and output, and the tool 
 		const audit = (await fs.readFile(path.join(logs, 'commands.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
 		assert.deepEqual({ denied, ranExit: ran.text.startsWith('exit 3'), budget: /about 1 turns left/.test(ran.text), audit: audit.map(entry => entry.denied ?? entry.exitCode) },
 			{ denied: { isError: true, text: denialText('git-mutation') }, ranExit: true, budget: true, audit: ['git-mutation', 3] });
-	} finally { await fs.rm(root, { recursive: true, force: true }); await fs.rm(logs, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); await fs.rm(logs, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 async function permissionsFor(preset: PermissionPreset, files: { user?: unknown; project?: unknown } = {}): Promise<{ set: PermissionSet; cleanup: () => Promise<void> }> {
@@ -115,7 +115,7 @@ async function permissionsFor(preset: PermissionPreset, files: { user?: unknown;
 			await fs.writeFile(path.join(base, folder, '.armotusitio', 'permissions.json'), JSON.stringify(content));
 		}
 	}
-	return { set: await loadPermissions(path.join(base, 'project'), path.join(base, 'home'), undefined, { preset }), cleanup: () => fs.rm(base, { recursive: true, force: true }) };
+	return { set: await loadPermissions(path.join(base, 'project'), path.join(base, 'home'), undefined, { preset }), cleanup: () => fs.rm(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }) };
 }
 
 test('permissions move dependency-change out of the floor: ask in dev and trusted, deny in readonly, denied without permissions', async () => {

@@ -17,7 +17,7 @@ async function withProject(files: Record<string, string>, body: (root: string) =
 			await fs.writeFile(path.join(root, name), content);
 		}
 		await body(root);
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 }
 
 const bytes = (text: string): number => Buffer.byteLength(text, 'utf8');
@@ -85,7 +85,7 @@ test('oversized and linked instruction files are ignored, and a project without 
 			catch { return; } // Creating symbolic links needs privileges on some Windows hosts.
 			assert.deepEqual(await readProjectInstructions(root, 8 * 1024), { files: [], text: '' });
 		});
-	} finally { await fs.rm(outside, { recursive: true, force: true }); }
+	} finally { await fs.rm(outside, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('a marker split by another marker cannot reassemble into a frame delimiter', async () => {

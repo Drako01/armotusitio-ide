@@ -23,7 +23,7 @@ async function fixture(text = '') {
 	return { root, file, profile: { id: 'redevent', root, name: 'RedEvent' }, async dispose() {
 		const target = path.resolve(root);
 		assert.ok(target.startsWith(path.resolve(os.tmpdir()) + path.sep) && path.basename(target).startsWith('ats-provider-'));
-		await fs.rm(target, { recursive: true, force: true });
+		await fs.rm(target, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 	} };
 }
 

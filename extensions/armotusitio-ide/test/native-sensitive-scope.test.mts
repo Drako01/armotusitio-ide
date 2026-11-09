@@ -21,7 +21,7 @@ test('detects nested ignored credentials with identical size', async () => {
 		const after = await sensitiveScopeDigest(canonical);
 		assert.equal(before.entries, 1);
 		assert.notEqual(before.digest, after.digest);
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('ignores dependency directories but fails closed on oversized secrets', async () => {
@@ -33,7 +33,7 @@ test('ignores dependency directories but fails closed on oversized secrets', asy
 		assert.equal((await sensitiveScopeDigest(canonical)).entries, 0);
 		await fs.writeFile(path.join(root, '.env'), Buffer.alloc(1024 * 1024 + 1));
 		await assert.rejects(sensitiveScopeDigest(canonical), /HARNESS_SENSITIVE_FILE_TOO_LARGE/);
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 
@@ -49,7 +49,7 @@ test('skips Harness output and tool caches by path or name, but not same-named f
 		await fs.mkdir(path.join(root, 'apps', 'runtime'), { recursive: true });
 		await fs.writeFile(path.join(root, 'apps', 'runtime', '.env'), 'KEY=abc');
 		assert.equal((await sensitiveScopeDigest(canonical)).entries, 1);
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('does not trip on the deep, generated trees a Harness run leaves behind', async () => {
@@ -60,7 +60,7 @@ test('does not trip on the deep, generated trees a Harness run leaves behind', a
 		await fs.mkdir(toolchain, { recursive: true });
 		await fs.mkdir(path.join(root, 'infra', 'tf', '.terraform', 'providers', 'registry', 'hashicorp', 'aws', '6.0.0', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'), { recursive: true });
 		assert.equal((await sensitiveScopeDigest(canonical)).entries, 0);
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 /** Real repository on disk: git, not a directory walk, decides what counts as project content. */
@@ -136,7 +136,7 @@ test('without git it walks the tree and reports what it cannot analyze', async (
 		assert.deepEqual({ entries: scan.entries, unscanned: scan.unscanned }, { entries: 1, unscanned: ['vendored/sdk/level0'] });
 	} finally {
 		for (const [name, value] of Object.entries(originalPath)) { if (value === undefined) { delete process.env[name]; } else { process.env[name] = value; } }
-		await fs.rm(root, { recursive: true, force: true });
+		await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 	}
 });
 
@@ -152,7 +152,7 @@ test('does not follow secret symlinks into unrelated directories', { skip: proce
 		assert.equal(before.digest, after.digest);
 		assert.equal(before.entries, 1);
 	} finally {
-		await fs.rm(root, { recursive: true, force: true });
-		await fs.rm(external, { recursive: true, force: true });
+		await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+		await fs.rm(external, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 	}
 });

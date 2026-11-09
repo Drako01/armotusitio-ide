@@ -39,7 +39,7 @@ test('/permisos lists the saved rules and /permisos quitar revokes one so the ac
 			usage: 'Uso: /permisos quitar REGLA (copiala de la lista de /permisos).',
 			allow: ['git_push:' + projectKey(root)]
 		});
-	} finally { await fs.rm(base, { recursive: true, force: true }); }
+	} finally { await fs.rm(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('/auditoria lists the latest tool actions across runs, newest first, redacted, skipping torn lines', async () => {
@@ -53,5 +53,5 @@ test('/auditoria lists the latest tool actions across runs, newest first, redact
 		assert.deepEqual({ count: lines.length, first: lines[0], last: lines[2], leaked: lines.some(line => line.includes('ghp_abcdef')) },
 			{ count: 3, first: '  2026-11-07 11:05:00  git_commit  -> COMMITTED', last: '  2026-11-07 10:00:00  pnpm lint  -> exit 0', leaked: false });
 		assert.deepEqual(await auditLines(path.join(runs, 'missing')), []);
-	} finally { await fs.rm(runs, { recursive: true, force: true }); }
+	} finally { await fs.rm(runs, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });

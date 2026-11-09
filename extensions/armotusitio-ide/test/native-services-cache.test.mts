@@ -67,5 +67,5 @@ test('the cache reuses a result only for identical inputs; any tracked or uncomm
 		await fs.writeFile(path.join(root, 'a.go'), 'package a // edit');
 		assert.deepEqual({ backend: cache.backend, describe: cache.describe(), hit: hit?.status, invalidated: (await key()) !== first, miss: await cache.get(await key()) },
 			{ backend: 'disk', describe: 'disco', hit: 'passed', invalidated: true, miss: undefined });
-	} finally { await fs.rm(root, { recursive: true, force: true }); await fs.rm(storage, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); await fs.rm(storage, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });

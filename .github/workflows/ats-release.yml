@@ -56,7 +56,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 360
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         include:
           - arch: x64
@@ -160,6 +160,10 @@ jobs:
           "ATS_IDE_SIGNING_KEY=$keyPath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: Validate and sign
         shell: pwsh
+        env:
+          # The hosted Windows temp folder is an 8.3 short path; the checkpoint store requires canonical paths.
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
         run: |
           node scripts/ats-autoupdate.mts validate
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
