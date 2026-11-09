@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { handleJob, handleRun, type RunnerConfig } from '../src/ats-runner.ts';
+import { handleJob, handleRun, runAsJob, type RunnerConfig } from '../src/ats-runner.ts';
 import { runCommand } from '../src/native-command-runner.ts';
 import { JobTable, MAX_RUNNING_JOBS } from '../src/native-jobs.ts';
 import type { PermissionSet } from '../src/native-permissions.ts';
@@ -88,5 +88,20 @@ test('stopping a command right after it was requested still stops it, even befor
 		abort.abort();
 		const result = await pending;
 		assert.deepEqual({ cancelled: result.cancelled, quick: Date.now() - started < 15000 }, { cancelled: true, quick: true });
+	});
+});
+
+test('a long install runs as a job whose exit code decides the result, with a timeout and no leftover process', async () => {
+	await withProject(async ({ root, config }) => {
+		await fs.writeFile(path.join(root, 'ok.cjs'), 'console.log("installed");');
+		const jobs = new JobTable();
+		const run = (script: string, timeoutSec = 30) => runAsJob(config, { command: 'node', args: [script], cwd: '.', timeoutSec }, 1, { jobs });
+		const ok = await run('ok.cjs'), failed = await run('quick.cjs'), timedOut = await run('server.cjs', 1);
+		assert.deepEqual({
+			ok: [ok.isError, /exited \(exit 0\)/.test(ok.text), ok.text.includes('installed')],
+			failed: [failed.isError, /exit 3/.test(failed.text)],
+			timedOut: [timedOut.isError, /^timed out after 1 s/.test(timedOut.text)],
+			running: jobs.list().filter(job => job.state === 'running').length
+		}, { ok: [false, true, true], failed: [true, true], timedOut: [true, true], running: 0 });
 	});
 });

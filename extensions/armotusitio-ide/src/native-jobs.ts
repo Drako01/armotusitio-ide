@@ -58,6 +58,12 @@ export class JobTable {
 
 	list(): JobSnapshot[] { return [...this.jobs.keys()].map(id => this.status(id)!); }
 
+	/** Resolves when the job has ended (exit, timeout, stop or failure), without polling. */
+	async wait(id: string): Promise<JobSnapshot | undefined> {
+		await this.jobs.get(id)?.finished;
+		return this.status(id);
+	}
+
 	/** Asks a running job to stop and waits until its process tree is gone. */
 	async stop(id: string): Promise<JobSnapshot | undefined> {
 		const job = this.jobs.get(id);

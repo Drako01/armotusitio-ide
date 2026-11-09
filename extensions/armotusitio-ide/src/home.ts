@@ -109,6 +109,7 @@ function registerHome(context: any, controller: any, projects: any, options: any
 <section aria-labelledby="progress-title"><h2 id="progress-title">${t('Progreso del Harness')}</h2><div id="progress" aria-live="polite"></div></section>
 <section aria-labelledby="runs-title"><div class="section-heading"><h2 id="runs-title">${t('Historial de tareas del IDE')}</h2><div class="actions"><button class="secondary" data-action="clear">${t('Borrar historial')}</button><button class="secondary" data-action="cancel">${t('Cancelar una tarea')}</button></div></div><p class="muted">${t('Hasta 20 tareas por proyecto. Se guardan en este workspace, sin logs ni comandos privados.')}</p><div id="runs" role="log" aria-live="polite"></div></section>
 </details></details>
+<footer>${t('Desarrollado por')} Alejandro Daniel Di Stefano &middot; <a href="https://armotusitio.com.ar" target="_blank" rel="noopener noreferrer">ArmoTuSitio.com.ar</a></footer>
 </main><script nonce="${nonce}" src="${current.webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'dist', 'home.js'))}"></script></body></html>`;
 		const disposables: any[] = [];
 		disposables.push(current.webview.onDidReceiveMessage(async (message: any) => {

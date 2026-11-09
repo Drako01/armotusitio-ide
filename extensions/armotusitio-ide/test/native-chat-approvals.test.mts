@@ -208,3 +208,13 @@ test('branch and PR approval cards carry their own title, and a remembered git r
 	}
 	assert.deepEqual(titles, ['Crear una rama', 'true', 'Crear o actualizar un pull request']);
 });
+
+test('two answers to one card at the same time: the first decides and nothing is remembered twice', async () => {
+	const s = await actingSession();
+	try {
+		const [card] = s.chat.snapshot().approvals!;
+		await Promise.all([s.chat.resolveApproval(card.id, 'always'), s.chat.resolveApproval(card.id, 'deny'), s.chat.resolveApproval(card.id, 'always')]);
+		assert.deepEqual({ answer: await s.answer(), remembered: s.remembered, left: s.chat.snapshot().approvals }, { answer: 'always', remembered: ['run:pnpm test'], left: undefined });
+		s.release(); await s.running;
+	} finally { await s.cleanup(); }
+});

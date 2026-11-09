@@ -8,6 +8,7 @@
  * nothing in the project, the user's MCP settings or the agent's requests can widen the policy.
  */
 import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
 import * as readline from 'node:readline';
 import { createCommandPolicy, denialText, type CommandPolicyConfig } from './native-command-policy.ts';
 import { JobTable, MAX_RUNNING_JOBS, type JobSnapshot } from './native-jobs.ts';
@@ -20,6 +21,7 @@ import { GIT_TOOLS, endsGitDelivery, handleGitTool } from './native-git-tools.ts
 import { FILE_TOOLS, handleFileTool } from './native-file-tools.ts';
 import { repairDependencies } from './native-dependency-repair.ts';
 import { createCallGuard } from './native-call-guard.ts';
+import { acquireInstallLock } from './native-install-lock.ts';
 import { detectEcosystems } from './native-ecosystems.ts';
 import { syncCommands } from './native-dependency-sync.ts';
 import { APPROVE_TOOL, decidePermissionPrompt, type ApproveContext, type PromptDecision } from './native-approve-tool.ts';
@@ -253,13 +255,37 @@ const REPAIR_TOOL = {
 const REPAIR_INSTALL_TIMEOUT_SEC = 900;
 
 /** Answer one `repair_dependencies` call: every effect is delegated to the policy-checked handlers above. Exported for tests. */
+/**
+ * A long command (an install) goes through the same policy and approvals as `run`, but as a background job of the job table: it has an
+ * id and a log in the run folder, a timeout, a cap of running jobs and is stopped when the run ends. The wait is on the job's end, not a
+ * poll, and success is the exit code, never the absence of output.
+ */
+export async function runAsJob(config: RunnerConfig, input: { command: string; args: string[]; cwd: string; timeoutSec: number }, calls: number, deps: RunnerDeps): Promise<{ isError: boolean; text: string }> {
+	const started = await handleRun(config, input, calls, deps, 'job');
+	const id = /^started (job-\d+)/.exec(started.text)?.[1];
+	if (started.isError || !id) { return started; }
+	const job = await (deps.jobs ?? JOBS).wait(id);
+	const ok = job?.state === 'exited' && job.exitCode === 0;
+	return { isError: !ok, text: (job?.state === 'timed-out' ? 'timed out after ' + input.timeoutSec + ' s. ' : '') + (job ? describeJob(job) : 'The background job ' + id + ' disappeared.') };
+}
+
 export async function handleRepair(config: RunnerConfig, input: unknown, calls: number, deps: RunnerDeps = {}): Promise<{ isError: boolean; text: string }> {
 	if (!config.files) { return { isError: true, text: 'Unknown tool' }; }
 	const subprojects = await detectEcosystems(config.root);
+	const wanted = input as { path?: unknown; mode?: unknown } | null;
+	// A repair rewrites a dependency folder: only one process (this run, another agent, another IDE window) may do it at a time.
+	const lock = wanted?.mode === 'diagnose' ? undefined : await acquireInstallLock(path.resolve(config.root, typeof wanted?.path === 'string' ? wanted.path : '.'));
+	if (!lock && wanted?.mode !== 'diagnose') { return { isError: true, text: 'BLOCKED install-in-progress: another process is already repairing or installing this folder. Wait for it to finish, then run the repair again.' }; }
+	try {
+		return await repairWithLock(config, input, calls, deps, subprojects);
+	} finally { await lock?.release(); }
+}
+
+async function repairWithLock(config: RunnerConfig, input: unknown, calls: number, deps: RunnerDeps, subprojects: Awaited<ReturnType<typeof detectEcosystems>>): Promise<{ isError: boolean; text: string }> {
 	const result = await repairDependencies({
 		root: config.root, subprojects,
 		installCommands: () => syncCommands(config.root, subprojects),
-		run: (command, args, cwd) => handleRun(config, { command, args, cwd, timeoutSec: REPAIR_INSTALL_TIMEOUT_SEC }, calls, deps),
+		run: (command, args, cwd) => runAsJob(config, { command, args, cwd, timeoutSec: REPAIR_INSTALL_TIMEOUT_SEC }, calls, deps),
 		remove: relative => handleFiles(config, 'delete_path', { path: relative }, deps)
 	}, (input ?? {}) as Record<string, unknown>);
 	await auditTool(config, REPAIR_TOOL.name, result);

@@ -34,3 +34,11 @@ test('path equality follows the host file system: case-insensitive only on Windo
 		samePath('/Users/dev', '/Users/dev', 'darwin')
 	], [true, true, false, true]);
 });
+
+test('credentials in URLs, private key blocks and more provider token shapes are redacted', () => {
+	const key = 'AIza' + 'a'.repeat(35);
+	const input = ['postgres://user:p4ssw0rd@db.host:5432/app', 'https://u:tok3n@github.com/x/y.git', '-----BEGIN RSA PRIVATE KEY-----\nMIIEvQ\n-----END RSA PRIVATE KEY----- after',
+		'glpat-abcdefghij0123456789', key, 'sk_' + 'live_' + 'a'.repeat(24), 'aws_secret_access_key = wJalrXUtnFEMI/K7MDENG', 'https://example.com/a:b/c', 'cut -----BEGIN PRIVATE KEY-----\nMIIEvQ'].join('\n');
+	assert.equal(redactSecrets(input), ['postgres://user:[redacted]@db.host:5432/app', 'https://u:[redacted]@github.com/x/y.git', '[redacted private key] after',
+		'[redacted]', '[redacted]', '[redacted]', 'aws_secret_access_key = [redacted]', 'https://example.com/a:b/c', 'cut [redacted private key]'].join('\n'));
+});

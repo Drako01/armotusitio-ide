@@ -9,6 +9,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { repairDependencies, type RepairDeps, type RepairStepResult } from '../src/native-dependency-repair.ts';
 import { classifyFailure } from '../src/native-failure-class.ts';
+import { acquireInstallLock } from '../src/native-install-lock.ts';
 import { handleRepair, type RunnerConfig } from '../src/ats-runner.ts';
 
 const OK: RepairStepResult = { isError: false, text: 'done' };
@@ -116,5 +117,18 @@ test('the runner tool detects the project itself and is unavailable unless the f
 		const withFiles = await handleRepair({ ...base, files: true }, { mode: 'diagnose' }, 0);
 		const without = await handleRepair(base, { mode: 'diagnose' }, 0);
 		assert.deepEqual([withFiles.text, without.text], ['DIAGNOSIS . (pnpm): node_modules is missing.', 'Unknown tool']);
+	});
+});
+
+test('a repair is refused while another process holds the folder, and diagnose is not', async () => {
+	await withProject({}, async h => {
+		await fs.writeFile(path.join(h.root, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n');
+		const base: RunnerConfig = { schemaVersion: 1, root: h.root, env: {}, logDirectory: h.root, policy: { subprojects: [], delegate: false, extras: [] }, permissions: {}, files: true };
+		const held = await acquireInstallLock(h.root);
+		const blocked = await handleRepair(base, {}, 0);
+		const diagnosed = await handleRepair(base, { mode: 'diagnose' }, 0);
+		await held?.release();
+		const after = await handleRepair(base, {}, 0);
+		assert.deepEqual([blocked.text.split(':')[0], diagnosed.text.slice(0, 9), after.text.startsWith('BLOCKED install-in-progress')], ['BLOCKED install-in-progress', 'DIAGNOSIS', false]);
 	});
 });

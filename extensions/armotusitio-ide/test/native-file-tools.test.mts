@@ -194,3 +194,14 @@ test('on Windows an alternate data stream, a trailing dot or space and a short n
 			{ results: aliases.map(() => 'POLICY_DENIED: invalid-path'), moved: 'POLICY_DENIED: invalid-path', git: true, file: true });
 	});
 });
+
+test('a protected folder planted in a dependency folder while the approval is pending stops the deletion', async () => {
+	await withProject(async ({ root, context, set }) => {
+		await fs.writeFile(path.join(root, '.gitignore'), 'node_modules\n');
+		await fs.writeFile(path.join(root, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n');
+		await fs.mkdir(path.join(root, 'node_modules', 'pkg'), { recursive: true });
+		set('ask');
+		const result = await handleFileTool({ ...context, ask: async () => { await fs.mkdir(path.join(root, 'node_modules', 'pkg', '.git')); return 'once'; } }, 'delete_path', { path: 'node_modules' });
+		assert.deepEqual([result.text, await exists(path.join(root, 'node_modules', 'pkg', '.git'))], ['POLICY_DENIED: protected-path', true]);
+	});
+});

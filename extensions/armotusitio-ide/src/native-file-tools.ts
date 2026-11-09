@@ -211,6 +211,8 @@ async function deletePath(context: FileToolsContext, input: Record<string, unkno
 	if (denial) { return { isError: true, text: denial }; }
 	// Re-validate after the (possibly long) approval wait: the tree may have changed meanwhile.
 	await assertInside(context.root, relative);
+	// A protected folder may have appeared in a dependency folder while the user was deciding: scan again, as the approval covers what was shown.
+	if (dependencies) { await assertDependencyTreeIsDisposable(absolute); }
 	// Retries ride out the short file locks a Windows antivirus or indexer holds on freshly installed packages.
 	await fs.rm(absolute, { recursive: true, force: false, maxRetries: 10, retryDelay: 200 });
 	return { isError: false, text: 'DELETED ' + relative + (entries > 1 ? ' (' + entries + ' entries)' : '') };

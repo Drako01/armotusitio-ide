@@ -8,6 +8,7 @@ const api = acquireVsCodeApi();
 const { parseMarkdown, parseInline } = require('./markdown.ts');
 const { createSuggest } = require('./composer-suggest.ts');
 
+const SECRET_LIKE = /(?:sk-|ghp_|github_pat_|xox[bap]-|AKIA)[A-Za-z0-9_-]{8,}|(?:password|passwd|secret|token|api[_-]?key)s*[:=]/i;
 const app = document.getElementById('app');
 let L: any = null;
 let state: any = null;
@@ -165,6 +166,10 @@ function shell(): void {
 	form.append(box, el('p', 'hint', L.keyboard));
 	(form.lastElementChild as HTMLElement).id = 'composer-hint';
 	form.addEventListener('submit', event => { event.preventDefault(); submit(input.value); });
+	// An unsent message survives the view being hidden or reloaded. Text that looks like a credential is never kept.
+	const restored = (api.getState() as { draft?: unknown } | undefined)?.draft;
+	if (typeof restored === 'string' && restored && !input.value) { input.value = restored; requestAnimationFrame(autosize); }
+	input.addEventListener('input', () => api.setState({ draft: SECRET_LIKE.test(input.value) ? '' : input.value.slice(0, L.maxMessageChars) }));
 	suggest = createSuggest(input, form, message => api.postMessage(message), { commands: L.commandsLabel, files: L.filesLabel, commandList: L.commandList });
 	input.addEventListener('keydown', event => {
 		if (suggest.key(event)) { event.preventDefault(); return; }
@@ -206,7 +211,7 @@ function submit(value: string): void {
 	api.postMessage({ action: 'send', text });
 	// An oversized message is answered with how many characters to remove; the text stays so it can be trimmed.
 	if (text.length > L.maxMessageChars) { return; }
-	const input = document.getElementById('prompt') as HTMLTextAreaElement; input.value = ''; autosize(); suggest?.close();
+	const input = document.getElementById('prompt') as HTMLTextAreaElement; input.value = ''; api.setState({ draft: '' }); autosize(); suggest?.close();
 }
 
 // ---------------------------------------------------------------- provider quota

@@ -58,12 +58,13 @@ export function replayJournal(goalId: string, entries: readonly JournalEntry[]):
 	const state: GoalState = { goalId, status: 'queued', charter: charter.charter, baseline: charter.baseline, baseCommit: charter.baseCommit, steps: [], questions: [], updatedAt: charter.at };
 	for (const entry of entries) {
 		state.updatedAt = entry.at;
-		if (entry.type === 'step-start') { state.steps.push({ index: entry.index, title: entry.title, role: entry.role, status: 'running', startedAt: entry.at }); }
+		// Replaying is idempotent: a duplicated record (a retried append, a merged journal) never doubles a step or a question.
+		if (entry.type === 'step-start' && !state.steps.some(step => step.index === entry.index && step.status === 'running')) { state.steps.push({ index: entry.index, title: entry.title, role: entry.role, status: 'running', startedAt: entry.at }); }
 		if (entry.type === 'step-end') {
 			const step = state.steps.find(item => item.index === entry.index && item.status === 'running');
 			if (step) { Object.assign(step, { status: entry.status, outcome: entry.outcome, metric: entry.metric, rejection: entry.rejection, endedAt: entry.at }); }
 		}
-		if (entry.type === 'question') { state.questions.push({ id: entry.id, text: entry.text }); }
+		if (entry.type === 'question' && !state.questions.some(item => item.id === entry.id)) { state.questions.push({ id: entry.id, text: entry.text }); }
 		if (entry.type === 'answer') { const question = state.questions.find(item => item.id === entry.id); if (question) { question.answer = entry.text; } }
 		if (entry.type === 'state') { state.status = entry.status; state.reason = entry.reason; }
 	}

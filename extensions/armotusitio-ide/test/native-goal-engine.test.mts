@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { FileGoalJournal, interruptedOnLoad } from '../src/native-goal-journal.ts';
+import { FileGoalJournal, interruptedOnLoad, replayJournal } from '../src/native-goal-journal.ts';
 import { checkStepIntegrity, parseUnifiedDiff } from '../src/native-goal-guards.ts';
 import { classifyRetry, oscillating, parseMetric, plateaued, serviceUnavailable } from '../src/native-goal-metric.ts';
 import { globPattern, isTestFile, validateStepDiff } from '../src/native-goal.ts';
@@ -46,8 +46,8 @@ test('metric, plateau, oscillation, flaky tests and service outages are measured
 		parseMetric('percent', 'no numbers here')
 	], [46, 55.5, 82, undefined]);
 	assert.deepEqual([plateaued([46, 46.2, 46.4]), plateaued([46, 50, 50.2]), oscillating([['a'], ['b'], ['a']]), oscillating([['a'], ['a'], ['a']]),
-		classifyRetry('failed', 'passed'), classifyRetry('failed', 'failed'), serviceUnavailable('dial tcp 127.0.0.1:5432: connect: connection refused'), serviceUnavailable('expected 2, got 3')],
-	[true, false, true, false, 'flaky', 'failed', true, false]);
+	classifyRetry('failed', 'passed'), classifyRetry('failed', 'failed'), serviceUnavailable('dial tcp 127.0.0.1:5432: connect: connection refused'), serviceUnavailable('expected 2, got 3')],
+		[true, false, true, false, 'flaky', 'failed', true, false]);
 });
 
 test('the charter validator checks the real diff: scope globs, denied paths and production code', () => {
@@ -142,5 +142,21 @@ test('autonomous goal stops on a rejected step after corrections and on a platea
 		const flat = simulated({ metrics: [46, 46.1, 46.2, 46.3] });
 		const plateau = await new GoalOrchestrator(new FileGoalJournal(directory, 'b'), flat.ports, 'b').run(defaultCharter('cobertura', 'claude', undefined, { allowProduction: false, target: 70, metric: { command: 'go', args: [], cwd: '.', parse: 'go-coverage' } }));
 		assert.deepEqual({ rejected: [rejected.status, rejected.reason?.split(':')[0]], plateau: [plateau.status, plateau.reason] }, { rejected: ['blocked', 'step-rejected'], plateau: ['blocked', 'plateau'] });
+	} finally { await fs.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
+});
+
+test('replaying a journal with duplicated, reordered or torn records stays consistent', async () => {
+	const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-journal-'));
+	try {
+		const at = '2026-01-01T00:00:00.000Z';
+		const charter = { type: 'charter' as const, at, charter: defaultCharter('objective') };
+		const start = { type: 'step-start' as const, at, index: 1, title: 'one' };
+		const end = { type: 'step-end' as const, at, index: 1, status: 'done' as const };
+		const question = { type: 'question' as const, at, id: 'q1', text: 'which?' };
+		const state = replayJournal('goal-1', [charter, start, start, end, end, question, question, { type: 'answer', at, id: 'unknown', text: 'x' }, { type: 'step-end', at, index: 9, status: 'done' }]);
+		const journal = new FileGoalJournal(directory, 'goal-1');
+		await fs.writeFile(path.join(directory, 'goal-1.jsonl'), [charter, start].map(entry => JSON.stringify({ ...entry, v: 1 })).join('\n') + '\n{"type":"step-en');
+		const torn = await journal.load();
+		assert.deepEqual({ steps: state.steps.map(step => [step.index, step.status]), questions: state.questions.length, tornSteps: torn.steps.map(step => step.status) }, { steps: [[1, 'done']], questions: 1, tornSteps: ['running'] });
 	} finally { await fs.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
