@@ -120,10 +120,13 @@ for (const provider of ['codex', 'claude'] as const) {
 			try {
 				const session = await h.session();
 				const controller = new AbortController();
-				setTimeout(() => controller.abort(), 400);
-				const started = Date.now();
-				const cancelled = await session.runTurn('SLOW work', 'conversation', controller.signal);
-				const elapsed = Date.now() - started;
+				const events = record(session);
+				// Abort once the turn is really streaming: a fixed delay raced the provider process start under load.
+				let abortedAt = 0;
+				const watcher = setInterval(() => { if (!abortedAt && events.some(event => event.payload.type === 'message.delta')) { abortedAt = Date.now(); controller.abort(); } }, 10);
+				const cancelled = await session.runTurn('SLOW work', 'conversation', controller.signal).finally(() => clearInterval(watcher));
+				// Cancellation latency: from the abort to the interrupted result, not including the provider start.
+				const elapsed = Date.now() - abortedAt;
 				const next = await session.runTurn('after cancel', 'conversation');
 				assert.deepEqual({ cancelled: cancelled.status, fast: elapsed < 2900, next: next.status }, { cancelled: 'interrupted', fast: true, next: 'completed' });
 			} finally { await h.close(); }
