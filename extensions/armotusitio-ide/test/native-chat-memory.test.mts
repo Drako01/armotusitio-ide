@@ -112,5 +112,5 @@ test('a long conversation compacts into persisted memory, keeps plan versions in
 		}, { bounded: true, memoryCompacted: true, memoryRoot: root, firstRequirementRemembered: true, planVersion: 2, survivesRestart: true });
 		await chat.reset();
 		assert.equal(JSON.parse(await fs.readFile(path.join(directory, 'conversation.json'), 'utf8')).memory, undefined);
-	} finally { await fs.rm(directory, { recursive: true, force: true }); }
+	} finally { await fs.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });

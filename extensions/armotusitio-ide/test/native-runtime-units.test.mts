@@ -92,7 +92,7 @@ test('session store: journal survives, lost turns are marked, corrupt files are 
 		await fs.writeFile(path.join(directory, 'agent-sessions.json'), JSON.stringify({ schemaVersion: SESSION_STORE_VERSION + 1, sessions: {} }));
 		await assert.rejects(store.get(key), /RUNTIME_STORE_NEWER/);
 		assert.deepEqual(migrateStore({ sessions: {} }), { schemaVersion: SESSION_STORE_VERSION, sessions: {} });
-	} finally { await fs.rm(directory, { recursive: true, force: true }); }
+	} finally { await fs.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('session store: a corrupt registry that cannot be archived is kept byte for byte and the failure is reported', async () => {
@@ -107,7 +107,7 @@ test('session store: a corrupt registry that cannot be archived is kept byte for
 			results.push({ code, bytes: await fs.readFile(file, 'utf8'), quarantined: store.quarantined, files: (await fs.readdir(directory)).filter(name => !name.endsWith('.lock')) });
 		}
 		assert.deepEqual(results, ['EACCES', 'EXDEV'].map(code => ({ code, bytes: '{broken', quarantined: false, files: ['agent-sessions.json'] })));
-	} finally { await fs.rm(directory, { recursive: true, force: true }); }
+	} finally { await fs.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('approval broker: scopes, expiry, revocation and audit, never across projects', () => {
@@ -162,7 +162,7 @@ test('provider policy: shell wrappers, sandboxed compound lines asked once, floo
 		});
 		assert.deepEqual(verdictOf('deny', 'run:x'), { allowed: false, scope: 'once', reason: 'DENIED: the user did not allow it' });
 		assert.deepEqual(verdictOf('session', 'run:x'), { allowed: true, scope: 'session' });
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('contracts: lifecycle transitions, tool normalization, question parsing and version pinning', () => {
@@ -192,7 +192,7 @@ test('a file change through a junction or symlink that leaves the project is den
 		const traversal = await decideProviderCall(context, { kind: 'file_change', name: 'fileChange', paths: ['../outside/owned.txt'] });
 		const inside = await decideProviderCall(context, { kind: 'file_change', name: 'fileChange', paths: [path.join(root, 'src', 'ok.ts')] });
 		assert.deepEqual({ through: through.reason, traversal: traversal.reason, inside: inside.allowed, asked }, { through: 'POLICY_DENIED: path-outside-project', traversal: 'POLICY_DENIED: path-outside-project', inside: true, asked: 0 });
-	} finally { await fs.rm(base, { recursive: true, force: true }); }
+	} finally { await fs.rm(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('a session key without a profile is the legacy one, and each profile is its own session', async () => {

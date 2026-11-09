@@ -34,7 +34,7 @@ test('native engine declares implemented features only', async () => {
 		assert.equal(advertised.executionEnabled, false);
 		await fs.writeFile(manifestPath, JSON.stringify({ schemaVersion: 2, engine: 'project', capabilities: ['unknown-capability'] }));
 		await assert.rejects(describeEngine(await fs.realpath(root)), /HARNESS_CAPABILITIES_INVALID/);
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('project capability handshake is explicit, nonce-bound and never grants execution authority', async () => {
@@ -56,7 +56,7 @@ test('project capability handshake is explicit, nonce-bound and never grants exe
 		assert.deepEqual(descriptor.supported, []);
 		await fs.writeFile(path.join(root, '.harness', 'core.mjs'), 'console.log(JSON.stringify({schemaVersion:2,nonce:"forged",capabilities:["parallel-gates"]}));');
 		await assert.rejects(probeProjectHandshake(canonical, () => true), /HARNESS_HANDSHAKE_INVALID/);
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('handshake rejects undeclared response fields even with a valid nonce', async () => {
@@ -69,7 +69,7 @@ test('handshake rejects undeclared response fields even with a valid nonce', asy
 		await fs.writeFile(path.join(root, '.harness', 'core.mjs'),
 			'console.log(JSON.stringify({schemaVersion:2,nonce:process.argv[process.argv.indexOf("--nonce")+1],capabilities:["parallel-gates"],executionGranted:true}));');
 		await assert.rejects(probeProjectHandshake(canonical, () => true), /HARNESS_HANDSHAKE_INVALID/);
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('handshake rejects project entry modified while its own process executes', async () => {
@@ -86,7 +86,7 @@ test('handshake rejects project entry modified while its own process executes', 
 			'console.log(JSON.stringify({ schemaVersion: 2, nonce: process.argv[process.argv.indexOf("--nonce") + 1], capabilities: ["parallel-gates"] }));'
 		].join('\n'));
 		await assert.rejects(probeProjectHandshake(canonical, () => true), /HARNESS_HANDSHAKE_ENTRY_CHANGED/);
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('hybrid capability comparison is read-only and cannot grant execution authority', () => {
@@ -127,8 +127,8 @@ test('capability discovery rejects unknown fields and linked manifest parents', 
 				throw error;
 			}
 			await assert.rejects(describeEngine(canonical), /HARNESS_CAPABILITIES_UNSAFE/);
-		} finally { await fs.rm(external, { recursive: true, force: true }); }
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+		} finally { await fs.rm(external, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('external handshake refuses a manifest changed by the project runner', async () => {
@@ -146,7 +146,7 @@ test('external handshake refuses a manifest changed by the project runner', asyn
 		].join('\n'));
 		await assert.rejects(probeProjectHandshake(canonical, () => true),
 			/HARNESS_HANDSHAKE_CAPABILITIES_CHANGED/);
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('a Harness entered through harness/scripts/ide.mjs declares its capabilities in harness/manifests', async () => {
@@ -163,5 +163,5 @@ test('a Harness entered through harness/scripts/ide.mjs declares its capabilitie
 		await fs.mkdir(path.join(root, '.harness', 'manifests'));
 		await fs.writeFile(path.join(root, '.harness', 'manifests', 'ide-capabilities.json'), JSON.stringify({ schemaVersion: 2, engine: 'project', capabilities: [] }));
 		assert.deepEqual((await describeEngine(canonical)).projectDeclared, ['durable-tasks', 'writer-lease']);
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });

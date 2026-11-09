@@ -52,7 +52,7 @@ test('Codex sandbox denies writes outside the workspace and does not confine rea
 			workspaceWrite: ['write-inside:allowed', 'write-outside:denied', 'read-outside:allowed'],
 			readOnly: ['write-inside:denied', 'write-outside:denied', 'read-outside:allowed']
 		});
-	} finally { await fs.rm(base, { recursive: true, force: true }); }
+	} finally { await fs.rm(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('Codex full access is reported as no isolation, passes only the default requirement and never reaches readers', () => {

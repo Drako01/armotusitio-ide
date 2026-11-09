@@ -81,7 +81,7 @@ test('the authenticated runner channel reads a live card through the extension b
 		const result = await callToolChannel(channel.address, channel.token, 'work-mcp', { name: 'armotusitio__get_issue_context', input: { issue_key: 'RED-001-261' } });
 		assert.deepEqual(result, { content: [{ type: 'text', text: 'live card' }] });
 		await assert.rejects(callToolChannel(channel.address, 'wrong', 'work-mcp', {}), /UNTRUSTED/);
-	} finally { await channel.close(); await fs.rm(directory, { recursive: true, force: true }); }
+	} finally { await channel.close(); await fs.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('provider stdio discovers and invokes the Work Management tool through ats-runner', async () => {
@@ -120,6 +120,6 @@ test('provider stdio discovers and invokes the Work Management tool through ats-
 			const exited = new Promise<void>(resolve => child.once('exit', () => resolve()));
 			child.kill(); await exited;
 		}
-		await channel.close(); await fs.rm(directory, { recursive: true, force: true });
+		await channel.close(); await fs.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 	}
 });

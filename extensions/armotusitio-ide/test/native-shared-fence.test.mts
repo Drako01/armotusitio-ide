@@ -38,8 +38,8 @@ test('shared fence grants one owner, is monotonic and fails closed on contention
 		await second.release();
 		assert.deepEqual(await inspectSharedExecutionFence(canonical, storage), { held: false, epoch: null });
 	} finally {
-		await fs.rm(root, { recursive: true, force: true });
-		await fs.rm(storage, { recursive: true, force: true });
+		await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+		await fs.rm(storage, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 	}
 });
 
@@ -54,8 +54,8 @@ test('shared fence does not erase a replaced or tampered lock', async () => {
 		await assert.rejects(fence.release(), /HARNESS_FENCE_LOST/);
 		assert.equal((await fs.readFile(lock, 'utf8')).includes('forged'), true);
 	} finally {
-		await fs.rm(root, { recursive: true, force: true });
-		await fs.rm(storage, { recursive: true, force: true });
+		await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+		await fs.rm(storage, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 	}
 });
 
@@ -68,8 +68,8 @@ test('corrupt epoch blocks new ownership instead of resetting the counter', asyn
 			/HARNESS_FENCE_EPOCH_INVALID/);
 		assert.equal((await fs.lstat(path.join(storage, 'shared-execution.lock'))).isFile(), true);
 	} finally {
-		await fs.rm(root, { recursive: true, force: true });
-		await fs.rm(storage, { recursive: true, force: true });
+		await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+		await fs.rm(storage, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 	}
 });
 
@@ -115,8 +115,8 @@ test('crashed local fence can be released only after explicit approval and safe-
 		assert.equal(successor.epoch, 2);
 		await successor.release();
 	} finally {
-		await fs.rm(root, { recursive: true, force: true });
-		await fs.rm(storage, { recursive: true, force: true });
+		await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+		await fs.rm(storage, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 	}
 });
 
@@ -146,8 +146,8 @@ test('shared recovery never clears pending rollback, unknown project owners or f
 			/HARNESS_FENCE_UNSAFE_FILE/);
 		assert.equal((await fs.lstat(lock)).isFile(), true);
 	} finally {
-		await fs.rm(root, { recursive: true, force: true });
-		await fs.rm(storage, { recursive: true, force: true });
+		await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+		await fs.rm(storage, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 	}
 });
 
@@ -166,8 +166,8 @@ test('recovery guard prevents new leases; only its owner may remove it', async (
 		const lease = await acquireSharedExecutionFence(canonical, storage, 'native-task');
 		await lease.release();
 	} finally {
-		await fs.rm(root, { recursive: true, force: true });
-		await fs.rm(storage, { recursive: true, force: true });
+		await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+		await fs.rm(storage, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 	}
 });
 
@@ -208,7 +208,7 @@ test('shared fence recovery refuses unfinished isolated verification even after 
 		assert.equal(outcome.released, true);
 		assert.equal(outcome.epoch, 1);
 	} finally {
-		await fs.rm(root, { recursive: true, force: true });
-		await fs.rm(storage, { recursive: true, force: true });
+		await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+		await fs.rm(storage, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 	}
 });

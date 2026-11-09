@@ -88,7 +88,7 @@ test('chat store persists per project, trims history and quarantines corrupt sta
 		const recovered = await store.load('codex');
 		assert.deepEqual({ recovered: recovered.recovered, messages: recovered.conversation.messages.length }, { recovered: true, messages: 0 });
 		assert.ok((await fs.readdir(path.join(directory, 'chat'))).some(name => name.endsWith('.corrupt')));
-	} finally { await fs.rm(directory, { recursive: true, force: true }); }
+	} finally { await fs.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('chat store accepts the lower-case drive letter that VS Code reports for global storage on Windows', { skip: process.platform !== 'win32' }, async () => {
@@ -98,7 +98,7 @@ test('chat store accepts the lower-case drive letter that VS Code reports for gl
 		const store = new ChatStore(path.join(lower, 'chat'));
 		await store.save({ schemaVersion: 1, provider: 'codex', messages: [chatMessage('user', 'hola')] });
 		assert.equal((await store.load('claude')).conversation.messages.length, 1);
-	} finally { await fs.rm(directory, { recursive: true, force: true }); }
+	} finally { await fs.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('two IDE windows on one project never drop each other messages and respect a reset', async () => {
@@ -116,7 +116,7 @@ test('two IDE windows on one project never drop each other messages and respect 
 		await first.save({ schemaVersion: 1, provider: 'claude', messages: [] }, { replace: true });
 		const afterReset = await second.save({ schemaVersion: 1, provider: 'claude', messages: [...merged, chatMessage('user', 'nuevo en B')] });
 		assert.deepEqual(afterReset.map(message => message.text), ['nuevo en B']);
-	} finally { await fs.rm(directory, { recursive: true, force: true }); }
+	} finally { await fs.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('review #2: interleaved saves from two windows never lose a message', async () => {
@@ -137,7 +137,7 @@ test('review #2: interleaved saves from two windows never lose a message', async
 		const stored = new Set((await new ChatStore(directory).load('claude')).conversation.messages.map(message => message.text));
 		assert.deepEqual(sent.filter(text => !stored.has(text)), []);
 		assert.equal((await fs.readdir(directory)).some(name => name.endsWith('.lock')), false);
-	} finally { await fs.rm(directory, { recursive: true, force: true }); }
+	} finally { await fs.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('verification: legacy pending marker, lock ownership and expired markers', async () => {
@@ -168,6 +168,6 @@ test('verification: legacy pending marker, lock ownership and expired markers', 
 		], [true, false, false]);
 	} finally {
 		live.kill();
-		await fs.rm(directory, { recursive: true, force: true });
+		await fs.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 	}
 });

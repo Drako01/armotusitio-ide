@@ -107,7 +107,7 @@ async function withProject(work: (project: Project) => Promise<void>, name = 'wo
 	try { await work(project); } finally {
 		for (const runner of runners) { await runner.close(); }
 		await channel.close();
-		await fs.rm(base, { recursive: true, force: true });
+		await fs.rm(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 	}
 }
 
@@ -143,7 +143,7 @@ test('S1 live: the real RedEvent Harness runs a read-only command in apps/backof
 	try {
 		const result = await runCommand({ root, cwd: 'apps/backoffice', command: 'pnpm', args: ['--version'], env: process.env, logDirectory: logs, delegateEntry: REDEVENT_ENTRY, timeoutSec: 120 });
 		assert.deepEqual({ exit: result.exitCode, version: /^\d+\.\d+\.\d+/m.test(result.output), invalidCwd: result.output.includes('--cwd'), harness: harnessStatus() }, { exit: 0, version: true, invalidCwd: false, harness: before });
-	} finally { await fs.rm(logs, { recursive: true, force: true }); }
+	} finally { await fs.rm(logs, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('S2: fetch, branch from origin with a dirty tree, commit skipping an ignored file and push; a refused branch does not stop the rest', async () => {

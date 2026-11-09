@@ -38,7 +38,7 @@ async function withRepo(work: (fixture: Fixture) => Promise<void>): Promise<void
 			ask: async request => { asked.push(request); return answer; }
 		};
 		await work({ root, remote, context, asked, requests, set: (next, reply = 'once') => { decision = next; answer = reply; } });
-	} finally { await fs.rm(base, { recursive: true, force: true }); }
+	} finally { await fs.rm(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 }
 
 const head = (root: string): string => git(root, 'rev-parse', 'HEAD');

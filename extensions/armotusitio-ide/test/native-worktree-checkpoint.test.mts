@@ -42,8 +42,8 @@ test('explicit rollback restores only the managed worktree, leaving primary chec
 			await removeCleanAgentWorktree(managed);
 		}
 	} finally {
-		await fs.rm(root, { recursive: true, force: true });
-		await fs.rm(storage, { recursive: true, force: true });
+		await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+		await fs.rm(storage, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 	}
 });
 
@@ -58,7 +58,7 @@ test('checkpoint refuses a stale or forged worktree descriptor before mutating',
 			}, path.join(storage, 'checkpoints'), fence), /HARNESS_CHECKPOINT_WORKTREE_INVALID/);
 		} finally { await fence.release(); }
 	} finally {
-		await fs.rm(root, { recursive: true, force: true });
-		await fs.rm(storage, { recursive: true, force: true });
+		await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+		await fs.rm(storage, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 	}
 });

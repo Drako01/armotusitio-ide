@@ -44,7 +44,7 @@ async function withProject(work: (input: { root: string; logs: string; config: R
 	try {
 		const env = { ...process.env };
 		await work({ root, logs, config: { schemaVersion: 1, root, env, logDirectory: logs, policy: { subprojects: [], delegate: false, extras: ['node'] }, permissions: {}, git: true } });
-	} finally { await fs.rm(root, { recursive: true, force: true }); await fs.rm(logs, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); await fs.rm(logs, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 }
 
 test('a run that needs approval waits for the user: approved runs, denied and unanswered do not', async () => {
@@ -119,7 +119,7 @@ test('the channel carries the approval to the extension and anything but an expl
 		reply = undefined; answers.push(await ask(card));
 		const wrongToken = await requestApproval(channelApprover({ address: channel.address, token: 'wrong' }), card);
 		assert.deepEqual({ answers, seen: seen.length, wrongToken }, { answers: ['always', 'once', 'deny', 'deny'], seen: 4, wrongToken: 'DENIED: the approval could not be requested' });
-	} finally { await channel.close(); await fs.rm(storage, { recursive: true, force: true }); }
+	} finally { await channel.close(); await fs.rm(storage, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('the extension accepts only well-formed approval cards from the runner process', () => {

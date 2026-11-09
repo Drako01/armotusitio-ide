@@ -37,7 +37,7 @@ async function codexHome(files: Record<string, string>): Promise<{ home: string;
 		await fs.mkdir(path.dirname(file), { recursive: true });
 		await fs.writeFile(file, content);
 	}
-	return { home, cleanup: () => fs.rm(home, { recursive: true, force: true }) };
+	return { home, cleanup: () => fs.rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }) };
 }
 
 describe('parseCodexRateLimits', () => {

@@ -19,7 +19,7 @@ async function withProject(files: Record<string, string>, body: (root: string) =
 			await fs.writeFile(path.join(root, name), content);
 		}
 		await body(root);
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 }
 
 const summary = (detected: Awaited<ReturnType<typeof detectProjectCommands>>): string[] =>
@@ -140,7 +140,7 @@ test('detection reads bounded files only: oversized manifests, .env files and sy
 			assert.deepEqual(summary(await detectProjectCommands(root)), []);
 			assert.equal(await readProjectText(root, 'package.json'), undefined);
 		});
-	} finally { await fs.rm(outside, { recursive: true, force: true }); }
+	} finally { await fs.rm(outside, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('the verification plan keeps test, lint and typecheck, drops build and anything the command policy denies', async () => {

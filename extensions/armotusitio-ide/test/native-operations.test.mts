@@ -63,7 +63,7 @@ test('the tool channel answers only requests that carry the run token', async ()
 	try {
 		assert.deepEqual(await callToolChannel(channel.address, channel.token, 'echo', { a: 1 }), { a: 1 });
 		await assert.rejects(callToolChannel(channel.address, 'wrong-token', 'echo', {}), /HARNESS_UNTRUSTED_OR_CANCELLED/);
-	} finally { await channel.close(); await fs.rm(storage, { recursive: true, force: true }); }
+	} finally { await channel.close(); await fs.rm(storage, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('the machine doctor reports each problem with its action, and environments avoid ports Windows reserves', async () => {
@@ -89,7 +89,7 @@ test('the doctor compares the package manager the project pins with the installe
 		};
 		assert.deepEqual([await statusFor('pnpm@11.23.0', '12.4.2\n'), await statusFor('pnpm@11.23.0', '11.24.1\n'), await statusFor('pnpm@11.23.0', 'EPERM 448', 1), await statusFor('bun@1.0.0', '1.0.0')],
 			['problem +action', 'ok', 'problem +action', undefined]);
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('the doctor finds a missing Node, an MSYS2 terminal and a GitHub CLI without a session, each with its action', async () => {
@@ -146,7 +146,7 @@ test('decisions supersede by title, reach agents and export as ADRs only on requ
 		const written = await log.exportAdrs(path.join(directory, 'adr'));
 		assert.deepEqual({ active: relevant.map(item => item.decision), prompt: decisionsPrompt(relevant).includes('Sólo loopback'), written: written.length, statuses: (await log.list()).map(item => item.status) },
 			{ active: ['Sólo loopback'], prompt: true, written: 2, statuses: ['superseded', 'active'] });
-	} finally { await fs.rm(directory, { recursive: true, force: true }); }
+	} finally { await fs.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 	const history = [10, 12, 14, 30].map(calls => ({ size: 'goal' as const, tasks: 3, calls, at: '' }));
 	assert.deepEqual({ estimate: estimateCalls('goal', 3, history), fits: quotaCheck({ low: 10, high: 30, basis: 'history' }, 40, 100, 20), levels: [budgetLevel(5, 12), budgetLevel(10, 12), budgetLevel(12, 12)] },
 		{ estimate: { low: 10, high: 14, basis: 'history' }, fits: { fits: false, available: 20, advice: 'split-or-other-provider' }, levels: ['ok', 'warning', 'exhausted'] });
@@ -166,7 +166,7 @@ test('long processes are followed from their progress file, stalls are flagged a
 		await fs.writeFile(path.join(directory, 'release.json'), JSON.stringify({ title: 'Release r5', state: 'completed', log }));
 		const finished = publishProcesses(feed, await readProcesses(directory, 15), 'IDE', states);
 		assert.deepEqual({ finished: finished.map(view => view.state), item: feed.snapshot()[0].state }, { finished: ['completed'], item: 'completed' });
-	} finally { await fs.rm(directory, { recursive: true, force: true }); }
+	} finally { await fs.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('multi-repo order, cards and inline review become concrete tasks', async () => {

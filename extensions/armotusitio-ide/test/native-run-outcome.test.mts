@@ -87,8 +87,8 @@ test('the run diff separates files the run changed from the user\'s earlier edit
 		assert.deepEqual(await Promise.all(['edited.txt', 'removed.txt', 'mine.txt', 'draft.txt'].map(name => fs.readFile(path.join(root, name), 'utf8'))), ['edited.txt', 'removed.txt', 'edición del usuario + agente', 'borrador del usuario']);
 		const outside = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'ats-run-diff-nogit-')));
 		try { assert.deepEqual(diffWorkingTree(await captureWorkingTree(outside), await captureWorkingTree(outside)), noGit); }
-		finally { await fs.rm(outside, { recursive: true, force: true }); }
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+		finally { await fs.rm(outside, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('dependency sync installs only from lockfiles without scripts, and cache-only steps never touch the checkout', async () => {
@@ -106,5 +106,5 @@ test('dependency sync installs only from lockfiles without scripts, and cache-on
 			{ command: 'pnpm', args: ['install', '--frozen-lockfile', '--ignore-scripts'], cwd: 'web', cacheOnly: false }
 		]);
 		assert.deepEqual([offlineEnvironment().GOPROXY, offlineEnvironment().npm_config_offline], ['off', 'true']);
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });

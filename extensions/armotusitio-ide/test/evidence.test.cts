@@ -12,7 +12,7 @@ const { readEvidence, logReference } = require('../src/evidence.ts');
 
 test('evidence reads a bounded native log and rejects arbitrary relative or absolute paths', async t => {
 	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-evidence-'));
-	t.after(() => fs.rm(root, { recursive: true, force: true }));
+	t.after(() => fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
 	await fs.mkdir(path.join(root, '.harness/logs'), { recursive: true });
 	await fs.writeFile(path.join(root, '.harness/logs/gate.log'), 'x'.repeat(100000) + '\nresult');
 	const text = await readEvidence(root, '.harness/logs/gate.log');

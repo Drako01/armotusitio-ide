@@ -75,6 +75,6 @@ export async function referenceEngine(options: { root?: string; capabilities?: s
 	return {
 		root, setMode,
 		command: (...args) => new Promise((resolve, reject) => execFile(process.execPath, [path.join(harness, 'core.mjs'), ...args], { cwd: root }, (error, stdout) => error ? reject(error) : resolve(stdout))),
-		cleanup: () => fs.rm(root, { recursive: true, force: true })
+		cleanup: () => fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
 	};
 }

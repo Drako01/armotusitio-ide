@@ -62,8 +62,8 @@ test('Claude permission prompts are decided by the same policy and permissions a
 		assert.deepEqual({ allowed: await decide('Bash', { command: 'node --version', description: 'version' }), cards: asked.map(card => card.detail[0]) },
 			{ allowed: { behavior: 'allow', updatedInput: { command: 'node --version', description: 'version' } }, cards: ['command: docker ps', 'command: docker images', 'host: example.com'] });
 	} finally {
-		await fs.rm(root, { recursive: true, force: true });
-		await fs.rm(home, { recursive: true, force: true });
+		await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+		await fs.rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 	}
 });
 
@@ -85,7 +85,7 @@ test('a tool of a user-added MCP server asks by default, obeys mcp rules, and an
 			results: ['allow', 'POLICY_DENIED: mcp:github/delete_repo', 'allow', 'POLICY_DENIED: tool-unavailable'],
 			cards: [{ kind: 'mcp', detail: ['server: github', 'tool: create_issue', 'arg title: ' + 'x'.repeat(29), 'arg n: 1'] }]
 		});
-	} finally { await fs.rm(root, { recursive: true, force: true }); await fs.rm(home, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); await fs.rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('WebFetch asks per host, obeys web rules, and never reaches private or non-https hosts', async () => {
@@ -104,5 +104,5 @@ test('WebFetch asks per host, obeys web rules, and never reaches private or non-
 			results: ['allow', 'POLICY_DENIED: web:*.evil.example', 'allow', 'POLICY_DENIED: web-host', 'POLICY_DENIED: web-host', 'POLICY_DENIED: web-host', 'POLICY_DENIED: web-host', 'POLICY_DENIED: web-host', 'POLICY_DENIED: web-host'],
 			cards: [['host: nodejs.org', 'url: https://nodejs.org/api']]
 		});
-	} finally { await fs.rm(root, { recursive: true, force: true }); await fs.rm(home, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); await fs.rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });

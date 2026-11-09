@@ -99,5 +99,5 @@ test('tokens are renewed before they expire, a rejected refresh asks for a new s
 			before: { type: 'http', url: fake.url, headers: { Authorization: 'Bearer access-1' } }, renewed: { type: 'http', url: fake.url, headers: { Authorization: 'Bearer access-2' } }, afterRenew: [],
 			rejected: { entries: [], needsSignIn: ['remote'] }, leaked: false, log: ['refresh:refresh-1', 'refresh:revoked', 'refresh:revoked'], unchanged: true
 		});
-	} finally { await fake.close(); await fs.rm(directory, { recursive: true, force: true }); }
+	} finally { await fake.close(); await fs.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });

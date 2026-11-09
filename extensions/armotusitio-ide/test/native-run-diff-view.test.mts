@@ -29,7 +29,7 @@ async function fixture() {
 		window: { showTextDocument: async (uri: unknown) => { opened.push(uri); }, showInformationMessage: async (text: string) => { messages.push(text); } }
 	};
 	registerRunDiffView(vscode, { subscriptions: [] }, () => [{ uri: { fsPath: root, toString: () => 'file:///project' } }], t);
-	return { root, provider: provider!, command: command!, diffs, opened, messages, cleanup: () => fs.rm(root, { recursive: true, force: true }) };
+	return { root, provider: provider!, command: command!, diffs, opened, messages, cleanup: () => fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }) };
 }
 
 test('Ver cambios diffs the committed content against the file now; added files compare against an empty side', async () => {

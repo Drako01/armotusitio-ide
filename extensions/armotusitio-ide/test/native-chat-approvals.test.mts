@@ -39,7 +39,7 @@ async function actingSession(options: { remember?: (rule: string) => Promise<voi
 	const running = chat.send('subi los cambios', 'act');
 	// The writer is waiting on its approval card once the snapshot lists it.
 	while (!chat.snapshot().approvals) { await new Promise(resolve => setImmediate(resolve)); }
-	return { chat, snapshots, remembered, answer: () => asked!, release, running, cleanup: () => fs.rm(directory, { recursive: true, force: true }) };
+	return { chat, snapshots, remembered, answer: () => asked!, release, running, cleanup: () => fs.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }) };
 }
 
 test('an approval requested by the writer is a card in the snapshot until the user answers', async () => {
@@ -133,7 +133,7 @@ test('without a running turn there is nothing to approve', async () => {
 		await chat.send('hola', 'ask');
 		assert.equal(await hooks!.approval!(CARD), 'deny');
 		assert.equal(chat.snapshot().approvals, undefined);
-	} finally { await fs.rm(directory, { recursive: true, force: true }); }
+	} finally { await fs.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 
@@ -164,7 +164,7 @@ test('"this task" lasts until the run ends and "this session" until the IDE clos
 		assert.deepEqual({ answers, cards: answered.size }, { answers: [['task', 'once'], ['session', 'once'], ['once', 'once']], cards: 2 });
 	} finally {
 		await Promise.allSettled(resolving);
-		await fs.rm(directory, { recursive: true, force: true });
+		await fs.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 	}
 });
 

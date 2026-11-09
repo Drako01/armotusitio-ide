@@ -24,5 +24,5 @@ test('a channel opens, serves and cleans up even when the storage path is far lo
 		const left = process.platform === 'win32' ? false : await fs.stat(channel.address).then(() => true, () => false);
 		assert.deepEqual({ answer, wrongToken, left, shortEnough: process.platform === 'win32' || Buffer.byteLength(channel.address) <= 100 },
 			{ answer: { method: 'echo', params: { value: 1 } }, wrongToken: 'HARNESS_UNTRUSTED_OR_CANCELLED', left: false, shortEnough: true });
-	} finally { await fs.rm(base, { recursive: true, force: true }); }
+	} finally { await fs.rm(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });

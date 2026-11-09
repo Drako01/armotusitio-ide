@@ -18,7 +18,7 @@ async function workspace(files: { user?: unknown; project?: unknown } = {}) {
 		await fs.mkdir(path.join(directory, '.armotusitio'), { recursive: true });
 		if (content !== undefined) { await fs.writeFile(path.join(directory, '.armotusitio', 'permissions.json'), typeof content === 'string' ? content : JSON.stringify(content)); }
 	}
-	return { base, home, root, cleanup: () => fs.rm(base, { recursive: true, force: true }) };
+	return { base, home, root, cleanup: () => fs.rm(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }) };
 }
 const run = (command: string, ...args: string[]): PermissionRequest => ({ kind: 'run', command, args, cwd: '.' });
 const edit = (file: string): PermissionRequest => ({ kind: 'edit', path: file });

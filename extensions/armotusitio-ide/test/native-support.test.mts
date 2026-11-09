@@ -27,7 +27,7 @@ test('support evidence omits output, instructions and absolute root', async () =
 		await exportSupportReport(dest, report);
 		assert.deepEqual(JSON.parse(await fs.readFile(dest, 'utf8')), report);
 		await assert.rejects(exportSupportReport(dest, report), (e: unknown) => (e as NodeJS.ErrnoException).code === 'EEXIST');
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('future support schema fails closed', () => {

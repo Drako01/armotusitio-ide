@@ -46,5 +46,5 @@ test('/mcp adds a server only after confirmation, asks secrets through a masked 
 			listed: ['Servidores MCP conectados:', 'docs activo http https://mcp.example.com/sse (credenciales: token)', 'files activo stdio npx -y srv (credenciales: API_KEY)'],
 			workShown: true, leaked: false, disabled: 'Desactiv\u00e9 el servidor docs.', missing: 'No encontr\u00e9 el servidor nope.', removed: 'Quit\u00e9 el servidor docs y sus credenciales.', stored: false
 		});
-	} finally { await fs.rm(directory, { recursive: true, force: true }); }
+	} finally { await fs.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });

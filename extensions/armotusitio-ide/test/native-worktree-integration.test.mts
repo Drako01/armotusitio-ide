@@ -41,8 +41,8 @@ async function withFixture(autocrlf: 'false' | 'true', work: (fixture: Fixture) 
 			await removeCleanAgentWorktree(managed);
 		}
 	} finally {
-		await fs.rm(root, { recursive: true, force: true });
-		await fs.rm(storage, { recursive: true, force: true });
+		await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+		await fs.rm(storage, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 	}
 }
 

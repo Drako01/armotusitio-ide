@@ -25,7 +25,7 @@ test('activity order is shared and never puts an interrupted record above runnin
 
 test('native observation shares equivalent reads and bounds subprocess concurrency across roots', async t => {
 	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-read-coordinator-'));
-	t.after(() => fs.rm(root, { recursive: true, force: true }));
+	t.after(() => fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
 	const profiles = [];
 	for (let index = 0; index < 4; index++) {
 		const directory = path.join(root, String(index)); await fs.mkdir(path.join(directory, '.harness'), { recursive: true });
@@ -40,7 +40,7 @@ test('native observation shares equivalent reads and bounds subprocess concurren
 });
 
 test('streamed diagnostics redact credentials split between stderr chunks', async t => {
-	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-redaction-')); t.after(() => fs.rm(root, { recursive: true, force: true }));
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-redaction-')); t.after(() => fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
 	await fs.mkdir(path.join(root,'.harness'));
 	await fs.writeFile(path.join(root,'.harness/core.mjs'), `process.stderr.write('api_key='); setTimeout(()=>{process.stderr.write('private-value\\n'); console.log('{}');},50);`);
 	let logs=''; await nativeRun({ id:'redevent',root }, ['status','fixture'], { log: text=>{logs+=text;} });

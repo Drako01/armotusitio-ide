@@ -22,7 +22,7 @@ test('discovers project skills read-only with bounded content and rejects modifi
 		assert.equal(await readProjectSkill(canonical, skills[0]), '# API conventions');
 		await fs.writeFile(file, '# Changed');
 		await assert.rejects(readProjectSkill(canonical, skills[0]), /HARNESS_PROJECT_SKILL_CHANGED/);
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('linked Claude skill aliases are not traversed or duplicated', async (t) => {
@@ -43,7 +43,7 @@ test('linked Claude skill aliases are not traversed or duplicated', async (t) =>
 			throw error;
 		}
 		assert.deepEqual((await listProjectSkills(canonical)).map(skill => skill.name), ['testing']);
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('oversized project skills fail closed without exposing content', async () => {
@@ -53,7 +53,7 @@ test('oversized project skills fail closed without exposing content', async () =
 		await fs.mkdir(directory, { recursive: true });
 		await fs.writeFile(path.join(directory, 'SKILL.md'), 'A'.repeat(64 * 1024 + 1));
 		await assert.rejects(listProjectSkills(await fs.realpath(root)), /HARNESS_PROJECT_SKILL_UNSAFE/);
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('symlinked top-level skill parent is rejected instead of following outside workspace', async (t) => {
@@ -75,8 +75,8 @@ test('symlinked top-level skill parent is rejected instead of following outside 
 		}
 		await assert.rejects(listProjectSkills(canonical), /HARNESS_PROJECT_SKILL_UNSAFE/);
 	} finally {
-		await fs.rm(root, { recursive: true, force: true });
-		await fs.rm(outside, { recursive: true, force: true });
+		await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+		await fs.rm(outside, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 	}
 });
 
@@ -90,7 +90,7 @@ test('Codex-only project skills are discovered without any project Harness', asy
 		const skills = await listProjectSkills(canonical);
 		assert.deepEqual(skills.map(skill => [skill.name, skill.source]), [['database-migrations', '.codex/skills']]);
 		assert.equal(await readProjectSkill(canonical, skills[0]), '# Codex migration conventions');
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('shared project skill takes precedence over duplicate Codex and Claude names', async () => {
@@ -106,7 +106,7 @@ test('shared project skill takes precedence over duplicate Codex and Claude name
 		assert.equal(skills.length, 1);
 		assert.equal(skills[0].source, '.agents/skills');
 		assert.equal(await readProjectSkill(canonical, skills[0]), '.agents');
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('Codex skills directory symlink is never traversed', async (t) => {
@@ -127,7 +127,7 @@ test('Codex skills directory symlink is never traversed', async (t) => {
 		}
 		assert.deepEqual(await listProjectSkills(await fs.realpath(root)), []);
 	} finally {
-		await fs.rm(root, { recursive: true, force: true });
-		await fs.rm(outside, { recursive: true, force: true });
+		await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+		await fs.rm(outside, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 	}
 });

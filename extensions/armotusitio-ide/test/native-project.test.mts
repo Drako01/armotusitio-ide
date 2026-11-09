@@ -14,7 +14,7 @@ async function fixture(run: (root: string) => Promise<void>): Promise<void> {
 	try {
 		await run(root);
 	} finally {
-		await fs.rm(root, { recursive: true, force: true });
+		await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 	}
 }
 
@@ -50,7 +50,7 @@ test('reject incompatible schema and unsafe symlink manifest', async () => fixtu
 		await fs.symlink(path.join(external, 'data.json'), path.join(root, '.ats-harness.json'));
 		await assert.rejects(loadProjectConfig(root), /HARNESS_PROJECT_FILE_UNSAFE/);
 	} finally {
-		await fs.rm(external, { recursive: true, force: true });
+		await fs.rm(external, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 	}
 }));
 

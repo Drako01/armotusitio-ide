@@ -55,7 +55,7 @@ async function fixture(work: (state: {
 			checkPermissions: async () => true
 		};
 		await work({ root, base, context, asked, set: (next, reply = 'once') => { decision = next; answer = reply; } });
-	} finally { await fs.rm(base, { recursive: true, force: true }); }
+	} finally { await fs.rm(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 }
 
 test('branch creation is structured, idempotent, preserves dirty work and renews only its trusted baseline', async () => {

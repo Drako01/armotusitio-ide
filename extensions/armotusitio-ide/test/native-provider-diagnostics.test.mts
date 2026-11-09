@@ -27,7 +27,7 @@ test('diagnostics report availability but never imply authentication', async () 
 		assert.equal(result.modelAuthenticated, false);
 	} finally {
 		if (oldPath === undefined) { delete process.env.PATH; } else { process.env.PATH = oldPath; }
-		await fs.rm(root, { recursive: true, force: true });
+		await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 	}
 });
 

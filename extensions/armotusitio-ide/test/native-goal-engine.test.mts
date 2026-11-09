@@ -90,7 +90,7 @@ test('the journal is append-only, survives a torn last line and reports an unfin
 		assert.deepEqual({ status: state.status, steps: state.steps.map(step => [step.title, step.status]), baseline: state.baseline, list: await FileGoalJournal.list(directory) },
 			{ status: 'interrupted', steps: [['Tanda 1', 'running']], baseline: 46, list: ['g1'] });
 		assert.throws(() => new FileGoalJournal(directory, '../escape'), /HARNESS_RESUME_ID_INVALID/);
-	} finally { await fs.rm(directory, { recursive: true, force: true }); }
+	} finally { await fs.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 /** Simulated provider and project for the autonomous mode acceptance test (section 6). */
@@ -131,7 +131,7 @@ test('autonomous goal: one approval, batches until the target, a cut by turns co
 		const state = await new FileGoalJournal(directory, 'cov').load('cov');
 		assert.deepEqual({ status: report.status, baseline: report.baseline, final: report.final, questions: sim.asked.length, resumed: sim.roles.includes('implementer:resume'), steps: state.steps.map(step => step.metric) },
 			{ status: 'completed', baseline: 46, final: 71, questions: 1, resumed: true, steps: [52, 58, 63, 71] });
-	} finally { await fs.rm(directory, { recursive: true, force: true }); }
+	} finally { await fs.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('autonomous goal stops on a rejected step after corrections and on a plateau, explaining why', async () => {
@@ -142,5 +142,5 @@ test('autonomous goal stops on a rejected step after corrections and on a platea
 		const flat = simulated({ metrics: [46, 46.1, 46.2, 46.3] });
 		const plateau = await new GoalOrchestrator(new FileGoalJournal(directory, 'b'), flat.ports, 'b').run(defaultCharter('cobertura', 'claude', undefined, { allowProduction: false, target: 70, metric: { command: 'go', args: [], cwd: '.', parse: 'go-coverage' } }));
 		assert.deepEqual({ rejected: [rejected.status, rejected.reason?.split(':')[0]], plateau: [plateau.status, plateau.reason] }, { rejected: ['blocked', 'step-rejected'], plateau: ['blocked', 'plateau'] });
-	} finally { await fs.rm(directory, { recursive: true, force: true }); }
+	} finally { await fs.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });

@@ -32,7 +32,7 @@ test('project gates are discovered as bounded read-only metadata and pin a diges
 		await validateProjectGateCatalog(canonical, catalog.digest);
 		await fs.writeFile(file, JSON.stringify({ ...plan, gates: [plan.gates[0]] }));
 		await assert.rejects(validateProjectGateCatalog(canonical, catalog.digest), /HARNESS_GATE_CATALOG_CHANGED/);
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('gate catalog rejects command injection, dangling dependencies and DAG cycles', async () => {
@@ -50,7 +50,7 @@ test('gate catalog rejects command injection, dangling dependencies and DAG cycl
 		await write([{ id: 'lint', dependsOn: ['tests'], resources: [] },
 		{ id: 'tests', dependsOn: ['lint'], resources: [] }]);
 		await assert.rejects(readProjectGateCatalog(canonical), /HARNESS_GATE_CATALOG_CYCLE/);
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('gate catalog rejects linked manifest parents and preserves external files', async (t) => {
@@ -73,8 +73,8 @@ test('gate catalog rejects linked manifest parents and preserves external files'
 		await assert.rejects(readProjectGateCatalog(await fs.realpath(root)), /HARNESS_GATE_CATALOG_UNSAFE/);
 		assert.ok((await fs.readFile(path.join(outside, 'ide-gates.json'), 'utf8')).includes('schemaVersion'));
 	} finally {
-		await fs.rm(root, { recursive: true, force: true });
-		await fs.rm(outside, { recursive: true, force: true });
+		await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+		await fs.rm(outside, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 	}
 });
 
@@ -97,7 +97,7 @@ test('read-only gate scheduler honors dependencies, resource conflicts and capac
 		assert.deepEqual(planProjectGateWaves(catalog, 2), [['lint', 'check'], ['audit', 'tests']]);
 		assert.deepEqual(planProjectGateWaves(catalog, 1), [['lint'], ['audit'], ['check'], ['tests']]);
 		assert.throws(() => planProjectGateWaves(catalog, 0), /HARNESS_GATE_CAPACITY_INVALID/);
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('gate planner refuses forged in-memory resources and undeclared dependencies', async () => {
@@ -126,5 +126,5 @@ test('gate planner refuses forged in-memory resources and undeclared dependencie
 		assert.throws(() => planProjectGateWaves({
 			...valid, gates: [{ id: 'lint', dependsOn: [], resources: [], command: 'node evil.js' }] as never
 		}), /HARNESS_GATE_CATALOG_INVALID/);
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });

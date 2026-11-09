@@ -25,7 +25,7 @@ async function runProposal(files: Record<string, string>): Promise<{ profile: st
 		const result = await engine.execute(task.id, await engine.reviewDigest(task.plan), () => true);
 		const gate = proposal.config.plan.gates[0];
 		return { profile: proposal.config.profile, gate: [gate.executable, ...gate.args].join(' '), status: result.attempts.at(-1)?.status };
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 }
 const available = async (tool: string): Promise<boolean> => resolveNativeCommand(tool, ['--version']).then(() => true, () => false);
 

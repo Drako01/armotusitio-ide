@@ -35,5 +35,5 @@ test('isolated worktree preserves the primary checkout and refuses dirty disposa
 		await removeCleanAgentWorktree(worktree);
 		await assert.rejects(fs.stat(worktree.root), { code: 'ENOENT' });
 		assert.equal((await listAgentWorktrees(await fs.realpath(root), path.join(directory, 'isolated'))).length, 0);
-	} finally { await fs.rm(directory, { recursive: true, force: true }); }
+	} finally { await fs.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });

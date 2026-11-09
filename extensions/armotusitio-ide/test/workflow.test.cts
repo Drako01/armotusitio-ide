@@ -13,7 +13,7 @@ const { toolArgs } = require('../src/catalog.ts');
 
 async function harness(t) {
 	const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-workflow-'));
-	t.after(() => fs.rm(directory, { recursive: true, force: true }));
+	t.after(() => fs.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
 	await fs.mkdir(path.join(directory, '.harness'));
 	const profile = { id: 'redevent', root: directory };
 	const calls = [];
@@ -105,7 +105,7 @@ test('multi-domain progress exposes native child units and rejects invalid value
 
 test('native subprocess receives literal arguments and the selected provider without a shell', async t => {
 	const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-native-'));
-	t.after(() => fs.rm(directory, { recursive: true, force: true }));
+	t.after(() => fs.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
 	await fs.mkdir(path.join(directory, '.harness'));
 	await fs.writeFile(path.join(directory, '.harness', 'core.mjs'), 'console.log(JSON.stringify({id:"fixture",args:process.argv.slice(2),host:process.env.HARNESS_HOST}));');
 	const literal = 'status & echo shell; $(do-not-run)';
