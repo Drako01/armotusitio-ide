@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 import * as path from 'node:path';
 import { spawn } from 'node:child_process';
-import { mkdir, readFile, stat } from 'node:fs/promises';
+import { chmod, mkdir, readFile, stat } from 'node:fs/promises';
 import { fileDigest, run, withLock } from './ats-autoupdate.mts';
 
 /** Stream local Docker output; host credentials are never injected unless a caller passes `env` explicitly. */
@@ -58,6 +58,15 @@ export async function reusableLinux(output: string, commit: string, version: str
 	}
 }
 
+/**
+ * The container's build user (uid 1000) writes /output and /logs, which are host folders. On a CI runner they belong to
+ * another uid with mode 755, so the entrypoint's writability check fails before any compilation. Opening exactly these
+ * two ephemeral folders to all users fixes it; other hosts keep their mapping (Docker Desktop) or their own uid.
+ */
+export async function shareWithBuildUser(folders: string[], ci = process.env.GITHUB_ACTIONS === 'true'): Promise<void> {
+	if (ci && process.platform !== 'win32') { await Promise.all(folders.map(folder => chmod(folder, 0o777))); }
+}
+
 /** Build Linux artifacts without sharing native modules across architectures. */
 export async function buildLinux(architectures = ['x64', 'arm64'], root = path.resolve(import.meta.dirname, '..'), resume = false): Promise<void> {
 	if (!architectures.length || architectures.some(arch => !['x64', 'arm64'].includes(arch))) { throw new Error('Expected Linux x64 and/or arm64.'); }
@@ -69,6 +78,7 @@ export async function buildLinux(architectures = ['x64', 'arm64'], root = path.r
 		const directory = path.join(root, '.build', 'ats-linux', commit);
 		const output = path.join(root, '.build', 'releases');
 		await mkdir(directory, { recursive: true }); await mkdir(output, { recursive: true });
+		await shareWithBuildUser([directory, output]);
 		const source = path.join(directory, 'source.tar.gz');
 		await archiveLinuxSources(root, commit, source);
 		const { version } = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
