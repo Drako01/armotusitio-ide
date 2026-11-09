@@ -79,3 +79,17 @@ test('/lease shows the engine lease state and /lease liberar removes it only aft
 	assert.deepEqual({ shown: shown?.includes('2099-01-01T00:00:00'), refused, released: released?.includes('estaba: valid'), cleared, nothing: nothing?.includes('nada que liberar'), usage, noEngine: noEngine?.includes('no tiene un Harness propio'), absent: (await runSessionCommand(base, 'lease', [], '/p', session))?.includes('no tiene un Harness propio') },
 		{ shown: true, refused: 'No liber\u00e9 el lease.', released: true, cleared: ['valid'], nothing: true, usage: 'Uso: /lease [liberar]', noEngine: true, absent: true });
 });
+
+test('/motor runs a project command in the IDE terminal only when the chat is idle, and explains its usage', async () => {
+	const base = { t, chatMode: () => 'act' as const, setChatMode: async () => undefined, permissionsPreset: () => undefined, openFile: async () => undefined, confirmDiscard: async () => false };
+	const ran: string[][] = [];
+	const deps: SessionCommandDeps = { ...base, motor: async (command, args) => { ran.push([command, ...args]); return 'exit 0 \u00b7 1.2 s\nok'; } };
+	const idle = { snapshot: () => ({}) } as unknown as HarnessChatSession;
+	const busy = { snapshot: () => ({ activity: { kind: 'implementing' } }) } as unknown as HarnessChatSession;
+	const result = await runSessionCommand(deps, 'motor', ['pnpm', 'harness:preflight', '--', 'api'], '/p', idle);
+	const usage = await runSessionCommand(deps, 'motor', [], '/p', idle);
+	const refused = await runSessionCommand(deps, 'motor', ['pnpm', 'test'], '/p', busy);
+	const unavailable = await runSessionCommand(base, 'motor', ['pnpm'], '/p', idle);
+	assert.deepEqual({ result, ran, usage: usage?.startsWith('Uso: /motor'), refused: refused?.includes('en curso'), unavailable: unavailable?.includes('no puede abrir la terminal') },
+		{ result: 'exit 0 \u00b7 1.2 s\nok', ran: [['pnpm', 'harness:preflight', '--', 'api']], usage: true, refused: true, unavailable: true });
+});

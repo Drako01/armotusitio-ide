@@ -54,6 +54,7 @@ export function chatCommands(t: CommandTranslator): ChatCommand[] {
 		{ name: 'modo', usage: '[actuar|preguntar]', description: t('Muestra o cambia el modo del chat.'), session: true },
 		{ name: 'deshacer', description: t('Descarta los cambios de la \u00faltima ejecuci\u00f3n.'), session: true },
 		{ name: 'lease', usage: '[liberar]', description: t('Estado del lease de escritura del Harness propio del proyecto; "liberar" lo retira cuando el IDE muri\u00f3 con \u00e9l.'), session: true },
+		{ name: 'motor', usage: 'COMANDO [ARGUMENTOS]', description: t('Corre un comando del Harness propio del proyecto (por ejemplo pnpm harness:preflight) en la terminal del IDE, donde pod\u00e9s contestar sus preguntas; el resultado queda en la conversaci\u00f3n.'), session: true },
 		{ name: 'doctor', description: t('Revisa la m\u00e1quina y el proyecto (Node, gestor de paquetes, git, Docker, disco) y dice c\u00f3mo arreglar cada problema.'), session: true },
 		{ name: 'auditoria', description: t('\u00daltimas acciones de las herramientas del agente en este proyecto (comandos, git, archivos) y su resultado.'), session: true },
 		{ name: 'costo', description: t('Muestra los tokens que inform\u00f3 el proveedor en el \u00faltimo turno.'), session: true },
@@ -78,7 +79,7 @@ export function chatCommands(t: CommandTranslator): ChatCommand[] {
 /** One line per command, generated from the table. */
 export function commandHelp(t: CommandTranslator): string {
 	return [t('Comandos:'), ...chatCommands(t).map(command => '/' + command.name + (command.usage ? ' ' + command.usage : '') + ' \u2014 ' + command.description),
-	t('Pod\u00e9s anteponer @harness o usar /comando. Con @archivo adjunt\u00e1s un archivo del proyecto como contexto.')].join('\n');
+	t('Pod\u00e9s anteponer @harness o usar /comando. Con @archivo adjunt\u00e1s un archivo del proyecto como contexto y con @terminal la salida de tu \u00faltimo comando de terminal.')].join('\n');
 }
 
 const USER_FILE_LABEL = '~/.armotusitio/permissions.json';
@@ -140,6 +141,8 @@ export interface SessionCommandDeps {
 	mcp?: McpCommandDeps;
 	/** The writer lease of a project that has its own Harness (`/lease`); absent when the project has none. */
 	lease?: { status(): Promise<EngineLease>; clear(): Promise<EngineLeaseState>; confirmClear(): Promise<boolean> };
+	/** Runs a project command in the visible IDE terminal and returns its result as text (`/motor`). */
+	motor?: (command: string, args: string[]) => Promise<string>;
 }
 
 const LEASE_TEXT: Record<EngineLeaseState, (t: CommandTranslator, until?: string) => string> = {
@@ -174,6 +177,13 @@ export async function runSessionCommand(deps: SessionCommandDeps, action: string
 	const home = deps.home ?? os.homedir();
 	if (action === 'mcp' && deps.mcp) { return await runMcpCommand(deps.mcp, words); }
 	if (action === 'lease') { return await runLeaseCommand(deps, words); }
+	if (action === 'motor') {
+		if (!deps.motor) { return t('Este chat no puede abrir la terminal del IDE.'); }
+		if (!words.length) { return t('Uso: /motor COMANDO [ARGUMENTOS] (por ejemplo /motor pnpm harness:preflight).'); }
+		// The agent and the user must not both drive the project at once.
+		if (session.snapshot().activity) { return t('Hay una ejecuci\u00f3n en curso en este chat. Esper\u00e1 a que termine o cancelala y volv\u00e9 a intentar.'); }
+		return await deps.motor(words[0], words.slice(1));
+	}
 	if (action === 'permisos') {
 		const target = (words[0] ?? '').toLowerCase();
 		if (target === 'usuario' || target === 'proyecto') {

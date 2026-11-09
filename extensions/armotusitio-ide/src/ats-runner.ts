@@ -10,7 +10,7 @@
 import * as fs from 'node:fs/promises';
 import * as readline from 'node:readline';
 import { createCommandPolicy, denialText, type CommandPolicyConfig } from './native-command-policy.ts';
-import { runCommand, MAX_COMMAND_TIMEOUT_SEC } from './native-command-runner.ts';
+import { runCommand, DEFAULT_COMMAND_TIMEOUT_SEC, MAX_COMMAND_TIMEOUT_SEC, type CommandResult } from './native-command-runner.ts';
 import { callToolChannel } from './native-tool-server.ts';
 import { EDITOR_TOOLS } from './native-editor-tools.ts';
 import { secretVariants } from './native-dev-secrets.ts';
@@ -45,6 +45,8 @@ export interface RunnerConfig {
 	files?: boolean;
 	/** Offers `approve`, Claude's permission prompt tool (native transport pilot); set only for runs that can ask the user. */
 	approve?: boolean;
+	/** Offers `run_in_terminal`: the same command policy and approvals as `run`, but in the visible IDE terminal where the user can answer prompts. */
+	terminal?: boolean;
 	/** User-added MCP servers wired into this run (names only; their credentials stay in the extension). */
 	mcpServers?: string[];
 	/**
@@ -59,7 +61,26 @@ export interface RunnerConfig {
 }
 
 /** Seams for tests; in production the permissions come from the files and approvals from the channel. */
-export interface RunnerDeps { permissions?: PermissionSet; ask?: ApprovalAsk; question?: ApproveContext['question'] }
+export interface RunnerDeps { permissions?: PermissionSet; ask?: ApprovalAsk; question?: ApproveContext['question']; terminal?: TerminalRunner; /** Silence before a prompt stops a command; for tests. */ promptIdleMs?: number }
+
+/** What the extension needs to start one policy-approved command in the visible IDE terminal. */
+export interface TerminalRequest { command: string; args: string[]; cwd: string; timeoutSec?: number; delegate: boolean }
+export type TerminalRunner = (request: TerminalRequest) => Promise<CommandResult>;
+/** The runner asked for this through its channel; anything that is not exactly a command request is refused. */
+export function parseTerminalRequest(value: unknown): TerminalRequest | undefined {
+	const input = value as Partial<TerminalRequest> | null;
+	if (!input || typeof input !== 'object' || typeof input.command !== 'string' || !input.command || !Array.isArray(input.args) || !input.args.every(arg => typeof arg === 'string')
+		|| typeof input.cwd !== 'string' || typeof input.delegate !== 'boolean' || (input.timeoutSec !== undefined && !(Number.isSafeInteger(input.timeoutSec) && input.timeoutSec >= 1 && input.timeoutSec <= MAX_COMMAND_TIMEOUT_SEC))) { return undefined; }
+	return { command: input.command, args: input.args, cwd: input.cwd, delegate: input.delegate, ...(input.timeoutSec !== undefined ? { timeoutSec: input.timeoutSec } : {}) };
+}
+const TERMINAL_GRACE_MS = 15_000;
+/** The extension owns the terminal, so the command goes there through the run's channel; a person may take a while to answer. */
+const terminalViaChannel = (config: RunnerConfig): TerminalRunner => async request => {
+	if (!config.channel) { throw Error('HARNESS_TOOL'); }
+	const value = await callToolChannel(config.channel.address, config.channel.token, 'terminal', request, (request.timeoutSec ?? DEFAULT_COMMAND_TIMEOUT_SEC) * 1000 + TERMINAL_GRACE_MS);
+	if (!value || typeof value !== 'object' || typeof Reflect.get(value, 'output') !== 'string') { throw Error('HARNESS_COMMAND_FAILED'); }
+	return value as CommandResult;
+};
 
 const loadRunnerPermissions = (config: RunnerConfig, deps: RunnerDeps): Promise<PermissionSet> =>
 	deps.permissions ? Promise.resolve(deps.permissions) : loadPermissions(config.root, undefined, undefined, { preset: config.permissions?.preset });
@@ -93,8 +114,16 @@ const TOOL = {
 	}
 };
 
+const TERMINAL_TOOL = {
+	...TOOL,
+	name: 'run_in_terminal',
+	description: 'Run one command in the visible IDE terminal, under the same command policy and approvals as `run`. Use it for commands that ask questions the user must answer ' +
+		'(installers, logins, project preflights): the user types the answers in that terminal and you receive the output when the command ends. ' +
+		'Plain line prompts only; no full-screen programs. Arguments are the same as `run`.'
+};
+
 /** Answer one `tools/call`; exported for tests. */
-export async function handleRun(config: RunnerConfig, input: unknown, calls: number, deps: RunnerDeps = {}): Promise<{ isError: boolean; text: string }> {
+export async function handleRun(config: RunnerConfig, input: unknown, calls: number, deps: RunnerDeps = {}, via: 'process' | 'terminal' = 'process'): Promise<{ isError: boolean; text: string }> {
 	if (!await permissionsUntouched(config)) { return { isError: true, text: 'POLICY_DENIED: project-permissions-changed' }; }
 	const value = (input ?? {}) as { command?: unknown; args?: unknown; cwd?: unknown; timeoutSec?: unknown };
 	const args = value.args ?? [];
@@ -104,7 +133,7 @@ export async function handleRun(config: RunnerConfig, input: unknown, calls: num
 	}
 	const permissions = config.permissions || deps.permissions ? await loadRunnerPermissions(config, deps) : undefined;
 	let decision = createCommandPolicy({ ...config.policy, ...(permissions ? { permissions } : {}) }).decide(value.command, args as string[], (value.cwd as string | undefined) ?? '.');
-	const audit = { at: new Date().toISOString(), command: value.command, args, cwd: value.cwd ?? '.' };
+	const audit = { at: new Date().toISOString(), command: value.command, args, cwd: value.cwd ?? '.', ...(via === 'terminal' ? { via } : {}) };
 	if (decision.allowed === false && decision.reason === 'needs-approval') {
 		// A permission rule said `ask`: the user decides; an unanswered or refused request is a denial the agent must not retry.
 		const denial = await requestApproval(approverOf(config, deps), { kind: 'run', title: 'Run command', rule: decision.rule, command: value.command, args: args as string[], cwd: decision.cwd, detail: ['command: ' + [value.command, ...(args as string[])].join(' ').slice(0, 300), 'cwd: ' + decision.cwd] });
@@ -119,12 +148,14 @@ export async function handleRun(config: RunnerConfig, input: unknown, calls: num
 		return { isError: true, text: denialText(decision.reason) };
 	}
 	// Secrets allowed for this exact command come from the keychain through the channel, only into this process.
-	const secrets = config.channel ? await callToolChannel(config.channel.address, config.channel.token, 'secrets', { command: value.command, args, cwd: decision.cwd }).catch(() => ({})) as Record<string, string> : {};
+	// In the terminal the extension spawns the process, so it adds the secrets and redacts the output itself.
+	const secrets = config.channel && via === 'process' ? await callToolChannel(config.channel.address, config.channel.token, 'secrets', { command: value.command, args, cwd: decision.cwd }).catch(() => ({})) as Record<string, string> : {};
 	if (!await permissionsUntouched(config)) { return { isError: true, text: 'POLICY_DENIED: project-permissions-changed' }; }
-	const result = await runCommand({
-		root: config.root, cwd: decision.cwd, command: value.command, args: args as string[], timeoutSec: value.timeoutSec as number | undefined,
-		env: { ...config.env, ...secrets }, logDirectory: config.logDirectory, ...(decision.delegate && config.delegateEntry ? { delegateEntry: config.delegateEntry } : {})
-	}).catch((error: Error) => error);
+	const request = { command: value.command, args: args as string[], cwd: decision.cwd, timeoutSec: value.timeoutSec as number | undefined, delegate: !!(decision.delegate && config.delegateEntry) };
+	const result = await (via === 'terminal' ? (deps.terminal ?? terminalViaChannel(config))(request) : runCommand({
+		root: config.root, cwd: decision.cwd, command: value.command, args: args as string[], timeoutSec: request.timeoutSec, ...(deps.promptIdleMs ? { promptIdleMs: deps.promptIdleMs } : {}),
+		env: { ...config.env, ...secrets }, logDirectory: config.logDirectory, ...(request.delegate ? { delegateEntry: config.delegateEntry } : {})
+	})).catch((error: Error) => error);
 	if (!(result instanceof Error)) {
 		for (const variant of Object.values(secrets).flatMap(secretVariants)) { result.output = result.output.split(variant).join('[REDACTED]'); }
 	}
@@ -137,12 +168,15 @@ export async function handleRun(config: RunnerConfig, input: unknown, calls: num
 		return { isError: true, text };
 	}
 	await fs.appendFile(config.logDirectory + '/commands.jsonl', JSON.stringify({ ...audit, exitCode: result.exitCode, durationMs: result.durationMs, timedOut: result.timedOut }) + '\n').catch(() => undefined);
-	const status = result.timedOut ? 'timed out' : 'exit ' + result.exitCode;
+	const status = result.timedOut ? 'timed out' : result.prompt ? 'stopped: waiting for input' : 'exit ' + result.exitCode;
+	// A command that asks questions cannot be answered through a closed stdin; the terminal tool lets the user answer.
+	const prompted = result.prompt ? '\n[ats-runner] The command stopped at a prompt: "' + result.prompt + '". ' +
+		(config.terminal && via === 'process' ? 'Run it again with run_in_terminal so the user can answer.' : 'Ask the user to answer it in their own terminal, or use a non-interactive option of the command.') : '';
 	const budget = config.maxTurns && calls >= Math.floor(config.maxTurns * 0.8)
 		? '\n[ats-runner] Budget: about ' + Math.max(0, config.maxTurns - calls) + ' turns left. Leave the work consistent and write the report now.' : '';
 	return {
 		isError: result.exitCode !== 0,
-		text: status + ' \u00b7 ' + (result.durationMs / 1000).toFixed(1) + ' s' + (result.truncated ? ' \u00b7 output truncated, full log: ' + result.logFile : '') + '\n' + (result.output || '(no output)') + budget
+		text: status + ' \u00b7 ' + (result.durationMs / 1000).toFixed(1) + ' s' + (result.truncated ? ' \u00b7 output truncated, full log: ' + result.logFile : '') + '\n' + (result.output || '(no output)') + prompted + budget
 	};
 }
 
@@ -221,7 +255,7 @@ async function main(): Promise<void> {
 		if (request.id === undefined) { return; }
 		const reply = (result: unknown): void => send({ jsonrpc: '2.0', id: request.id, result });
 		if (request.method === 'initialize') { return reply({ protocolVersion: request.params?.protocolVersion ?? '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'ats-runner', version: '1.0.0' } }); }
-		if (request.method === 'tools/list') { return reply({ tools: [TOOL, ...(config.git ? GIT_TOOLS : []), ...(config.files ? FILE_TOOLS : []), ...(config.approve ? [APPROVE_TOOL] : []), ...(config.channel ? EDITOR_TOOLS : []), ...(config.channel ? config.mcpTools ?? [] : [])] }); }
+		if (request.method === 'tools/list') { return reply({ tools: [TOOL, ...(config.terminal ? [TERMINAL_TOOL] : []), ...(config.git ? GIT_TOOLS : []), ...(config.files ? FILE_TOOLS : []), ...(config.approve ? [APPROVE_TOOL] : []), ...(config.channel ? EDITOR_TOOLS : []), ...(config.channel ? config.mcpTools ?? [] : [])] }); }
 		if (request.method === 'ping') { return reply({}); }
 		if (request.method === 'tools/call' && config.channel && request.params?.name?.startsWith(MCP_TOOL_PREFIX) && config.mcpTools?.some(tool => tool.name === request.params!.name)) {
 			calls++;
@@ -237,6 +271,11 @@ async function main(): Promise<void> {
 		if (request.method === 'tools/call' && request.params?.name === TOOL.name) {
 			const key = callKey(TOOL.name, request.params.arguments);
 			const result = await isRefused(key) ? ALREADY_REFUSED : await remember(key, await handleRun(config, request.params.arguments, await nextCall()));
+			return reply({ isError: result.isError, content: [{ type: 'text', text: result.text }] });
+		}
+		if (request.method === 'tools/call' && config.terminal && request.params?.name === TERMINAL_TOOL.name) {
+			const key = callKey(TERMINAL_TOOL.name, request.params.arguments);
+			const result = await isRefused(key) ? ALREADY_REFUSED : await remember(key, await handleRun(config, request.params.arguments, await nextCall(), {}, 'terminal'));
 			return reply({ isError: result.isError, content: [{ type: 'text', text: result.text }] });
 		}
 		if (request.method === 'tools/call' && config.git && GIT_TOOLS.some(tool => tool.name === request.params?.name)) {
