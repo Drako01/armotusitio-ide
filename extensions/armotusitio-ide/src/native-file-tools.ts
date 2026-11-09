@@ -62,6 +62,13 @@ const refuse = (reason: string): never => { throw new FileToolError('POLICY_DENI
 const insideOf = (parent: string, candidate: string): boolean => samePath(parent, candidate) ||
 	(process.platform === 'win32' ? candidate.toLowerCase().startsWith(parent.toLowerCase() + path.sep) : candidate.startsWith(parent + path.sep));
 
+/**
+ * NTFS names that reach a protected folder under another spelling: an alternate data stream or stream type (`.git::$INDEX_ALLOCATION`
+ * deletes the whole folder), characters Windows reserves, a trailing dot or space (ignored by the file system) and 8.3 short names
+ * (`GIT~1`). None is a plain project path, so none is accepted; this only runs on Windows.
+ */
+const isWindowsAlias = (segment: string): boolean => /[:*?"<>|]/.test(segment) || /[. ]$/.test(segment) || /~\d/.test(segment);
+
 /** Validated project-relative path with `/` separators; refuses anything that is not plainly inside the project. */
 function relativePath(raw: unknown): string {
 	if (typeof raw !== 'string' || !raw || raw.length > MAX_PATH_LENGTH || /[\u0000-\u001f\u007f]/.test(raw)) { return refuse('invalid-path'); }
@@ -69,7 +76,9 @@ function relativePath(raw: unknown): string {
 	const relative = path.posix.normalize(raw.replace(/\\/g, '/')).replace(/^(\.\/)+/, '').replace(/\/+$/, '');
 	if (!relative || relative === '.') { return refuse('project-root'); }
 	if (relative === '..' || relative.startsWith('../')) { return refuse('path-outside-project'); }
-	if (relative.split('/').some(segment => FORBIDDEN_SEGMENTS.has(segment.toLowerCase()))) { return refuse('protected-path'); }
+	const segments = relative.split('/');
+	if (process.platform === 'win32' && segments.some(isWindowsAlias)) { return refuse('invalid-path'); }
+	if (segments.some(segment => FORBIDDEN_SEGMENTS.has(segment.toLowerCase()))) { return refuse('protected-path'); }
 	return relative;
 }
 

@@ -184,3 +184,13 @@ test('a dependency folder is refused when a protected folder hides inside it, ac
 		}, { nested: 'POLICY_DENIED: protected-path', workspace: 'DELETED apps/web/node_modules', kept: true, gone: true });
 	});
 });
+
+test('on Windows an alternate data stream, a trailing dot or space and a short name cannot reach a protected folder', { skip: process.platform !== 'win32' }, async () => {
+	await withProject(async ({ root, context }) => {
+		const aliases = ['.git::$INDEX_ALLOCATION', '.git.', '.git ', 'GIT~1', '.armotusitio::$INDEX_ALLOCATION', 'src/a.ts:hidden'];
+		const results = await Promise.all(aliases.map(alias => handleFileTool(context, 'delete_path', { path: alias })));
+		const moved = await handleFileTool(context, 'move_path', { from: 'src/a.ts', to: '.git::$DATA' });
+		assert.deepEqual({ results: results.map(result => result.text), moved: moved.text, git: await exists(path.join(root, '.git')), file: await exists(path.join(root, 'src/a.ts')) },
+			{ results: aliases.map(() => 'POLICY_DENIED: invalid-path'), moved: 'POLICY_DENIED: invalid-path', git: true, file: true });
+	});
+});

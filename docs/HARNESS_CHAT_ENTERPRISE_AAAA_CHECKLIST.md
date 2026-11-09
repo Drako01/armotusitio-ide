@@ -56,7 +56,8 @@ Existing work this plan builds on (do not redo): #72 (hybrid writer, tools), #75
 
 | ID | Prio | Item | Status |
 | --- | --- | --- | --- |
-| E6-1 | P1 | Adversarial tests: prompt injection, traversal, symlink races (TOCTOU), escalation, command injection, secret leaks, stale approval | TODO |
+| E6-1 | P1 | Adversarial tests: prompt injection, traversal, symlink races (TOCTOU), escalation, command injection, secret leaks, stale approval | PARTIAL: file-path floor covered (below); the rest TODO |
+| E6-1a | P0 | Windows: `delete_path`/`move_path`/Edit floor accepted `.git::$INDEX_ALLOCATION` and deleted the whole `.git` (NTFS alternate data stream); trailing dot/space and 8.3 `GIT~1` are other aliases | DONE: `isWindowsAlias` refuses them (`invalid-path`) in `native-file-tools.ts`; test fails without the fix (9/10) and passes with it (10/10), Windows only. Other floors (`native-command-policy.ts`, MCP) not yet checked for the same aliases: TODO |
 | E6-2 | P2 | Scopes (operation, task, session, project, global low-risk), immediate revocation, concurrent decisions, traceability | TODO |
 
 ## Phase 7: concurrency and external harnesses
