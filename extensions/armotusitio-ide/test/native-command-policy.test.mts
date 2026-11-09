@@ -284,3 +284,10 @@ test('package-manager workspace flags are judged on their subcommand and folder;
 		});
 	} finally { await loaded.cleanup(); }
 });
+
+test('npx cannot download and run an unknown package without a question; the project tools and --no-install still run', () => {
+	const policy = createCommandPolicy({ subprojects: monorepo, delegate: false, extras: [] });
+	const decide = (args: string[]) => { const decision = policy.decide('npx', args, 'apps/web'); return decision.allowed ? 'allowed' : decision.reason; };
+	assert.deepEqual([decide(['cowsay']), decide(['left-pad', 'x']), decide(['prettier', '--check', '.']), decide(['tsc', '--noEmit']), decide(['--no-install', 'cowsay'])],
+		['dependency-change', 'dependency-change', 'allowed', 'allowed', 'allowed']);
+});

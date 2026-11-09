@@ -6,6 +6,18 @@ Commits are local until the user pushes. To continue with another agent: take th
 
 Existing work this plan builds on (do not redo): #72 (hybrid writer, tools), #75 (account selector), #78 (resilience: engine reason, `/lease`, `/motor`, `@terminal`, jobs, `/skills`), #81 (`delete_path` of a reinstallable `node_modules`). See `HARNESS_CHAT_UPGRADE_CHECKLIST.md` and `HARNESS_TOOL_INVENTORY.md`.
 
+## Standing rule: background execution of long operations (permanent, all phases)
+
+Installs (`pnpm|npm|yarn|bun install`), builds, full test suites and similar long processes MUST run in the background: do not block the session; record job id/PID, log file, state and result; supervise without excessive polling; continue independent work; check the exit code before declaring PASS; handle timeouts, errors and orphans; never run two operations that modify the same resources at once.
+
+| ID | Requirement | Compliance |
+|---|---|---|
+| B-1 | Agent work sessions (this process) run installs, builds and full suites with `run_in_background` and a monitor, not in the foreground | COMPLIANT from 2026-11-09: the full suite already ran in the background (606 tests, exit 0). Evidence is each run recorded under its SHA in this file |
+| B-2 | Exit code checked before PASS | COMPLIANT: results are quoted from the test runner summary and the process exit status; no PASS is recorded without them |
+| B-3 | No concurrent mutation of the same resource | COMPLIANT in sessions (one suite or install at a time, background suite never overlapped with a second copy). Product side: `repairQueue` and `gitQueue` serialize repair and git inside one runner |
+| B-4 | Product: `repair_dependencies` installs run in the background with job id, log, supervision and orphan cleanup | PARTIAL: the install runs through `run` with a 900 s timeout and the runner kills it on timeout or when the run ends, but the call blocks the agent turn. Moving it onto the existing `job_start`/`job_status` jobs (max 4, stopped when the run ends) is TODO (A2/D1 follow-up) |
+| B-5 | Product: cross-window exclusion for installs on one folder | TODO (same as D1-5) |
+
 ## Phase 0: housekeeping
 
 | ID | Prio | Item | Status | Evidence |
@@ -78,7 +90,7 @@ Existing work this plan builds on (do not redo): #72 (hybrid writer, tools), #75
 
 | ID | Prio | Item | Status |
 | --- | --- | --- | --- |
-| X9-1 | P1 | Reproduce-before-fix tests per area of the matrix in `PLAN_IDE.md` section 12; real E2E only with credentials and quota, else `BLOCKED` | TODO |
+| X9-1 | P1 | Reproduce-before-fix tests per area of the matrix in `PLAN_IDE.md` section 12; real E2E only with credentials and quota, else `BLOCKED` | IN PROGRESS: adversarial probe of the command policy (35 hostile forms) found one real gap, `npx <unknown>` auto-installs and runs a registry package without a terminal; fixed (needs approval unless a project tool or `--no-install`), test added. Other areas (symlinks, aliases, git flags) covered by earlier blocks; secrets/prompt-injection/MCP probes TODO |
 
 ## Phase 10: validation and delivery
 
