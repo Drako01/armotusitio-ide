@@ -40,10 +40,12 @@ export interface SessionIdentity {
 	worktree: string;
 	provider: NativeProvider;
 	conversationId: string;
+	/** AI profile (account) the session runs under; part of the key, so another profile is another session. Absent: the IDE's own login. */
+	profileId?: string;
 }
 
 export function sessionKey(identity: SessionIdentity): string {
-	return createHash('sha256').update([identity.root, identity.worktree, identity.provider, identity.conversationId].join('\u0000')).digest('hex').slice(0, 32);
+	return createHash('sha256').update([identity.root, identity.worktree, identity.provider, identity.conversationId, ...(identity.profileId ? [identity.profileId] : [])].join('\u0000')).digest('hex').slice(0, 32);
 }
 
 /** What a tool call does, normalized across providers for policy, cards and the timeline. */

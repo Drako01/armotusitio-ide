@@ -21,6 +21,7 @@ import { runCommand } from './native-command-runner.ts';
 import { openToolChannel } from './native-tool-server.ts';
 import { createWorkMcpBridge, type WorkMcpTool } from './native-mcp-bridge.ts';
 import { parseApprovalDraft, type ApprovalAsk } from './native-approval.ts';
+import { ProfileRegistry } from './native-profiles.ts';
 import { NativeChatTransport, parseAgentQuestions, parseTransportSetting, type NativeTurnHooks } from './native-agent-transport.ts';
 import type { SessionRole } from './runtime/contracts.ts';
 import { addUserRule, configuredPreset, listUserRules, loadPermissions, removeUserRule } from './native-permissions.ts';
@@ -366,13 +367,21 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 	 * Native transport of the chat (r8): persistent provider sessions behind the same guarded pipeline. The setting decides
 	 * (structured | native | auto); an incompatible CLI keeps the structured transport and says why once per provider.
 	 */
+	// Each AI profile is a private config directory (CLAUDE_CONFIG_DIR / CODEX_HOME) under the IDE storage, never inside a project.
+	const profiles = new ProfileRegistry(path.join(context.globalStorageUri.fsPath, 'ai-profiles'), (provider, env) => new Promise(resolve => {
+		resolveNativeCommand(provider, provider === 'claude' ? ['auth', 'status'] : ['login', 'status'], env).then(resolved => execFile(resolved.executable, resolved.args, { env, timeout: 15_000, windowsHide: true, maxBuffer: 64 * 1024 }, (error, stdout, stderr) => resolve({ code: error ? 1 : 0, output: stdout + stderr })), () => resolve(undefined));
+	}));
 	const nativeChat = new NativeChatTransport({
 		storageFor: root => metricsDirectory(root),
+		profileFor: async (root, provider) => (await profiles.resolve(provider, root))?.id,
 		setting: () => parseTransportSetting(vscode.workspace.getConfiguration('atsHarness').get('agentTransport', 'structured')),
 		trusted: () => vscode.workspace.isTrusted,
-		environment: async provider => {
+		environment: async (provider, profileId) => {
 			const toolchain = await currentToolchainEnvironment();
-			return { env: await withHarnessProvider(toolchain.env, provider), writableRoots: toolchain.writableRoots };
+			// A profile that cannot be found stops the run: it never falls back to another account or to the IDE's own login.
+			const profile = profileId ? await profiles.get(profileId) : undefined;
+			if (profileId && !profile) { throw Error('HARNESS_PROFILE_NOT_FOUND'); }
+			return { env: await withHarnessProvider(profile ? profiles.environment(profile, toolchain.env) : toolchain.env, provider), writableRoots: toolchain.writableRoots };
 		},
 		toolServer: (root, provider, role, channel) => prepareToolServer(root, role === 'writer' ? implementerMaxTurns() : 50, provider, undefined, undefined, channel.approve, { role, question: channel.question, epoch: channel.epoch }),
 		policy: async root => {

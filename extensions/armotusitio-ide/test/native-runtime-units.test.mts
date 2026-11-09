@@ -194,3 +194,11 @@ test('a file change through a junction or symlink that leaves the project is den
 		assert.deepEqual({ through: through.reason, traversal: traversal.reason, inside: inside.allowed, asked }, { through: 'POLICY_DENIED: path-outside-project', traversal: 'POLICY_DENIED: path-outside-project', inside: true, asked: 0 });
 	} finally { await fs.rm(base, { recursive: true, force: true }); }
 });
+
+test('a session key without a profile is the legacy one, and each profile is its own session', async () => {
+	const { createHash } = await import('node:crypto');
+	const identity = { root: '/repo', worktree: '/repo', provider: 'claude' as const, conversationId: 'c1' };
+	const legacy = createHash('sha256').update(['/repo', '/repo', 'claude', 'c1'].join(String.fromCharCode(0))).digest('hex').slice(0, 32);
+	const keys = [sessionKey(identity), sessionKey({ ...identity, profileId: 'a' }), sessionKey({ ...identity, profileId: 'b' }), sessionKey({ ...identity, profileId: 'a' })];
+	assert.deepEqual({ legacy: keys[0] === legacy, aDiffersFromB: keys[1] !== keys[2], profileDiffersFromNone: keys[1] !== keys[0], stable: keys[1] === keys[3] }, { legacy: true, aDiffersFromB: true, profileDiffersFromNone: true, stable: true });
+});
