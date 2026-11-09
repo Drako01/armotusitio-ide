@@ -8,6 +8,7 @@
  * secrets, which therefore never touch a file. The token travels only in the run's runner configuration.
  */
 import * as net from 'node:net';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
@@ -17,6 +18,8 @@ export type ChannelHandler = (method: string, params: unknown) => Promise<unknow
 export interface ToolChannel { address: string; token: string; close(): Promise<void> }
 
 const MAX_REQUEST_BYTES = 256 * 1024;
+/** `sun_path` holds 104 bytes on macOS and 108 on Linux, terminator included: longer socket paths fail with EINVAL. */
+const SOCKET_PATH_LIMIT = 100;
 
 function sameToken(left: string, right: string): boolean {
 	const a = Buffer.from(left), b = Buffer.from(right);
@@ -27,8 +30,13 @@ function sameToken(left: string, right: string): boolean {
 export async function openToolChannel(storage: string, handler: ChannelHandler): Promise<ToolChannel> {
 	const token = randomBytes(32).toString('hex');
 	const name = 'ats-' + randomBytes(12).toString('hex');
-	const address = process.platform === 'win32' ? '\\\\.\\pipe\\' + name : path.join(storage, name + '.sock');
-	if (process.platform !== 'win32') { await fs.mkdir(storage, { recursive: true, mode: 0o700 }); }
+	const posix = process.platform !== 'win32';
+	// The IDE storage path is long (hash directories); when the socket would not fit, a short private directory takes its place.
+	const fits = posix && Buffer.byteLength(path.join(storage, name + '.sock')) <= SOCKET_PATH_LIMIT;
+	const directory = !posix || fits ? storage : await fs.mkdtemp(path.join(os.tmpdir(), 'ats-'));
+	const address = posix ? path.join(directory, name + '.sock') : '\\\\.\\pipe\\' + name;
+	if (posix && Buffer.byteLength(address) > SOCKET_PATH_LIMIT) { throw Error('HARNESS_CHANNEL_PATH_TOO_LONG'); }
+	if (fits) { await fs.mkdir(storage, { recursive: true, mode: 0o700 }); }
 	const server = net.createServer(socket => {
 		let buffer = '';
 		socket.on('data', async data => {
@@ -54,7 +62,7 @@ export async function openToolChannel(storage: string, handler: ChannelHandler):
 	if (process.platform !== 'win32') { await fs.chmod(address, 0o600).catch(() => undefined); }
 	return {
 		address, token,
-		close: () => new Promise(resolve => server.close(() => { if (process.platform !== 'win32') { void fs.rm(address, { force: true }); } resolve(); }))
+		close: () => new Promise(resolve => server.close(() => { if (posix) { void fs.rm(fits ? address : directory, { recursive: true, force: true }); } resolve(); }))
 	};
 }
 

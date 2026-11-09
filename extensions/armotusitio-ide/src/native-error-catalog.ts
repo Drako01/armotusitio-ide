@@ -59,6 +59,7 @@ const EXACT: Record<string, Hint> = {
 	HARNESS_WORKFLOW_CALL_BUDGET_EXCEEDED: t => t('El workflow us\u00f3 todas las llamadas a la IA que ten\u00eda permitidas. Revis\u00e1 el resultado y crea uno nuevo si falta trabajo.'),
 	HARNESS_WORKFLOW_FOREIGN_PROJECT_STATE: t => t('El estado guardado pertenece a otro proyecto. Abr\u00ed el proyecto correcto o us\u00e1 {0}.', DIAGNOSE),
 	HARNESS_GATE_CAPACITY_INVALID: t => t('La configuraci\u00f3n de verificaciones en paralelo no es v\u00e1lida. Us\u00e1 \u00abArmoTuSitio: Configurar Harness nativo del proyecto\u00bb para regenerarla.'),
+	HARNESS_CHANNEL_PATH_TOO_LONG: t => t('La carpeta temporal del sistema tiene una ruta demasiado larga para el canal local del Harness. Defin\u00ed una carpeta temporal m\u00e1s corta (variable TMPDIR) y reintent\u00e1.'),
 	HARNESS_TIMEOUT: t => t('La operaci\u00f3n super\u00f3 su tiempo m\u00e1ximo. Reintent\u00e1 o acot\u00e1 el pedido.'),
 	HARNESS_OPERATION_FAILED: t => t('La conversaci\u00f3n se conserva; pod\u00e9s reintentar. Si se repite, us\u00e1 {0}.', DIAGNOSE)
 };
