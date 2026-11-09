@@ -11,6 +11,7 @@
  *   run:<glob>        a command line, `command arg1 arg2` joined by single spaces   e.g. `run:pnpm test*`
  *   edit:<glob>       RESERVED, not enforced yet: edits are made by the provider's native tools, which nothing here intercepts
  *   edit:<glob>       also decides the structured delete_path / move_path tools (project-relative path)
+ *   mcp:<glob>       a tool of a user-added MCP server, written `server/tool` (e.g. `mcp:github/*`); asked unless a rule allows it
  *   git_commit        the structured commit tool, in every project
  *   git_push          the structured push tool, in every project
  *   git_branch_create the structured branch creation tool, in every project
@@ -49,7 +50,8 @@ export type PermissionRequest =
 	| { kind: 'git_push'; branch: string; remote: string }
 	| { kind: 'git_branch_create'; repo: string; branch: string; from: string }
 	| { kind: 'git_pr_upsert'; repo: string; branch: string; base: string; title: string; body: string }
-	| { kind: 'git_fetch'; remote: string; branch?: string };
+	| { kind: 'git_fetch'; remote: string; branch?: string }
+	| { kind: 'mcp'; server: string; tool: string };
 
 export interface PermissionVerdict {
 	decision: PermissionDecision;

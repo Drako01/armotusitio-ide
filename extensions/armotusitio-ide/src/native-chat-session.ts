@@ -171,7 +171,7 @@ interface PendingQuestion { questions: AgentQuestion[]; settle(answers: Question
 
 /** What a wrong yes can do, by kind; a compound shell line or a sandbox escalation is always high. */
 function riskOf(draft: ApprovalDraft): ApprovalRisk {
-	if (draft.kind === 'sandbox' || draft.kind === 'git_push' || draft.kind === 'git_pr_upsert' || draft.detail.includes('shell: provider sandbox')) { return 'high'; }
+	if (draft.kind === 'sandbox' || draft.kind === 'mcp' || draft.kind === 'git_push' || draft.kind === 'git_pr_upsert' || draft.detail.includes('shell: provider sandbox')) { return 'high'; }
 	return draft.kind === 'edit' || draft.kind === 'git_fetch' || draft.kind === 'git_branch_create' ? 'low' : 'medium';
 }
 /** Turn-only extras of a message (mentioned file content and its notice); a queued message keeps them until it runs. */
@@ -496,7 +496,7 @@ export class HarnessChatSession {
 		const titles: Record<ApprovalDraft['kind'], string> = {
 			run: this.t('Ejecutar un comando'), edit: this.t('Borrar o mover archivos del proyecto'), git_commit: this.t('Hacer commit'), git_push: this.t('Hacer push'),
 			git_branch_create: this.t('Crear una rama'), git_pr_upsert: this.t('Crear o actualizar un pull request'), git_fetch: this.t('Traer cambios del remoto (fetch)'),
-			sandbox: this.t('Ampliar los permisos del sandbox')
+			sandbox: this.t('Ampliar los permisos del sandbox'), mcp: this.t('Usar una herramienta de un servidor MCP')
 		};
 		const title = titles[draft.kind];
 		return new Promise<ApprovalAnswer>(resolve => {

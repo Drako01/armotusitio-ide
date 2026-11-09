@@ -36,6 +36,8 @@ export interface ApproveContext {
 	ask?: ApprovalAsk;
 	/** Agent questions (`AskUserQuestion`) shown as a card; without it they are denied and the agent decides by itself. */
 	question?: (questions: AgentQuestion[]) => Promise<QuestionAnswers | undefined>;
+	/** Names of the user-added MCP servers wired into this run; a tool of any other server is not available. */
+	mcpServers?: readonly string[];
 }
 /** The IDE's decision about one normalized call, before the user is asked (shared by every provider). */
 export type CallVerdict = { verdict: 'allow' } | { verdict: 'deny'; message: string } | { verdict: 'ask'; draft: ApprovalDraft & ApprovalSubject };
@@ -151,6 +153,22 @@ export function parseClaudeQuestions(input: Record<string, unknown>): AgentQuest
 	return questions;
 }
 
+/** Claude names a server's tool `mcp__<server>__<tool>`; server names have no underscores (see `native-mcp-servers.ts`). */
+const MCP_TOOL = /^mcp__(?<server>[a-z0-9-]+)__(?<tool>[A-Za-z0-9_.-]+)$/;
+
+/** What the user sees of a call's arguments: key names and short values, never an unbounded blob. */
+function argumentLines(input: Record<string, unknown>): string[] {
+	return Object.entries(input).slice(0, 6).map(([key, value]) => 'arg ' + key.slice(0, 40) + ': ' + (typeof value === 'string' ? value : JSON.stringify(value) ?? '').slice(0, 200));
+}
+
+async function mcpTool(context: ApproveContext, server: string, tool: string, input: Record<string, unknown>): Promise<PromptDecision> {
+	const verdict = context.permissions.decide({ kind: 'mcp', server, tool });
+	if (verdict.decision === 'deny') { return deny('POLICY_DENIED: ' + (verdict.rule ?? 'mcp tool denied by permissions')); }
+	const denial = verdict.decision === 'allow' ? undefined
+		: await settleVerdict(context, { verdict: 'ask', draft: { kind: 'mcp', title: 'Use MCP tool', rule: '', server, tool, detail: ['server: ' + server, 'tool: ' + tool, ...argumentLines(input)] } });
+	return denial ? deny(denial) : allow(input);
+}
+
 async function question(context: ApproveContext, input: Record<string, unknown>): Promise<PromptDecision> {
 	const questions = parseClaudeQuestions(input);
 	if (!questions) { return deny('POLICY_DENIED: invalid-question'); }
@@ -169,6 +187,8 @@ export async function decidePermissionPrompt(context: ApproveContext, value: unk
 	try {
 		if (request.tool_name === 'Bash') { return await bash(context, input); }
 		if (request.tool_name === 'AskUserQuestion') { return await question(context, input); }
+		const mcp = MCP_TOOL.exec(request.tool_name)?.groups;
+		if (mcp && context.mcpServers?.includes(mcp.server)) { return await mcpTool(context, mcp.server, mcp.tool, input); }
 		const editField = EDIT_TOOLS.get(request.tool_name);
 		if (editField) { return await edit(context, input, editField); }
 		if (READ_TOOLS.has(request.tool_name)) {

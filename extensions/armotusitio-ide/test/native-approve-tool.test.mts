@@ -66,3 +66,24 @@ test('Claude permission prompts are decided by the same policy and permissions a
 		await fs.rm(home, { recursive: true, force: true });
 	}
 });
+
+test('a tool of a user-added MCP server asks by default, obeys mcp rules, and an unknown server is unavailable', async () => {
+	const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'ats-approve-mcp-')));
+	const home = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-approve-mcp-home-'));
+	try {
+		await addUserRule('mcp:github/list_issues', 'allow', home);
+		await addUserRule('mcp:github/delete_repo', 'deny', home);
+		const permissions = await loadPermissions(root, home, undefined, { preset: 'dev' });
+		const asked: ApprovalDraft[] = [];
+		const context: ApproveContext = {
+			root, permissions, policy: createCommandPolicy({ subprojects: [], delegate: false, extras: [], permissions }), mcpServers: ['github'],
+			ask: async card => { asked.push(card); return 'once'; }
+		};
+		const verdict = async (tool_name: string) => { const decision = await decidePermissionPrompt(context, { tool_name, input: { title: 'x'.repeat(500), n: 1 } }); return decision.behavior === 'allow' ? 'allow' : decision.message.split('\n', 1)[0]; };
+		const results = [await verdict('mcp__github__list_issues'), await verdict('mcp__github__delete_repo'), await verdict('mcp__github__create_issue'), await verdict('mcp__other__anything')];
+		assert.deepEqual({ results, cards: asked.map(card => ({ kind: card.kind, detail: card.detail.map(line => line.slice(0, 40)) })) }, {
+			results: ['allow', 'POLICY_DENIED: mcp:github/delete_repo', 'allow', 'POLICY_DENIED: tool-unavailable'],
+			cards: [{ kind: 'mcp', detail: ['server: github', 'tool: create_issue', 'arg title: ' + 'x'.repeat(29), 'arg n: 1'] }]
+		});
+	} finally { await fs.rm(root, { recursive: true, force: true }); await fs.rm(home, { recursive: true, force: true }); }
+});

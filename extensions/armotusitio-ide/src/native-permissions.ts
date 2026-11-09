@@ -61,7 +61,7 @@ export function globMatches(glob: string, subject: string): boolean {
 function parseRule(text: unknown): Rule | undefined {
 	if (typeof text !== 'string' || !text || text.length > MAX_RULE_LENGTH || /[\u0000-\u001f\u007f]/.test(text)) { return undefined; }
 	if (GIT_KINDS.has(text)) { return { text, kind: text as PermissionRequest['kind'], glob: '' }; }
-	const match = /^(run|edit|git_commit|git_push|git_branch_create|git_pr_upsert|git_fetch):(.+)$/.exec(text);
+	const match = /^(run|edit|mcp|git_commit|git_push|git_branch_create|git_pr_upsert|git_fetch):(.+)$/.exec(text);
 	if (!match) { return undefined; }
 	return { text, kind: match[1] as PermissionRequest['kind'], glob: GIT_KINDS.has(match[1]) ? projectKey(match[2]) : match[2] };
 }
@@ -79,6 +79,7 @@ function subjectOf(request: PermissionRequest, root: string): { kind: Permission
 	switch (request.kind) {
 		case 'run': return { kind: 'run', subject: [commandName(request.command), ...request.args].join(' ') };
 		case 'edit': return { kind: 'edit', subject: normalizePath(request.path) };
+		case 'mcp': return { kind: 'mcp', subject: request.server + '/' + request.tool };
 		default: return { kind: request.kind, subject: projectKey(root) };
 	}
 }
@@ -163,6 +164,8 @@ async function readLayer(file: string, allowAllow: boolean, label: string, t: Tr
 function presetDecision(preset: PermissionPreset, request: PermissionRequest): PermissionDecision {
 	switch (request.kind) {
 		case 'edit': return preset === 'readonly' ? 'deny' : 'allow';
+		// An external server runs code the IDE cannot inspect: no preset allows it without a rule.
+		case 'mcp': return preset === 'readonly' ? 'deny' : 'ask';
 		case 'git_commit': return preset === 'readonly' ? 'deny' : preset === 'trusted' ? 'allow' : 'ask';
 		case 'git_fetch': return preset === 'readonly' ? 'deny' : 'allow';
 		case 'git_push':
@@ -343,6 +346,10 @@ export function suggestRule(request: PermissionRequest, root?: string): string {
 		const rule = request.kind + ':' + key;
 		// The glob grammar has no escaping: a root containing `*` or control characters cannot be written as an exact rule.
 		return key && !/[*\u0000-\u001f\u007f]/.test(key) && rule.length <= MAX_RULE_LENGTH ? rule : '';
+	}
+	if (request.kind === 'mcp') {
+		const rule = 'mcp:' + request.server + '/' + request.tool;
+		return /^[A-Za-z0-9_.-]+$/.test(request.server) && /^[A-Za-z0-9_.-]+$/.test(request.tool) && rule.length <= MAX_RULE_LENGTH ? rule : '';
 	}
 	if (request.kind !== 'run' || request.args.length === 0) { return ''; }
 	if (installsOrLaunches(request)) { return ''; }

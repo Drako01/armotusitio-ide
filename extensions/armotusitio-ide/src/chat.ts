@@ -551,6 +551,10 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 	if (vscode.workspace.onDidChangeConfiguration) {
 		context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
 			if (['codex', 'claude'].some(provider => event.affectsConfiguration('atsHarness.' + modelSetting(provider)))) { providerCache.invalidate(); }
+			// A grant was given under another security context: a changed preset, sandbox or mode makes the next action ask again.
+			if (['atsHarness.permissionsPreset', 'atsHarness.codexSandbox', 'atsHarness.chatMode'].some(setting => event.affectsConfiguration(setting))) {
+				for (const entry of sessions.values()) { if (entry.loaded) { entry.session.revokeGrant(); } }
+			}
 			if (event.affectsConfiguration('atsHarness.codexSandbox')) {
 				useCodexSandbox(vscode.workspace.getConfiguration('atsHarness').get('codexSandbox'));
 				if (panel) { publish(); }
