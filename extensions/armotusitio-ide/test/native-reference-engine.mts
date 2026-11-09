@@ -12,7 +12,7 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-export type EngineMode = 'honest' | 'ignore-fence' | 'ignore-lease' | 'wrong-lease-id' | 'busy-ack' | 'mutate-on-lease';
+export type EngineMode = 'honest' | 'ignore-fence' | 'ignore-lease' | 'wrong-lease-id' | 'busy-ack' | 'mutate-on-lease' | 'refuse-lease';
 export const REFERENCE_CAPABILITIES = ['durable-tasks', 'writer-lease', 'verification-gates', 'bounded-processes'];
 
 const ENGINE = [
@@ -32,6 +32,7 @@ const ENGINE = [
 	'if (command === "capabilities") { print({ schemaVersion: 2, nonce, capabilities: behavior.report ?? read("declared.json", []) }); }',
 	'else if (command === "ide-status") { print({ schemaVersion: 2, nonce, executionEnabled: false, tasks }); }',
 	'else if (command === "ide-writer-lease") {',
+	'	if (behavior.mode === "refuse-lease") { console.error("Protocolo IDE no soportado: 3 token=sk-secret-value-1234567890"); process.exit(1); }',
 	'	const running = tasks.filter(task => task.status === "running").length;',
 	'	const leaseId = "a1".repeat(16);',
 	'	if (behavior.mode !== "busy-ack") { write("lease.json", { leaseId, epoch: Number(arg("--fence-epoch")) }); }',
@@ -39,9 +40,16 @@ const ENGINE = [
 	'	print({ schemaVersion: 2, nonce, action: "lease", leaseId, fenceEpoch: behavior.mode === "ignore-fence" ? 0 : Number(arg("--fence-epoch")), state: behavior.mode === "busy-ack" ? "busy" : "quiescent", runningTasks: behavior.mode === "busy-ack" ? 1 : running });',
 	'}',
 	'else if (command === "ide-writer-release") {',
+	'	// Like the real engine: there is nothing to release when the lease is already gone.',
+	'	if (!lease) { console.error("No hay un lease de escritura del IDE con ese id y epoca"); process.exit(1); }',
 	'	fs.rmSync(path.join(state, "lease.json"), { force: true });',
 	'	print({ schemaVersion: 2, nonce, action: "release", leaseId: behavior.mode === "wrong-lease-id" ? "b2".repeat(16) : arg("--lease-id"), fenceEpoch: Number(arg("--fence-epoch")) });',
 	'}',
+	'else if (command === "ide-lease") {',
+	'	if (process.argv[3] === "clear") { fs.rmSync(path.join(state, "lease.json"), { force: true }); print({ state: "cleared", previous: lease ? "valid" : "none" }); }',
+	'	else { print(lease ? { state: "valid", expiresAt: "2099-01-01T00:00:00" } : { state: "none" }); }',
+	'}',
+	'else if (command === "expire-lease") { fs.rmSync(path.join(state, "lease.json"), { force: true }); print({ expired: true }); }',
 	'else if (command === "start-task") {',
 	'	// The engine\'s own scheduler: an honest engine refuses to start work while the IDE holds the lease.',
 	'	if (lease && behavior.mode !== "ignore-lease") { console.error("lease held"); process.exit(2); }',

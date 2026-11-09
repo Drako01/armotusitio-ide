@@ -19,6 +19,8 @@ const { endpoint } = require('./mcp.ts');
 const { TtlCache } = require('./native-ttl-cache.ts');
 const { chatCommands, commandHelp, runSessionCommand } = require('./native-chat-commands.ts');
 const { resolveMentions, mentionNotice, suggestMentionFiles } = require('./native-chat-mentions.ts');
+const { captureTerminalOutput } = require('./native-terminal-capture.ts');
+const { resolveSkillInvocation } = require('./native-chat-skills.ts');
 const { configuredPreset } = require('./native-permissions.ts');
 const { APPROVAL_ANSWERS } = require('./native-approval.ts');
 const { indexProject, IGNORED } = require('./context.ts');
@@ -250,6 +252,9 @@ function registerChat(context: any, controller: any, projects: any, mcp: any, vs
 	useCodexSandbox(vscode.workspace.getConfiguration('atsHarness').get('codexSandbox'));
 	const chatMode = (): ChatMode => vscode.workspace.getConfiguration('atsHarness').get('chatMode', 'act') === 'ask' ? 'ask' : 'act';
 	const mentionIndex = new TtlCache(MENTION_INDEX_TTL_MS);
+	// `@terminal` attaches the last command the user ran in an IDE terminal (needs shell integration).
+	const terminalCapture = captureTerminalOutput(vscode.window ?? {});
+	context.subscriptions.push(terminalCapture);
 	const chosenEfforts = () => Object.fromEntries(['codex', 'claude'].map(provider => [provider, vscode.workspace.getConfiguration('atsHarness').get(effortSetting(provider), '')]));
 	const chosenModels = () => Object.fromEntries(Object.entries(models).map(([provider, found]) => [provider, { ...found, selected: vscode.workspace.getConfiguration('atsHarness').get(modelSetting(provider), '') }]));
 	let mcpStatus: { state: string; reason?: string; tools?: number; checkedAt?: string } = { state: 'checking' };
@@ -411,6 +416,11 @@ function registerChat(context: any, controller: any, projects: any, mcp: any, vs
 		openFile: (file: any) => vscode.commands.executeCommand('vscode.open', vscode.Uri.file(file)),
 		runsDirectory: (root: string) => controller.runsDirectory?.(root),
 		doctor: async (root: string) => doctorReport(controller.doctorFor ? await controller.doctorFor(root) : []),
+		motor: controller.runProjectCommand && ((command: string, args: string[]) => controller.runProjectCommand(selectedFolder(), command, args)),
+		lease: controller.writerLeaseStatus && {
+			status: () => controller.writerLeaseStatus(selectedFolder()), clear: () => controller.clearWriterLease(selectedFolder()),
+			confirmClear: async () => { const confirm = t('Liberar lease'); return await vscode.window.showWarningMessage(t('\u00bfLiberar el lease de escritura del Harness del proyecto? Hacelo solo si el IDE ya no est\u00e1 ejecutando nada en este proyecto.'), { modal: true }, confirm) === confirm; }
+		},
 		mcp: controller.mcpServers && {
 			t, store: controller.mcpServers,
 			confirm: async (summary: string) => { const confirm = t('Conectar'); return await vscode.window.showWarningMessage(summary, { modal: true }, confirm) === confirm; },
@@ -478,6 +488,12 @@ function registerChat(context: any, controller: any, projects: any, mcp: any, vs
 					// A four-backtick fence keeps triple backticks inside command output inert.
 					try {
 						const [name = '', ...words] = text.slice(1).trim().split(/\s+/);
+						if (name.toLowerCase() === 'skill') {
+							// A skill is not a report: it becomes the request of a turn, with the skill as data.
+							const invocation = await resolveSkillInvocation(folder.uri.fsPath, words.join(' '), t);
+							if (typeof invocation === 'string') { await session.note(invocation); } else { await session.send(invocation.message, chatMode(), { context: invocation.context, notice: invocation.notice }); }
+							return;
+						}
 						const output = await runSessionCommand(sessionCommands, name.toLowerCase(), words, folder.uri.fsPath, session) ?? await handle(text, source.token);
 						await session.note('`' + text.slice(0, 200).replace(/`/g, '') + '`\n\n````text\n' + output + '\n````');
 					}
@@ -491,7 +507,7 @@ function registerChat(context: any, controller: any, projects: any, mcp: any, vs
 					return;
 				}
 				ranWith[selected] = accounts[selected].selected;
-				const mentions = await resolveMentions(folder.uri.fsPath, text, IGNORED);
+				const mentions = await resolveMentions(folder.uri.fsPath, text, IGNORED, { terminal: () => terminalCapture.latest() });
 				await session.send(text, chatMode(), { context: mentions.context, notice: mentionNotice(mentions, t) });
 			}
 			if (action === 'approve' && typeof message.digest === 'string' && /^[a-f0-9]{64}$/.test(message.digest)) { await session.approve(message.digest); }

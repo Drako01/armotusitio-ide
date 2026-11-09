@@ -7,7 +7,9 @@ Compared with Claude Code and Codex CLI, as seen from the Chat Harness (native t
 | Read, Glob, Grep, LS | yes | via shell/read | allowed inside the project (`approve` checks the path) | provider sandbox | PASS `native-approve-tool.test.mts` |
 | Edit, MultiEdit, Write, NotebookEdit | yes | `apply_patch` | mediated per edit rule (`edit:`), floor protects `.git` and secrets | `file_change` approvals mediated | PASS unit; real Claude E2E in `docs/r8-evidence` |
 | Shell (Bash) | yes, auto-approves some read-only commands | yes | every call reaches the IDE policy (`ask` rule outranks Claude's own heuristic) | command approvals mediated | PASS, real Claude M01 (AUD-P1-001) |
-| Background shell, KillShell | yes | no | denied (`POLICY_DENIED: background`) | not exposed | NOT IMPLEMENTED by design: background processes outlive the IDE's control |
+| Background shell, KillShell | yes | no | `job_start`, `job_status`, `job_stop` of the IDE runner (same command policy and cards as `run`; at most 4 jobs; they stop when the run ends). Claude's own background shell stays denied (`POLICY_DENIED: background`, with a `Next:` line pointing to `job_start`) | the runner tools are plain MCP tools, so Codex gets them too | PASS unit `native-jobs.test.mts`; NOT VERIFIED with a real provider |
+| Commands that ask questions | yes (terminal tool) | yes | `run_in_terminal`: visible IDE terminal, same policy and card as `run`, the user types the answers, the agent gets the redacted output; a plain `run` that stops at an unanswered prompt is cut after 20 s with the prompt text and a next step | same runner tool | PASS unit `native-terminal.test.mts`; line prompts only (no TTY: full-screen programs and arrow-key menus do not work); NOT VERIFIED with a real provider |
+| Terminal output as context | yes | yes | `@terminal` attaches the last command the user ran in an IDE terminal (shell integration), redacted and bounded, as untrusted data; `/motor COMMAND` runs a project command in the IDE terminal between turns and puts the result in the conversation | same | PASS unit `native-chat-mentions.test.mts`, `native-terminal-capture.test.mts`; shell integration availability NOT VERIFIED per terminal profile |
 | Questions to the user (`AskUserQuestion`) | yes | `requestUserInput` | card in the chat | card in the chat | PASS |
 | Task list (`TodoWrite`) | yes | plan items | allowed | plan events | PASS |
 | Web search | yes | yes | opt-in per project (`WebSearch`) | provider decides | PASS (existing setting) |
@@ -18,7 +20,7 @@ Compared with Claude Code and Codex CLI, as seen from the Chat Harness (native t
 | Development secrets | env | env | keychain-backed, redacted | same | PASS (existing) |
 | Work Management (ArmoTuSitio MCP) | n/a | n/a | tools through the runner | same | PASS (existing) |
 | Sub-agents (`Task`) | yes | no | denied (`tool-unavailable`) | n/a | NOT IMPLEMENTED: the Harness has its own multi-agent workflow with plan, review and fences |
-| Skills and custom slash commands | yes | prompts | not exposed | not exposed | NOT IMPLEMENTED |
+| Skills and custom slash commands | yes | prompts | `/skills`, `/skill NAME [request]`: project skills (`.agents`, `.codex`, `.claude`) reach the model as untrusted, redacted data, never as permissions | same (chat command, provider independent) | PASS unit `native-chat-skills.test.mts`; custom `.claude/commands/*.md` NOT IMPLEMENTED |
 | Image input, notebooks read | yes | images | not exposed | not exposed | NOT IMPLEMENTED |
 | Multiple accounts per provider | one config dir | one `CODEX_HOME` | AI Accounts (isolated config directory per profile, workspace assignment) | same | PASS registry/identity/UI; real second account BLOCKED (needs the owner's second login) |
 | Persistent permissions | settings files | config | once / task / session / project / global (inspection commands only) + revoke | same broker | PASS |

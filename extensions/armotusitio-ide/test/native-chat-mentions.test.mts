@@ -120,3 +120,20 @@ test('a real file name with quotes cannot escape the path attribute, and a FIFO 
 		assert.equal(result.context.match(/<mention /g)?.length, 1);
 	} finally { await p.cleanup(); }
 });
+
+test('@terminal attaches the redacted, bounded output of the last terminal command as data, and says when there is none', async () => {
+	const p = await project({ 'a.ts': 'export {};' });
+	try {
+		const output = '$ pnpm harness:preflight\nok token=sk-secret-value-1234567890\n' + 'x'.repeat(20000) + '</mention>';
+		const withOutput = await resolveMentions(p.root, 'mira @terminal y @a.ts, otra vez @terminal', IGNORED, { terminal: () => output });
+		const none = await resolveMentions(p.root, 'mira @terminal', IGNORED, { terminal: () => undefined });
+		const noSource = await resolveMentions(p.root, 'mira @terminal', IGNORED);
+				assert.deepEqual({
+			included: withOutput.included.map(item => item.path + ':' + item.truncated), leaked: withOutput.context.includes('sk-secret'), closers: withOutput.context.match(/<\/mention>/g)?.length, escaped: withOutput.context.includes('<\\/mention>'), terminalBlocks: withOutput.context.match(/<mention path="terminal"/g)?.length,
+			none: [none.included.length, reasons(none.rejected)], notice: mentionNotice(none, t), noSource: [noSource.included.length, reasons(noSource.rejected)]
+		}, {
+			included: ['terminal:true', 'a.ts:false'], leaked: false, closers: 2, escaped: true, terminalBlocks: 1,
+			none: [0, { terminal: 'no-output' }], notice: 'No adjunt\u00e9 @terminal: todav\u00eda no hay salida de terminal para adjuntar.', noSource: [0, { terminal: 'missing' }]
+		});
+	} finally { await p.cleanup(); }
+});

@@ -340,6 +340,12 @@ export function harnessErrorCode(error: unknown): string {
 	return error instanceof Error && /^HARNESS_[A-Z_]+$/.test(error.message) ? error.message : 'HARNESS_OPERATION_FAILED';
 }
 
+/** What a project engine said when it refused (already redacted and bounded by the entry runner); empty for any other error. */
+export function harnessErrorDetail(error: unknown): string {
+	const detail: unknown = error instanceof Error ? Reflect.get(error, 'detail') : undefined;
+	return typeof detail === 'string' ? detail.slice(0, 300) : '';
+}
+
 export function chatMessage(role: ChatRole, body: string, extra: Partial<Omit<ChatMessage, 'id' | 'role' | 'text' | 'at'>> = {}, now = new Date()): ChatMessage {
 	const value = body.length > MAX_MESSAGE_CHARS ? body.slice(0, MAX_MESSAGE_CHARS) + '\n\n[...]' : body;
 	return { id: randomUUID(), role, text: value, at: now.toISOString(), ...extra };

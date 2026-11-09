@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
 import { access, chmod, copyFile, lstat, mkdir, open, readFile, readdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
-import { createReadStream, createWriteStream } from 'node:fs';
+import { createReadStream, createWriteStream, existsSync } from 'node:fs';
 import { pipeline } from 'node:stream/promises';
 import { createHash, createPublicKey, generateKeyPairSync, randomUUID, sign, verify } from 'node:crypto';
 import { armotusitioManifestName, armotusitioReleaseTag, armotusitioRepository, compareArmotusitioVersions, isUpdateRecord, parseArmotusitioManifest, type ArmotusitioAsset } from '../src/vs/platform/update/common/armotusitioUpdate.ts';
@@ -206,19 +206,29 @@ async function prepare(): Promise<unknown> {
 export const allowedActiveWorkflows = ['.github/workflows/ats-release.yml', '.github/workflows/ats-ide-extension.yml'];
 const releaseWorkflowPath = allowedActiveWorkflows[0];
 
+/** True when the listing is the complete one GitHub returns (a partial page could hide an active workflow). */
+const completeListing = (workflows: any): boolean => Number.isSafeInteger(workflows?.total_count) && workflows.total_count > 0 && workflows.total_count <= 100
+	&& Array.isArray(workflows.workflows) && workflows.workflows.length === workflows.total_count;
+
+/**
+ * Active workflows outside the allowlist. `present` tells whether the workflow file still exists in the release commit:
+ * GitHub keeps listing a deleted workflow as active, and one that cannot run is not a risk to a publication.
+ */
+export function strayWorkflows(workflows: any, present: (workflowPath: string) => boolean = () => true): string[] {
+	return workflows.workflows.filter((entry: any) => entry.state === 'active' && !allowedActiveWorkflows.includes(entry.path) && present(entry.path)).map((entry: any) => String(entry.path));
+}
+
 /** True when the workflow listing is complete and only allowlisted workflows are active. */
-export function onlyAllowedWorkflowsActive(workflows: any): boolean {
-	return Number.isSafeInteger(workflows?.total_count) && workflows.total_count > 0 && workflows.total_count <= 100 && Array.isArray(workflows.workflows)
-		&& workflows.workflows.length === workflows.total_count
-		&& workflows.workflows.every((entry: any) => entry.state !== 'active' || allowedActiveWorkflows.includes(entry.path));
+export function onlyAllowedWorkflowsActive(workflows: any, present?: (workflowPath: string) => boolean): boolean {
+	return completeListing(workflows) && strayWorkflows(workflows, present).length === 0;
 }
 
 /** Release CI may publish only the tag it prepared, from the release workflow, with upstream workflows disabled. */
-export function exclusiveReleaseWorkflow(environment: NodeJS.ProcessEnv, workflows: any): boolean {
+export function exclusiveReleaseWorkflow(environment: NodeJS.ProcessEnv, workflows: any, present?: (workflowPath: string) => boolean): boolean {
 	return environment.GITHUB_ACTIONS === 'true' && environment.GITHUB_REPOSITORY === armotusitioRepository
 		&& environment.GITHUB_WORKFLOW === 'ArmotuSitio Release'
 		&& /^ats-v\d+\.\d+\.\d+-r[1-9]\d*$/.test(environment.ATS_RELEASE_TAG || '')
-		&& onlyAllowedWorkflowsActive(workflows)
+		&& onlyAllowedWorkflowsActive(workflows, present)
 		&& workflows.workflows.some((entry: any) => entry.state === 'active' && entry.path === releaseWorkflowPath);
 }
 
@@ -229,7 +239,12 @@ export function exclusiveReleaseWorkflow(environment: NodeJS.ProcessEnv, workflo
 export async function requireIsolatedActions(): Promise<void> {
 	const workflowList = async () => JSON.parse(await run('gh', ['api', `repos/${armotusitioRepository}/actions/workflows?per_page=100`]));
 	if (process.env.GITHUB_ACTIONS === 'true') {
-		if (!exclusiveReleaseWorkflow(process.env, await workflowList())) { throw new Error('Publication stopped: release CI is not exclusive or the tag is invalid.'); }
+		const listed = await workflowList();
+		const present = (workflowPath: string): boolean => existsSync(path.join(repositoryRoot, workflowPath));
+		if (!exclusiveReleaseWorkflow(process.env, listed, present)) {
+			const strays = completeListing(listed) ? strayWorkflows(listed, present) : [];
+			throw new Error('Publication stopped: release CI is not exclusive or the tag is invalid.' + (strays.length ? ` Active workflows outside the allowlist: ${strays.join(', ')}. Disable them in GitHub Actions and rerun the failed job.` : ''));
+		}
 		return;
 	}
 	const permissions = JSON.parse(await run('gh', ['api', `repos/${armotusitioRepository}/actions/permissions`]));
