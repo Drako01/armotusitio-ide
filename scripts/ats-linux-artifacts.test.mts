@@ -7,10 +7,10 @@ import * as assert from 'node:assert/strict';
 import { armotusitioProduct as product } from '../build/lib/armotusitioProduct.ts';
 import { validateIdentity, findLinuxPackage, writeLinuxReceipt } from './ats-linux-artifacts.mts';
 import { exclusiveReleaseWorkflow } from './ats-autoupdate.mts';
-import { archiveLinuxSources } from './ats-build-linux.mts';
+import { archiveLinuxSources, shareWithBuildUser } from './ats-build-linux.mts';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtemp, writeFile, readFile, mkdir, rm } from 'node:fs/promises';
+import { mkdtemp, writeFile, readFile, mkdir, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 
@@ -81,4 +81,15 @@ test('RPM selection ignores rpmbuild staging copies but rejects multiple publish
 		await writeFile(path.join(directory, 'unexpected.rpm'), 'ambiguous output');
 		await assert.rejects(findLinuxPackage(directory, '.rpm'), /Expected exactly one/);
 	} finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test('the CI runner opens the bind-mounted output and log folders to the container build user, and nothing else does', { skip: process.platform === 'win32' }, async () => {
+	const base = await mkdtemp(path.join(tmpdir(), 'ats-bind-'));
+	try {
+		const [ci, local] = [path.join(base, 'ci'), path.join(base, 'local')];
+		await mkdir(ci, { mode: 0o755 }); await mkdir(local, { mode: 0o755 });
+		await shareWithBuildUser([ci], true);
+		await shareWithBuildUser([local], false);
+		assert.deepEqual({ ci: (await stat(ci)).mode & 0o777, local: (await stat(local)).mode & 0o777 }, { ci: 0o777, local: 0o755 });
+	} finally { await rm(base, { recursive: true, force: true }); }
 });
