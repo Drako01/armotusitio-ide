@@ -1006,7 +1006,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			if (JSON.stringify((await loadProjectConfig(root))?.plan || null) !== verificationSnapshot) { throw Error('HARNESS_WORKFLOW_VERIFICATION_CHANGED'); }
 			assertProviderCapacity();
 			pendingWorkflows.add(root); controller.refresh();
-			const engine = new NativeAgentWorkflow(executionRoot, path.join(metricsDirectory(root), 'workflows'), root, modelFor, effortFor);
+			const engine = new NativeAgentWorkflow(executionRoot, path.join(metricsDirectory(root), 'workflows'), root, modelFor, effortFor, provider => profileEnvironment(root, provider));
 			const unsubscribeEvents = engine.onEvent(() => { controller.refresh(); });
 			const validationEngine = isolation ? new NativeHarness(executionRoot, path.join(metricsDirectory(root), 'isolated-verification', isolation.id)) : chosen.engine;
 			let checkpoint: WorktreeCheckpoint | undefined;
