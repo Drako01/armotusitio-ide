@@ -111,13 +111,13 @@ export function registerProfileCommands(context: Host, vscode: Host, deps: Profi
 	}));
 	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.accounts.manage', async () => {
 		try {
-			const root = await deps.rootOf();
-			const profile = await chooseProfile(vscode, deps, root);
+			// The folder is asked only by the actions that need one, never before the accounts are shown.
+			const profile = await chooseProfile(vscode, deps, undefined);
 			if (!profile) { return; }
 			const actions = [
 				{ label: '$(sign-in) ' + t('Iniciar o renovar sesi\u00f3n'), run: () => openSignIn(vscode, deps, profile) },
 				{ label: '$(star) ' + t('Usar como predeterminada de {0}', PROVIDER_LABEL[profile.provider]), run: () => deps.registry.setDefault(profile.id) },
-				...(root ? [{ label: '$(folder) ' + t('Usar en este workspace'), run: () => deps.registry.assign(root, profile.id) }, { label: '$(close) ' + t('Quitar la asignaci\u00f3n de este workspace'), run: () => deps.registry.unassign(root, profile.provider) }] : []),
+				{ label: '$(folder) ' + t('Usar en este workspace'), run: async () => { const root = await deps.rootOf(); if (root) { await deps.registry.assign(root, profile.id); } } }, { label: '$(close) ' + t('Quitar la asignaci\u00f3n de este workspace'), run: async () => { const root = await deps.rootOf(); if (root) { await deps.registry.unassign(root, profile.provider); } } },
 				{ label: '$(edit) ' + t('Cambiar alias'), run: () => shared.rename(profile) },
 				{ label: '$(trash) ' + t('Eliminar cuenta y su sesi\u00f3n'), run: () => shared.remove(profile) }
 			];

@@ -521,3 +521,11 @@ test('the Codex full access switch asks before turning on, never turns on by its
 		assert.deepEqual({ setting: accepted.settings.get('codexSandbox'), shown: accepted.state().codexFullAccess, mode: codexSandbox() }, { setting: 'workspace-write', shown: false, mode: 'workspace-write' });
 	} finally { useCodexSandbox('workspace-write'); await accepted.cleanup(); }
 });
+
+test('"Administrar cuentas..." of the selector opens the AI Accounts tab, never the folder-first palette command', async () => {
+	const f = await panelFixture([], undefined, { folders: 2, confirm: undefined });
+	try {
+		await f.receive({ action: 'accounts' });
+		assert.deepEqual(f.executed.map(call => call[0]).filter(id => String(id).startsWith('atsHarness.accounts')), ['atsHarness.accounts.open']);
+	} finally { await f.cleanup(); }
+});
