@@ -514,7 +514,7 @@ function registerChat(context: any, controller: any, projects: any, mcp: any, vs
 			if (action === 'openHome') { await vscode.commands.executeCommand('atsIde.home'); }
 			if (action === 'cancel') { session.cancel(); }
 			if (action === 'provider' && ['codex', 'claude'].includes(message.provider)) { await session.selectProvider(message.provider); }
-			if (action === 'accounts') { await vscode.commands.executeCommand('atsHarness.accounts.manage'); void refreshAccounts(folder).catch(() => undefined); }
+			if (action === 'accounts') { await vscode.commands.executeCommand('atsHarness.accounts.open'); void refreshAccounts(folder).catch(() => undefined); }
 			if (action === 'account' && profiles && ['codex', 'claude'].includes(message.provider) && typeof message.profileId === 'string' && folder) {
 				// The choice applies to new runs; a session that already exists keeps the account it started with.
 				if (message.profileId === '') { await profiles.unassign(folder.uri.fsPath, message.provider); }

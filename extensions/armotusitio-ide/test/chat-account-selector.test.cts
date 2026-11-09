@@ -61,3 +61,19 @@ test('the chat says when the conversation keeps one account but the next message
 		assert.deepEqual({ split, same }, { split: 'Esta conversación sigue con Personal; el próximo mensaje usará Trabajo con un nombre bastante largo.', same: '' });
 	} finally { await browser.close(); }
 });
+
+test('the account selector looks like the other selectors of the bar: same computed background, color, radius and height', async () => {
+	const browser = await launchBrowser();
+	try {
+		const page = await browser.newPage({ viewport: { width: 900, height: 800 }, reducedMotion: 'reduce' });
+		const push = await mountChat(page);
+		const value = accountsState();
+		value.chat.provider = 'claude';
+		await push(value);
+		const styles = await page.evaluate(() => {
+			const read = id => { const style = getComputedStyle(document.getElementById(id)); return { background: style.backgroundColor, color: style.color, radius: style.borderRadius, height: style.minHeight, border: style.borderTopWidth + ' ' + style.borderTopColor, font: style.fontFamily }; };
+			return { account: read('account'), model: read('model') };
+		});
+		assert.deepEqual(styles.account, styles.model);
+	} finally { await browser.close(); }
+});

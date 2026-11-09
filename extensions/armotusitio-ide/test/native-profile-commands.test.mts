@@ -86,3 +86,28 @@ test('after the sign-in terminal closes the account is verified: authenticated o
 		}
 	} finally { await fs.rm(base, { recursive: true, force: true }); }
 });
+
+test('managing accounts lists them without asking for a folder; only the workspace actions ask', async () => {
+	const base = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-profile-manage-'));
+	try {
+		const registry = new ProfileRegistry(path.join(base, 'storage'), async () => undefined);
+		const profile = await registry.add('claude', 'Work');
+		const handlers = new Map<string, () => Promise<void>>();
+		const pickedActions = ['default', 'workspace'];
+		let folderAsks = 0;
+		const host = {
+			l10n: { t: (text: string, ...args: string[]) => text.replace(/\{(\d+)\}/g, (_, index) => args[Number(index)]) },
+			commands: { registerCommand: (id: string, run: () => Promise<void>) => { handlers.set(id, run); return { dispose() { } }; } },
+			window: {
+				showQuickPick: async (items: Array<{ label: string; profile?: unknown }>) => items[0].profile ? items[0] : items.find(item => pickedActions[0] === 'default' ? item.label.includes('predeterminada') : item.label.includes('workspace') && !item.label.includes('asignaci')),
+				showInformationMessage: async () => undefined
+			}
+		};
+		registerProfileCommands({ subscriptions: [] }, host, { registry, rootOf: async () => { folderAsks++; return path.join(base, 'project'); }, showError: error => { throw error; } });
+		await handlers.get('atsHarness.accounts.manage')!();
+		const afterDefault = { asks: folderAsks, isDefault: (await registry.placement()).defaults.claude === profile.id };
+		pickedActions.shift();
+		await handlers.get('atsHarness.accounts.manage')!();
+		assert.deepEqual({ afterDefault, asksAfterWorkspace: folderAsks, assigned: (await registry.resolve('claude', path.join(base, 'project')))?.id === profile.id }, { afterDefault: { asks: 0, isDefault: true }, asksAfterWorkspace: 1, assigned: true });
+	} finally { await fs.rm(base, { recursive: true, force: true }); }
+});
