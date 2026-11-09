@@ -204,6 +204,16 @@ const SCENARIOS: Scenario[] = [
 			return verdict(!denied.includes('first') && deniedCards >= 1 && allowed.includes('second'), 'cards=' + h.cards.filter(card => card.kind === 'mcp').length, { denied, allowed, cards: h.cards.map(card => card.detail[0]) });
 		}
 	},
+	{
+		id: 'M03', criteria: 'W2', expected: 'WebFetch reaches a web card with the host and, once denied, fetches nothing',
+		async run(h) {
+			h.user.approval = () => 'deny';
+			const session = await h.session();
+			await session.runTurn('Use your WebFetch tool to read https://example.com and tell me its title. If you cannot, say why.', 'writer');
+			const cards = h.cards.filter(card => card.kind === 'web').map(card => card.detail[0]);
+			return verdict(cards.includes('host: example.com'), 'webCards=' + cards.length, { cards });
+		}
+	},
 	// Autonomy tasks A01-A10 (DoD-06): one message, no intervention besides approvals ("this session").
 	{
 		id: 'A01', criteria: 'DoD-06', expected: 'failing test fixed; node --test exits 0',

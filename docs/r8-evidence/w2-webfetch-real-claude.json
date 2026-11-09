@@ -1,0 +1,17 @@
+[
+  {
+    "id": "M03",
+    "provider": "claude",
+    "criteria": "W2",
+    "expected": "WebFetch reaches a web card with the host and, once denied, fetches nothing",
+    "status": "PASS",
+    "obtained": "webCards=1",
+    "evidence": {
+      "cards": [
+        "host: example.com"
+      ]
+    },
+    "durationMs": 7210,
+    "at": "2026-11-09T01:40:48.449Z"
+  }
+]
