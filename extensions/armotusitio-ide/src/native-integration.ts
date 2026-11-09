@@ -371,6 +371,11 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 	const profiles = new ProfileRegistry(path.join(context.globalStorageUri.fsPath, 'ai-profiles'), (provider, env) => new Promise(resolve => {
 		resolveNativeCommand(provider, provider === 'claude' ? ['auth', 'status'] : ['login', 'status'], env).then(resolved => execFile(resolved.executable, resolved.args, { env, timeout: 15_000, windowsHide: true, maxBuffer: 64 * 1024 }, (error, stdout, stderr) => resolve({ code: error ? 1 : 0, output: stdout + stderr })), () => resolve(undefined));
 	}));
+	/** Environment transform of the AI profile this project uses for the provider, for the one-shot (structured) transport. */
+	const profileEnvironment = async (root: string, provider: NativeProvider): Promise<((base: NodeJS.ProcessEnv) => NodeJS.ProcessEnv) | undefined> => {
+		const profile = await profiles.resolve(provider, root);
+		return profile && (base => profiles.environment(profile, base));
+	};
 	const nativeChat = new NativeChatTransport({
 		storageFor: root => metricsDirectory(root),
 		profileFor: async (root, provider) => (await profiles.resolve(provider, root))?.id,
@@ -477,7 +482,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			await hooks.beforeLaunch?.();
 			await fence.assertCurrent();
 			execution = hooks.execute ? await hooks.execute()
-				: await executeReviewedAgent(reviewAgentDraft(draft), draft, undefined, hooks.onProgress && (progress => hooks.onProgress!(progress.observedBytes)), hooks.onMessage, hooks.toolServer, text => devSecrets.redact(text) !== text, hooks.onStep);
+				: await executeReviewedAgent(reviewAgentDraft(draft), draft, undefined, hooks.onProgress && (progress => hooks.onProgress!(progress.observedBytes)), hooks.onMessage, hooks.toolServer, text => devSecrets.redact(text) !== text, hooks.onStep, await profileEnvironment(draft.projectRoot, draft.provider));
 		} catch (error) {
 			await lease?.release().catch(() => undefined);
 			if (fence) { await fence.release(); }

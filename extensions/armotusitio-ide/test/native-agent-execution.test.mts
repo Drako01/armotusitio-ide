@@ -214,3 +214,23 @@ test('provider progress exposes only bounded byte counts, never secrets or promp
 		await fs.rm(root, { recursive: true, force: true });
 	}
 });
+
+test('a profile environment reaches the one-shot CLI with its own directory and without inherited provider credentials', async () => {
+	const folder = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-agent-profile-'));
+	const oldPath = process.env.PATH;
+	const oldKey = process.env.OPENAI_API_KEY;
+	try {
+		await installFakeCodex(folder, '#!/usr/bin/env node\nprocess.stdin.resume(); process.stdin.on("end", () => console.log("SEEN", JSON.stringify({ home: process.env.CODEX_HOME, key: process.env.OPENAI_API_KEY ?? null })));\n');
+		process.env.PATH = folder + path.delimiter + (oldPath || '');
+		process.env.OPENAI_API_KEY = 'ide-account-key';
+		const draft = { ...base, projectRoot: await fs.realpath(folder) };
+		const withProfile = await (await executeReviewedAgent(reviewAgentDraft(draft), draft, 10000, undefined, undefined, undefined, undefined, undefined, env => ({ ...env, OPENAI_API_KEY: undefined, CODEX_HOME: '/profiles/work' }))).outcome;
+		const without = await (await executeReviewedAgent(reviewAgentDraft(draft), draft, 10000)).outcome;
+		const seen = (output: string) => JSON.parse(/SEEN (.*)/.exec(output)![1]) as { home?: string; key: string | null };
+		assert.deepEqual({ profile: seen(withProfile.output), ide: seen(without.output).key }, { profile: { home: '/profiles/work', key: null }, ide: 'ide-account-key' });
+	} finally {
+		if (oldPath === undefined) { delete process.env.PATH; } else { process.env.PATH = oldPath; }
+		if (oldKey === undefined) { delete process.env.OPENAI_API_KEY; } else { process.env.OPENAI_API_KEY = oldKey; }
+		await fs.rm(folder, { recursive: true, force: true });
+	}
+});

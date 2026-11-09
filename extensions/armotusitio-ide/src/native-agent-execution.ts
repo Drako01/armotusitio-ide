@@ -154,16 +154,18 @@ export function claudeToolArgs(options: { readOnly: boolean; runner: boolean; na
  * Caller MUST verify Workspace Trust, project authority and consent immediately before invoking.
  * `onMessage` receives redacted intermediate assistant messages as the provider streams them (Codex JSONL, Claude stream-json).
  */
-export async function executeReviewedAgent(review: AgentReview, current: AgentDraft, durationMs = MAX_DURATION_MS, onProgress?: (progress: Readonly<AgentProgress>) => void, onMessage?: (text: string) => void, toolServer?: ToolServerLaunch, sensitive?: (text: string) => boolean, onStep?: (step: ChatStep) => void): Promise<AgentExecution> {
+export async function executeReviewedAgent(review: AgentReview, current: AgentDraft, durationMs = MAX_DURATION_MS, onProgress?: (progress: Readonly<AgentProgress>) => void, onMessage?: (text: string) => void, toolServer?: ToolServerLaunch, sensitive?: (text: string) => boolean, onStep?: (step: ChatStep) => void, profileEnvironment?: (base: NodeJS.ProcessEnv) => NodeJS.ProcessEnv): Promise<AgentExecution> {
 	validateReviewedAgent(review, current);
 	if (!Number.isSafeInteger(durationMs) || durationMs < 1000 || durationMs > MAX_DURATION_MS) { throw Error('HARNESS_AGENT_TIMEOUT_INVALID'); }
 	const canonical = await fs.realpath(current.projectRoot);
 	if (canonical !== current.projectRoot || !(await fs.stat(canonical)).isDirectory()) { throw Error('HARNESS_AGENT_ROOT_CHANGED'); }
 	const toolchain = await currentToolchainEnvironment();
+	// An AI profile replaces the provider credentials of the IDE environment with its own private directory.
+	const base = profileEnvironment ? profileEnvironment(toolchain.env) : toolchain.env;
 	const invocation = buildAgentInvocation(current, toolchain.writableRoots, toolServer);
 	const initialScope = current.readOnly ? await captureAgentScope(canonical) : undefined;
-	const command = await resolveNativeCommand(invocation.executable, invocation.args, toolchain.env);
-	const env: NodeJS.ProcessEnv = toolchain.env;
+	const command = await resolveNativeCommand(invocation.executable, invocation.args, base);
+	const env: NodeJS.ProcessEnv = base;
 	if (command.embeddedNode) { env.ELECTRON_RUN_AS_NODE = '1'; }
 	if (current.provider === 'claude') { env.CLAUDE_CODE_SKIP_PROMPT_HISTORY = '1'; }
 	const started = Date.now();
