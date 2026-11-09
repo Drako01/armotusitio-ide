@@ -128,6 +128,11 @@ export class ProfileRegistry {
 		return { defaults: { ...file.defaults }, workspace: root ? { ...file.assignments[projectKey(root)] } : {} };
 	}
 
+	/** Workspaces (project keys) that use this profile, for the accounts screen. */
+	async workspacesOf(id: string): Promise<string[]> {
+		return Object.entries((await this.read()).assignments).filter(([, assignment]) => Object.values(assignment).includes(id)).map(([key]) => key);
+	}
+
 	/** Terminal environment for signing in: the profile directory set, every other credential variable removed (`null` unsets). */
 	terminalEnvironment(profile: AiProfile): Record<string, string | null> {
 		return { ...Object.fromEntries(INHERITED_CREDENTIALS.map(name => [name, null])), [CONFIG_VARIABLE[profile.provider]]: this.configDirectory(profile) };

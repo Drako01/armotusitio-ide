@@ -54,8 +54,19 @@ async function chooseProfile(vscode: Host, deps: ProfileCommandDeps, root: strin
 	return picked?.profile;
 }
 
+/** Account actions that need the user's confirmation or input, shared by the Command Palette and the AI Accounts screen. */
+export function profileActions(vscode: Host, deps: ProfileCommandDeps): { signIn(profile: AiProfile): Promise<void>; rename(profile: AiProfile): Promise<void>; remove(profile: AiProfile): Promise<void> } {
+	const t = vscode.l10n.t;
+	return {
+		signIn: profile => openSignIn(vscode, deps, profile),
+		rename: async profile => { const alias = await vscode.window.showInputBox({ title: t('Nuevo alias'), value: profile.alias }); if (alias !== undefined) { await deps.registry.rename(profile.id, alias); } },
+		remove: async profile => { if (await vscode.window.showWarningMessage(t('Se elimina la cuenta {0} y su sesi\u00f3n guardada en este IDE. Las dem\u00e1s no se tocan.', profile.alias), { modal: true }, t('Eliminar'))) { await deps.registry.remove(profile.id); } }
+	};
+}
+
 export function registerProfileCommands(context: Host, vscode: Host, deps: ProfileCommandDeps): void {
 	const t = vscode.l10n.t;
+	const shared = profileActions(vscode, deps);
 	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.accounts.add', async () => {
 		try {
 			const provider = await vscode.window.showQuickPick((['claude', 'codex'] as const).map(value => ({ label: PROVIDER_LABEL[value], value })), { title: t('Agregar cuenta de IA'), placeHolder: t('Proveedor') });
@@ -76,8 +87,8 @@ export function registerProfileCommands(context: Host, vscode: Host, deps: Profi
 				{ label: '$(sign-in) ' + t('Iniciar o renovar sesi\u00f3n'), run: () => openSignIn(vscode, deps, profile) },
 				{ label: '$(star) ' + t('Usar como predeterminada de {0}', PROVIDER_LABEL[profile.provider]), run: () => deps.registry.setDefault(profile.id) },
 				...(root ? [{ label: '$(folder) ' + t('Usar en este workspace'), run: () => deps.registry.assign(root, profile.id) }, { label: '$(close) ' + t('Quitar la asignaci\u00f3n de este workspace'), run: () => deps.registry.unassign(root, profile.provider) }] : []),
-				{ label: '$(edit) ' + t('Cambiar alias'), run: async () => { const alias = await vscode.window.showInputBox({ title: t('Nuevo alias'), value: profile.alias }); if (alias !== undefined) { await deps.registry.rename(profile.id, alias); } } },
-				{ label: '$(trash) ' + t('Eliminar cuenta y su sesi\u00f3n'), run: async () => { if (await vscode.window.showWarningMessage(t('Se elimina la cuenta {0} y su sesi\u00f3n guardada en este IDE. Las dem\u00e1s no se tocan.', profile.alias), { modal: true }, t('Eliminar'))) { await deps.registry.remove(profile.id); } } }
+				{ label: '$(edit) ' + t('Cambiar alias'), run: () => shared.rename(profile) },
+				{ label: '$(trash) ' + t('Eliminar cuenta y su sesi\u00f3n'), run: () => shared.remove(profile) }
 			];
 			const action = await vscode.window.showQuickPick(actions, { title: profile.alias + ' \u00b7 ' + PROVIDER_LABEL[profile.provider] });
 			await action?.run();

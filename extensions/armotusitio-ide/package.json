@@ -12,6 +12,7 @@
 	"activationEvents": [
 		"onView:atsHarness.tasks",
 		"onCommand:atsHarness.execute",
+		"onCommand:atsHarness.accounts.open",
 		"onCommand:atsHarness.accounts.add",
 		"onCommand:atsHarness.accounts.manage",
 		"onCommand:atsHarness.cancelTask",
@@ -435,6 +436,10 @@
 			{
 				"command": "atsHarness.managePermissions",
 				"title": "ArmoTuSitio: Gestionar permisos"
+			},
+			{
+				"command": "atsHarness.accounts.open",
+				"title": "ArmoTuSitio: AI Accounts"
 			},
 			{
 				"command": "atsHarness.accounts.add",

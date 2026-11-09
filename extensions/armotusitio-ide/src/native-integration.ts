@@ -23,6 +23,7 @@ import { createWorkMcpBridge, type WorkMcpTool } from './native-mcp-bridge.ts';
 import { parseApprovalDraft, type ApprovalAsk } from './native-approval.ts';
 import { ProfileRegistry } from './native-profiles.ts';
 import { registerProfileCommands } from './native-profile-commands.ts';
+import { registerAccountsPanel } from './accounts-panel.ts';
 import { NativeChatTransport, parseAgentQuestions, parseTransportSetting, type NativeTurnHooks } from './native-agent-transport.ts';
 import type { SessionRole } from './runtime/contracts.ts';
 import { addUserRule, configuredPreset, listUserRules, loadPermissions, removeUserRule } from './native-permissions.ts';
@@ -374,15 +375,17 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 	}));
 	// The chat reads and assigns accounts through the same registry the commands use.
 	controller.profiles = profiles;
-	registerProfileCommands(context, vscode, {
+	const profileDeps = {
 		registry: profiles,
 		rootOf: async () => {
 			const folders: Host[] = vscode.workspace.workspaceFolders ?? [];
 			const folder = folders.length > 1 ? await vscode.window.showWorkspaceFolderPick() : folders[0];
 			return folder ? fs.realpath(folder.uri.fsPath) : undefined;
 		},
-		showError: error => showError(error)
-	});
+		showError: (error: unknown) => showError(error)
+	};
+	registerProfileCommands(context, vscode, profileDeps);
+	registerAccountsPanel(context, vscode, profileDeps);
 	/** Environment transform of the AI profile this project uses for the provider, for the one-shot (structured) transport. */
 	const profileEnvironment = async (root: string, provider: NativeProvider): Promise<((base: NodeJS.ProcessEnv) => NodeJS.ProcessEnv) | undefined> => {
 		const profile = await profiles.resolve(provider, root);

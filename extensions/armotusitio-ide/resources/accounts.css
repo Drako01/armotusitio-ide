@@ -1,0 +1,42 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+body { margin: 0; background: var(--vscode-editor-background); color: var(--vscode-editor-foreground); font-family: var(--vscode-font-family, system-ui, "Segoe UI", sans-serif); font-size: var(--vscode-font-size); }
+main { max-width: 960px; margin: 0 auto; padding: 32px 24px 48px; }
+h1 { font-weight: 500; font-size: clamp(22px, 3.5vw, 30px); letter-spacing: -.02em; margin: 0 0 6px; }
+h2 { font-size: 15px; font-weight: 600; margin: 0; }
+h3 { font-size: 14px; font-weight: 600; margin: 0; overflow-wrap: anywhere; }
+p { margin: 0; }
+.subtitle { color: var(--vscode-descriptionForeground, #9d9d9d); line-height: 1.5; max-width: 62ch; }
+.muted { color: var(--vscode-descriptionForeground, #9d9d9d); }
+.page-header { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 28px; }
+#accounts-summary { margin-top: 8px; font-size: 12px; }
+.toolbar { display: flex; flex-wrap: wrap; gap: 8px; }
+.provider { margin-top: 28px; }
+.provider-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, .35)); }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.card { display: flex; flex-direction: column; gap: 8px; padding: 14px; border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, .35)); border-radius: 6px; background: var(--vscode-sideBar-background, var(--vscode-editor-background)); min-width: 0; }
+.card-head { display: none; }
+.badges { display: flex; flex-wrap: wrap; gap: 6px; }
+.badge { padding: 1px 8px; font-size: 11px; border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, .35)); border-radius: 10px; color: var(--vscode-descriptionForeground, #9d9d9d); }
+.badge.accent { border-color: var(--vscode-focusBorder, #007fd4); color: var(--vscode-foreground, inherit); }
+.state { display: flex; align-items: center; gap: 8px; font-weight: 500; }
+.symbol { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border: 1px solid currentColor; border-radius: 50%; font-size: 11px; line-height: 1; flex-shrink: 0; }
+.state-authenticated { color: var(--vscode-testing-iconPassed, var(--vscode-foreground, inherit)); }
+.state-not-authenticated { color: var(--vscode-editorWarning-foreground, var(--vscode-foreground, inherit)); }
+.state-cli-unavailable { color: var(--vscode-errorForeground, var(--vscode-foreground, inherit)); }
+.workspaces { font-size: 12px; overflow-wrap: anywhere; }
+.actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.empty { padding: 20px; border: 1px dashed var(--vscode-panel-border, rgba(128, 128, 128, .35)); border-radius: 6px; display: flex; flex-direction: column; gap: 6px; }
+button { box-sizing: border-box; min-height: 28px; max-width: 100%; padding: 4px 12px; font: inherit; cursor: pointer; border: 1px solid transparent; border-radius: 4px; color: var(--vscode-button-foreground); background: var(--vscode-button-background); }
+button:not(:disabled):hover { background: var(--vscode-button-hoverBackground); }
+button:focus-visible { outline: 2px solid var(--vscode-focusBorder, #007fd4); outline-offset: 2px; }
+button:disabled { opacity: .55; cursor: not-allowed; }
+button[aria-busy="true"] { cursor: progress; }
+.quiet { color: var(--vscode-foreground, inherit); background: transparent; border-color: var(--vscode-panel-border, rgba(128, 128, 128, .35)); }
+.quiet:not(:disabled):hover { background: var(--vscode-list-hoverBackground); }
+.destructive { color: var(--vscode-errorForeground, #f48771); background: transparent; border-color: var(--vscode-panel-border, rgba(128, 128, 128, .35)); }
+.destructive:not(:disabled):hover { background: var(--vscode-list-hoverBackground); }
+@media (prefers-reduced-motion: no-preference) { button { transition: background-color .12s ease; } }
+@media (forced-colors: active) { .card, .badge, .symbol { border-color: CanvasText; } }
