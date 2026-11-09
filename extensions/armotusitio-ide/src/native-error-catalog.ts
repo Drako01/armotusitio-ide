@@ -60,6 +60,11 @@ const EXACT: Record<string, Hint> = {
 	HARNESS_WORKFLOW_FOREIGN_PROJECT_STATE: t => t('El estado guardado pertenece a otro proyecto. Abr\u00ed el proyecto correcto o us\u00e1 {0}.', DIAGNOSE),
 	HARNESS_GATE_CAPACITY_INVALID: t => t('La configuraci\u00f3n de verificaciones en paralelo no es v\u00e1lida. Us\u00e1 \u00abArmoTuSitio: Configurar Harness nativo del proyecto\u00bb para regenerarla.'),
 	HARNESS_CHANNEL_PATH_TOO_LONG: t => t('La carpeta temporal del sistema tiene una ruta demasiado larga para el canal local del Harness. Defin\u00ed una carpeta temporal m\u00e1s corta (variable TMPDIR) y reintent\u00e1.'),
+	HARNESS_PROFILE_LIMIT: t => t('Alcanzaste el m\u00e1ximo de perfiles de IA. Elimin\u00e1 uno que no uses y reintent\u00e1.'),
+	HARNESS_PROFILE_ALIAS_INVALID: t => t('El alias del perfil debe tener entre 1 y 40 caracteres, sin caracteres de control.'),
+	HARNESS_PROFILE_ALIAS_TAKEN: t => t('Ya existe un perfil de ese proveedor con ese alias. Eleg\u00ed otro nombre.'),
+	HARNESS_PROFILE_NOT_FOUND: t => t('El perfil ya no existe. Actualiz\u00e1 la lista de cuentas y volv\u00e9 a elegir.'),
+	HARNESS_PROFILES_UNSAFE: t => t('El archivo de perfiles est\u00e1 da\u00f1ado o es de una versi\u00f3n m\u00e1s nueva. No se modific\u00f3; revis\u00e1lo o us\u00e1 {0}.', DIAGNOSE),
 	HARNESS_TIMEOUT: t => t('La operaci\u00f3n super\u00f3 su tiempo m\u00e1ximo. Reintent\u00e1 o acot\u00e1 el pedido.'),
 	HARNESS_OPERATION_FAILED: t => t('La conversaci\u00f3n se conserva; pod\u00e9s reintentar. Si se repite, us\u00e1 {0}.', DIAGNOSE)
 };
