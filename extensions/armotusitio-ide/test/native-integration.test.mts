@@ -10,6 +10,7 @@ import { writeProjectConfig } from '../src/native-project.ts';
 import { inspectHarnessAuthority } from '../src/native-authority.ts';
 import { acquireSharedExecutionFence, inspectSharedExecutionFence } from '../src/native-shared-fence.ts';
 import { installFakeCodex } from './native-fake-provider.mts';
+import { installFakeCli } from './native-runtime-fakes.mts';
 import { referenceEngine } from './native-reference-engine.mts';
 import { addUserRule, listUserRules, projectKey } from '../src/native-permissions.ts';
 
@@ -632,6 +633,8 @@ test('the required writer isolation blocks providers that cannot offer it before
 		const root = await fs.realpath(f.roots[0]);
 		const bin = path.join(path.dirname(root), 'fake-isolation-bin');
 		await installFakeCodex(bin, ['#!/usr/bin/env node', 'process.stdin.resume(); process.stdin.on("end", () => { require("fs").writeFileSync("written.txt", "x"); console.log("done"); });'].join('\n'));
+		// A Claude that is installed but never runs: the isolation check must fire before it, on machines with or without a real one.
+		await installFakeCli(bin, 'claude', 'process.exit(1);');
 		process.env.PATH = bin + path.delimiter + (originalPath || '');
 		const runtime = f.controller.nativeChatRuntime(f.vscode.workspace.workspaceFolders[0]);
 		const hooks = { started() { }, progress() { }, stage() { }, gates() { } };
