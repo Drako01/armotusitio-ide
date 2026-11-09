@@ -65,6 +65,10 @@ const EXACT: Record<string, Hint> = {
 	HARNESS_PROFILE_ALIAS_TAKEN: t => t('Ya existe un perfil de ese proveedor con ese alias. Eleg\u00ed otro nombre.'),
 	HARNESS_PROFILE_NOT_FOUND: t => t('El perfil ya no existe. Actualiz\u00e1 la lista de cuentas y volv\u00e9 a elegir.'),
 	HARNESS_PROFILES_UNSAFE: t => t('El archivo de perfiles est\u00e1 da\u00f1ado o es de una versi\u00f3n m\u00e1s nueva. No se modific\u00f3; revis\u00e1lo o us\u00e1 {0}.', DIAGNOSE),
+	HARNESS_MCP_SERVER_INVALID: t => t('El servidor MCP no es v\u00e1lido: us\u00e1 un nombre en min\u00fasculas (letras, n\u00fameros y guiones), una URL https (o http en localhost) o un comando, y sin credenciales dentro de la URL.'),
+	HARNESS_MCP_SERVER_EXISTS: t => t('Ya hay un servidor MCP con ese nombre. Quitalo primero con /mcp remove.'),
+	HARNESS_MCP_SERVER_LIMIT: t => t('Alcanzaste el m\u00e1ximo de servidores MCP. Quit\u00e1 uno que no uses y reintent\u00e1.'),
+	HARNESS_MCP_SERVERS_UNSAFE: t => t('El archivo de servidores MCP est\u00e1 da\u00f1ado o es de una versi\u00f3n m\u00e1s nueva. No se modific\u00f3; revis\u00e1lo o us\u00e1 {0}.', DIAGNOSE),
 	HARNESS_TIMEOUT: t => t('La operaci\u00f3n super\u00f3 su tiempo m\u00e1ximo. Reintent\u00e1 o acot\u00e1 el pedido.'),
 	HARNESS_OPERATION_FAILED: t => t('La conversaci\u00f3n se conserva; pod\u00e9s reintentar. Si se repite, us\u00e1 {0}.', DIAGNOSE)
 };

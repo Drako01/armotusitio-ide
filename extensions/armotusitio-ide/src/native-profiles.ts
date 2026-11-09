@@ -11,10 +11,9 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { withFileLock } from './native-chat.ts';
+import { LockedJson } from './native-locked-json.ts';
 import { projectKey } from './native-permissions.ts';
 import type { NativeProvider } from './native-providers.ts';
-import { safeStorage, writeDurable } from './native-worktree-checkpoint.ts';
 
 export const PROFILES_SCHEMA_VERSION = 1;
 const MAX_BYTES = 256 * 1024;
@@ -52,13 +51,13 @@ function valid(file: unknown): file is ProfilesFile {
 export class ProfileRegistry {
 	private readonly directory: string;
 	private readonly exec: ProfileExec;
-	private readonly file: string;
+	private readonly store: LockedJson<ProfilesFile>;
 
 	/** `directory` is private IDE storage (never a project folder); `exec` is injectable so tests need no real CLI. */
 	constructor(directory: string, exec: ProfileExec) {
 		this.directory = directory;
 		this.exec = exec;
-		this.file = path.join(directory, 'profiles.json');
+		this.store = new LockedJson(directory, 'profiles.json', MAX_BYTES, emptyFile, valid, 'HARNESS_PROFILES_UNSAFE');
 	}
 
 	async list(provider?: NativeProvider): Promise<AiProfile[]> {
@@ -173,27 +172,7 @@ export class ProfileRegistry {
 		return profile;
 	}
 
-	/** Read-modify-write under the cross-window lock; a corrupt or newer file is reported, never overwritten. */
-	private async update<T>(mutate: (file: ProfilesFile) => Promise<T>): Promise<T> {
-		await safeStorage(this.directory);
-		return withFileLock(this.file + '.lock', async () => {
-			const file = await this.read();
-			const result = await mutate(file);
-			await writeDurable(this.file, file, false, MAX_BYTES);
-			return result;
-		});
-	}
+	private read(): Promise<ProfilesFile> { return this.store.read(); }
 
-	private async read(): Promise<ProfilesFile> {
-		try {
-			const stat = await fs.lstat(this.file);
-			if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_BYTES) { throw Error('HARNESS_PROFILES_UNSAFE'); }
-			const parsed: unknown = JSON.parse(await fs.readFile(this.file, 'utf8'));
-			if (!valid(parsed)) { throw Error('HARNESS_PROFILES_UNSAFE'); }
-			return parsed;
-		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code === 'ENOENT') { return emptyFile(); }
-			throw error instanceof SyntaxError ? Error('HARNESS_PROFILES_UNSAFE') : error;
-		}
-	}
+	private update<T>(mutate: (file: ProfilesFile) => Promise<T>): Promise<T> { return this.store.update(mutate); }
 }
