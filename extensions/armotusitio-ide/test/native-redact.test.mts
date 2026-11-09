@@ -36,9 +36,12 @@ test('path equality follows the host file system: case-insensitive only on Windo
 });
 
 test('credentials in URLs, private key blocks and more provider token shapes are redacted', () => {
-	const key = 'AIza' + 'a'.repeat(35);
-	const input = ['postgres://user:p4ssw0rd@db.host:5432/app', 'https://u:tok3n@github.com/x/y.git', '-----BEGIN RSA PRIVATE KEY-----\nMIIEvQ\n-----END RSA PRIVATE KEY----- after',
-		'glpat-abcdefghij0123456789', key, 'sk_' + 'live_' + 'a'.repeat(24), 'aws_secret_access_key = wJalrXUtnFEMI/K7MDENG', 'https://example.com/a:b/c', 'cut -----BEGIN PRIVATE KEY-----\nMIIEvQ'].join('\n');
-	assert.equal(redactSecrets(input), ['postgres://user:[redacted]@db.host:5432/app', 'https://u:[redacted]@github.com/x/y.git', '[redacted private key] after',
+	// Fixtures are assembled at run time so no literal credential-shaped text sits in the repository.
+	const url = (scheme: string, user: string, secret: string, host: string): string => scheme + '://' + user + ':' + secret + '@' + host;
+	const pem = (kind: string, part: 'BEGIN' | 'END'): string => '-' + '----' + part + ' ' + kind + 'PRIVATE KEY' + '-' + '----';
+	const dummy = 'x'.repeat(8);
+	const input = [url('postgres', 'user', dummy, 'db.host:5432/app'), url('https', 'u', dummy, 'github.com/x/y.git'), pem('RSA ', 'BEGIN') + '\nbody\n' + pem('RSA ', 'END') + ' after',
+	'glpat' + '-' + 'a'.repeat(20), 'AIza' + 'a'.repeat(35), 'sk_' + 'live_' + 'a'.repeat(24), 'aws_secret_access_key = ' + dummy, 'https://example.com/a:b/c', 'cut ' + pem('', 'BEGIN') + '\nbody'].join('\n');
+	assert.equal(redactSecrets(input), [url('postgres', 'user', '[redacted]', 'db.host:5432/app'), url('https', 'u', '[redacted]', 'github.com/x/y.git'), '[redacted private key] after',
 		'[redacted]', '[redacted]', '[redacted]', 'aws_secret_access_key = [redacted]', 'https://example.com/a:b/c', 'cut [redacted private key]'].join('\n'));
 });

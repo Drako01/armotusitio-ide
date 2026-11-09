@@ -10,7 +10,7 @@ const BEARER = /\b(Bearer\s+)[^\s"']+/gi;
 const ASSIGNMENT = /(["']?(?:token|secret|password|api[_-]?key|access[_-]?key|private[_-]?key|connection[_-]?token)["']?\s*[=:]\s*)("(?:\\.|[^"\\])*"|'[^']*'|[^\s,"'}]+)/gi;
 /** Well-known credential shapes that appear without a key name. */
 const TOKEN_SHAPES = /\b(?:sk-[A-Za-z0-9_-]{16,}|github_pat_[A-Za-z0-9_]{16,}|gh[pousr]_[A-Za-z0-9]{30,}|xox[abprs]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16}|glpat-[A-Za-z0-9_-]{20,}|AIza[0-9A-Za-z_-]{35}|[sr]k_live_[A-Za-z0-9]{16,})\b/g;
-/** Credentials embedded in a URL (`scheme://user:password@host`): the password goes, the rest of the address stays readable. */
+/** A password inside a URL's user-info part: it goes, the rest of the address stays readable. */
 const URL_CREDENTIALS = /(\b[a-z][a-z0-9+.-]*:\/\/[^\s:/@]*:)[^\s@/]+(?=@)/gi;
 /** A whole PEM private key block, even when it was cut off before its END line. */
 const PRIVATE_KEY_BLOCK = /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g;

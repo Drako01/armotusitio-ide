@@ -51,10 +51,13 @@ async function diagnose(root: string, projectPath: string): Promise<Diagnosis> {
 	const folder = path.join(root, projectPath);
 	const modules = path.join(folder, 'node_modules');
 	if (!await fs.lstat(modules).then(stat => stat.isDirectory(), () => false)) { return { installed: false, missing: [], unreadable: [] }; }
-	let manifest: { dependencies?: Record<string, unknown>; devDependencies?: Record<string, unknown> } = {};
-	try { manifest = JSON.parse(await fs.readFile(path.join(folder, 'package.json'), 'utf8')); } catch { /* No readable manifest: nothing declared to verify. */ }
-	const names = [...Object.keys(manifest.dependencies ?? {}), ...Object.keys(manifest.devDependencies ?? {})].slice(0, MAX_CHECKED_PACKAGES);
 	const missing: string[] = [], unreadable: string[] = [];
+	let manifest: { dependencies?: Record<string, unknown>; devDependencies?: Record<string, unknown> } = {};
+	// No manifest declares nothing to verify; a manifest that exists but cannot be read or parsed is itself a damaged install input.
+	try { manifest = JSON.parse(await fs.readFile(path.join(folder, 'package.json'), 'utf8')); } catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== 'ENOENT') { unreadable.push('package.json'); }
+	}
+	const names = [...Object.keys(manifest.dependencies ?? {}), ...Object.keys(manifest.devDependencies ?? {})].slice(0, MAX_CHECKED_PACKAGES);
 	await Promise.all(names.map(async name => {
 		try { JSON.parse(await fs.readFile(path.join(modules, name, 'package.json'), 'utf8')); } catch (error) {
 			((error as NodeJS.ErrnoException).code === 'ENOENT' ? missing : unreadable).push(name);

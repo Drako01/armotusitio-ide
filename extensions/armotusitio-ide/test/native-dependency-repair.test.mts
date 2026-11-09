@@ -164,3 +164,14 @@ test('other ecosystems are repaired by their lockfile install, judged by the exi
 			{ diagnosis: 'DIAGNOSIS svc (go): no', repaired: 'REPAIRED svc (go ', brokenFailed: true, removed: false });
 	});
 });
+
+test('a damaged package.json is reported instead of being treated as "nothing declared"', async () => {
+	await withProject({}, async h => {
+		await h.installPackage();
+		await fs.writeFile(path.join(h.root, 'package.json'), '{broken');
+		const damaged = await repairDependencies(h.deps, { mode: 'diagnose' });
+		await fs.rm(path.join(h.root, 'package.json'));
+		const absent = await repairDependencies(h.deps, { mode: 'diagnose' });
+		assert.deepEqual([damaged.text, absent.text], ['DIAGNOSIS . (pnpm): unreadable: package.json.', 'DIAGNOSIS . (pnpm): every declared package is installed and readable.']);
+	});
+});
