@@ -1,0 +1,38 @@
+[
+  {
+    "id": "M02",
+    "provider": "claude",
+    "criteria": "W4",
+    "expected": "a tool of a user-added MCP server reaches an mcp card, never runs when denied, and runs once allowed",
+    "status": "PASS",
+    "obtained": "cards=2",
+    "evidence": {
+      "denied": "",
+      "allowed": "second\n",
+      "cards": [
+        "server: echo",
+        "server: echo"
+      ]
+    },
+    "durationMs": 13265,
+    "at": "2026-11-09T01:26:52.375Z"
+  },
+  {
+    "id": "M02",
+    "provider": "claude",
+    "criteria": "W4",
+    "expected": "a tool of a user-added MCP server reaches an mcp card, never runs when denied, and runs once allowed",
+    "status": "PASS",
+    "obtained": "cards=2",
+    "evidence": {
+      "denied": "",
+      "allowed": "second\n",
+      "cards": [
+        "server: echo",
+        "server: echo"
+      ]
+    },
+    "durationMs": 9055,
+    "at": "2026-11-09T01:27:42.649Z"
+  }
+]

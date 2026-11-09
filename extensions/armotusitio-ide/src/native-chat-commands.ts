@@ -7,6 +7,7 @@
  * in `chat.ts` all derive from it, so a new command cannot be missing from the help. Commands that need the conversation
  * (`session: true`) run here against the session; the rest are Work Management / Harness queries handled in `chat.ts`.
  */
+import { runMcpCommand, type McpCommandDeps } from './native-mcp-command.ts';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -133,12 +134,15 @@ export interface SessionCommandDeps {
 	/** Folder holding this project's agent runs, each with `logs/commands.jsonl`. */
 	runsDirectory?(root: string): string | undefined;
 	home?: string;
+	/** User-added MCP servers (`/mcp`); absent where the transport cannot use them. */
+	mcp?: McpCommandDeps;
 }
 
 /** Runs a command that needs the conversation; `undefined` when `action` is not one of them. */
 export async function runSessionCommand(deps: SessionCommandDeps, action: string, words: string[], root: string, session: HarnessChatSession): Promise<string | undefined> {
 	const { t } = deps;
 	const home = deps.home ?? os.homedir();
+	if (action === 'mcp' && deps.mcp) { return await runMcpCommand(deps.mcp, words); }
 	if (action === 'permisos') {
 		const target = (words[0] ?? '').toLowerCase();
 		if (target === 'usuario' || target === 'proyecto') {

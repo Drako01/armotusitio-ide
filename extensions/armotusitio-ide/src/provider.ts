@@ -10,17 +10,17 @@ const { parseEnv } = require('node:util');
 const { createHash } = require('node:crypto');
 
 /** Bind a reviewed plan to its private provider configuration without exposing its contents. */
-async function providerRevision(profile) {
+async function providerRevision(profile: any) {
 	try {
 		const file = await envPath(profile);
-		const info = await fs.stat(file).catch(error => { if (error.code === 'ENOENT') { return null; } throw error; });
+		const info = await fs.stat(file).catch((error: any) => { if (error.code === 'ENOENT') { return null; } throw error; });
 		if (info?.size > 65536) { throw new Error('Harness configuration too large'); }
 		return createHash('sha256').update(JSON.stringify([info ? await fs.readFile(file, 'utf8') : '', process.env.HARNESS_HOST || '', process.env.HARNESS_AGENT_COMMAND || ''])).digest('hex');
 	} catch { return 'unavailable'; }
 }
 
 /** Read only nonsecret provider metadata; inherited variables have the same precedence as Node loadEnvFile. */
-function providerState(text, inherited = process.env) {
+function providerState(text: any, inherited = process.env) {
 	const values = parseEnv(text);
 	const raw = inherited.HARNESS_HOST ?? values.HARNESS_HOST ?? '';
 	return {
@@ -31,7 +31,7 @@ function providerState(text, inherited = process.env) {
 }
 
 /** Locate assignments outside comments and multiline strings, preserving every unrelated byte when editing. */
-function hostEdits(text, host) {
+function hostEdits(text: any, host: any) {
 	if (!['codex', 'claude'].includes(host)) { throw new Error('Invalid Harness provider'); }
 	const edits = []; let quote = '', offset = 0;
 	for (const line of text.match(/[^\n]*\n|[^\n]+$/g) || []) {
@@ -62,7 +62,7 @@ function hostEdits(text, host) {
 }
 
 /** Resolve a local configuration path without following links outside the selected project. */
-async function envPath(profile) {
+async function envPath(profile: any) {
 	if (profile.id !== 'redevent') { throw new Error('Harness provider is selected by its agent plan'); }
 	const root = await fs.realpath(profile.root);
 	const directory = path.join(root, '.harness');
@@ -70,16 +70,16 @@ async function envPath(profile) {
 	if (realDirectory !== directory) { throw new Error('Linked Harness directory'); }
 	const file = path.join(directory, '.env');
 	try { if (!(await fs.lstat(file)).isFile()) { throw new Error('Linked or invalid Harness configuration'); } }
-	catch (error) { if (error.code !== 'ENOENT') { throw error; } }
+	catch (error: any) { if (error.code !== 'ENOENT') { throw error; } }
 	return file;
 }
 
 /** Inspect a project's saved configuration without exposing tokens, commands or other .env values. */
-async function readProvider(profile, inherited = process.env): Promise<{ supported: boolean; host?: string; custom?: boolean; inherited?: boolean; invalid?: boolean; error?: boolean }> {
+async function readProvider(profile: any, inherited = process.env): Promise<{ supported: boolean; host?: string; custom?: boolean; inherited?: boolean; invalid?: boolean; error?: boolean }> {
 	if (profile.id !== 'redevent') { return { supported: false }; }
 	try {
 		const file = await envPath(profile);
-		const info = await fs.stat(file).catch(error => { if (error.code === 'ENOENT') { return null; } throw error; });
+		const info = await fs.stat(file).catch((error: any) => { if (error.code === 'ENOENT') { return null; } throw error; });
 		if (info && info.size > 65536) { throw new Error('Harness configuration too large'); }
 		const text = info ? await fs.readFile(file, 'utf8') : '';
 		return providerState(text, inherited);
@@ -87,7 +87,7 @@ async function readProvider(profile, inherited = process.env): Promise<{ support
 }
 
 /** Check CLI availability on PATH without starting an agent or invoking a shell. */
-async function cliAvailable(host, environment = process.env, platform = process.platform) {
+async function cliAvailable(host: any, environment = process.env, platform = process.platform) {
 	if (!['codex', 'claude'].includes(host)) { return false; }
 	const extensions = platform === 'win32' ? ['', '.exe', '.cmd', '.bat'] : [''];
 	for (const directory of (environment.PATH || environment.Path || '').split(platform === 'win32' ? ';' : ':').filter(Boolean)) {
@@ -103,8 +103,8 @@ async function cliAvailable(host, environment = process.env, platform = process.
 }
 
 /** Persist only HARNESS_HOST through the editor's versioned document and undo infrastructure. */
-async function selectProvider(project, vscode, available = cliAvailable) {
-	const t = (message, ...args) => vscode.l10n.t(message, ...args);
+async function selectProvider(project: any, vscode: any, available = cliAvailable) {
+	const t = (message: any, ...args: any[]) => vscode.l10n.t(message, ...args);
 	if (!vscode.workspace.isTrusted) { vscode.window.showWarningMessage(t('Marc\u00e1 el workspace como confiable para cambiar la IA del Harness.')); return; }
 	if (project.profile.id !== 'redevent') { vscode.window.showInformationMessage(t('Este Harness selecciona la IA en su plan de agentes; no utiliza HARNESS_HOST.')); return; }
 	try {
@@ -112,7 +112,7 @@ async function selectProvider(project, vscode, available = cliAvailable) {
 		const uri = vscode.Uri.file(file);
 		if (!vscode.workspace.getWorkspaceFolder(uri)) { return; }
 		let exists = true;
-		try { await fs.access(file); } catch (error) { if (error.code !== 'ENOENT') { throw error; } exists = false; }
+		try { await fs.access(file); } catch (error: any) { if (error.code !== 'ENOENT') { throw error; } exists = false; }
 		const document = exists ? await vscode.workspace.openTextDocument(uri) : undefined;
 		if (document?.isDirty) { vscode.window.showWarningMessage(t('Guard\u00e1 o descart\u00e1 los cambios de .harness/.env antes de cambiar la IA.')); return; }
 		const text = document?.getText() || '';

@@ -81,7 +81,8 @@ export interface ChatRuntime {
 	/** Undo the files a run changed, under the same fence and lease as a writer; files the user touched are skipped. */
 	discard?(diff: RunDiffSummary): Promise<{ discarded: string[]; skipped: string[] }>;
 	/** Persists the rule of an "always allow" answer in the USER permissions file. */
-	rememberApproval?(rule: string): Promise<void>;
+	/** Persists an allow rule in the user's permissions file: for this project only, or for every project. */
+	rememberApproval?(rule: string, scope: 'project' | 'global'): Promise<void>;
 	/** Limits a provider keeps outside its run output (Codex rollouts); bounded and silent on failure. */
 	readQuota?(provider: NativeProvider): Promise<ProviderQuota | undefined>;
 	/** Local machine checks (Node, package manager, shell, git, gh), run before the first act turn of a session. */
@@ -170,7 +171,7 @@ interface PendingQuestion { questions: AgentQuestion[]; settle(answers: Question
 
 /** What a wrong yes can do, by kind; a compound shell line or a sandbox escalation is always high. */
 function riskOf(draft: ApprovalDraft): ApprovalRisk {
-	if (draft.kind === 'sandbox' || draft.kind === 'git_push' || draft.kind === 'git_pr_upsert' || draft.detail.includes('shell: provider sandbox')) { return 'high'; }
+	if (draft.kind === 'sandbox' || draft.kind === 'mcp' || draft.kind === 'git_push' || draft.kind === 'git_pr_upsert' || draft.detail.includes('shell: provider sandbox')) { return 'high'; }
 	return draft.kind === 'edit' || draft.kind === 'git_fetch' || draft.kind === 'git_branch_create' ? 'low' : 'medium';
 }
 /** Turn-only extras of a message (mentioned file content and its notice); a queued message keeps them until it runs. */
@@ -459,14 +460,19 @@ export class HarnessChatSession {
 		const pending = this.approvals.get(id);
 		if (!pending || pending.resolving || !APPROVAL_ANSWERS.includes(answer)) { return; }
 		if (REMEMBERING_ANSWERS.includes(answer) && !pending.request.rule) { return; }
-		if (answer === 'always' && !this.runtime.rememberApproval) { return; }
+		const persistent = answer === 'always' || answer === 'global';
+		// Only exact rules of inspection commands may leave the project: the card says so through `global`.
+		if (answer === 'global' && !pending.request.global) { return; }
+		if (persistent && !this.runtime.rememberApproval) { return; }
 		// Claim this card before asynchronous persistence; cancellation and timeout can still deny it.
 		pending.resolving = true;
 		let final = answer;
-		if (answer === 'always') {
+		if (persistent) {
 			try {
-				await this.runtime.rememberApproval?.(pending.request.rule);
-				this.conversation.messages.push(chatMessage('notice', this.t('Se guard\u00f3 la regla \u00ab{0}\u00bb en tu archivo de permisos (~/.armotusitio/permissions.json). Revocala con /permisos quitar {0}', redactSecrets(pending.request.rule)), { tone: 'info' }));
+				await this.runtime.rememberApproval?.(pending.request.rule, answer === 'global' ? 'global' : 'project');
+				this.conversation.messages.push(chatMessage('notice', answer === 'global'
+					? this.t('Se guard\u00f3 la regla \u00ab{0}\u00bb para todos tus proyectos (~/.armotusitio/permissions.json). Revocala con /permisos quitar {0}', redactSecrets(pending.request.rule))
+					: this.t('Se guard\u00f3 la regla \u00ab{0}\u00bb en tu archivo de permisos (~/.armotusitio/permissions.json). Revocala con /permisos quitar {0}', redactSecrets(pending.request.rule)), { tone: 'info' }));
 			} catch {
 				final = 'once';
 				this.conversation.messages.push(chatMessage('notice', this.t('No se pudo guardar la regla \u00ab{0}\u00bb; se permiti\u00f3 solo esta vez.', redactSecrets(pending.request.rule)), { tone: 'error' }));
@@ -490,7 +496,7 @@ export class HarnessChatSession {
 		const titles: Record<ApprovalDraft['kind'], string> = {
 			run: this.t('Ejecutar un comando'), edit: this.t('Borrar o mover archivos del proyecto'), git_commit: this.t('Hacer commit'), git_push: this.t('Hacer push'),
 			git_branch_create: this.t('Crear una rama'), git_pr_upsert: this.t('Crear o actualizar un pull request'), git_fetch: this.t('Traer cambios del remoto (fetch)'),
-			sandbox: this.t('Ampliar los permisos del sandbox')
+			sandbox: this.t('Ampliar los permisos del sandbox'), mcp: this.t('Usar una herramienta de un servidor MCP'), web: this.t('Leer una p\u00e1gina de internet')
 		};
 		const title = titles[draft.kind];
 		return new Promise<ApprovalAnswer>(resolve => {

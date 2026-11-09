@@ -7,7 +7,6 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { build } from 'esbuild';
 import type { RunnerConfig } from '../src/ats-runner.ts';
 
 const repository = path.resolve(import.meta.dirname, '../../..');
@@ -105,6 +104,8 @@ export async function createToolchainFixture(options: { nodeHint?: boolean; dele
 			'    print(str(error), file=sys.stderr); sys.exit(127)'
 		].join('\n'));
 		const runnerFile = path.join(base, 'ats-runner.js');
+		// Loaded here, not at the top: the fixture only runs on Windows, and other systems do not install esbuild for the contract suite.
+		const { build } = await import('esbuild');
 		await build({ entryPoints: [path.join(repository, 'extensions', 'armotusitio-ide', 'src', 'ats-runner.ts')], outfile: runnerFile, bundle: true, platform: 'node', format: 'cjs', logLevel: 'silent' });
 		const systemRoot = process.env.SystemRoot ?? 'C:\\Windows';
 		const env: NodeJS.ProcessEnv = {

@@ -13,6 +13,7 @@ import type { ChatMode } from './native-chat.ts';
 const { parseCodexSandbox, useCodexSandbox } = require('./native-codex-sandbox.ts');
 const { diagnoseProvider } = require('./native-provider-diagnostics.ts');
 const { listProviderModels } = require('./native-provider-models.ts');
+const { authorizeMcpServer } = require('./native-mcp-oauth.ts');
 const { validModel, validEffort } = require('./native-providers.ts');
 const { endpoint } = require('./mcp.ts');
 const { TtlCache } = require('./native-ttl-cache.ts');
@@ -32,10 +33,10 @@ const { registerRunDiffView, validRunPath, RUN_DIFF_COMMAND } = require('./nativ
 const PROVIDER_CACHE_TTL_MS = 5 * 60 * 1000;
 
 /** Dispatch explicit slash commands without an LLM, shell interpolation or arbitrary MCP tool names. */
-function createHandler(vscode, controller, projects, mcp) {
-	const t = (message, ...args) => vscode.l10n.t(message, ...args);
+function createHandler(vscode: any, controller: any, projects: any, mcp: any) {
+	const t = (message: any, ...args: any[]) => vscode.l10n.t(message, ...args);
 	const help = () => commandHelp(t);
-	return async function handle(input, token) {
+	return async function handle(input: any, token: any) {
 		if (token?.isCancellationRequested) { return t('Consulta cancelada.'); }
 		const text = input.trim().replace(/^@harness(?:\s+|$)/i, '').replace(/^\//, '');
 		const [raw = '', ...words] = text.split(/\s+/);
@@ -47,42 +48,42 @@ function createHandler(vscode, controller, projects, mcp) {
 			if (action === 'comandos' && !words.length) {
 				const all = await projects();
 				const local = await controller.nativeProjects?.() || [];
-				return [...all.map(({ profile }) => profile.name + ': ' + (profile.actions.join(', ') || t('Preparar una tarea con el Harness del proyecto'))), ...local.map(project => project.name + ': ' + t('Conversar, planificar y ejecutar con aprobaci\u00f3n desde Chat Harness'))].join('\n') || t('Abr\u00ed una carpeta para detectar su Harness o configurar el incluido en el IDE.');
+				return [...all.map(({ profile }: any) => profile.name + ': ' + (profile.actions.join(', ') || t('Preparar una tarea con el Harness del proyecto'))), ...local.map((project: any) => project.name + ': ' + t('Conversar, planificar y ejecutar con aprobaci\u00f3n desde Chat Harness'))].join('\n') || t('Abr\u00ed una carpeta para detectar su Harness o configurar el incluido en el IDE.');
 			}
 			if (action === 'estado' && !words.length) {
 				await controller.refreshActivity();
 				if (token?.isCancellationRequested) { return t('Consulta cancelada.'); }
-				const labels = { running: t('En ejecuci\u00f3n'), passed: t('Completada'), failed: t('Fall\u00f3'), cancelled: t('Cancelada'), ended: t('Sin c\u00f3digo de salida'), unknown: t('Resultado desconocido'), stalled: t('Sin proceso activo'), completed: t('Completada') };
-				const native = (controller.readHarnessProgress?.() || controller.progress).map(row => row.error ? t('No se pudo consultar el progreso del Harness.') : `${row.title || row.id} [${row.id}] (${row.project || ''}): ${labels[row.outcome || row.state] || row.outcome || row.state}${row.percent === undefined ? '' : ' (' + row.percent + '%)'}`);
-				const jobs = controller.getHistory().slice(-20).reverse().map(job => `${job.action}: ${labels[job.state] || job.state} (${job.project})`);
+				const labels: Record<string, string> = { running: t('En ejecuci\u00f3n'), passed: t('Completada'), failed: t('Fall\u00f3'), cancelled: t('Cancelada'), ended: t('Sin c\u00f3digo de salida'), unknown: t('Resultado desconocido'), stalled: t('Sin proceso activo'), completed: t('Completada') };
+				const native = (controller.readHarnessProgress?.() || controller.progress).map((row: any) => row.error ? t('No se pudo consultar el progreso del Harness.') : `${row.title || row.id} [${row.id}] (${row.project || ''}): ${labels[row.outcome || row.state] || row.outcome || row.state}${row.percent === undefined ? '' : ' (' + row.percent + '%)'}`);
+				const jobs = controller.getHistory().slice(-20).reverse().map((job: any) => `${job.action}: ${labels[job.state] || job.state} (${job.project})`);
 				const local = await controller.nativeProjects?.() || [];
-				const tasks = local.flatMap(project => project.tasks.map(task => `${project.name}: ${task.title} \u2014 ${task.reconciliationRequired ? t('Requiere reconciliaci\u00f3n') : labels[task.status] || task.status}`));
+				const tasks = local.flatMap((project: any) => project.tasks.map((task: any) => `${project.name}: ${task.title} \u2014 ${task.reconciliationRequired ? t('Requiere reconciliaci\u00f3n') : labels[task.status] || task.status}`));
 				return [...native, ...jobs, ...tasks].join('\n') || t('No hay ejecuciones registradas en este workspace.');
 			}
 			if (['check', 'verify', 'test'].includes(action) && words.length <= 1) {
 				const all = await projects();
-				const project = words.length ? all.find(({ profile }) => profile.id === words[0].toLowerCase()) : all.length === 1 ? all[0] : undefined;
+				const project = words.length ? all.find(({ profile }: any) => profile.id === words[0].toLowerCase()) : all.length === 1 ? all[0] : undefined;
 				if (!project || !project.profile.actions.includes(action)) { return t('Indic\u00e1 un proyecto disponible: armotusitio o redevent. Consult\u00e1 sus comandos con @harness comandos.'); }
 				const id = await controller.execute(project.folder.uri.toString(), action, token);
 				return id ? t('Tarea iniciada. Pod\u00e9s seguir el resultado en la barra de estado y en el historial.') : t('No se inici\u00f3 una tarea nueva. Revis\u00e1 la confirmaci\u00f3n o si ya est\u00e1 activa.');
 			}
 			const commands = chatCommands(t);
 			// These need the open conversation, which only Chat Harness has.
-			if (commands.some(command => command.session && command.name === action)) { return t('El comando /{0} funciona solo dentro de Chat Harness (ArmoTuSitio: Chat Harness).', action); }
-			const localCommands = commands.filter(command => command.name !== 'ayuda').map(command => command.name);
+			if (commands.some((command: any) => command.session && command.name === action)) { return t('El comando /{0} funciona solo dentro de Chat Harness (ArmoTuSitio: Chat Harness).', action); }
+			const localCommands = commands.filter((command: any) => command.name !== 'ayuda').map((command: any) => command.name);
 			// Free text is a conversation with the selected AI; only Chat Harness hosts that flow.
 			if (!localCommands.includes(action)) { return t('Para conversar con la IA, planificar y ejecutar cambios abr\u00ed Chat Harness (ArmoTuSitio: Chat Harness). Ac\u00e1 solo se aceptan comandos.') + '\n' + help(); }
 			if (!mcp.enabled()) { return t('Work Management es opcional y est\u00e1 desactivado en este workspace. Pod\u00e9s conversar y ejecutar tareas sin conectarlo. Para usar tarjetas y tableros, habilit\u00e1 ArmotuSitio MCP desde el indicador del chat.'); }
 			if (action === 'mcp' && !words.length) {
 				const tools = await mcp.client.tools(token);
-				return t('Conectado a ArmotuSitio Work Management. Herramientas disponibles para tu clave: {0}.', tools.map(tool => tool.name).join(', '));
+				return t('Conectado a ArmotuSitio Work Management. Herramientas disponibles para tu clave: {0}.', tools.map((tool: any) => tool.name).join(', '));
 			}
 			const projectKey = /^[a-z0-9_-]{1,40}$/i;
 			const issueKey = /^[a-z][a-z0-9-]*-\d+$/i;
-			let name, args, mutation = false;
+			let name: any, args: any, mutation = false;
 			if (action === 'proyectos' && !words.length) { name = 'list_projects'; args = {}; }
 			if (['proyecto', 'tareas', 'tablero'].includes(action) && words.length === 1 && projectKey.test(words[0])) {
-				name = { proyecto: 'get_project_context', tareas: 'list_issues', tablero: 'get_project_board' }[action]; args = { project: words[0] };
+				name = new Map(Object.entries({ proyecto: 'get_project_context', tareas: 'list_issues', tablero: 'get_project_board' })).get(action); args = { project: words[0] };
 			}
 			if (action === 'tarea' && words.length === 1 && issueKey.test(words[0])) { name = 'get_issue_context'; args = { issue_key: words[0].toUpperCase() }; }
 			if (action === 'buscar' && words.join(' ').length >= 2) { name = 'search_issues'; args = { query: words.join(' '), limit: 20 }; }
@@ -93,7 +94,7 @@ function createHandler(vscode, controller, projects, mcp) {
 				return help();
 			}
 			if (mutation) {
-				if (!(await mcp.client.tools(token)).some(tool => tool.name === name)) { return t('Tu clave MCP no tiene habilitada esa acci\u00f3n. Revis\u00e1 sus permisos en ArmotuSitio.'); }
+				if (!(await mcp.client.tools(token)).some((tool: any) => tool.name === name)) { return t('Tu clave MCP no tiene habilitada esa acci\u00f3n. Revis\u00e1 sus permisos en ArmotuSitio.'); }
 				await mcp.client.call(args.issue_key ? 'get_issue_context' : 'get_project_context', args.issue_key ? { issue_key: args.issue_key } : { project: args.project }, token);
 				if (token?.isCancellationRequested) { return t('Consulta cancelada.'); }
 				const confirm = t('Confirmar cambio');
@@ -104,10 +105,10 @@ function createHandler(vscode, controller, projects, mcp) {
 			}
 			if (token?.isCancellationRequested || !mcp.enabled() || !vscode.workspace.isTrusted) { return t('Consulta cancelada.'); }
 			const result = await mcp.client.call(name, args, token);
-			const content = result.structuredContent ?? result.content?.filter(part => part.type === 'text').map(part => part.text).join('\n') ?? result;
+			const content = result.structuredContent ?? result.content?.filter((part: any) => part.type === 'text').map((part: any) => part.text).join('\n') ?? result;
 			const output = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
 			return output.length > 30000 ? output.slice(0, 30000) + '\n' + t('Resultado recortado. Acot\u00e1 la consulta para ver m\u00e1s detalle.') : output;
-		} catch (error) {
+		} catch (error: any) {
 			if (token?.isCancellationRequested) { return t('Consulta cancelada.'); }
 			return error.message === 'MCP_AUTH' ? t('Revis\u00e1 la clave MCP y sus permisos. Us\u00e1 ArmotuSitio: Configurar clave MCP o la variable ATS_MCP_TOKEN.') : t('No se pudo confirmar el resultado. Revis\u00e1 la conexi\u00f3n, los permisos y el estado actual antes de repetir una modificaci\u00f3n.');
 		}
@@ -118,7 +119,7 @@ function createHandler(vscode, controller, projects, mcp) {
  * Real MCP handshake: `initialize` plus `tools/list` against the existing endpoint. A stored key alone is
  * never reported as connected. The result carries no secret, only state, reason and tool count.
  */
-async function probeMcpConnection(vscode, mcp, token = undefined) {
+async function probeMcpConnection(vscode: any, mcp: any, token = undefined) {
 	const checkedAt = new Date().toISOString();
 	if (!vscode.workspace.isTrusted) { return { state: 'disconnected', reason: 'untrusted', checkedAt }; }
 	if (!mcp.enabled()) { return { state: 'disconnected', reason: 'disabled', checkedAt }; }
@@ -127,16 +128,16 @@ async function probeMcpConnection(vscode, mcp, token = undefined) {
 	try {
 		const tools = await mcp.client.tools(token);
 		return { state: 'connected', tools: tools.length, checkedAt };
-	} catch (error) {
+	} catch (error: any) {
 		// Force a full initialize on the next check instead of trusting a cached session.
 		mcp.client.reset?.();
-		const reason = { MCP_AUTH: 'auth', MCP_HTTP: 'http', MCP_RESPONSE: 'protocol', MCP_SIZE: 'protocol', MCP_CANCELLED: 'cancelled' }[error?.message] || 'network';
+		const reason = new Map(Object.entries({ MCP_AUTH: 'auth', MCP_HTTP: 'http', MCP_RESPONSE: 'protocol', MCP_SIZE: 'protocol', MCP_CANCELLED: 'cancelled' })).get(error?.message) || 'network';
 		return { state: 'error', reason, checkedAt };
 	}
 }
 
 /** Local CLI evidence only: installed, version and local login. No prompt is sent to a model. */
-async function probeProvider(provider, diagnose = diagnoseProvider) {
+async function probeProvider(provider: any, diagnose = diagnoseProvider) {
 	try {
 		const result = await diagnose(provider);
 		if (!result.installed || !result.version) { return { status: 'unavailable' }; }
@@ -146,7 +147,7 @@ async function probeProvider(provider, diagnose = diagnoseProvider) {
 }
 
 /** Webview copy. Templates pass their own placeholders so the webview fills them with live values. */
-function labels(t) {
+function labels(t: any) {
 	return {
 		title: t('Chat Harness'), project: t('Proyecto'), provider: t('IA'), codex: 'Codex', claude: 'Claude Code',
 		model: t('Modelo de {0}', '{0}'), modelDefault: t('Predeterminado: {0}', '{0}'), modelCliDefault: t('Predeterminado del CLI'),
@@ -195,7 +196,7 @@ function labels(t) {
 		change: { added: t('nuevo'), modified: t('modificado'), deleted: t('borrado') },
 		continueRun: t('Continuar'), retry: t('Reintentar'), continuedRun: t('Continuaci\u00f3n'), maxMessageChars: MAX_USER_MESSAGE_CHARS,
 		discardRun: t('Deshacer esta ejecuci\u00f3n'), openHome: t('Ver en Inicio'),
-		approvals: t('Aprobaciones pendientes'), allowOnce: t('Permitir una vez'), allowTask: t('Esta tarea'), allowSession: t('Esta sesi\u00f3n'), allowAlways: t('Siempre en este proyecto'), denyApproval: t('Denegar'),
+		approvals: t('Aprobaciones pendientes'), allowOnce: t('Permitir una vez'), allowTask: t('Esta tarea'), allowSession: t('Esta sesi\u00f3n'), account: t('Cuenta de {0}', '{0}'), accountIde: t('Cuenta del IDE'), accountManage: t('Administrar cuentas\u2026'), accountSplit: t('Esta conversaci\u00f3n sigue con {0}; el pr\u00f3ximo mensaje usar\u00e1 {1}.', '{0}', '{1}'), authState: { authenticated: t('Autenticada'), 'not-authenticated': t('Sin sesi\u00f3n'), unknown: t('Estado desconocido'), 'cli-unavailable': t('CLI no disponible') }, allowAlways: t('Siempre en este proyecto'), allowGlobal: t('En todos mis proyectos'), globalRule: t('\u00abEn todos mis proyectos\u00bb se ofrece solo para comandos de inspecci\u00f3n y vale en cualquier proyecto.'), denyApproval: t('Denegar'),
 		alwaysRule: t('\u00abSiempre en este proyecto\u00bb guarda la regla \u00ab{0}\u00bb en {1}; \u00abEsta tarea\u00bb y \u00abEsta sesi\u00f3n\u00bb no guardan nada.', '{0}', '{1}'), permissionsFile: '~/.armotusitio/permissions.json',
 		noRemember: {
 			dependency: t('Solo una vez: instalar o cambiar dependencias se aprueba cada vez.'),
@@ -219,7 +220,7 @@ function labels(t) {
 		stepStatus: { running: t('en curso'), ok: t('listo'), error: t('fall\u00f3') },
 		queued: t('En cola ({0})', '{0}'), queueSend: t('Encolar'), unqueue: t('Quitar de la cola'), queueHint: t('Se env\u00eda cuando termine la tarea actual. Si se cancela o falla, la cola se descarta.'),
 		viewChanges: t('Ver cambios'), revertFile: t('Revertir'), reverted: t('revertido'), stopHint: t('Detiene la tarea de la IA ahora mismo'),
-		commandList: chatCommands(t).map(({ name, usage, description }) => ({ name, usage: usage ?? '', description })),
+		commandList: chatCommands(t).map(({ name, usage, description }: any) => ({ name, usage: usage ?? '', description })),
 		commandsLabel: t('Comandos'), filesLabel: t('Archivos del proyecto')
 	};
 }
@@ -228,17 +229,23 @@ function labels(t) {
  * Standalone conversational panel plus the native chat participant for explicit commands.
  * `options.diagnose` and `options.listModels` are test seams for local CLI diagnostics and model discovery.
  */
-function registerChat(context, controller, projects, mcp, vscode, options: { diagnose?: typeof diagnoseProvider; listModels?: typeof listProviderModels; feed?: ActivityFeed } = {}) {
+function registerChat(context: any, controller: any, projects: any, mcp: any, vscode: any, options: { diagnose?: typeof diagnoseProvider; listModels?: typeof listProviderModels; feed?: ActivityFeed } = {}) {
 	const handle = createHandler(vscode, controller, projects, mcp);
-	const t = (message, ...args) => vscode.l10n.t(message, ...args);
+	const t = (message: any, ...args: any[]) => vscode.l10n.t(message, ...args);
 	const diagnose = options.diagnose || diagnoseProvider;
 	const listModels = options.listModels || listProviderModels;
 	const sessions = new Map();
-	const providers = { codex: { status: 'checking' }, claude: { status: 'checking' } };
+	const providers: Record<string, any> = { codex: { status: 'checking' }, claude: { status: 'checking' } };
 	// Discovered from each CLI's own configuration; the choice itself lives in `atsHarness.<provider>Model`.
-	const models = { codex: { options: [] }, claude: { options: [] } };
-	const modelSetting = provider => provider + 'Model';
-	const effortSetting = provider => provider + 'Effort';
+	const models: Record<string, any> = { codex: { options: [] }, claude: { options: [] } };
+	/** What the IDE's own account shows; an AI profile reads its own configuration directory instead. */
+	const defaultModels: Record<string, any> = { codex: { options: [] }, claude: { options: [] } };
+	// AI accounts per provider for the project in view: each option carries the real login state of its directory.
+	const profiles = controller.profiles;
+	const ranWith: Record<string, string> = {};
+	const accounts: Record<string, { options: Array<{ id: string; alias: string; state: string }>; selected: string }> = { codex: { options: [], selected: '' }, claude: { options: [], selected: '' } };
+	const modelSetting = (provider: any) => provider + 'Model';
+	const effortSetting = (provider: any) => provider + 'Effort';
 	const codexFullAccess = () => parseCodexSandbox(vscode.workspace.getConfiguration('atsHarness').get('codexSandbox')) === 'danger-full-access';
 	useCodexSandbox(vscode.workspace.getConfiguration('atsHarness').get('codexSandbox'));
 	const chatMode = (): ChatMode => vscode.workspace.getConfiguration('atsHarness').get('chatMode', 'act') === 'ask' ? 'ask' : 'act';
@@ -246,7 +253,7 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 	const chosenEfforts = () => Object.fromEntries(['codex', 'claude'].map(provider => [provider, vscode.workspace.getConfiguration('atsHarness').get(effortSetting(provider), '')]));
 	const chosenModels = () => Object.fromEntries(Object.entries(models).map(([provider, found]) => [provider, { ...found, selected: vscode.workspace.getConfiguration('atsHarness').get(modelSetting(provider), '') }]));
 	let mcpStatus: { state: string; reason?: string; tools?: number; checkedAt?: string } = { state: 'checking' };
-	let panel, mcpCheck;
+	let panel: any, mcpCheck: any;
 	if (vscode.window?.createStatusBarItem) {
 		const shortcut = vscode.window.createStatusBarItem('atsHarness.chat', vscode.StatusBarAlignment.Left, 19);
 		context.subscriptions.push(shortcut);
@@ -254,10 +261,10 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 		shortcut.tooltip = t('Conversar con la IA, planificar y ejecutar cambios con aprobaci\u00f3n.'); shortcut.command = 'atsIde.chat';
 		const update = () => vscode.workspace.getConfiguration('atsHarness').get('enabled', true) ? shortcut.show() : shortcut.hide();
 		update();
-		context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => { if (event.affectsConfiguration('atsHarness.enabled')) { update(); } }));
+		context.subscriptions.push(vscode.workspace.onDidChangeConfiguration((event: any) => { if (event.affectsConfiguration('atsHarness.enabled')) { update(); } }));
 	}
 	if (vscode.chat?.createChatParticipant) {
-		const participant = vscode.chat.createChatParticipant('atsIde.harness', async (request, _context, stream, token) => {
+		const participant = vscode.chat.createChatParticipant('atsIde.harness', async (request: any, _context: any, stream: any, token: any) => {
 			const output = await handle((request.command ? request.command + ' ' : '') + request.prompt, token);
 			const markdown = new vscode.MarkdownString(); markdown.appendText(output); stream.markdown(markdown);
 		});
@@ -270,9 +277,9 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 	const feedKeyOf = (uri: string): string => createHash('sha256').update(uri).digest('hex').slice(0, 16);
 	const selectedFolder = () => {
 		const saved = context.workspaceState?.get('atsChat.folder');
-		return folders().find(folder => folder.uri.toString() === saved) || folders()[0];
+		return folders().find((folder: any) => folder.uri.toString() === saved) || folders()[0];
 	};
-	const post = message => { void panel?.webview.postMessage(message); };
+	const post = (message: any) => { void panel?.webview.postMessage(message); };
 	// Progress events are frequent; the history is resent only when it changed or the webview lost it.
 	let posted = { key: undefined, revision: -1 };
 	const publish = (folder = selectedFolder()) => {
@@ -283,16 +290,16 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 		// The webview drops its history whenever it receives no chat, so the next one must be complete.
 		else { posted = chat ? { key, revision: chat.revision } : { key: undefined, revision: -1 }; }
 		post({
-			type: 'state', trusted: !!vscode.workspace.isTrusted, providers, models: chosenModels(), efforts: chosenEfforts(), chatMode: chatMode(), codexFullAccess: codexFullAccess(), mcp: { ...mcpStatus, endpoint: new URL(endpoint).host, enabled: !!mcp.enabled?.() },
+			type: 'state', trusted: !!vscode.workspace.isTrusted, providers, models: chosenModels(), accounts, ranWith, efforts: chosenEfforts(), chatMode: chatMode(), codexFullAccess: codexFullAccess(), mcp: { ...mcpStatus, endpoint: new URL(endpoint).host, enabled: !!mcp.enabled?.() },
 			project: folder ? { name: folder.name, id: key } : null,
-			projects: folders().map(item => ({ name: item.name, id: item.uri.toString() })),
+			projects: folders().map((item: any) => ({ name: item.name, id: item.uri.toString() })),
 			chat
 		});
 	};
 	/** A load that finishes after the user switched projects must not replace the visible one. */
-	const publishIfSelected = folder => { if (selectedFolder()?.uri.toString() === folder.uri.toString()) { publish(folder); } };
+	const publishIfSelected = (folder: any) => { if (selectedFolder()?.uri.toString() === folder.uri.toString()) { publish(folder); } };
 	/** One session per folder survives panel close, so a running execution keeps reporting when reopened. */
-	const sessionFor = folder => {
+	const sessionFor = (folder: any) => {
 		const key = folder.uri.toString();
 		let entry = sessions.get(key);
 		if (!entry) {
@@ -304,11 +311,11 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 				if (!runtime) { throw Error('HARNESS_CHAT_UNAVAILABLE'); }
 				const preferred = providers.claude.status === 'ready' || providers.codex.status !== 'ready' ? 'claude' : 'codex';
 				const feedKey = feedKeyOf(key);
-				entry.session = new HarnessChatSession(new ChatStore(directory), runtime, snapshot => {
+				entry.session = new HarnessChatSession(new ChatStore(directory), runtime, (snapshot: any) => {
 					if (selectedFolder()?.uri.toString() === key) { publish(folder); }
 					if (options.feed) {
 						const items = chatActivityItems(snapshot, { key: feedKey, name: folder.name }, t);
-						const ids = new Set(items.map(item => item.id));
+						const ids = new Set(items.map((item: any) => item.id));
 						options.feed.retain(item => !item.id.startsWith('chat:' + feedKey + ':') || ids.has(item.id));
 						for (const item of items) { options.feed.publish(item); }
 					}
@@ -324,16 +331,31 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 		return entry.ready;
 	};
 	// An unknown status is a failed probe: do not keep it for minutes.
-	const providerCache = new TtlCache(PROVIDER_CACHE_TTL_MS, Date.now, probed => probed.status.status !== 'unknown');
+	const providerCache = new TtlCache(PROVIDER_CACHE_TTL_MS, Date.now, (probed: any) => probed.status.status !== 'unknown');
 	// Model discovery is display-only: an unreadable CLI configuration leaves just the CLI default.
-	const inspectProvider = (provider, force) => providerCache.get(provider, async () => ({ status: await probeProvider(provider, diagnose), models: await listModels(provider).catch(() => ({ options: [] })) }), force);
+	const inspectProvider = (provider: any, force: any) => providerCache.get(provider, async () => ({ status: await probeProvider(provider, diagnose), models: await listModels(provider).catch(() => ({ options: [] })) }), force);
+	/** Reads profiles and their login state; called when the chat opens or an account changes, never on every publish. */
+	const refreshAccounts = async (folder = selectedFolder()) => {
+		if (!profiles) { return; }
+		const root = folder?.uri.fsPath;
+		const [list, placement] = await Promise.all([profiles.list(), profiles.placement(root)]);
+		for (const provider of ['codex', 'claude']) {
+			const options = await Promise.all(list.filter((profile: any) => profile.provider === provider).map(async (profile: any) => ({ id: profile.id, alias: profile.alias, state: await profiles.authState(profile, process.env) })));
+			accounts[provider] = { options, selected: placement.workspace[provider] ?? placement.defaults[provider] ?? '' };
+			// The model list and default come from the selected account's own settings (its CLAUDE_CONFIG_DIR / CODEX_HOME).
+			const chosen = list.find((profile: any) => profile.id === accounts[provider].selected && profile.provider === provider);
+			models[provider] = chosen ? await listModels(provider, profiles.environment(chosen, process.env)).catch(() => ({ options: [] })) : defaultModels[provider];
+		}
+		publish(folder);
+	};
 	const refreshProviders = async (force = false) => {
+		void refreshAccounts().catch(() => undefined);
 		providers.codex = { status: 'checking' }; providers.claude = { status: 'checking' }; publish();
 		const [codex, claude] = await Promise.all([inspectProvider('codex', force), inspectProvider('claude', force)]);
-		providers.codex = codex.status; providers.claude = claude.status; models.codex = codex.models; models.claude = claude.models; publish();
+		providers.codex = codex.status; providers.claude = claude.status; defaultModels.codex = codex.models; defaultModels.claude = claude.models; models.codex = codex.models; models.claude = claude.models; void refreshAccounts().catch(() => undefined); publish();
 	};
 	/** Run the one fix of a setup item; every kind reuses an existing VS Code surface. */
-	const applySetupFix = async fix => {
+	const applySetupFix = async (fix: any) => {
 		if (fix.kind === 'settings') { await vscode.commands.executeCommand('workbench.action.openSettings', fix.setting); }
 		else if (fix.kind === 'command') { await vscode.commands.executeCommand(fix.command); }
 		else if (fix.kind === 'docs') { await vscode.env.openExternal(vscode.Uri.parse(fix.url)); }
@@ -350,7 +372,7 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 				coordinatedProjectWriters: !!settings.get('coordinatedProjectWriters', false), chatMode: chatMode()
 			}, t);
 		});
-		const picked = await vscode.window.showQuickPick(items.map(item => ({ label: setupIcon(item.status) + ' ' + item.title, description: item.detail, detail: item.fix?.label, item })), { title: t('Revisar mi entorno'), placeHolder: t('Eleg\u00ed un \u00edtem para aplicar su arreglo') });
+		const picked = await vscode.window.showQuickPick(items.map((item: any) => ({ label: setupIcon(item.status) + ' ' + item.title, description: item.detail, detail: item.fix?.label, item })), { title: t('Revisar mi entorno'), placeHolder: t('Eleg\u00ed un \u00edtem para aplicar su arreglo') });
 		if (picked?.item.fix) { await applySetupFix(picked.item.fix); }
 	};
 	context.subscriptions.push(vscode.commands.registerCommand('atsIde.setupCheck', () => setupCheck().catch(error => report(undefined, error))));
@@ -386,42 +408,49 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 	const sessionCommands = {
 		t, chatMode, setChatMode, confirmDiscard,
 		permissionsPreset: () => configuredPreset(vscode.workspace.getConfiguration('atsHarness').get('permissionsPreset')),
-		openFile: file => vscode.commands.executeCommand('vscode.open', vscode.Uri.file(file)),
+		openFile: (file: any) => vscode.commands.executeCommand('vscode.open', vscode.Uri.file(file)),
 		runsDirectory: (root: string) => controller.runsDirectory?.(root),
-		doctor: async (root: string) => doctorReport(controller.doctorFor ? await controller.doctorFor(root) : [])
+		doctor: async (root: string) => doctorReport(controller.doctorFor ? await controller.doctorFor(root) : []),
+		mcp: controller.mcpServers && {
+			t, store: controller.mcpServers,
+			confirm: async (summary: string) => { const confirm = t('Conectar'); return await vscode.window.showWarningMessage(summary, { modal: true }, confirm) === confirm; },
+			authorize: (url: string) => authorizeMcpServer(url, controller.mcpOAuth),
+			askSecret: (prompt: string) => vscode.window.showInputBox({ title: prompt, password: true, ignoreFocusOut: true }),
+			workManagement: async () => mcp.enabled() ? handle('/mcp', new vscode.CancellationTokenSource().token) : undefined
+		}
 	};
 	/** Project files matching what the user typed after `@`; the webview asks on every keystroke. */
-	const suggestFiles = async (folder, query: string) => {
+	const suggestFiles = async (folder: any, query: string) => {
 		const files = await mentionIndex.get(folder.uri.toString(), async () => (await indexProject(folder.uri.fsPath)).files);
 		return suggestMentionFiles(files, query);
 	};
-	const report = (folder, error) => {
+	const report = (folder: any, error: any) => {
 		const entry = folder && sessions.get(folder.uri.toString());
 		if (entry?.loaded) { void entry.session.note(describeFailure(t, error), 'error').catch(() => undefined); }
 		else { void vscode.window.showErrorMessage(t('Chat Harness: {0}', harnessErrorCode(error))); }
 	};
-	const receive = async message => {
+	const receive = async (message: any) => {
 		const folder = selectedFolder();
 		const action = message?.action;
 		if (action === 'ready') {
 			posted = { key: undefined, revision: -1 };
 			post({ type: 'init', labels: labels(t) });
 			publish();
-			if (folder && vscode.workspace.isTrusted) { await sessionFor(folder).then(() => publishIfSelected(folder), error => report(folder, error)); }
+			if (folder && vscode.workspace.isTrusted) { await sessionFor(folder).then(() => publishIfSelected(folder), (error: any) => report(folder, error)); }
 			return;
 		}
 		if (action === 'project' && typeof message.id === 'string') {
-			const target = folders().find(item => item.uri.toString() === message.id);
+			const target = folders().find((item: any) => item.uri.toString() === message.id);
 			if (!target) { return; }
 			await context.workspaceState?.update('atsChat.folder', target.uri.toString());
 			publish(target);
-			if (vscode.workspace.isTrusted) { await sessionFor(target).then(() => publishIfSelected(target), error => report(target, error)); }
+			if (vscode.workspace.isTrusted) { await sessionFor(target).then(() => publishIfSelected(target), (error: any) => report(target, error)); }
 			return;
 		}
 		if (action === 'mcpCheck') { await refreshMcp(); return; }
 		if (action === 'providerCheck') { await refreshProviders(true); return; }
 		if (['mcpConfigure', 'mcpChangeKey', 'mcpEnable'].includes(action)) {
-			await vscode.commands.executeCommand({ mcpConfigure: 'atsIde.mcpConfigure', mcpChangeKey: 'atsIde.mcpChangeKey', mcpEnable: 'atsIde.mcpEnable' }[action]);
+			await vscode.commands.executeCommand(new Map(Object.entries({ mcpConfigure: 'atsIde.mcpConfigure', mcpChangeKey: 'atsIde.mcpChangeKey', mcpEnable: 'atsIde.mcpEnable' })).get(action));
 			await refreshMcp(); return;
 		}
 		if (action === 'mcpSettings') { await vscode.commands.executeCommand('workbench.action.openSettings', 'atsHarness.mcp'); return; }
@@ -433,7 +462,7 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 		}
 		if (!folder) { return; }
 		if (!vscode.workspace.isTrusted) { publish(folder); return; }
-		const entry = await sessionFor(folder).catch(error => { report(folder, error); return undefined; });
+		const entry = await sessionFor(folder).catch((error: any) => { report(folder, error); return undefined; });
 		if (!entry) { return; }
 		const { session } = entry;
 		try {
@@ -461,6 +490,7 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 					await session.note(t('{0} no est\u00e1 instalado en este equipo. Eleg\u00ed el otro proveedor y reenvi\u00e1 tu mensaje: {1}', selected === 'claude' ? 'Claude Code' : 'Codex', '\u00ab' + text.slice(0, 500) + '\u00bb'), 'error');
 					return;
 				}
+				ranWith[selected] = accounts[selected].selected;
 				const mentions = await resolveMentions(folder.uri.fsPath, text, IGNORED);
 				await session.send(text, chatMode(), { context: mentions.context, notice: mentionNotice(mentions, t) });
 			}
@@ -484,6 +514,13 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 			if (action === 'openHome') { await vscode.commands.executeCommand('atsIde.home'); }
 			if (action === 'cancel') { session.cancel(); }
 			if (action === 'provider' && ['codex', 'claude'].includes(message.provider)) { await session.selectProvider(message.provider); }
+			if (action === 'accounts') { await vscode.commands.executeCommand('atsHarness.accounts.manage'); void refreshAccounts(folder).catch(() => undefined); }
+			if (action === 'account' && profiles && ['codex', 'claude'].includes(message.provider) && typeof message.profileId === 'string' && folder) {
+				// The choice applies to new runs; a session that already exists keeps the account it started with.
+				if (message.profileId === '') { await profiles.unassign(folder.uri.fsPath, message.provider); }
+				else if ((await profiles.get(message.profileId))?.provider === message.provider) { await profiles.assign(folder.uri.fsPath, message.profileId); }
+				await refreshAccounts(folder);
+			}
 			if (action === 'model' && ['codex', 'claude'].includes(message.provider) && (message.model === '' || validModel(message.model))) {
 				// `true` targets user settings: the model is a personal choice, not a project policy.
 				await vscode.workspace.getConfiguration('atsHarness').update(modelSetting(message.provider), message.model, true);
@@ -500,10 +537,11 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 				publish(folder);
 			}
 			if (action === 'reset' && !session.busy) {
+				for (const key of Object.keys(ranWith)) { delete ranWith[key]; }
 				const confirm = t('Empezar de nuevo');
 				if (await vscode.window.showWarningMessage(t('\u00bfEmpezar una conversaci\u00f3n nueva? El historial actual de este proyecto se borra.'), { modal: true }, confirm) === confirm) { await session.reset(); }
 			}
-		} catch (error) { report(folder, error); }
+		} catch (error: any) { report(folder, error); }
 	};
 	context.subscriptions.push(vscode.commands.registerCommand('atsIde.chat', () => {
 		if (panel) { panel.reveal(); return; }
@@ -511,11 +549,11 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 		panel = vscode.window.createWebviewPanel('atsIde.chat', t('Chat Harness'), vscode.ViewColumn.One, { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [resources, vscode.Uri.joinPath(context.extensionUri, 'dist')] });
 		const current = panel;
 		const nonce = randomBytes(24).toString('base64');
-		const uri = name => current.webview.asWebviewUri(vscode.Uri.joinPath(resources, name)).toString();
+		const uri = (name: any) => current.webview.asWebviewUri(vscode.Uri.joinPath(resources, name)).toString();
 		current.webview.html = `<!doctype html><html lang="es-AR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${current.webview.cspSource}; style-src ${current.webview.cspSource}; script-src 'nonce-${nonce}';"><link rel="stylesheet" href="${uri('chat.css')}"><title>Chat Harness</title></head><body><div id="app" class="chat-app" data-logo="${uri('logo.png')}"></div><script nonce="${nonce}" src="${current.webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'dist', 'chat.js'))}"></script></body></html>`;
-		const subscriptions = [current.webview.onDidReceiveMessage(message => receive(message).catch(error => report(selectedFolder(), error)))];
+		const subscriptions = [current.webview.onDidReceiveMessage((message: any) => receive(message).catch(error => report(selectedFolder(), error)))];
 		// A status older than five minutes is re-verified when the panel becomes visible again.
-		subscriptions.push(current.onDidChangeViewState?.(event => {
+		subscriptions.push(current.onDidChangeViewState?.((event: any) => {
 			const age = mcpStatus.checkedAt ? Date.now() - Date.parse(mcpStatus.checkedAt) : Infinity;
 			if (event.webviewPanel.visible && mcpStatus.state !== 'checking' && age > 5 * 60 * 1000) { void refreshMcp(); }
 		}) ?? { dispose() { } });
@@ -524,8 +562,12 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 		void refreshMcp();
 	}));
 	if (vscode.workspace.onDidChangeConfiguration) {
-		context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
+		context.subscriptions.push(vscode.workspace.onDidChangeConfiguration((event: any) => {
 			if (['codex', 'claude'].some(provider => event.affectsConfiguration('atsHarness.' + modelSetting(provider)))) { providerCache.invalidate(); }
+			// A grant was given under another security context: a changed preset, sandbox or mode makes the next action ask again.
+			if (['atsHarness.permissionsPreset', 'atsHarness.codexSandbox', 'atsHarness.chatMode'].some(setting => event.affectsConfiguration(setting))) {
+				for (const entry of sessions.values()) { if (entry.loaded) { entry.session.revokeGrant(); } }
+			}
 			if (event.affectsConfiguration('atsHarness.codexSandbox')) {
 				useCodexSandbox(vscode.workspace.getConfiguration('atsHarness').get('codexSandbox'));
 				if (panel) { publish(); }
@@ -542,14 +584,14 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 	if (vscode.workspace.onDidGrantWorkspaceTrust) { context.subscriptions.push(vscode.workspace.onDidGrantWorkspaceTrust(() => { publish(); void receive({ action: 'ready' }); })); }
 	context.subscriptions.push({ dispose() { for (const entry of sessions.values()) { entry.session?.cancel(); } mcpCheck?.cancel(); panel?.dispose(); } });
 	/** Select a project in the chat and show it; Inicio uses this so both views share one conversation. */
-	const focus = async folder => {
+	const focus = async (folder: any) => {
 		await context.workspaceState?.update('atsChat.folder', folder.uri.toString());
 		await vscode.commands.executeCommand('atsIde.chat');
 		publish(folder);
 	};
 	/** Inicio's request field: the same circuit, limit and validation as typing in the chat. */
 	const ask = async (folderUri: string, text: string) => {
-		const folder = folders().find(item => item.uri.toString() === folderUri);
+		const folder = folders().find((item: any) => item.uri.toString() === folderUri);
 		if (!folder || typeof text !== 'string' || !text.trim()) { return; }
 		await focus(folder);
 		void receive({ action: 'send', text }).catch(error => report(folder, error));
@@ -560,10 +602,10 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 	 */
 	const act = async (itemId: string, action: string): Promise<boolean> => {
 		const match = /^chat:(?<key>[0-9a-f]{16}):(?<suffix>[\w-]{1,64})$/.exec(itemId);
-		const folder = match && folders().find(item => feedKeyOf(item.uri.toString()) === match.groups!.key);
+		const folder = match && folders().find((item: any) => feedKeyOf(item.uri.toString()) === match.groups!.key);
 		if (!folder) { return false; }
 		if (action === 'open') { await focus(folder); return true; }
-		const entry = await sessionFor(folder).catch(error => { report(folder, error); return undefined; });
+		const entry = await sessionFor(folder).catch((error: any) => { report(folder, error); return undefined; });
 		if (!entry) { return true; }
 		const { session } = entry;
 		const state = session.snapshot();

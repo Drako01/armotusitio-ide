@@ -12,6 +12,7 @@ import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import { MAX_TEXT_CHARS } from '../src/runtime/event-bridge.ts';
 import type { RecoveryNotice } from '../src/runtime/session-manager.ts';
 import { harness, record, settledPids } from './native-runtime-harness.mts';
 
@@ -68,6 +69,21 @@ for (const provider of ['codex', 'claude'] as const) {
 			} finally { await h.close(); }
 		});
 
+		test('a runaway stream stops accumulating at the event bound and says so (AUD-P2-004)', async () => {
+			const h = await harness(provider);
+			try {
+				const session = await h.session();
+				const events = record(session);
+				const result = await session.runTurn('FLOOD 30000', 'conversation');
+				const deltaLengths = events.filter(event => event.payload.type === 'message.delta').map(event => (event.payload as { text: string }).text.length);
+				assert.deepEqual({
+					status: result.status, outputBound: result.output.length <= MAX_TEXT_CHARS, reachedBound: Math.max(...deltaLengths) === MAX_TEXT_CHARS,
+					deltasBound: deltaLengths.every(length => length <= MAX_TEXT_CHARS), stoppedEarly: deltaLengths.length < 30000,
+					truncationReported: events.filter(event => event.payload.type === 'diagnostic' && event.payload.text === 'message-truncated').length
+				}, { status: 'completed', outputBound: true, reachedBound: true, deltasBound: true, stoppedEarly: true, truncationReported: 1 });
+			} finally { await h.close(); }
+		});
+
 		test('approvals decide execution: deny, once, and the floor without a card (S05/S06)', async () => {
 			const h = await harness(provider);
 			try {
@@ -102,10 +118,13 @@ for (const provider of ['codex', 'claude'] as const) {
 			try {
 				const session = await h.session();
 				const controller = new AbortController();
-				setTimeout(() => controller.abort(), 400);
-				const started = Date.now();
-				const cancelled = await session.runTurn('SLOW work', 'conversation', controller.signal);
-				const elapsed = Date.now() - started;
+				const events = record(session);
+				// Abort once the turn is really streaming: a fixed delay raced the provider process start under load.
+				let abortedAt = 0;
+				const watcher = setInterval(() => { if (!abortedAt && events.some(event => event.payload.type === 'message.delta')) { abortedAt = Date.now(); controller.abort(); } }, 10);
+				const cancelled = await session.runTurn('SLOW work', 'conversation', controller.signal).finally(() => clearInterval(watcher));
+				// Cancellation latency: from the abort to the interrupted result, not including the provider start.
+				const elapsed = Date.now() - abortedAt;
 				const next = await session.runTurn('after cancel', 'conversation');
 				assert.deepEqual({ cancelled: cancelled.status, fast: elapsed < 2900, next: next.status }, { cancelled: 'interrupted', fast: true, next: 'completed' });
 			} finally { await h.close(); }
@@ -295,3 +314,24 @@ test('an installed CLI that speaks another protocol version keeps the structured
 		} finally { await h.close(); }
 	}
 });
+
+for (const provider of ['codex', 'claude'] as const) {
+	test('two accounts of ' + provider + ' run side by side with their own directory and each session keeps the identity it started with (W3)', async () => {
+		const h = await harness(provider);
+		try {
+			const manager = h.manager();
+			const personal = await manager.session({ ...h.identity, profileId: 'personal' });
+			const work = await manager.session({ ...h.identity, profileId: 'work' });
+			const [one, two] = await Promise.all([personal.runTurn('remember PERSONAL-CODE', 'conversation'), work.runTurn('remember WORK-CODE', 'conversation')]);
+			// Each session continues independently: its own context, its own directory, never the other account's.
+			const [again, other] = [await personal.runTurn('what did I say', 'conversation'), await work.runTurn('what did I say', 'conversation')];
+			const dir = (name: string) => path.join(h.base, 'profiles', name);
+			assert.deepEqual({
+				distinctSessions: personal.key !== work.key && one.nativeSessionId !== two.nativeSessionId,
+				personal: [one.output.includes('cfg=' + dir('personal')), again.output.includes('prev=remember PERSONAL-CODE'), again.output.includes(dir('work'))],
+				work: [two.output.includes('cfg=' + dir('work')), other.output.includes('prev=remember WORK-CODE'), other.output.includes(dir('personal'))],
+				sameKeyForSameProfile: (await manager.session({ ...h.identity, profileId: 'personal' })).key === personal.key
+			}, { distinctSessions: true, personal: [true, true, false], work: [true, true, false], sameKeyForSameProfile: true });
+		} finally { await h.close(); }
+	});
+}

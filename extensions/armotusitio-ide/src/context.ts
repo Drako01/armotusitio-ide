@@ -7,12 +7,12 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const IGNORED = new Set(['node_modules', '.git', '.next', '.harness', '.env', 'dist', 'out', 'coverage', '.turbo', '.artifacts', 'vendor', 'build', 'tmp']);
 const SOURCE_EXT = new Set(['.go', '.php', '.ts', '.tsx', '.js', '.mjs', '.py', '.sql', '.json', '.md', '.yaml', '.yml']);
-async function indexProject(root, { limit = 5000 } = {}) {
-	const result = { files: [], byExtension: {}, truncated: false };
-	const stack = [{ dir: root, depth: 0 }];
+async function indexProject(root: any, { limit = 5000 } = {}) {
+	const result: { files: string[]; byExtension: Record<string, number>; truncated: boolean } = { files: [], byExtension: {}, truncated: false };
+	const stack: Array<{ dir: any; depth: number }> = [{ dir: root, depth: 0 }];
 	while (stack.length && result.files.length < limit) {
-		const { dir, depth } = stack.pop(); if (depth > 10) { continue; }
-		let entries = []; try { entries = await fs.readdir(dir, { withFileTypes: true }); } catch { continue; }
+		const { dir, depth } = stack.pop()!; if (depth > 10) { continue; }
+		let entries: any[] = []; try { entries = await fs.readdir(dir, { withFileTypes: true }); } catch { continue; }
 		for (const entry of entries) {
 			if (entry.isSymbolicLink() || entry.name.startsWith('.env') || IGNORED.has(entry.name)) { continue; }
 			const full = path.join(dir, entry.name);

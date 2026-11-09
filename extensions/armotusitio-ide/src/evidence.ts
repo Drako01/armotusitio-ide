@@ -7,10 +7,10 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 
 /** Accept only producer log references, never paths supplied by the webview. */
-function logReference(value) { return typeof value === 'string' && /^\.harness\/logs\/(?:audit\/)?[a-z0-9][a-z0-9._-]{0,159}\.(?:log|json|txt)$/i.test(value); }
+function logReference(value: any) { return typeof value === 'string' && /^\.harness\/logs\/(?:audit\/)?[a-z0-9][a-z0-9._-]{0,159}\.(?:log|json|txt)$/i.test(value); }
 
 /** Read a bounded tail of a regular log inside the authorized project without following links. */
-async function readEvidence(root, relative) {
+async function readEvidence(root: any, relative: any) {
 	if (!logReference(relative)) { throw new Error('HARNESS_EVIDENCE'); }
 	const directory = await fs.realpath(root);
 	const target = path.join(directory, relative);

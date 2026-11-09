@@ -37,6 +37,7 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, .log:focus-v
 .project-name { color: var(--chat-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sandbox-switch { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; cursor: pointer; color: var(--vscode-foreground); }
 .sandbox-switch:has(input:checked) { color: var(--vscode-editorWarning-foreground); }
+.account-note { font-size: 11px; color: var(--vscode-descriptionForeground); max-width: 260px; }
 .project-select, .model-select, .effort-select, .mode-select { min-height: 24px; font: inherit; color: var(--vscode-dropdown-foreground); background: var(--vscode-dropdown-background); border: 1px solid var(--vscode-dropdown-border, transparent); border-radius: var(--chat-radius); padding: 2px 6px; max-width: 220px; }
 .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .provider-switch { display: inline-flex; padding: 2px; border: 1px solid var(--chat-border); border-radius: var(--chat-radius-large); background: var(--vscode-input-background); }

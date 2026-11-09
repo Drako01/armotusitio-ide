@@ -8,20 +8,20 @@
  * an explicit yes (no channel, no UI, timeout, cancellation, error) is a denial: this module fails closed.
  */
 import { callToolChannel } from './native-tool-server.ts';
-import { suggestRule, whyNotRemembered } from './native-permissions.ts';
+import { globalRuleAllowed, suggestRule, whyNotRemembered } from './native-permissions.ts';
 import { redactSecrets } from './native-redact.ts';
 import type { ApprovalAnswer, ApprovalRequest, PermissionRequest } from './native-permissions-types.ts';
 
 /** Without an answer the request is denied after this long. */
 export const APPROVAL_TIMEOUT_MS = 10 * 60 * 1000;
-export const APPROVAL_ANSWERS: readonly ApprovalAnswer[] = ['once', 'task', 'session', 'always', 'deny'];
+export const APPROVAL_ANSWERS: readonly ApprovalAnswer[] = ['once', 'task', 'session', 'always', 'global', 'deny'];
 /** Answers that reach beyond this one action; each needs a rule to remember. */
-export const REMEMBERING_ANSWERS: readonly ApprovalAnswer[] = ['task', 'session', 'always'];
+export const REMEMBERING_ANSWERS: readonly ApprovalAnswer[] = ['task', 'session', 'always', 'global'];
 
 /** What the tool server asks; the extension assigns the id. */
 export type ApprovalDraft = Omit<ApprovalRequest, 'id'>;
 /** The structured fields the extension derives the "always" rule from; the runner's own `rule` is only a hint and is never trusted. */
-export interface ApprovalSubject { command?: string; args?: string[]; cwd?: string; path?: string; repo?: string; branch?: string; from?: string; base?: string; prTitle?: string; prBody?: string; action?: string }
+export interface ApprovalSubject { host?: string; server?: string; tool?: string; command?: string; args?: string[]; cwd?: string; path?: string; repo?: string; branch?: string; from?: string; base?: string; prTitle?: string; prBody?: string; action?: string }
 export type ApprovalAsk = (request: ApprovalDraft & ApprovalSubject) => Promise<ApprovalAnswer>;
 
 const MAX_PENDING_ARGS = 100;
@@ -36,6 +36,8 @@ function subjectRequest(draft: Partial<ApprovalDraft> & ApprovalSubject): Permis
 			return { kind: 'run', command, args, cwd: cwd ?? '.' };
 		}
 		case 'edit': return typeof draft.path === 'string' && draft.path ? { kind: 'edit', path: draft.path } : undefined;
+		case 'web': return typeof draft.host === 'string' && draft.host.length > 0 && draft.host.length <= 253 ? { kind: 'web', host: draft.host } : undefined;
+		case 'mcp': return [draft.server, draft.tool].every(value => typeof value === 'string' && value.length > 0 && value.length <= 100) ? { kind: 'mcp', server: draft.server!, tool: draft.tool! } : undefined;
 		case 'git_commit': return { kind: 'git_commit', branch: '', files: [], message: '' };
 		case 'git_push': return { kind: 'git_push', branch: '', remote: '' };
 		case 'git_fetch': return { kind: 'git_fetch', remote: '' };
@@ -74,7 +76,7 @@ export function parseApprovalDraft(value: unknown, root?: string): ApprovalDraft
 	const suggested = suggestRule(request, root);
 	const rule = redactSecrets(suggested) === suggested ? suggested : '';
 	const noRemember = rule ? undefined : whyNotRemembered(request, root) ?? 'inexact';
-	return { kind: request.kind, title: redactSecrets(draft.title.slice(0, 200)), rule, detail: detail.map(redactSecrets), ...(noRemember ? { noRemember } : {}) };
+	return { kind: request.kind, title: redactSecrets(draft.title.slice(0, 200)), rule, detail: detail.map(redactSecrets), ...(noRemember ? { noRemember } : {}), ...(rule && globalRuleAllowed(request, root) ? { global: true } : {}) };
 }
 
 /** Asks through the run's channel. The client waits slightly longer than the extension, which answers `deny` on its own timeout. */
@@ -93,7 +95,7 @@ export async function requestApproval(ask: ApprovalAsk | undefined, request: App
 		// The extension owns the rule (it rebuilds it with the project root) and only offers a reaching answer when one exists,
 		// so any valid yes allows this action; a local rule hint may be empty (git_branch_create without the root).
 		// "Always" still needs an exact local rule: nothing permanent is ever granted for an action that cannot be remembered.
-		return answer === 'once' || answer === 'task' || answer === 'session' || (answer === 'always' && !!request.rule) ? undefined : 'DENIED: the user did not allow it';
+		return answer === 'once' || answer === 'task' || answer === 'session' || ((answer === 'always' || answer === 'global') && !!request.rule) ? undefined : 'DENIED: the user did not allow it';
 	} catch (error) {
 		return (error as Error).message === 'HARNESS_TIMEOUT' ? 'DENIED: the user did not answer in time' : 'DENIED: the approval could not be requested';
 	}

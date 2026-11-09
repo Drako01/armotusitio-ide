@@ -12,25 +12,25 @@ const { inicioLabels } = require('./home-labels.ts');
  * Inicio: the Harness control center. The top answers what is running, what needs you and how to ask for something;
  * it reads the shared activity feed and acts through the chat's own methods. Earlier tools live under "Mas".
  */
-function registerHome(context, controller, projects, options) {
-	let panel;
+function registerHome(context: any, controller: any, projects: any, options: any) {
+	let panel: any;
 	let updateRevision = 0;
-	let draft;
-	let reveal;
-	const t = (message, ...args) => vscode.l10n.t(message, ...args);
+	let draft: any;
+	let reveal: any;
+	const t = (message: any, ...args: any[]) => vscode.l10n.t(message, ...args);
 	const { feed, chat } = options || {};
 	const workspace = createWorkspace(context, controller, projects);
-	const folders = () => (vscode.workspace.workspaceFolders || []).map(folder => ({ name: folder.name, id: folder.uri.toString() }));
+	const folders = () => (vscode.workspace.workspaceFolders || []).map((folder: any) => ({ name: folder.name, id: folder.uri.toString() }));
 	/** Feed changes arrive at most four times per second and carry only the items, not the whole page state. */
 	const postFeed = () => { void panel?.webview.postMessage({ type: 'feed', items: feed?.snapshot() || [] }); };
 	if (feed) { context.subscriptions.push(feed.onDidChange(postFeed)); }
-	controller.restoreHarnessDraft = (root, text) => panel?.webview.postMessage({ type: 'restoreDraft', root, text });
-	controller.openTask = prompt => vscode.commands.executeCommand('atsIde.home', { prompt });
+	controller.restoreHarnessDraft = (root: any, text: any) => panel?.webview.postMessage({ type: 'restoreDraft', root, text });
+	controller.openTask = (prompt: any) => vscode.commands.executeCommand('atsIde.home', { prompt });
 	async function update() {
 		const revision = ++updateRevision;
 		if (!panel) { return; }
 		const all = await projects();
-		const providers = await Promise.all(all.map(({ profile }) => controller.getProvider(profile)));
+		const providers = await Promise.all(all.map(({ profile }: any) => controller.getProvider(profile)));
 		const nativeProjects = await controller.nativeProjects?.() || [];
 		if (!panel || revision !== updateRevision) { return; }
 		void panel.webview.postMessage({
@@ -51,14 +51,14 @@ function registerHome(context, controller, projects, options) {
 				repeat: t('Repetir tarea'),
 				states: { interrupted: t('Interrumpida'), running: t('En ejecuci\u00f3n'), passed: t('Completada'), failed: t('Fall\u00f3'), cancelled: t('Cancelada'), ended: t('Finaliz\u00f3 sin c\u00f3digo de salida'), unknown: t('Resultado desconocido tras reiniciar el IDE'), completed: t('Completada'), stalled: t('Sin proceso activo'), active: t('Activa'), pending: t('Pendiente'), blocked: t('Bloqueada'), aborted: t('Abortada') }
 			},
-			projects: all.map(({ profile }, index) => ({ id: profile.id, name: profile.name, root: profile.root, authorityReason: profile.authority?.reason, connection: controller.getHarnessConnection?.(profile.root), actions: profile.actions, workflow: profile.workflow === true, tools: (profile.tools || []).filter(tool => profile.id !== 'armotusitio' || controller.getHarnessConnection?.(profile.root)?.value?.operations.includes(tool.id)).map(tool => ({ ...tool, title: t(tool.title), description: t(tool.description) })), provider: providers[index].label, customProvider: profile.id === 'armotusitio' || providers[index].custom === true, providerSupported: providers[index].supported === true && !providers[index].error })),
+			projects: all.map(({ profile }: any, index: any) => ({ id: profile.id, name: profile.name, root: profile.root, authorityReason: profile.authority?.reason, connection: controller.getHarnessConnection?.(profile.root), actions: profile.actions, workflow: profile.workflow === true, tools: (profile.tools || []).filter((tool: any) => profile.id !== 'armotusitio' || controller.getHarnessConnection?.(profile.root)?.value?.operations.includes(tool.id)).map((tool: any) => ({ ...tool, title: t(tool.title), description: t(tool.description) })), provider: providers[index].label, customProvider: profile.id === 'armotusitio' || providers[index].custom === true, providerSupported: providers[index].supported === true && !providers[index].error })),
 			nativeProjects, nativeLabels: { open: t('Abrir un proyecto'), compatibility: t('Ver compatibilidad'), diagnostics: t('Diagn\u00f3stico'), gates: t('Ver verificaciones'), dependencies: t('Depende de'), newTask: t('Nueva tarea'), projectEngine: t('Harness del proyecto'), projectHint: t('Este proyecto usa su propio Harness. Revis\u00e1s el plan antes de autorizar la ejecuci\u00f3n.'), unsupported: t('El Harness del proyecto tiene prioridad, pero su entrada no es compatible con el IDE. No se iniciar\u00e1 otro motor.'), setup: t('Configurar este proyecto'), setupHint: t('Revis\u00e1 los comandos que usar\u00e1 el Harness. Todav\u00eda no se ejecuta nada.'), readyHint: t('Cre\u00e1 una verificaci\u00f3n local, revis\u00e1 sus comandos y eleg\u00ed cu\u00e1ndo ejecutarla.'), more: t('Historial y opciones'), attempts: t('Intentos'), empty: t('Todav\u00eda no hay tareas en este proyecto.'), inspect: t('Detalle t\u00e9cnico'), approve: t('Revisar y ejecutar'), running: t('Ver tarea en curso'), recover: t('Revisar interrupci\u00f3n'), engine: t('Harness incluido en el IDE'), configure: t('Configurar'), remove: t('Retirar configuraci\u00f3n generada'), create: t('Nueva tarea local'), run: t('Ejecutar'), history: t('Planes, intentos y evidencias'), cancel: t('Cancelar'), reconcile: t('Reconciliar'), error: t('No se pudo leer el estado. Abr\u00ed el diagn\u00f3stico.'), restricted: t('Marc\u00e1 el workspace como confiable para consultar sus tareas.'), capabilities: t('Verificaciones locales sin IA. Los proveedores y agentes requieren una integraci\u00f3n adicional.'), interrupted: t('Resultado incierto; requiere reconciliaci\u00f3n expl\u00edcita.') },
 			workflows: workspace.views(), toolResult: workspace.toolResult(),
-			jobs: controller.getHistory().map(job => ({ id: job.id, action: job.action, host: job.host, state: job.state, project: job.project, startedAt: job.startedAt, endedAt: job.endedAt, repeatable: controller.canRepeat(job), repeatBlocked: controller.isBusy(job.project, job.action) || !all.some(({ profile }) => profile.root === job.project && profile.actions.includes(job.action)) })),
+			jobs: controller.getHistory().map((job: any) => ({ id: job.id, action: job.action, host: job.host, state: job.state, project: job.project, startedAt: job.startedAt, endedAt: job.endedAt, repeatable: controller.canRepeat(job), repeatBlocked: controller.isBusy(job.project, job.action) || !all.some(({ profile }: any) => profile.root === job.project && profile.actions.includes(job.action)) })),
 			progress: controller.readHarnessProgress?.() || controller.progress
 		});
 	}
-	context.subscriptions.push(vscode.commands.registerCommand('atsIde.home', (options = undefined) => {
+	context.subscriptions.push(vscode.commands.registerCommand('atsIde.home', (options: any = undefined) => {
 		if (typeof options?.task === 'string' && typeof options?.root === 'string') { reveal = { type: 'reveal', id: options.task, project: options.root }; }
 		if (typeof options?.prompt === 'string' && options.prompt.length <= 10000) { draft = options.prompt; }
 		if (panel) { panel.reveal(); if (reveal) { void panel.webview.postMessage(reveal); reveal = undefined; } if (draft) { void panel.webview.postMessage({ type: 'draft', text: draft }); draft = undefined; } update(); return; }
@@ -68,7 +68,7 @@ function registerHome(context, controller, projects, options) {
 		});
 		const current = panel;
 		const nonce = randomBytes(24).toString('base64');
-		const uri = name => current.webview.asWebviewUri(vscode.Uri.joinPath(resources, name)).toString();
+		const uri = (name: any) => current.webview.asWebviewUri(vscode.Uri.joinPath(resources, name)).toString();
 		current.webview.html = `<!doctype html><html lang="es-AR"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${current.webview.cspSource}; style-src ${current.webview.cspSource}; script-src 'nonce-${nonce}';">
@@ -110,8 +110,8 @@ function registerHome(context, controller, projects, options) {
 <section aria-labelledby="runs-title"><div class="section-heading"><h2 id="runs-title">${t('Historial de tareas del IDE')}</h2><div class="actions"><button class="secondary" data-action="clear">${t('Borrar historial')}</button><button class="secondary" data-action="cancel">${t('Cancelar una tarea')}</button></div></div><p class="muted">${t('Hasta 20 tareas por proyecto. Se guardan en este workspace, sin logs ni comandos privados.')}</p><div id="runs" role="log" aria-live="polite"></div></section>
 </details></details>
 </main><script nonce="${nonce}" src="${current.webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'dist', 'home.js'))}"></script></body></html>`;
-		const disposables = [];
-		disposables.push(current.webview.onDidReceiveMessage(async message => {
+		const disposables: any[] = [];
+		disposables.push(current.webview.onDidReceiveMessage(async (message: any) => {
 			if (!message || typeof message.action !== 'string') { return; }
 			// The request field and feed actions go through the chat: one circuit, one validation, idempotent actions.
 			if (message.action === 'ask' && typeof message.text === 'string' && typeof message.folder === 'string') {
@@ -122,19 +122,19 @@ function registerHome(context, controller, projects, options) {
 				if (await chat?.act(message.id, message.command)) { return; }
 				if (await controller.goalAct?.(message.id, message.command)) { return; }
 				// Task and external items open their detail, which lives under "Mas".
-				const item = feed?.snapshot().find(entry => entry.id === message.id);
+				const item = feed?.snapshot().find((entry: any) => entry.id === message.id);
 				if (item?.kind === 'task' && item.parentId) { void panel?.webview.postMessage({ type: 'reveal', id: item.parentId, project: item.project }); }
 				void panel?.webview.postMessage({ type: 'openMore' });
 				return;
 			}
 			if (message.action === 'projectInfo') {
-				const project = (await projects()).find(project => project.profile.root === message.root);
+				const project = (await projects()).find((project: any) => project.profile.root === message.root);
 				if (project?.profile.id === 'project-native') { await vscode.window.showInformationMessage(t('El Harness del proyecto conserva la prioridad. Para usarlo desde el IDE debe ofrecer una entrada y un contrato compatibles. No se modificaron sus archivos.')); }
 				return;
 			}
 			if (message.action === 'native') {
 				const commands = ['nativeConfigure', 'nativeRemoveConfiguration', 'nativeNewTask', 'nativeRunTask', 'nativeStatus', 'nativeSupport', 'nativeCancel', 'nativeReconcile', 'nativeAgentExecute', 'nativeAgentWorkflow', 'nativeAgentMetrics', 'nativeWorkflowHistory', 'nativeWorkflowReconcile', 'nativeWorktreeCleanup', 'nativeProviderDiagnostics'];
-				if (commands.includes(message.command) && typeof message.root === 'string' && (vscode.workspace.workspaceFolders || []).some(folder => folder.uri.fsPath === message.root)) { await vscode.commands.executeCommand('atsHarness.' + message.command, message.root, typeof message.id === 'string' && /^[a-z0-9][a-z0-9_-]{0,63}$/i.test(message.id) ? message.id : undefined); }
+				if (commands.includes(message.command) && typeof message.root === 'string' && (vscode.workspace.workspaceFolders || []).some((folder: any) => folder.uri.fsPath === message.root)) { await vscode.commands.executeCommand('atsHarness.' + message.command, message.root, typeof message.id === 'string' && /^[a-z0-9][a-z0-9_-]{0,63}$/i.test(message.id) ? message.id : undefined); }
 				await update(); return;
 			}
 			if (await workspace.receive(message)) { await update(); return; }
@@ -145,19 +145,19 @@ function registerHome(context, controller, projects, options) {
 				return;
 			}
 			if (message.action === 'execute') {
-				const project = (await projects()).find(p => p.profile.root === message.root);
+				const project = (await projects()).find((p: any) => p.profile.root === message.root);
 				if (project && project.profile.actions.includes(message.command)) {
 					await controller.execute(project.folder.uri.toString(), message.command);
 				}
 				return;
 			}
 			if (message.action === 'provider') {
-				const project = (await projects()).find(p => p.profile.root === message.root);
+				const project = (await projects()).find((p: any) => p.profile.root === message.root);
 				if (project) { await vscode.commands.executeCommand('atsHarness.selectProvider', project.folder.uri.toString()); }
 				return;
 			}
 			if (message.action === 'repeat') { if (typeof message.id === 'string') { await controller.repeat(message.id); } return; }
-			const commands = { changes: 'workbench.view.scm', theme: 'workbench.action.selectTheme', chat: 'atsIde.chat', mcp: 'atsIde.mcpConfigure', agent: 'atsIde.agent', context: 'atsIde.context', worktrees: 'atsIde.worktrees', github: 'atsIde.github', n8n: 'atsIde.n8n', plan: 'atsHarness.reviewPlan', cancel: 'atsHarness.cancelTask', clear: 'atsHarness.clearHistory' };
+			const commands: Record<string, string> = { changes: 'workbench.view.scm', theme: 'workbench.action.selectTheme', chat: 'atsIde.chat', mcp: 'atsIde.mcpConfigure', agent: 'atsIde.agent', context: 'atsIde.context', worktrees: 'atsIde.worktrees', github: 'atsIde.github', n8n: 'atsIde.n8n', plan: 'atsHarness.reviewPlan', cancel: 'atsHarness.cancelTask', clear: 'atsHarness.clearHistory' };
 			if (Object.hasOwn(commands, message.action)) { await vscode.commands.executeCommand(commands[message.action]); }
 		}));
 		disposables.push(current.onDidDispose(() => { panel = undefined; for (const disposable of disposables) { disposable.dispose(); } }));

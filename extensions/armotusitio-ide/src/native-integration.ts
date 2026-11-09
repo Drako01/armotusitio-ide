@@ -21,6 +21,9 @@ import { runCommand } from './native-command-runner.ts';
 import { openToolChannel } from './native-tool-server.ts';
 import { createWorkMcpBridge, type WorkMcpTool } from './native-mcp-bridge.ts';
 import { parseApprovalDraft, type ApprovalAsk } from './native-approval.ts';
+import { ProfileRegistry } from './native-profiles.ts';
+import { registerProfileCommands } from './native-profile-commands.ts';
+import { registerAccountsPanel } from './accounts-panel.ts';
 import { NativeChatTransport, parseAgentQuestions, parseTransportSetting, type NativeTurnHooks } from './native-agent-transport.ts';
 import type { SessionRole } from './runtime/contracts.ts';
 import { addUserRule, configuredPreset, listUserRules, loadPermissions, removeUserRule } from './native-permissions.ts';
@@ -28,6 +31,7 @@ import { repoFingerprint } from './native-git-tools.ts';
 import { projectPermissionsDigest } from './native-run-integrity.ts';
 import type { PermissionPreset } from './native-permissions-types.ts';
 import { runEditorTool, type EditorBackend } from './native-editor-tools.ts';
+import { McpServerStore } from './native-mcp-servers.ts';
 import { KeychainDevSecrets } from './native-dev-secrets.ts';
 import { doctorReport, runDoctor, type DoctorCheck, type Exec } from './native-machine-doctor.ts';
 import { collectOrphans, validateTemplate, type EnvironmentTemplate } from './native-ephemeral-env.ts';
@@ -283,7 +287,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 	/** Command policy configuration of a project: the project Harness delegates commands when it declares `command-runner`. */
 	const policyConfigOf = async (root: string): Promise<{ policy: CommandPolicyConfig; authority: Awaited<ReturnType<typeof inspectHarnessAuthority>>; subprojects: Awaited<ReturnType<typeof detectEcosystems>>; delegate: boolean }> => {
 		const authority = await inspectHarnessAuthority(root);
-		const delegate = authority.engine === 'project' && !!authority.entry && (await readProjectCapabilities(root).catch(() => [])).includes('command-runner');
+		const delegate = authority.engine === 'project' && !!authority.entry && (await readProjectCapabilities(root).catch(() => [] as string[])).includes('command-runner');
 		const subprojects = delegate ? [] : await detectEcosystems(root);
 		return { policy: { subprojects, delegate, extras: commandExtras() }, authority, subprojects, delegate };
 	};
@@ -348,10 +352,13 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			} : {}),
 			...(delegate ? { delegateEntry: path.join(root, authority.entry!) } : {})
 		};
+		// User-added MCP servers only reach a native conversation that can ask the user: each of their tools goes through `approve`.
+		const userServers = native && approve ? await mcpServers.launchEntries() : {};
+		if (Object.keys(userServers).length) { config.mcpServers = Object.keys(userServers); }
 		const configFile = path.join(directory, 'runner.json');
 		await fs.writeFile(configFile, JSON.stringify(config), { mode: 0o600 });
 		const launch = { command: process.execPath, args: [path.join(context.extensionPath ?? context.extensionUri?.fsPath ?? '', 'dist', 'ats-runner.js'), configFile], env: { ELECTRON_RUN_AS_NODE: '1' }, mcpConfigFile: path.join(directory, 'mcp.json'), ...(writerTools ? { git: true, files: true } : {}), ...(native ? { approve: true } : {}) };
-		await fs.writeFile(launch.mcpConfigFile, JSON.stringify({ mcpServers: { 'ats-runner': { type: 'stdio', command: launch.command, args: launch.args, env: launch.env } } }), { mode: 0o600 });
+		await fs.writeFile(launch.mcpConfigFile, JSON.stringify({ mcpServers: { ...userServers, 'ats-runner': { type: 'stdio', command: launch.command, args: launch.args, env: launch.env } } }), { mode: 0o600 });
 		return {
 			launch, policy: createCommandPolicy(approve ? { ...policy, permissions: await loadPermissions(root, undefined, vscode.l10n.t, { preset: permissionsPreset() }) } : policy).describe(), ecosystems: describeEcosystems(subprojects),
 			// The configuration goes; the command logs and audit stay with the run for the report.
@@ -366,13 +373,44 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 	 * Native transport of the chat (r8): persistent provider sessions behind the same guarded pipeline. The setting decides
 	 * (structured | native | auto); an incompatible CLI keeps the structured transport and says why once per provider.
 	 */
+	// Each AI profile is a private config directory (CLAUDE_CONFIG_DIR / CODEX_HOME) under the IDE storage, never inside a project.
+	/** MCP servers the user connected with `/mcp`; credentials stay in the IDE's secret storage. */
+	const mcpOAuth = { fetch: globalThis.fetch, openBrowser: async (url: string) => { await vscode.env.openExternal(vscode.Uri.parse(url)); } };
+	const mcpServers = new McpServerStore(path.join(context.globalStorageUri.fsPath, 'mcp-servers'), context.secrets, mcpOAuth);
+	const profiles = new ProfileRegistry(path.join(context.globalStorageUri.fsPath, 'ai-profiles'), (provider, env) => new Promise(resolve => {
+		resolveNativeCommand(provider, provider === 'claude' ? ['auth', 'status'] : ['login', 'status'], env).then(resolved => execFile(resolved.executable, resolved.args, { env, timeout: 15_000, windowsHide: true, maxBuffer: 64 * 1024 }, (error, stdout, stderr) => resolve({ code: error ? 1 : 0, output: stdout + stderr })), () => resolve(undefined));
+	}));
+	// The chat reads and assigns accounts through the same registry the commands use.
+	controller.profiles = profiles;
+	controller.mcpServers = mcpServers;
+	controller.mcpOAuth = mcpOAuth;
+	const profileDeps = {
+		registry: profiles,
+		rootOf: async () => {
+			const folders: Host[] = vscode.workspace.workspaceFolders ?? [];
+			const folder = folders.length > 1 ? await vscode.window.showWorkspaceFolderPick() : folders[0];
+			return folder ? fs.realpath(folder.uri.fsPath) : undefined;
+		},
+		showError: (error: unknown) => showError(error)
+	};
+	registerProfileCommands(context, vscode, profileDeps);
+	registerAccountsPanel(context, vscode, profileDeps);
+	/** Environment transform of the AI profile this project uses for the provider, for the one-shot (structured) transport. */
+	const profileEnvironment = async (root: string, provider: NativeProvider): Promise<((base: NodeJS.ProcessEnv) => NodeJS.ProcessEnv) | undefined> => {
+		const profile = await profiles.resolve(provider, root);
+		return profile && (base => profiles.environment(profile, base));
+	};
 	const nativeChat = new NativeChatTransport({
 		storageFor: root => metricsDirectory(root),
+		profileFor: async (root, provider) => (await profiles.resolve(provider, root))?.id,
 		setting: () => parseTransportSetting(vscode.workspace.getConfiguration('atsHarness').get('agentTransport', 'structured')),
 		trusted: () => vscode.workspace.isTrusted,
-		environment: async provider => {
+		environment: async (provider, profileId) => {
 			const toolchain = await currentToolchainEnvironment();
-			return { env: await withHarnessProvider(toolchain.env, provider), writableRoots: toolchain.writableRoots };
+			// A profile that cannot be found stops the run: it never falls back to another account or to the IDE's own login.
+			const profile = profileId ? await profiles.get(profileId) : undefined;
+			if (profileId && !profile) { throw Error('HARNESS_PROFILE_NOT_FOUND'); }
+			return { env: await withHarnessProvider(profile ? profiles.environment(profile, toolchain.env) : toolchain.env, provider), writableRoots: toolchain.writableRoots };
 		},
 		toolServer: (root, provider, role, channel) => prepareToolServer(root, role === 'writer' ? implementerMaxTurns() : 50, provider, undefined, undefined, channel.approve, { role, question: channel.question, epoch: channel.epoch }),
 		policy: async root => {
@@ -468,7 +506,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			await hooks.beforeLaunch?.();
 			await fence.assertCurrent();
 			execution = hooks.execute ? await hooks.execute()
-				: await executeReviewedAgent(reviewAgentDraft(draft), draft, undefined, hooks.onProgress && (progress => hooks.onProgress!(progress.observedBytes)), hooks.onMessage, hooks.toolServer, text => devSecrets.redact(text) !== text, hooks.onStep);
+				: await executeReviewedAgent(reviewAgentDraft(draft), draft, undefined, hooks.onProgress && (progress => hooks.onProgress!(progress.observedBytes)), hooks.onMessage, hooks.toolServer, text => devSecrets.redact(text) !== text, hooks.onStep, await profileEnvironment(draft.projectRoot, draft.provider));
 		} catch (error) {
 			await lease?.release().catch(() => undefined);
 			if (fence) { await fence.release(); }
@@ -556,7 +594,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 				return { native: true, lastInputRef: await nativeChat.lastInputRef(await rootOf(), provider, conversationId) };
 			},
 			fork: async (provider, conversationId, next) => nativeChat.fork(await rootOf(), provider, conversationId, next),
-			rememberApproval: async rule => addUserRule(rule, 'allow', undefined, await rootOf()),
+			rememberApproval: async (rule, scope) => addUserRule(rule, 'allow', undefined, scope === 'project' ? await rootOf() : undefined),
 			preflight: async () => doctorFor(await rootOf(), true),
 			readQuota: async provider => provider === 'codex' ? readLatestCodexQuota() : undefined,
 			async discard(diff) {
@@ -792,7 +830,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 				if (!value) { return; }
 				const rules = await vscode.window.showInputBox({ title: vscode.l10n.t('Comandos que pueden usarlo'), prompt: vscode.l10n.t('Separados por coma; @carpeta limita la carpeta. Ejemplo: go test @apps/api'), ignoreFocusOut: true });
 				if (!rules?.trim()) { return; }
-				await devSecrets.set(key, name, value, rules.split(',').map(rule => rule.trim()).filter(Boolean));
+				await devSecrets.set(key, name, value, rules.split(',').map((rule: string) => rule.trim()).filter(Boolean));
 				void vscode.window.showInformationMessage(vscode.l10n.t('Secreto {0} guardado en el llavero del sistema.', name));
 			}
 			if (picked?.label === remove) {
@@ -803,7 +841,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 	}));
 	controller.nativeRunning = () => running.size + runningAgents.size + pendingAgents.size + runningWorkflows.size + pendingWorkflows.size + goalIntegration.running();
 	controller.nativeProjects = async () => {
-		const rows = [];
+		const rows: any[] = [];
 		if (!vscode.workspace.getConfiguration('atsHarness').get('enabled', true)) { return rows; }
 		for (const folder of vscode.workspace.workspaceFolders || []) {
 			try {
@@ -977,7 +1015,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			if (JSON.stringify((await loadProjectConfig(root))?.plan || null) !== verificationSnapshot) { throw Error('HARNESS_WORKFLOW_VERIFICATION_CHANGED'); }
 			assertProviderCapacity();
 			pendingWorkflows.add(root); controller.refresh();
-			const engine = new NativeAgentWorkflow(executionRoot, path.join(metricsDirectory(root), 'workflows'), root, modelFor, effortFor);
+			const engine = new NativeAgentWorkflow(executionRoot, path.join(metricsDirectory(root), 'workflows'), root, modelFor, effortFor, provider => profileEnvironment(root!, provider));
 			const unsubscribeEvents = engine.onEvent(() => { controller.refresh(); });
 			const validationEngine = isolation ? new NativeHarness(executionRoot, path.join(metricsDirectory(root), 'isolated-verification', isolation.id)) : chosen.engine;
 			let checkpoint: WorktreeCheckpoint | undefined;

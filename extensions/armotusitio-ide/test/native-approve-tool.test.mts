@@ -55,14 +55,54 @@ test('Claude permission prompts are decided by the same policy and permissions a
 			await verdict('Bash', 'not an object' as unknown as Record<string, unknown>)
 		], [
 			'allow', 'DENIED: the user did not allow it', 'allow', 'POLICY_DENIED: shell-operator', 'POLICY_DENIED: change-directory', 'POLICY_DENIED: background', 'POLICY_DENIED: credential-access',
-			'allow', 'allow', 'POLICY_DENIED: protected-path', 'POLICY_DENIED: path-outside-project', 'POLICY_DENIED: edit:secret/**', 'allow', 'POLICY_DENIED: path-outside-project', 'POLICY_DENIED: tool-unavailable',
+			'allow', 'allow', 'POLICY_DENIED: protected-path', 'POLICY_DENIED: path-outside-project', 'POLICY_DENIED: edit:secret/**', 'allow', 'POLICY_DENIED: path-outside-project', 'DENIED: the user did not allow it',
 			denialText('invalid').split('\n', 1)[0]
 		]);
 		// An allowed prompt hands the input back unchanged; the cards were the two external CLI calls.
 		assert.deepEqual({ allowed: await decide('Bash', { command: 'node --version', description: 'version' }), cards: asked.map(card => card.detail[0]) },
-			{ allowed: { behavior: 'allow', updatedInput: { command: 'node --version', description: 'version' } }, cards: ['command: docker ps', 'command: docker images'] });
+			{ allowed: { behavior: 'allow', updatedInput: { command: 'node --version', description: 'version' } }, cards: ['command: docker ps', 'command: docker images', 'host: example.com'] });
 	} finally {
 		await fs.rm(root, { recursive: true, force: true });
 		await fs.rm(home, { recursive: true, force: true });
 	}
+});
+
+test('a tool of a user-added MCP server asks by default, obeys mcp rules, and an unknown server is unavailable', async () => {
+	const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'ats-approve-mcp-')));
+	const home = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-approve-mcp-home-'));
+	try {
+		await addUserRule('mcp:github/list_issues', 'allow', home);
+		await addUserRule('mcp:github/delete_repo', 'deny', home);
+		const permissions = await loadPermissions(root, home, undefined, { preset: 'dev' });
+		const asked: ApprovalDraft[] = [];
+		const context: ApproveContext = {
+			root, permissions, policy: createCommandPolicy({ subprojects: [], delegate: false, extras: [], permissions }), mcpServers: ['github'],
+			ask: async card => { asked.push(card); return 'once'; }
+		};
+		const verdict = async (tool_name: string) => { const decision = await decidePermissionPrompt(context, { tool_name, input: { title: 'x'.repeat(500), n: 1 } }); return decision.behavior === 'allow' ? 'allow' : decision.message.split('\n', 1)[0]; };
+		const results = [await verdict('mcp__github__list_issues'), await verdict('mcp__github__delete_repo'), await verdict('mcp__github__create_issue'), await verdict('mcp__other__anything')];
+		assert.deepEqual({ results, cards: asked.map(card => ({ kind: card.kind, detail: card.detail.map(line => line.slice(0, 40)) })) }, {
+			results: ['allow', 'POLICY_DENIED: mcp:github/delete_repo', 'allow', 'POLICY_DENIED: tool-unavailable'],
+			cards: [{ kind: 'mcp', detail: ['server: github', 'tool: create_issue', 'arg title: ' + 'x'.repeat(29), 'arg n: 1'] }]
+		});
+	} finally { await fs.rm(root, { recursive: true, force: true }); await fs.rm(home, { recursive: true, force: true }); }
+});
+
+test('WebFetch asks per host, obeys web rules, and never reaches private or non-https hosts', async () => {
+	const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'ats-approve-web-')));
+	const home = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-approve-web-home-'));
+	try {
+		await addUserRule('web:docs.python.org', 'allow', home);
+		await addUserRule('web:*.evil.example', 'deny', home);
+		const permissions = await loadPermissions(root, home, undefined, { preset: 'dev' });
+		const asked: ApprovalDraft[] = [];
+		const context: ApproveContext = { root, permissions, policy: createCommandPolicy({ subprojects: [], delegate: false, extras: [], permissions }), ask: async card => { asked.push(card); return 'once'; } };
+		const verdict = async (url: string) => { const decision = await decidePermissionPrompt(context, { tool_name: 'WebFetch', input: { url, prompt: 'summarize' } }); return decision.behavior === 'allow' ? 'allow' : decision.message.split('\n', 1)[0]; };
+		const results = [await verdict('https://docs.python.org/3/'), await verdict('https://a.evil.example/x'), await verdict('https://nodejs.org/api'), await verdict('http://nodejs.org'),
+			await verdict('https://localhost/admin'), await verdict('https://192.168.1.10/'), await verdict('https://printer.local/'), await verdict('https://user:pw@nodejs.org/'), await verdict('not a url')];
+		assert.deepEqual({ results, cards: asked.map(card => card.detail) }, {
+			results: ['allow', 'POLICY_DENIED: web:*.evil.example', 'allow', 'POLICY_DENIED: web-host', 'POLICY_DENIED: web-host', 'POLICY_DENIED: web-host', 'POLICY_DENIED: web-host', 'POLICY_DENIED: web-host', 'POLICY_DENIED: web-host'],
+			cards: [['host: nodejs.org', 'url: https://nodejs.org/api']]
+		});
+	} finally { await fs.rm(root, { recursive: true, force: true }); await fs.rm(home, { recursive: true, force: true }); }
 });

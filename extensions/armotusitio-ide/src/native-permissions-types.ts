@@ -11,6 +11,8 @@
  *   run:<glob>        a command line, `command arg1 arg2` joined by single spaces   e.g. `run:pnpm test*`
  *   edit:<glob>       RESERVED, not enforced yet: edits are made by the provider's native tools, which nothing here intercepts
  *   edit:<glob>       also decides the structured delete_path / move_path tools (project-relative path)
+ *   mcp:<glob>       a tool of a user-added MCP server, written `server/tool` (e.g. `mcp:github/*`); asked unless a rule allows it
+ *   web:<glob>        a page fetch by the agent (WebFetch), written as the host name (e.g. `web:docs.python.org`); asked unless a rule allows it
  *   git_commit        the structured commit tool, in every project
  *   git_push          the structured push tool, in every project
  *   git_branch_create the structured branch creation tool, in every project
@@ -49,7 +51,9 @@ export type PermissionRequest =
 	| { kind: 'git_push'; branch: string; remote: string }
 	| { kind: 'git_branch_create'; repo: string; branch: string; from: string }
 	| { kind: 'git_pr_upsert'; repo: string; branch: string; base: string; title: string; body: string }
-	| { kind: 'git_fetch'; remote: string; branch?: string };
+	| { kind: 'git_fetch'; remote: string; branch?: string }
+	| { kind: 'mcp'; server: string; tool: string }
+	| { kind: 'web'; host: string };
 
 export interface PermissionVerdict {
 	decision: PermissionDecision;
@@ -72,6 +76,8 @@ export interface ApprovalRequest {
 	rule: string;
 	/** Why the action cannot be remembered, when `rule` is empty; the card says so instead of hiding the options silently. */
 	noRemember?: NoRememberReason;
+	/** The rule may also be remembered for every project; set only for exact rules of inspection commands (`globalRuleAllowed`). */
+	global?: boolean;
 	/** How much harm a wrong yes can do, shown on the card next to what, where and for how long. */
 	risk?: ApprovalRisk;
 }
@@ -79,8 +85,8 @@ export interface ApprovalRequest {
 export type ApprovalRisk = 'low' | 'medium' | 'high';
 /**
  * How far an approval reaches: this action only, the rest of the current run, the rest of the IDE session in this project,
- * or always in this project. Anything else is a denial.
+ * always in this project, or in every project (`global`, offered only for inspection commands). Anything else is a denial.
  */
-export type ApprovalAnswer = 'once' | 'task' | 'session' | 'always' | 'deny';
+export type ApprovalAnswer = 'once' | 'task' | 'session' | 'always' | 'global' | 'deny';
 /** Why an approval is offered only once: dependency installs, irreversible file changes, publication, or no exact rule exists. */
 export type NoRememberReason = 'dependency' | 'irreversible' | 'publication' | 'inexact';

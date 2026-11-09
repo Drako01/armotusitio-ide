@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 'use strict';
+const { stripTypeScriptTypes } = require('node:module');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -44,7 +45,7 @@ function harness(secrets = undefined, storage = '/private', roots = ['/repo']) {
 		dispose() { }
 	}
 	const module = { exports: {} };
-	vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../src/workspace.ts'), 'utf8'), { module, process, require: name => name === './adapter.ts' || name === './src/adapter.ts' ? require('../src/adapter.ts') : name === './evidence.ts' ? require('../src/evidence.ts') : name === 'vscode' ? vscode : name === './workflow.ts' ? { HarnessWorkflow: Workflow, redact: require('../src/workflow.ts').redact, nativeRun: async (profile, args) => { calls.push(['native', ...args]); return native(profile, args); } } : name === './catalog.ts' ? { toolArgs } : require(name) });
+	vm.runInNewContext(stripTypeScriptTypes(fs.readFileSync(path.join(__dirname, '../src/workspace.ts'), 'utf8')), { module, process, require: name => name === './adapter.ts' || name === './src/adapter.ts' ? require('../src/adapter.ts') : name === './evidence.ts' ? require('../src/evidence.ts') : name === 'vscode' ? vscode : name === './workflow.ts' ? { HarnessWorkflow: Workflow, redact: require('../src/workflow.ts').redact, nativeRun: async (profile, args) => { calls.push(['native', ...args]); return native(profile, args); } } : name === './catalog.ts' ? { toolArgs } : require(name) });
 	const profiles = roots.map(root => ({ id: 'redevent', root, workflow: true, tools }));
 	const controller = { progress: [], refresh() { }, async getProvider() { return { custom }; } };
 	const workspaceState = { get: (key, fallback) => state.has(key) ? state.get(key) : fallback, update: async (key, value) => { state.set(key, value); } };

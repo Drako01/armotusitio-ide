@@ -40,10 +40,12 @@ export interface SessionIdentity {
 	worktree: string;
 	provider: NativeProvider;
 	conversationId: string;
+	/** AI profile (account) the session runs under; part of the key, so another profile is another session. Absent: the IDE's own login. */
+	profileId?: string;
 }
 
 export function sessionKey(identity: SessionIdentity): string {
-	return createHash('sha256').update([identity.root, identity.worktree, identity.provider, identity.conversationId].join('\u0000')).digest('hex').slice(0, 32);
+	return createHash('sha256').update([identity.root, identity.worktree, identity.provider, identity.conversationId, ...(identity.profileId ? [identity.profileId] : [])].join('\u0000')).digest('hex').slice(0, 32);
 }
 
 /** What a tool call does, normalized across providers for policy, cards and the timeline. */
@@ -119,7 +121,7 @@ export interface AdapterEvent {
 export interface ApprovalVerdict {
 	allowed: boolean;
 	/** How long the user allowed it; adapters translate only what the provider really supports. */
-	scope: 'once' | 'task' | 'session' | 'always';
+	scope: 'once' | 'task' | 'session' | 'always' | 'global';
 	/** Text the model receives on a denial (`POLICY_DENIED: ...`, `DENIED: ...`). */
 	reason?: string;
 }

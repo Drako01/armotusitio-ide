@@ -5,9 +5,9 @@
 'use strict';
 
 /** Rank confirmed activity ahead of historical and unverified records in every surface. */
-function activityRank(entry) {
+function activityRank(entry: any) {
 	return entry.phase === 'stopping' ? 0 : entry.progress?.live && !entry.progressError || entry.phase === 'running' && entry.owned ? 1 : ['questions', 'review', 'blocked'].includes(entry.phase) ? 2 : ['preparing', 'creating'].includes(entry.phase) ? 3 : ['interrupted', 'pending', 'unknown'].includes(entry.phase) ? 4 : 5;
 }
-function sortActivity(entries) { return [...entries].sort((a, b) => activityRank(a) - activityRank(b) || (b.startedAt || 0) - (a.startedAt || 0) || a.id.localeCompare(b.id)); }
+function sortActivity(entries: any) { return [...entries].sort((a, b) => activityRank(a) - activityRank(b) || (b.startedAt || 0) - (a.startedAt || 0) || a.id.localeCompare(b.id)); }
 
 module.exports = { activityRank, sortActivity };

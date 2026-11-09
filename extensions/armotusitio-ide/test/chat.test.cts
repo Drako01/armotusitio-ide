@@ -197,7 +197,7 @@ async function panelFixture(replies, providerStatus = { claude: 'authenticated',
 		const last = states.at(-1);
 		return { ...last, chat: last.chat && { ...last.chat, messages: last.chat.messages ?? messages } };
 	};
-	const cleanup = async () => { context.subscriptions.forEach(item => item.dispose()); await fsp.rm(storage, { recursive: true, force: true }); };
+	const cleanup = async () => { context.subscriptions.forEach(item => item.dispose()); await fsp.rm(storage, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); };
 	return { receive, state, posted, calls, executed, instructions, approvals, root, settings, cleanup };
 }
 

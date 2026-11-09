@@ -128,3 +128,31 @@ test('DAG blocks unreviewed writes before launching agents', () => {
 	};
 	assert.throws(() => validateDAGReviewCoverage(unsafe), /HARNESS_DAG_REVIEW_REQUIRED/);
 });
+
+test('workflow providers run inside the account directory of the profile, not the IDE session', async () => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-dag-profile-'));
+	const oldPath = process.env.PATH;
+	try {
+		const canonical = await fs.realpath(root);
+		const bin = path.join(root, 'bin');
+		const seen = path.join(root, 'seen.txt');
+		await fs.mkdir(bin);
+		await installFakeCodex(bin, ['#!/usr/bin/env node', 'let input = "";', 'process.stdin.on("data", chunk => input += chunk);',
+			'process.stdin.on("end", () => { require("node:fs").appendFileSync(' + JSON.stringify(seen) + ', "home=" + process.env.CODEX_HOME + String.fromCharCode(10)); console.log("HARNESS_REVIEW: PASS"); });'].join('\n'));
+		process.env.PATH = bin + path.delimiter + (oldPath || '');
+		const graph: HandoffPlan = {
+			schemaVersion: 1, handoffs: [
+				{ id: 'writer', role: 'implementer', provider: 'codex', dependsOn: [], instruction: 'DAG_WRITE implement' },
+				{ id: 'review', role: 'reviewer', provider: 'codex', dependsOn: ['writer'], instruction: 'Read-only review; print HARNESS_REVIEW: PASS' }
+			]
+		};
+		const profileDir = path.join(root, 'account-work');
+		const workflow = new NativeAgentWorkflow(canonical, path.join(root, 'private'), canonical, () => undefined, () => undefined, async () => base => ({ ...base, CODEX_HOME: profileDir }));
+		const result = await (await workflow.start(graph, workflowDigest(canonical, graph), () => true)).result;
+		const homes = (await fs.readFile(seen, 'utf8')).trim().split('\n');
+		assert.deepEqual({ status: result.status, homes }, { status: 'passed', homes: ['home=' + profileDir, 'home=' + profileDir] });
+	} finally {
+		if (oldPath === undefined) { delete process.env.PATH; } else { process.env.PATH = oldPath; }
+		await fs.rm(root, { recursive: true, force: true });
+	}
+});

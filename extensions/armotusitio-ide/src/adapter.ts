@@ -9,7 +9,7 @@ const { activityRank, sortActivity } = require('./presentation.ts');
 const { inspectHarnessAuthority } = require('./native-authority.ts');
 
 /** Resolve a producer-owned regular entrypoint without following links outside the authorized root. */
-async function nativeEntry(profile) {
+async function nativeEntry(profile: any) {
 	const relative = profile.id === 'redevent' ? '.harness/core.mjs' : profile.id === 'armotusitio' ? 'harness/scripts/ide.mjs' : profile.id === 'project-native' ? (await inspectHarnessAuthority(profile.root)).entry : undefined;
 	if (!relative) { throw new Error('HARNESS_UNSUPPORTED'); }
 	try {
@@ -21,11 +21,11 @@ async function nativeEntry(profile) {
 }
 
 /** Validate declared capabilities before allowing any native lifecycle mutation. */
-function capabilities(value) {
+function capabilities(value: any) {
 	if (value?.contract !== 'armotusitio-harness-ide' || value.schemaVersion !== 1 || !/^1\./.test(value.version || '') || !Array.isArray(value.hosts) || !value.hosts.includes('project')) { throw new Error('HARNESS_CONTRACT'); }
 	const required = ['preflight', 'run', 'execute', 'progress', 'list', 'status', 'resume', 'retry', 'abort'];
 	if (!required.every(name => value.operations?.[name]?.supported === true)) { throw new Error('HARNESS_CAPABILITY'); }
-	return { contract: value.contract, version: value.version, operations: Object.keys(value.operations).filter(name => value.operations[name]?.supported === true), hosts: ['project'], unsupported: (value.unsupported || []).map(item => String(item.id)).slice(0, 30) };
+	return { contract: value.contract, version: value.version, operations: Object.keys(value.operations).filter(name => value.operations[name]?.supported === true), hosts: ['project'], unsupported: (value.unsupported || []).map((item: any) => String(item.id)).slice(0, 30) };
 }
 
 module.exports = { nativeEntry, capabilities, activityRank, sortActivity };

@@ -61,7 +61,7 @@ export function globMatches(glob: string, subject: string): boolean {
 function parseRule(text: unknown): Rule | undefined {
 	if (typeof text !== 'string' || !text || text.length > MAX_RULE_LENGTH || /[\u0000-\u001f\u007f]/.test(text)) { return undefined; }
 	if (GIT_KINDS.has(text)) { return { text, kind: text as PermissionRequest['kind'], glob: '' }; }
-	const match = /^(run|edit|git_commit|git_push|git_branch_create|git_pr_upsert|git_fetch):(.+)$/.exec(text);
+	const match = /^(run|edit|mcp|web|git_commit|git_push|git_branch_create|git_pr_upsert|git_fetch):(.+)$/.exec(text);
 	if (!match) { return undefined; }
 	return { text, kind: match[1] as PermissionRequest['kind'], glob: GIT_KINDS.has(match[1]) ? projectKey(match[2]) : match[2] };
 }
@@ -79,6 +79,8 @@ function subjectOf(request: PermissionRequest, root: string): { kind: Permission
 	switch (request.kind) {
 		case 'run': return { kind: 'run', subject: [commandName(request.command), ...request.args].join(' ') };
 		case 'edit': return { kind: 'edit', subject: normalizePath(request.path) };
+		case 'mcp': return { kind: 'mcp', subject: request.server + '/' + request.tool };
+		case 'web': return { kind: 'web', subject: request.host };
 		default: return { kind: request.kind, subject: projectKey(root) };
 	}
 }
@@ -163,6 +165,9 @@ async function readLayer(file: string, allowAllow: boolean, label: string, t: Tr
 function presetDecision(preset: PermissionPreset, request: PermissionRequest): PermissionDecision {
 	switch (request.kind) {
 		case 'edit': return preset === 'readonly' ? 'deny' : 'allow';
+		// An external server runs code the IDE cannot inspect: no preset allows it without a rule.
+		case 'mcp':
+		case 'web': return preset === 'readonly' ? 'deny' : 'ask';
 		case 'git_commit': return preset === 'readonly' ? 'deny' : preset === 'trusted' ? 'allow' : 'ask';
 		case 'git_fetch': return preset === 'readonly' ? 'deny' : 'allow';
 		case 'git_push':
@@ -344,6 +349,11 @@ export function suggestRule(request: PermissionRequest, root?: string): string {
 		// The glob grammar has no escaping: a root containing `*` or control characters cannot be written as an exact rule.
 		return key && !/[*\u0000-\u001f\u007f]/.test(key) && rule.length <= MAX_RULE_LENGTH ? rule : '';
 	}
+	if (request.kind === 'mcp') {
+		const rule = 'mcp:' + request.server + '/' + request.tool;
+		return /^[A-Za-z0-9_.-]+$/.test(request.server) && /^[A-Za-z0-9_.-]+$/.test(request.tool) && rule.length <= MAX_RULE_LENGTH ? rule : '';
+	}
+	if (request.kind === 'web') { return /^[a-z0-9][a-z0-9.-]*$/.test(request.host) ? 'web:' + request.host : ''; }
 	if (request.kind !== 'run' || request.args.length === 0) { return ''; }
 	if (installsOrLaunches(request)) { return ''; }
 	// No escaping syntax exists in the glob grammar. Refuse metacharacters, empty arguments and argument-boundary ambiguity.
@@ -351,6 +361,14 @@ export function suggestRule(request: PermissionRequest, root?: string): string {
 	if (parts.some(part => !part || /[\s*?\u0000-\u001f\u007f]/.test(part))) { return ''; }
 	const rule = 'run:' + parts.join(' ');
 	return rule.length <= MAX_RULE_LENGTH ? rule : '';
+}
+
+/** Inspection commands whose exact rule may be remembered for every project: none runs project code, reads secrets or changes anything. */
+const GLOBAL_SAFE_SUBCOMMANDS = new Map<string, readonly string[]>([['docker', ['ps', 'images', 'version', 'info']], ['terraform', ['version']], ['kubectl', ['version']]]);
+
+/** Whether the "every project" answer may be offered: only exact rules of those commands, never git, edits or anything that runs project code. */
+export function globalRuleAllowed(request: PermissionRequest, root?: string): boolean {
+	return request.kind === 'run' && !!suggestRule(request, root) && request.args.length === 1 && GLOBAL_SAFE_SUBCOMMANDS.get(commandName(request.command))?.includes(request.args[0]) === true;
 }
 
 /** Validates the raw `atsHarness.permissionsPreset` setting; `undefined` lets the permission files decide. */

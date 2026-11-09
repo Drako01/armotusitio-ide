@@ -43,7 +43,9 @@ export interface NativeTransportDeps {
 	setting(): TransportSetting;
 	trusted(root: string): boolean;
 	/** Provider environment (toolchain PATH, provider config) and the toolchain caches a writer may also write. */
-	environment(provider: NativeProvider): Promise<{ env: NodeJS.ProcessEnv; writableRoots: readonly string[] }>;
+	environment(provider: NativeProvider, profileId?: string): Promise<{ env: NodeJS.ProcessEnv; writableRoots: readonly string[] }>;
+	/** The AI profile this project uses for the provider (workspace assignment, then default); `undefined` keeps the IDE's own login. */
+	profileFor?(root: string, provider: NativeProvider): Promise<string | undefined>;
 	/** The `ats-runner` tool server of a session; `approve`/`question`/`epoch` reach the current turn through these callbacks. */
 	toolServer(root: string, provider: NativeProvider, role: SessionRole, channel: { approve: ApprovalAsk; question: NonNullable<NativeTurnHooks['question']>; epoch(): number }): Promise<{ launch: ToolServerLaunch; dispose(): Promise<void> }>;
 	/** Policy and permissions of the project, read fresh for each provider-initiated approval. */
@@ -249,7 +251,8 @@ export class NativeChatTransport {
 				.then(result => result.stdout.trim() + '|' + root, () => root);
 			this.worktrees.set(root, worktree);
 		}
-		return { root, worktree: await worktree, provider, conversationId };
+		const profileId = await this.deps.profileFor?.(root, provider);
+		return { root, worktree: await worktree, provider, conversationId, ...(profileId ? { profileId } : {}) };
 	}
 
 	private async session(root: string, provider: NativeProvider, conversationId: string): Promise<ManagedSession> {
@@ -266,7 +269,7 @@ export class NativeChatTransport {
 			const hooksOf = (session: ManagedSession) => this.turnHooks.get(session.key);
 			manager = new AgentSessionManager(new AgentSessionStore(deps.storageFor(root)), [new ClaudeAdapter(), new CodexAdapter({ fullAccess: () => deps.codexFullAccess(), clientVersion: deps.clientVersion })], {
 				async prepare(identity, role) {
-					const { env, writableRoots } = await deps.environment(identity.provider);
+					const { env, writableRoots } = await deps.environment(identity.provider, identity.profileId);
 					// The handle exists before its process: the tool server reaches the current turn through it.
 					const session = await managerOf().session(identity);
 					const current = (): NativeTurnHooks | undefined => session && hooksOf(session);

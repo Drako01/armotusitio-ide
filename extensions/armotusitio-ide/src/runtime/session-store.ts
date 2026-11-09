@@ -87,11 +87,14 @@ export function migrateStore(value: unknown): StoreFile {
 export class AgentSessionStore {
 	private readonly directory: string;
 	private readonly file: string;
+	private readonly rename: (from: string, to: string) => Promise<void>;
 	/** Set when a corrupt registry was moved aside during this IDE session. */
 	quarantined = false;
 
-	constructor(directory: string) {
+	/** `rename` is injectable so tests can make the archive step fail (EACCES, EXDEV) without touching the file system. */
+	constructor(directory: string, rename: (from: string, to: string) => Promise<void> = fs.rename) {
 		this.directory = directory;
+		this.rename = rename;
 		this.file = path.join(directory, 'agent-sessions.json');
 	}
 
@@ -162,7 +165,9 @@ export class AgentSessionStore {
 	}
 
 	private async quarantine(): Promise<StoreFile> {
-		await fs.rename(this.file, this.file + '.' + Date.now() + '.corrupt').catch(() => fs.rm(this.file, { force: true }));
+		// The corrupt bytes are evidence: if they cannot be archived they stay where they are and the caller sees the failure.
+		try { await this.rename(this.file, this.file + '.' + Date.now() + '.corrupt'); }
+		catch (error) { throw new Error('RUNTIME_STORE_QUARANTINE_FAILED', { cause: error }); }
 		this.quarantined = true;
 		return { schemaVersion: SESSION_STORE_VERSION, sessions: {} };
 	}

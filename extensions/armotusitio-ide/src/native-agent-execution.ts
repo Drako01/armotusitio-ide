@@ -132,32 +132,41 @@ export function buildAgentInvocation(draft: AgentDraft, writableRoots: readonly 
 }
 
 /**
- * Claude's permission mode and tool lists, shared by one-shot runs and native sessions (r8). WebFetch is never allowed;
+ * Claude Code approves shell commands it judges read-only (`docker ps`, `cat .env`) without consulting the permission prompt tool.
+ * An `ask` rule outranks that heuristic, so every shell call reaches the IDE policy. Passed inline: user, project and local settings stay off.
+ */
+const MEDIATE_SHELL_SETTINGS = JSON.stringify({ permissions: { ask: ['Bash'] } });
+
+/**
+ * Claude's permission mode and tool lists, shared by one-shot runs and native sessions (r8). WebFetch is denied outright except in native sessions, where it asks per host;
  * WebSearch only when the project enabled it (D9). Native: Bash, Edit and Write are not pre-allowed, so every use reaches
  * the IDE's `approve` tool, which also answers `AskUserQuestion` through the IDE's card.
  */
 export function claudeToolArgs(options: { readOnly: boolean; runner: boolean; native: boolean; webSearch?: boolean }): string[] {
 	const { readOnly, runner, native, webSearch } = options;
 	const tools = (readOnly ? 'Read,Glob,Grep' : native ? 'Read,Glob,Grep,' + RUNNER_TOOL : 'Read,Glob,Grep,Edit,Write' + (runner ? ',' + RUNNER_TOOL : '')) + (webSearch ? ',WebSearch' : '');
-	const denied = (native ? '' : 'Bash,') + (webSearch ? 'WebFetch' : 'WebFetch,WebSearch');
+	// Native: WebFetch reaches `approve` (a card per host, public https hosts only); the structured transport still denies it.
+	const denied = native ? (webSearch ? '' : 'WebSearch') : 'Bash,' + (webSearch ? 'WebFetch' : 'WebFetch,WebSearch');
 	const mode = readOnly ? 'plan' : native ? 'default' : 'dontAsk';
-	return ['--permission-mode', mode, '--allowedTools', tools, '--disallowedTools', denied];
+	return ['--permission-mode', mode, '--allowedTools', tools, ...(denied ? ['--disallowedTools', denied] : []), ...(native ? ['--settings', MEDIATE_SHELL_SETTINGS] : [])];
 }
 
 /**
  * Caller MUST verify Workspace Trust, project authority and consent immediately before invoking.
  * `onMessage` receives redacted intermediate assistant messages as the provider streams them (Codex JSONL, Claude stream-json).
  */
-export async function executeReviewedAgent(review: AgentReview, current: AgentDraft, durationMs = MAX_DURATION_MS, onProgress?: (progress: Readonly<AgentProgress>) => void, onMessage?: (text: string) => void, toolServer?: ToolServerLaunch, sensitive?: (text: string) => boolean, onStep?: (step: ChatStep) => void): Promise<AgentExecution> {
+export async function executeReviewedAgent(review: AgentReview, current: AgentDraft, durationMs = MAX_DURATION_MS, onProgress?: (progress: Readonly<AgentProgress>) => void, onMessage?: (text: string) => void, toolServer?: ToolServerLaunch, sensitive?: (text: string) => boolean, onStep?: (step: ChatStep) => void, profileEnvironment?: (base: NodeJS.ProcessEnv) => NodeJS.ProcessEnv): Promise<AgentExecution> {
 	validateReviewedAgent(review, current);
 	if (!Number.isSafeInteger(durationMs) || durationMs < 1000 || durationMs > MAX_DURATION_MS) { throw Error('HARNESS_AGENT_TIMEOUT_INVALID'); }
 	const canonical = await fs.realpath(current.projectRoot);
 	if (canonical !== current.projectRoot || !(await fs.stat(canonical)).isDirectory()) { throw Error('HARNESS_AGENT_ROOT_CHANGED'); }
 	const toolchain = await currentToolchainEnvironment();
+	// An AI profile replaces the provider credentials of the IDE environment with its own private directory.
+	const base = profileEnvironment ? profileEnvironment(toolchain.env) : toolchain.env;
 	const invocation = buildAgentInvocation(current, toolchain.writableRoots, toolServer);
 	const initialScope = current.readOnly ? await captureAgentScope(canonical) : undefined;
-	const command = await resolveNativeCommand(invocation.executable, invocation.args, toolchain.env);
-	const env: NodeJS.ProcessEnv = toolchain.env;
+	const command = await resolveNativeCommand(invocation.executable, invocation.args, base);
+	const env: NodeJS.ProcessEnv = base;
 	if (command.embeddedNode) { env.ELECTRON_RUN_AS_NODE = '1'; }
 	if (current.provider === 'claude') { env.CLAUDE_CODE_SKIP_PROMPT_HISTORY = '1'; }
 	const started = Date.now();

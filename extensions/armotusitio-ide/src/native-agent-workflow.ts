@@ -217,8 +217,10 @@ export class NativeAgentWorkflow {
 	/** Model chosen for each provider; undefined keeps the CLI default. */
 	private readonly modelFor: (provider: NativeProvider) => string | undefined;
 	private readonly effortFor: (provider: NativeProvider) => NativeEffort | undefined;
-	constructor(root: string, storage: string, coordinationRoot = root, modelFor: (provider: NativeProvider) => string | undefined = () => undefined, effortFor: (provider: NativeProvider) => NativeEffort | undefined = () => undefined) {
-		this.root = root; this.storage = storage; this.coordinationRoot = coordinationRoot; this.modelFor = modelFor; this.effortFor = effortFor;
+	/** Account environment of each provider (isolated CLI directory); undefined keeps the IDE session. */
+	private readonly profileEnvironment: (provider: NativeProvider) => Promise<((base: NodeJS.ProcessEnv) => NodeJS.ProcessEnv) | undefined>;
+	constructor(root: string, storage: string, coordinationRoot = root, modelFor: (provider: NativeProvider) => string | undefined = () => undefined, effortFor: (provider: NativeProvider) => NativeEffort | undefined = () => undefined, profileEnvironment: (provider: NativeProvider) => Promise<((base: NodeJS.ProcessEnv) => NodeJS.ProcessEnv) | undefined> = async () => undefined) {
+		this.root = root; this.storage = storage; this.coordinationRoot = coordinationRoot; this.modelFor = modelFor; this.effortFor = effortFor; this.profileEnvironment = profileEnvironment;
 	}
 	/** Only an owned nested verification gate may borrow this lease; it must never release it. */
 	activeFence(): SharedExecutionFence | undefined { return this.sharedFence; }
@@ -523,7 +525,7 @@ export class NativeAgentWorkflow {
 					};
 					const run = await executeReviewedAgent(reviewAgentDraft(draft), draft,
 						Math.min(MAX_AGENT_DURATION_MS, Math.max(1000, deadline - Date.now())),
-						progress => this.emit(record, 'provider-progress', step, progress.observedBytes));
+						progress => this.emit(record, 'provider-progress', step, progress.observedBytes), undefined, undefined, undefined, undefined, await this.profileEnvironment(handoff.provider));
 					this.activeDAG.add(run);
 					if (this.cancelled || !trusted()) { run.cancel(); }
 					let outcome: AgentOutcome;
@@ -679,7 +681,7 @@ export class NativeAgentWorkflow {
 							await fence.assertCurrent();
 							this.active = await executeReviewedAgent(reviewAgentDraft(draft), draft,
 								Math.min(MAX_AGENT_DURATION_MS, Math.max(1000, deadline - Date.now())),
-								progress => this.emit(record, 'provider-progress', step, progress.observedBytes));
+								progress => this.emit(record, 'provider-progress', step, progress.observedBytes), undefined, undefined, undefined, undefined, await this.profileEnvironment(handoff.provider));
 							if (this.cancelled || !trusted()) { this.active.cancel(); }
 							const outcome: AgentOutcome = await this.active.outcome;
 							step.status = outcome.status === 'timeout' ? 'failed' : outcome.status;

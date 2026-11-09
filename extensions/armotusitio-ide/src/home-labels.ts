@@ -5,7 +5,7 @@
 'use strict';
 
 /** Copy of Inicio's control center (block AC): short sentences that say what is happening and what to do. */
-function inicioLabels(t) {
+function inicioLabels(t: any) {
 	return {
 		askTitle: t('\u00bfQu\u00e9 quer\u00e9s hacer?'), askPlaceholder: t('Describ\u00ed el cambio. La IA lo conversa con vos y te propone un plan para aprobar.'), ask: t('Enviar al chat'),
 		askProject: t('Proyecto'), askHint: t('Enviar abre el Chat Harness; la IA act\u00faa o solo conversa seg\u00fan el modo que elegiste.'),

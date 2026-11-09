@@ -16,7 +16,7 @@ import { CodexAdapter } from '../src/runtime/codex-adapter.ts';
 import { AgentSessionManager, type ManagedSession, type RecoveryNotice } from '../src/runtime/session-manager.ts';
 import { AgentSessionStore } from '../src/runtime/session-store.ts';
 import { decideProviderCall } from '../src/runtime/provider-policy.ts';
-import type { AgentEvent, AgentQuestion, QuestionAnswers, SessionIdentity, SessionRole } from '../src/runtime/contracts.ts';
+import type { AgentEvent, AgentQuestion, QuestionAnswers, SessionIdentity, SessionRole, ToolCall } from '../src/runtime/contracts.ts';
 import { createCommandPolicy } from '../src/native-command-policy.ts';
 import { loadPermissions } from '../src/native-permissions.ts';
 import { parseApprovalDraft, type ApprovalDraft } from '../src/native-approval.ts';
@@ -39,6 +39,8 @@ export interface User {
 }
 
 export interface Harness {
+	/** User-added MCP servers wired into every session this harness prepares (set by a scenario before it opens one). */
+	extraMcp: Record<string, unknown>;
 	provider: Provider;
 	root: string;
 	state: string;
@@ -47,6 +49,8 @@ export interface Harness {
 	home: string;
 	store: AgentSessionStore;
 	cards: ApprovalDraft[];
+	/** Every tool call the provider asked the IDE to decide (card or not): what it did NOT ask about was decided by the provider alone. */
+	mediated: ToolCall[];
 	asked: AgentQuestion[][];
 	user: User;
 	manager(): AgentSessionManager;
@@ -68,6 +72,7 @@ export async function harness(provider: Provider, extraEnv: Record<string, strin
 	// Real providers keep the user's HOME (their login lives there); fakes get a throwaway one.
 	const env: NodeJS.ProcessEnv = fake ? { ...process.env, PATH: bin + path.delimiter + (process.env.PATH ?? ''), FAKE_STATE_DIR: state, HOME: home, USERPROFILE: home, ...extraEnv } : { ...process.env, ...extraEnv };
 	const cards: ApprovalDraft[] = [];
+	const mediated: ToolCall[] = [];
 	const asked: AgentQuestion[][] = [];
 	const user: User = { approval: () => 'once', question: questions => Object.fromEntries(questions.map(question => [question.id, ['blue']])) };
 	// Same order as the chat: a live task/session grant answers without a card; otherwise the user's card, then the grant.
@@ -101,11 +106,11 @@ export async function harness(provider: Provider, extraEnv: Record<string, strin
 	const managers: AgentSessionManager[] = [];
 	const store = new AgentSessionStore(path.join(base, 'store'));
 	const services = {
-		async prepare(_identity: SessionIdentity, role: SessionRole) {
+		async prepare(identity: SessionIdentity, role: SessionRole) {
 			const directory = path.join(base, 'runs', String(++runs));
 			await fs.mkdir(directory, { recursive: true });
 			const config: RunnerConfig = {
-				schemaVersion: 1, root, env, logDirectory: path.join(directory, 'logs'), maxTurns: 50, approve: provider === 'claude', turnEpochs: true, permissions: { preset: 'dev' },
+				schemaVersion: 1, root, env, logDirectory: path.join(directory, 'logs'), maxTurns: 50, approve: provider === 'claude', turnEpochs: true, permissions: { preset: 'dev' }, ...(Object.keys(self.extraMcp).length ? { mcpServers: Object.keys(self.extraMcp) } : {}),
 				...(role === 'writer' ? { git: true, files: true, repoBaseline: await repoFingerprint(root) } : {}),
 				policy: { subprojects: [], delegate: false, extras: [] }, projectPermissionsBaseline: await projectPermissionsDigest(root),
 				channel: { address: channel.address, token: channel.token }
@@ -114,20 +119,22 @@ export async function harness(provider: Provider, extraEnv: Record<string, strin
 			await fs.writeFile(configFile, JSON.stringify(config));
 			// The runner reads permissions from a throwaway HOME, so the user's own rules never change a scenario's verdicts.
 			const toolServer = { command: process.execPath, args: [RUNNER, configFile], env: fake ? {} : { HOME: home, USERPROFILE: home }, mcpConfigFile: path.join(directory, 'mcp.json') };
-			await fs.writeFile(toolServer.mcpConfigFile, JSON.stringify({ mcpServers: { 'ats-runner': { type: 'stdio', command: toolServer.command, args: toolServer.args, env: toolServer.env } } }));
+			await fs.writeFile(toolServer.mcpConfigFile, JSON.stringify({ mcpServers: { ...self.extraMcp, 'ats-runner': { type: 'stdio', command: toolServer.command, args: toolServer.args, env: toolServer.env } } }));
 			// Real providers get the same session contract as the IDE; fakes only need a marker.
 			const instructions = fake ? 'IDE contract (' + role + ')' : agentContract({ provider, role: role === 'writer' ? 'implementer' : 'planner', maxTurns: 40, runner: true, git: role === 'writer', files: role === 'writer', nativeShell: true });
-			return { options: { instructions, env, toolServer, maxTurns: 40 }, dispose: async () => undefined };
+			// An AI profile gives the provider its own private config directory, like the IDE's environment builder does.
+			const profileEnv = identity.profileId ? { ...env, [provider === 'claude' ? 'CLAUDE_CONFIG_DIR' : 'CODEX_HOME']: path.join(base, 'profiles', identity.profileId) } : env;
+			return { options: { instructions, env: profileEnv, toolServer, maxTurns: Number(process.env.ATS_E2E_MAX_TURNS) || 40 }, dispose: async () => undefined };
 		},
-		approve: (_session: ManagedSession, call: Parameters<typeof decideProviderCall>[1]) => decideProviderCall({
-			root, policy, permissions, trusted: () => true, sandboxed: true,
-			ask: draft => answer(draft)
-		}, call),
+		approve: (_session: ManagedSession, call: ToolCall) => {
+			mediated.push(call);
+			return decideProviderCall({ root, policy, permissions, trusted: () => true, sandboxed: true, ask: draft => answer(draft) }, call);
+		},
 		ask: async (_session: ManagedSession, questions: AgentQuestion[]) => { asked.push(questions); return user.question(questions); }
 	};
 	const identity: SessionIdentity = { root, worktree: root, provider, conversationId: 'c1' };
 	const self: Harness = {
-		provider, root, state, identity, store, cards, asked, user, base, home,
+		extraMcp: {}, provider, root, state, identity, store, cards, mediated, asked, user, base, home,
 		manager() {
 			const manager = new AgentSessionManager(store, [new ClaudeAdapter(), new CodexAdapter()], services, { retryDelayMs: 50 });
 			managers.push(manager);

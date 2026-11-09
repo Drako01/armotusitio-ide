@@ -45,6 +45,8 @@ export interface RunnerConfig {
 	files?: boolean;
 	/** Offers `approve`, Claude's permission prompt tool (native transport pilot); set only for runs that can ask the user. */
 	approve?: boolean;
+	/** User-added MCP servers wired into this run (names only; their credentials stay in the extension). */
+	mcpServers?: string[];
 	/**
 	 * A long-lived native session (r8): refusals and the command budget last one turn, not the whole process. The extension
 	 * names the current turn through the channel (`epoch`); an unreadable epoch never matches, so nothing is forgotten early.
@@ -174,7 +176,7 @@ export async function handleGit(config: RunnerConfig, name: string, input: unkno
 export async function handleApprove(config: RunnerConfig, input: unknown, deps: RunnerDeps = {}): Promise<PromptDecision> {
 	if (!await permissionsUntouched(config)) { return { behavior: 'deny', message: 'POLICY_DENIED: project-permissions-changed' }; }
 	const permissions = await loadRunnerPermissions(config, deps);
-	const decision = await decidePermissionPrompt({ root: config.root, policy: createCommandPolicy({ ...config.policy, permissions }), permissions, ask: approverOf(config, deps), question: questionerOf(config, deps) }, input);
+	const decision = await decidePermissionPrompt({ root: config.root, policy: createCommandPolicy({ ...config.policy, permissions }), permissions, ask: approverOf(config, deps), question: questionerOf(config, deps), mcpServers: config.mcpServers }, input);
 	const request = (input ?? {}) as { tool_name?: unknown };
 	await fs.appendFile(config.logDirectory + '/commands.jsonl', JSON.stringify({ at: new Date().toISOString(), tool: 'approve', for: String(request.tool_name).slice(0, 60), outcome: decision.behavior === 'allow' ? 'ALLOWED' : decision.message.split('\n', 1)[0] }) + '\n').catch(() => undefined);
 	return decision;

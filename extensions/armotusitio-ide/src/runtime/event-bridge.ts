@@ -18,7 +18,8 @@ const MAX_DEDUP_KEYS = 4096;
 /** Diagnostics are for support, not for the chat: a few per turn, short. */
 const MAX_DIAGNOSTICS_PER_TURN = 20;
 const MAX_DIAGNOSTIC_CHARS = 500;
-const MAX_TEXT_CHARS = 64 * 1024;
+/** Longest free-text field an event carries; adapters stop accumulating at the same bound so memory and event size agree. */
+export const MAX_TEXT_CHARS = 64 * 1024;
 
 export type EventListener = (event: AgentEvent) => void;
 
