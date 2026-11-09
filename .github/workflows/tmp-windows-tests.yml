@@ -14,12 +14,7 @@ jobs:
         with:
           node-version-file: .nvmrc
       - run: npm ci --ignore-scripts --no-audit --no-fund
-      - name: Each extension test file with a hard timeout
+      - name: chat.test.cts with per-test timeout
         working-directory: extensions/armotusitio-ide
         shell: bash
-        run: |
-          for f in test/*.test.cts test/native-*.test.mts; do
-            s=$SECONDS; timeout 240 node --test "$f" > "/tmp/out.txt" 2>&1; rc=$?
-            echo "$f rc=$rc $((SECONDS-s))s"
-            if [ $rc -ne 0 ]; then tail -40 /tmp/out.txt; fi
-          done
+        run: timeout 300 node --test --test-timeout=45000 --test-reporter=spec test/chat.test.cts || true
