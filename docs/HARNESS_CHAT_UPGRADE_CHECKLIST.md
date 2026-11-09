@@ -41,6 +41,42 @@ Not run yet: `scripts/ats-harness-check.mts`, Linux/macOS, real Codex. Real Clau
 
 `S09` (cancel a streaming turn) failed once in `check:conformance` under load. Reproduced on the original adapter too (8/8 failures under 32 CPU-bound processes), so it is not caused by this work: it aborted on a fixed 400 ms timer and asserted wall-clock time including the provider start. It now aborts on the first streamed delta and measures cancellation latency. Idle 8/8 pass; under the same extreme synthetic load 5/8 (was 0/8). Full suite and conformance pass after the change.
 
+## Added scope requested during the work (same branch and Draft PR #72, separate commits)
+
+Nothing in this section is implemented yet unless a row says so. Impact was assessed against the code on this branch.
+
+### W0 - Empty-editor watermark is the ArmoTuSitio A
+
+DONE in `d056b89`. The four `letterpress-*.svg` files now draw the A of `extensions/armotusitio-ide/resources/ats.svg`. Rendered and inspected for dark and light (browser preview of the SVGs); **the two high-contrast variants were not rendered**, and the change was not seen inside a built IDE (needs a build of the fork).
+
+### W1 - Persistent permissions (once / session / project / global) and a management screen
+
+What already exists (verified): `ApprovalAnswer = once | task | session | always | deny`; `ApprovalBroker` (per project chat, shared by both providers, audited, revocable, session grants expire after 8 h); `always` is stored in `~/.armotusitio/permissions.json` under the project key and `.armotusitio/permissions.json` in the project is a second layer; exact-rule requirement and `NoRememberReason` (dependency, irreversible, publication, inexact) already keep risky operations to "once".
+Gaps: no **global** scope (the user layer is keyed per project), no management UI (list, revoke, audit), no automatic invalidation when the security context changes beyond the existing project-permissions digest.
+Design rule: extend `ApprovalBroker` and `native-permissions`; no second broker. A global grant is allowed only for explicitly allow-listed low-risk rules and can never cover destructive operations, secrets, privilege elevation or high-risk commands.
+Depends on: Phase 1 (policy is the single source of decision).
+Acceptance: project grants survive an IDE restart; a global grant works only for its listed rules; revocation applies to the next operation; both providers see identical verdicts; unauthorized operations fail closed. Tests: unit (broker/store), integration (restart, two projects), E2E (card -> persist -> restart).
+Status: PENDING.
+
+### W2 - Chat tool gaps versus Claude Code and Codex
+
+Needs an inventory first (files: read, search, create, edit, delete, move; terminal; git; diagnostics/tests/lint/build; workspace and dependency inspection; long-running processes; cancel/recover/resume; chat history). Some exist (file tools, git tools, `ats-runner run`, journal/recovery). The gap list is produced from the code, not from this paragraph.
+Constraint: every tool goes through the existing authorization, validation and audit path (`approve` tool and policy).
+Status: PENDING (inventory not started).
+
+### W3 - AI profile manager (several accounts per provider)
+
+Current state (verified): no profile concept. `CLAUDE_CONFIG_DIR` and `CODEX_HOME` are only read to list models and diagnostics, and `CODEX_HOME` is passed through the toolchain environment. Sessions are keyed by provider, root and conversation (`SessionIdentity`), so the account is not part of a session identity yet.
+Plan: a profile registry (alias, provider, state; default global plus per-workspace assignment, persisted outside the repository), one private config directory per profile (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`), the profile id added to `SessionIdentity` and to the session-store key (schema migration, never overwriting a newer schema), a Provider -> Account -> Model selector in the chat, and account changes applied only to new turns.
+Rules: no token copying, no credentials in the repository or project files, no automatic rotation to avoid quotas. Provider limits (where each CLI really keeps credentials on Windows, macOS and Linux) must be verified before isolation is declared.
+**BLOCKED / NOT VERIFIED until the owner authenticates a second Claude Code account and a second Codex account in their own profile directories**: this session cannot complete an interactive login. Real two-account checks stay BLOCKED; the isolation logic itself can be tested with fake CLIs.
+Depends on: Phase 2 (session contracts frozen) and W1 (grants must not widen on account change).
+Status: PENDING.
+
+### Order
+
+Current Phase 1 items first (P1-004), then W1 inside Phase 1, W3 after the Phase 2 contracts, W2 inventory in Phase 2 and its UI in Phase 5. Each block gets its own commit, tests and a checklist update.
+
 ## Blocked or owned by the repository owner
 
 - Ruleset `required_status_checks` on `main`: the owner changes it. The workflow side is prepared here.
