@@ -19,6 +19,7 @@ import { APPROVAL_TIMEOUT_MS, channelApprover, requestApproval, type ApprovalAsk
 import { GIT_TOOLS, endsGitDelivery, handleGitTool } from './native-git-tools.ts';
 import { FILE_TOOLS, handleFileTool } from './native-file-tools.ts';
 import { repairDependencies } from './native-dependency-repair.ts';
+import { createCallGuard } from './native-call-guard.ts';
 import { detectEcosystems } from './native-ecosystems.ts';
 import { syncCommands } from './native-dependency-sync.ts';
 import { APPROVE_TOOL, decidePermissionPrompt, type ApproveContext, type PromptDecision } from './native-approve-tool.ts';
@@ -314,6 +315,13 @@ async function main(): Promise<void> {
 		if (result.text.startsWith('DENIED: the user did not allow it')) { refused.set(key, await currentEpoch()); }
 		return result;
 	};
+	const guard = createCallGuard();
+	/** One path for every effectful tool: a refused call and a call stuck in a failure loop are answered without running; the rest is run, classified and remembered. */
+	const attempt = async (key: string, run: () => Promise<{ isError: boolean; text: string }>): Promise<{ isError: boolean; text: string }> => {
+		if (await isRefused(key)) { return ALREADY_REFUSED; }
+		const epoch = await currentEpoch();
+		return guard.stopped(key, epoch) ?? await remember(key, guard.record(key, epoch, await run()));
+	};
 	/** The command budget of a native session restarts with each turn. */
 	const nextCall = async (): Promise<number> => {
 		const epoch = await currentEpoch();
@@ -343,17 +351,17 @@ async function main(): Promise<void> {
 		}
 		if (request.method === 'tools/call' && request.params?.name === TOOL.name) {
 			const key = callKey(TOOL.name, request.params.arguments);
-			const result = await isRefused(key) ? ALREADY_REFUSED : await remember(key, await handleRun(config, request.params.arguments, await nextCall()));
+			const result = await attempt(key, async () => await handleRun(config, request.params!.arguments, await nextCall()));
 			return reply({ isError: result.isError, content: [{ type: 'text', text: result.text }] });
 		}
 		if (request.method === 'tools/call' && config.terminal && request.params?.name === TERMINAL_TOOL.name) {
 			const key = callKey(TERMINAL_TOOL.name, request.params.arguments);
-			const result = await isRefused(key) ? ALREADY_REFUSED : await remember(key, await handleRun(config, request.params.arguments, await nextCall(), {}, 'terminal'));
+			const result = await attempt(key, async () => await handleRun(config, request.params!.arguments, await nextCall(), {}, 'terminal'));
 			return reply({ isError: result.isError, content: [{ type: 'text', text: result.text }] });
 		}
 		if (request.method === 'tools/call' && config.jobs && request.params?.name === 'job_start') {
 			const key = callKey('job_start', request.params.arguments);
-			const result = await isRefused(key) ? ALREADY_REFUSED : await remember(key, await handleRun(config, request.params.arguments, await nextCall(), {}, 'job'));
+			const result = await attempt(key, async () => await handleRun(config, request.params!.arguments, await nextCall(), {}, 'job'));
 			return reply({ isError: result.isError, content: [{ type: 'text', text: result.text }] });
 		}
 		if (request.method === 'tools/call' && config.jobs && (request.params?.name === 'job_status' || request.params?.name === 'job_stop')) {
@@ -370,8 +378,7 @@ async function main(): Promise<void> {
 					return result;
 				}
 				const key = callKey(request.params!.name!, request.params!.arguments);
-				if (await isRefused(key)) { return ALREADY_REFUSED; }
-				const result = await remember(key, await handleGit(config, request.params!.name!, request.params!.arguments, {}, stopped.signal));
+				const result = await attempt(key, () => handleGit(config, request.params!.name!, request.params!.arguments, {}, stopped.signal));
 				// An integrity refusal (config or hooks changed, a permission rule) ends git for the run; input refusals can be fixed.
 				if (endsGitDelivery(result.text)) { gitDenied = true; }
 				return result;
@@ -384,7 +391,7 @@ async function main(): Promise<void> {
 			calls++;
 			const key = callKey(REPAIR_TOOL.name, request.params.arguments);
 			// One repair at a time in this run: two installs on the same folder would corrupt each other.
-			const task = repairQueue.then(async () => await isRefused(key) ? ALREADY_REFUSED : await remember(key, await handleRepair(config, request.params!.arguments, calls)));
+			const task = repairQueue.then(() => attempt(key, () => handleRepair(config, request.params!.arguments, calls)));
 			repairQueue = task.then(() => undefined, () => undefined);
 			const result = await task;
 			return reply({ isError: result.isError, content: [{ type: 'text', text: result.text }] });
@@ -392,7 +399,7 @@ async function main(): Promise<void> {
 		if (request.method === 'tools/call' && config.files && FILE_TOOLS.some(tool => tool.name === request.params?.name)) {
 			calls++;
 			const key = callKey(request.params!.name!, request.params!.arguments);
-			const result = await isRefused(key) ? ALREADY_REFUSED : await remember(key, await handleFiles(config, request.params!.name!, request.params!.arguments));
+			const result = await attempt(key, () => handleFiles(config, request.params!.name!, request.params!.arguments));
 			return reply({ isError: result.isError, content: [{ type: 'text', text: result.text }] });
 		}
 		if (request.method === 'tools/call' && config.approve && request.params?.name === APPROVE_TOOL.name) {

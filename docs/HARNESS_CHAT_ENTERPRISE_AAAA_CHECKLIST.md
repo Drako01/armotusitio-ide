@@ -28,16 +28,16 @@ Existing work this plan builds on (do not redo): #72 (hybrid writer, tools), #75
 
 | ID | Prio | Item | Status |
 | --- | --- | --- | --- |
-| A2-1 | P1 | Explicit error classification (auto-recoverable, needs approval, change strategy, security-blocked, unrecoverable) | PARTIAL: `native-failure-class.ts` exists and is used by `repair_dependencies`; not yet wired into `run`, `delete_path`, git or MCP results |
-| A2-2 | P1 | Bounded retries with backoff, execution budget, loop detection, idempotency for non-idempotent operations | TODO |
-| A2-3 | P2 | Report cause, attempts made and next step on failure | TODO |
+| A2-1 | P1 | Explicit error classification (auto-recoverable, needs approval, change strategy, security-blocked, unrecoverable) | DONE: `native-failure-class.ts` is applied to every effectful runner tool (run, terminal, job_start, git, files, repair) through `attempt()` in `ats-runner.ts`; failures carry `[kind, class] next step` (unknown cause left unannotated). MCP work tools and the native-session approval path are not annotated (their errors come from the channel) |
+| A2-2 | P1 | Bounded retries with backoff, execution budget, loop detection, idempotency for non-idempotent operations | DONE for the runner: `native-call-guard.ts` stops the exact same failing call after 3 in a row (2 min hold, resets per turn epoch or on success; denials never counted); network-only backoff in `repair_dependencies`; command budget already existed. Blind retries of non-idempotent operations are never made by the harness. Tests `native-call-guard.test.mts` (3) |
+| A2-3 | P2 | Report cause, attempts made and next step on failure | DONE: failure text = cause + `[kind, class]` + next step (`classifyFailure`); `repair_dependencies` also lists the attempts |
 
 ## Phase 3: tool parity (Claude Code / Codex)
 
 | ID | Prio | Item | Status |
 | --- | --- | --- | --- |
-| T3-1 | P1 | Capability matrix per provider from the real implementation (filesystem, terminal, git, dev, context, MCP, skills, multimodal) | TODO |
-| T3-2 | P2 | Fill gaps found by the matrix; document real limits instead of simulating tools | TODO |
+| T3-1 | P1 | Capability matrix per provider from the real implementation (filesystem, terminal, git, dev, context, MCP, skills, multimodal) | DONE: `docs/HARNESS_TOOL_INVENTORY.md` and `docs/NATIVE_CHAT_PARITY_MATRIX.md` cover filesystem, terminal, git, dev secrets, context, MCP, skills and multimodal per provider, with evidence; `repair_dependencies` row added. Codex real-run columns stay BLOCKED (quota) |
+| T3-2 | P2 | Fill gaps found by the matrix; document real limits instead of simulating tools | DONE (limits documented, nothing simulated): image input and notebook reads, Codex user-MCP and sub-agents are listed as NOT IMPLEMENTED in the inventory; implementing them needs provider features that cannot be verified here (OWNER VALIDATION REQUIRED for Codex) |
 
 ## Phase 4: real interactive terminal (PTY/ConPTY)
 
