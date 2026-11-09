@@ -124,7 +124,7 @@ test('an ephemeral environment is created labeled, waits for its service, export
 	};
 	try {
 		const environment = await createEnvironment({
-			goalId: 'goal-a', exec, excludedPorts: [{ start: 0, end: port - 1 }, { start: port + 1, end: 65535 }], sleep: async () => undefined,
+			goalId: 'goal-a', exec, firstPort: port, excludedPorts: [{ start: 0, end: port - 1 }, { start: port + 1, end: 65535 }], sleep: async () => undefined,
 			template: { name: 'pg', services: [{ name: 'db', image: 'postgres:16.4', containerPort: 5432, kind: 'postgres', env: { POSTGRES_PASSWORD: 'postgres' } }], exports: { APP_E2E_DSN: 'postgres://postgres:postgres@127.0.0.1:{port:db}/postgres' } }
 		});
 		const run = calls.find(call => call[1] === 'run')!;

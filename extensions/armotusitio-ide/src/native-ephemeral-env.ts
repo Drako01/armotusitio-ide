@@ -43,14 +43,14 @@ export function validateTemplate(template: EnvironmentTemplate): EnvironmentTemp
 }
 
 /** Create, wait until each service answers its protocol, and return the variables for the goal. */
-export async function createEnvironment(input: { template: EnvironmentTemplate; goalId: string; exec: Exec; excludedPorts: readonly PortRange[]; sleep?: (ms: number) => Promise<void> }): Promise<EphemeralEnvironment> {
+export async function createEnvironment(input: { template: EnvironmentTemplate; goalId: string; exec: Exec; excludedPorts: readonly PortRange[]; sleep?: (ms: number) => Promise<void>; firstPort?: number }): Promise<EphemeralEnvironment> {
 	const template = validateTemplate(input.template);
 	const sleep = input.sleep ?? (ms => new Promise(resolve => setTimeout(resolve, ms)));
 	const ports: Record<string, number> = {};
 	const containers: string[] = [];
 	const destroy = async () => { for (const id of containers) { await input.exec('docker', ['rm', '-f', '-v', id]).catch(() => undefined); } };
 	try {
-		let next = 20000 + Math.floor(Math.random() * 20000);
+		let next = input.firstPort ?? 20000 + Math.floor(Math.random() * 20000);
 		for (const service of template.services) {
 			const port = pickPort(next, input.excludedPorts, new Set(Object.values(ports)));
 			next = port + 1;
