@@ -7,7 +7,7 @@ import * as assert from 'node:assert/strict';
 import { armotusitioProduct as product } from '../build/lib/armotusitioProduct.ts';
 import { validateIdentity, findLinuxPackage, writeLinuxReceipt } from './ats-linux-artifacts.mts';
 import { exclusiveReleaseWorkflow } from './ats-autoupdate.mts';
-import { archiveLinuxSources, shareWithBuildUser } from './ats-build-linux.mts';
+import { archiveLinuxSources, linuxBuildAttempts, shareWithBuildUser } from './ats-build-linux.mts';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdtemp, writeFile, readFile, mkdir, rm, stat } from 'node:fs/promises';
@@ -92,4 +92,8 @@ test('the CI runner opens the bind-mounted output and log folders to the contain
 		await shareWithBuildUser([local], false);
 		assert.deepEqual({ ci: (await stat(ci)).mode & 0o777, local: (await stat(local)).mode & 0o777 }, { ci: 0o777, local: 0o755 });
 	} finally { await rm(base, { recursive: true, force: true }); }
+});
+
+test('CI retries the Linux container on transient download failures; a local build runs once', () => {
+	assert.deepEqual([linuxBuildAttempts(true), linuxBuildAttempts(false)], [3, 1]);
 });
