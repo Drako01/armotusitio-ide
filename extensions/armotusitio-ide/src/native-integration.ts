@@ -355,7 +355,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 		const writerTools = !!approve && (!session || session.role === 'writer');
 		const config: RunnerConfig = {
 			schemaVersion: 1, root, policy, env, logDirectory: path.join(directory, 'logs'), maxTurns, ...(native ? { approve: true } : {}), ...(session ? { turnEpochs: true } : {}),
-			channel: { address: channel.address, token: channel.token }, mcpTools, ...(approve ? { terminal: true } : {}),
+			channel: { address: channel.address, token: channel.token }, mcpTools, ...(approve ? { terminal: true, jobs: true } : {}),
 			...(approve ? {
 				git: writerTools, files: writerTools, permissions: { preset: permissionsPreset() },
 				projectPermissionsBaseline: await projectPermissionsDigest(root), repoBaseline: await repoFingerprint(root),

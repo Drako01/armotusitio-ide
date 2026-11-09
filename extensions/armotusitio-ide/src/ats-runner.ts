@@ -10,6 +10,7 @@
 import * as fs from 'node:fs/promises';
 import * as readline from 'node:readline';
 import { createCommandPolicy, denialText, type CommandPolicyConfig } from './native-command-policy.ts';
+import { JobTable, MAX_RUNNING_JOBS, type JobSnapshot } from './native-jobs.ts';
 import { runCommand, DEFAULT_COMMAND_TIMEOUT_SEC, MAX_COMMAND_TIMEOUT_SEC, type CommandResult } from './native-command-runner.ts';
 import { callToolChannel } from './native-tool-server.ts';
 import { EDITOR_TOOLS } from './native-editor-tools.ts';
@@ -47,6 +48,8 @@ export interface RunnerConfig {
 	approve?: boolean;
 	/** Offers `run_in_terminal`: the same command policy and approvals as `run`, but in the visible IDE terminal where the user can answer prompts. */
 	terminal?: boolean;
+	/** Offers `job_start`, `job_status` and `job_stop`: background commands the IDE owns and stops when the run ends. */
+	jobs?: boolean;
 	/** User-added MCP servers wired into this run (names only; their credentials stay in the extension). */
 	mcpServers?: string[];
 	/**
@@ -61,7 +64,7 @@ export interface RunnerConfig {
 }
 
 /** Seams for tests; in production the permissions come from the files and approvals from the channel. */
-export interface RunnerDeps { permissions?: PermissionSet; ask?: ApprovalAsk; question?: ApproveContext['question']; terminal?: TerminalRunner; /** Silence before a prompt stops a command; for tests. */ promptIdleMs?: number }
+export interface RunnerDeps { permissions?: PermissionSet; ask?: ApprovalAsk; question?: ApproveContext['question']; terminal?: TerminalRunner; jobs?: JobTable; /** Silence before a prompt stops a command; for tests. */ promptIdleMs?: number }
 
 /** What the extension needs to start one policy-approved command in the visible IDE terminal. */
 export interface TerminalRequest { command: string; args: string[]; cwd: string; timeoutSec?: number; delegate: boolean }
@@ -122,8 +125,34 @@ const TERMINAL_TOOL = {
 		'Plain line prompts only; no full-screen programs. Arguments are the same as `run`.'
 };
 
+/** Background jobs of this run; the runner process owns them and stops them when it ends. */
+const JOBS = new JobTable();
+const JOB_ID = { type: 'object', properties: { id: { type: 'string', description: 'Job id returned by job_start, for example "job-1".' } }, additionalProperties: false };
+const JOB_TOOLS = [
+	{
+		...TOOL, name: 'job_start',
+		description: 'Start a long-running command in the background (dev server, file watcher, test watch) under the same command policy and approvals as `run`. ' +
+			'It returns a job id at once; read its output with job_status and stop it with job_stop. Jobs stop when this run ends. Arguments are the same as `run`.'
+	},
+	{ name: 'job_status', description: 'Show a background job (state, exit code, recent output), or every job when no id is given.', inputSchema: JOB_ID },
+	{ name: 'job_stop', description: 'Stop a background job and its child processes.', inputSchema: { ...JOB_ID, required: ['id'] } }
+];
+
+const describeJob = (job: JobSnapshot): string => job.id + ' ' + job.state + (job.exitCode === null ? '' : ' (exit ' + job.exitCode + ')') + ' \u00b7 ' + job.runningSec + ' s\n$ ' + job.command + '\n' + (job.output.trim() || '(no output yet)');
+
+/** `job_status` and `job_stop`; starting goes through `handleRun` because it needs the command policy. Exported for tests. */
+export async function handleJob(name: string, input: unknown, deps: RunnerDeps = {}): Promise<{ isError: boolean; text: string }> {
+	const jobs = deps.jobs ?? JOBS;
+	const id = (input as { id?: unknown } | null)?.id;
+	if (id !== undefined && typeof id !== 'string') { return { isError: true, text: 'Invalid input: { id?: string }' }; }
+	if (name === 'job_status' && id === undefined) { const all = jobs.list(); return { isError: false, text: all.length ? all.map(describeJob).join('\n\n') : 'No background jobs.' }; }
+	if (id === undefined) { return { isError: true, text: 'Invalid input: { id: string }' }; }
+	const job = name === 'job_stop' ? await jobs.stop(id) : jobs.status(id);
+	return job ? { isError: false, text: describeJob(job) } : { isError: true, text: 'No background job ' + id + '.' };
+}
+
 /** Answer one `tools/call`; exported for tests. */
-export async function handleRun(config: RunnerConfig, input: unknown, calls: number, deps: RunnerDeps = {}, via: 'process' | 'terminal' = 'process'): Promise<{ isError: boolean; text: string }> {
+export async function handleRun(config: RunnerConfig, input: unknown, calls: number, deps: RunnerDeps = {}, via: 'process' | 'terminal' | 'job' = 'process'): Promise<{ isError: boolean; text: string }> {
 	if (!await permissionsUntouched(config)) { return { isError: true, text: 'POLICY_DENIED: project-permissions-changed' }; }
 	const value = (input ?? {}) as { command?: unknown; args?: unknown; cwd?: unknown; timeoutSec?: unknown };
 	const args = value.args ?? [];
@@ -149,9 +178,19 @@ export async function handleRun(config: RunnerConfig, input: unknown, calls: num
 	}
 	// Secrets allowed for this exact command come from the keychain through the channel, only into this process.
 	// In the terminal the extension spawns the process, so it adds the secrets and redacts the output itself.
-	const secrets = config.channel && via === 'process' ? await callToolChannel(config.channel.address, config.channel.token, 'secrets', { command: value.command, args, cwd: decision.cwd }).catch(() => ({})) as Record<string, string> : {};
+	const secrets = config.channel && via !== 'terminal' ? await callToolChannel(config.channel.address, config.channel.token, 'secrets', { command: value.command, args, cwd: decision.cwd }).catch(() => ({})) as Record<string, string> : {};
 	if (!await permissionsUntouched(config)) { return { isError: true, text: 'POLICY_DENIED: project-permissions-changed' }; }
 	const request = { command: value.command, args: args as string[], cwd: decision.cwd, timeoutSec: value.timeoutSec as number | undefined, delegate: !!(decision.delegate && config.delegateEntry) };
+	if (via === 'job') {
+		const started = (deps.jobs ?? JOBS).start({
+			root: config.root, cwd: decision.cwd, command: value.command, args: args as string[], timeoutSec: request.timeoutSec,
+			env: { ...config.env, ...secrets }, logDirectory: config.logDirectory, ...(request.delegate ? { delegateEntry: config.delegateEntry } : {})
+		});
+		await fs.appendFile(config.logDirectory + '/commands.jsonl', JSON.stringify({ ...audit, job: started }) + '\n').catch(() => undefined);
+		return started === 'limit'
+			? { isError: true, text: 'Too many background jobs are running (max ' + MAX_RUNNING_JOBS + '). Stop one with job_stop first.' }
+			: { isError: false, text: 'started ' + started + '. Check it with job_status, stop it with job_stop. It also stops when this run ends.' };
+	}
 	const result = await (via === 'terminal' ? (deps.terminal ?? terminalViaChannel(config))(request) : runCommand({
 		root: config.root, cwd: decision.cwd, command: value.command, args: args as string[], timeoutSec: request.timeoutSec, ...(deps.promptIdleMs ? { promptIdleMs: deps.promptIdleMs } : {}),
 		env: { ...config.env, ...secrets }, logDirectory: config.logDirectory, ...(request.delegate ? { delegateEntry: config.delegateEntry } : {})
@@ -248,14 +287,14 @@ async function main(): Promise<void> {
 		return ++calls;
 	};
 	const input = readline.createInterface({ input: process.stdin });
-	input.on('close', () => stopped.abort());
+	input.on('close', () => { stopped.abort(); void JOBS.stopAll(); });
 	input.on('line', async line => {
 		let request: { id?: unknown; method?: string; params?: { name?: string; arguments?: unknown; protocolVersion?: string } };
 		try { request = JSON.parse(line); } catch { return; }
 		if (request.id === undefined) { return; }
 		const reply = (result: unknown): void => send({ jsonrpc: '2.0', id: request.id, result });
 		if (request.method === 'initialize') { return reply({ protocolVersion: request.params?.protocolVersion ?? '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'ats-runner', version: '1.0.0' } }); }
-		if (request.method === 'tools/list') { return reply({ tools: [TOOL, ...(config.terminal ? [TERMINAL_TOOL] : []), ...(config.git ? GIT_TOOLS : []), ...(config.files ? FILE_TOOLS : []), ...(config.approve ? [APPROVE_TOOL] : []), ...(config.channel ? EDITOR_TOOLS : []), ...(config.channel ? config.mcpTools ?? [] : [])] }); }
+		if (request.method === 'tools/list') { return reply({ tools: [TOOL, ...(config.terminal ? [TERMINAL_TOOL] : []), ...(config.jobs ? JOB_TOOLS : []), ...(config.git ? GIT_TOOLS : []), ...(config.files ? FILE_TOOLS : []), ...(config.approve ? [APPROVE_TOOL] : []), ...(config.channel ? EDITOR_TOOLS : []), ...(config.channel ? config.mcpTools ?? [] : [])] }); }
 		if (request.method === 'ping') { return reply({}); }
 		if (request.method === 'tools/call' && config.channel && request.params?.name?.startsWith(MCP_TOOL_PREFIX) && config.mcpTools?.some(tool => tool.name === request.params!.name)) {
 			calls++;
@@ -276,6 +315,15 @@ async function main(): Promise<void> {
 		if (request.method === 'tools/call' && config.terminal && request.params?.name === TERMINAL_TOOL.name) {
 			const key = callKey(TERMINAL_TOOL.name, request.params.arguments);
 			const result = await isRefused(key) ? ALREADY_REFUSED : await remember(key, await handleRun(config, request.params.arguments, await nextCall(), {}, 'terminal'));
+			return reply({ isError: result.isError, content: [{ type: 'text', text: result.text }] });
+		}
+		if (request.method === 'tools/call' && config.jobs && request.params?.name === 'job_start') {
+			const key = callKey('job_start', request.params.arguments);
+			const result = await isRefused(key) ? ALREADY_REFUSED : await remember(key, await handleRun(config, request.params.arguments, await nextCall(), {}, 'job'));
+			return reply({ isError: result.isError, content: [{ type: 'text', text: result.text }] });
+		}
+		if (request.method === 'tools/call' && config.jobs && (request.params?.name === 'job_status' || request.params?.name === 'job_stop')) {
+			const result = await handleJob(request.params.name, request.params.arguments);
 			return reply({ isError: result.isError, content: [{ type: 'text', text: result.text }] });
 		}
 		if (request.method === 'tools/call' && config.git && GIT_TOOLS.some(tool => tool.name === request.params?.name)) {

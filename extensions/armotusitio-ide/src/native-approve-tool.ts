@@ -46,7 +46,7 @@ const EDIT_TOOLS = new Map([['Edit', 'file_path'], ['MultiEdit', 'file_path'], [
 const READ_TOOLS = new Map<string, string | undefined>([['Read', 'file_path'], ['Glob', 'path'], ['Grep', 'path'], ['LS', 'path'], ['TodoWrite', undefined]]);
 const CHANGE_DIRECTORY = new Set(['cd', 'pushd', 'popd', 'chdir', 'set-location', 'sl']);
 const CHANGE_DIRECTORY_DENIAL = 'POLICY_DENIED: change-directory\nNext: Bash stays in the project root: pass the folder to the tool instead (pnpm --dir apps/web lint, npm --prefix apps/web test) or use the run tool with cwd.';
-const BACKGROUND_DENIAL = 'POLICY_DENIED: background\nNext: run the command in the foreground; background processes outlive the IDE\'s control.';
+const BACKGROUND_DENIAL = 'POLICY_DENIED: background\nNext: run the command in the foreground, or start it with the job_start tool of the IDE runner (the IDE stops its jobs when the run ends); other background processes outlive the IDE\'s control.';
 const MAX_QUESTIONS = 4;
 const MAX_COMPOUND_LINE = 4000;
 

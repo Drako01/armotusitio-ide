@@ -134,3 +134,26 @@ None yet. Commits and pushes are made only on the owner's explicit request.
 - **Per-call consent:** new permission kind `mcp` (`mcp:<server>/<tool>` rules, default `ask`, `readonly` denies, no preset allows). Claude's `mcp__server__tool` calls reach `approve`; unknown servers stay `tool-unavailable`. Test: `native-approve-tool.test.mts`.
 - **Real Claude 2.1.319, scenario M02 PASS** (`docs/r8-evidence/w4-mcp-real-claude.json`): the denied call never ran (marker empty), the allowed call ran, both produced an `mcp` card.
 - **Limits:** only Claude Code uses the servers (Codex wiring NOT IMPLEMENTED, needs Codex quota to verify); a server is used from the next conversation (Empezar de nuevo); remote OAuth is implemented by the IDE (`native-mcp-oauth.ts`, PASS against a local fake authorization server: PKCE, state, timeout, refresh, rejected refresh; NOT VERIFIED against a real provider's server).
+
+## Audit 2026-11-09: why the Harness and its chat did not resolve things alone (resilience and tools)
+
+Three phases, one commit each. Status uses PASS (unit test, evidence below) or NOT VERIFIED (needs a real provider or a person at the IDE).
+
+### Phase 1 - the Harness must say why it refuses and keep what worked
+- **PASS** The project engine's own words (stderr, exit code) reach the chat, redacted and bounded to 300 characters (`ProjectEngineError`, `harnessErrorDetail`). `HARNESS_HYBRID_WRITER_FAILED/TIMEOUT/PROCESS` have specific hints. Test: `native-hybrid-writer.test.mts` (refusing engine).
+- **PASS** A release the engine rejects because the lease no longer exists (it expired after the engine's 45 minutes, or an engine command removed it) is reported as `leaseLost`; the run's outcome, diff and accounting are no longer discarded, and the IDE's own checks (entrypoint, capabilities, gates, task list) still apply. A lease the engine still holds, or any change it made during the lease, still fails closed. Test: same file (expired lease, rogue engine).
+- **PASS** `/lease` shows the engine's lease state; `/lease liberar` removes a lease left by a dead IDE after a modal confirmation and under the shared fence. Tests: `native-hybrid-writer.test.mts`, `native-chat-commands.test.mts`.
+- **NOT DONE** Renewing the lease while a long run is in progress: the engine has no renew command (`ide.py` only has acquire, release and `ide-lease`). The project engine would need an `ide-writer-renew`.
+- **PASS** The PR gate runs the extension tests on `windows-2022` with pwsh and the canonical temp folder (`ats-ide-extension.yml`, job `contract-windows`, required through `ATS gate`). The publication guard names the stray workflows and ignores workflows whose file no longer exists. Test: `ats-linux-artifacts.test.mts`.
+
+### Phase 2 - commands that ask questions, and context the user no longer copies by hand
+- **PASS** A command silent for 20 s at an unfinished prompt line is stopped with the prompt text and a next step instead of hanging for 10 minutes. Test: `native-terminal.test.mts`.
+- **PASS** `run_in_terminal` (same policy and card as `run`) and `/motor COMMAND` run in a visible IDE terminal where the user answers prompts. Line prompts only: there is no pseudo-terminal device. NOT VERIFIED with a real provider or a real VS Code window.
+- **PASS** `@terminal` attaches the last terminal command's output. NOT VERIFIED that shell integration is active in every terminal profile (Git Bash, WSL).
+- **Real bugs found on the way, fixed:** an abort that happened before the process spawned was ignored (the command ran until its timeout); two commands started in the same millisecond collided on their log file name and crashed the runner.
+
+### Phase 3 - tools Claude Code has and the Harness lacked
+- **PASS** Background jobs (`job_start`, `job_status`, `job_stop`), owned by the run. Test: `native-jobs.test.mts`.
+- **PASS** `/skills` and `/skill NAME [request]`. Test: `native-chat-skills.test.mts`.
+- **NOT DONE, decided:** sub-agents (`Task`): the Harness has its own multi-agent workflow and an agent-spawned agent would bypass its plan, review and fences; it needs a design, not a quick tool. Image and notebook input: no case yet. `/mcp` with Codex: needs Codex quota to verify. Custom `.claude/commands/*.md`: skills cover the case first.
+

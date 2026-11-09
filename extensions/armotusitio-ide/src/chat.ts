@@ -20,6 +20,7 @@ const { TtlCache } = require('./native-ttl-cache.ts');
 const { chatCommands, commandHelp, runSessionCommand } = require('./native-chat-commands.ts');
 const { resolveMentions, mentionNotice, suggestMentionFiles } = require('./native-chat-mentions.ts');
 const { captureTerminalOutput } = require('./native-terminal-capture.ts');
+const { resolveSkillInvocation } = require('./native-chat-skills.ts');
 const { configuredPreset } = require('./native-permissions.ts');
 const { APPROVAL_ANSWERS } = require('./native-approval.ts');
 const { indexProject, IGNORED } = require('./context.ts');
@@ -487,6 +488,12 @@ function registerChat(context: any, controller: any, projects: any, mcp: any, vs
 					// A four-backtick fence keeps triple backticks inside command output inert.
 					try {
 						const [name = '', ...words] = text.slice(1).trim().split(/\s+/);
+						if (name.toLowerCase() === 'skill') {
+							// A skill is not a report: it becomes the request of a turn, with the skill as data.
+							const invocation = await resolveSkillInvocation(folder.uri.fsPath, words.join(' '), t);
+							if (typeof invocation === 'string') { await session.note(invocation); } else { await session.send(invocation.message, chatMode(), { context: invocation.context, notice: invocation.notice }); }
+							return;
+						}
 						const output = await runSessionCommand(sessionCommands, name.toLowerCase(), words, folder.uri.fsPath, session) ?? await handle(text, source.token);
 						await session.note('`' + text.slice(0, 200).replace(/`/g, '') + '`\n\n````text\n' + output + '\n````');
 					}

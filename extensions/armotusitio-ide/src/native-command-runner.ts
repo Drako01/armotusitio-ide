@@ -7,6 +7,7 @@ import * as fs from 'node:fs';
 import * as fsp from 'node:fs/promises';
 import * as path from 'node:path';
 import { spawn } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { StringDecoder } from 'node:string_decoder';
 import { resolveNativeCommand, stopProcess } from './native-runtime.ts';
 import { redactSecrets } from './native-redact.ts';
@@ -51,6 +52,8 @@ export interface CommandRequest {
 	signal?: AbortSignal;
 	/** With a person attached stdin is open and an unanswered prompt is theirs to answer, not a hang. */
 	interactive?: InteractiveIo;
+	/** Called with every piece of output as it arrives (background jobs show the live tail). */
+	observe?: (text: string) => void;
 }
 export interface CommandResult {
 	exitCode: number | null;
@@ -90,8 +93,10 @@ export async function runCommand(request: CommandRequest): Promise<CommandResult
 		resolved = local ? { executable: local, args, embeddedNode: false } : await resolveNativeCommand(request.command, args, toolchainEnv);
 	}
 	await fsp.mkdir(request.logDirectory, { recursive: true });
-	const logFile = path.join(request.logDirectory, new Date(started).toISOString().replace(/[:.]/g, '-') + '-' + path.basename(request.command).replace(/[^\w.-]/g, '_') + '.log');
+	const logFile = path.join(request.logDirectory, new Date(started).toISOString().replace(/[:.]/g, '-') + '-' + randomBytes(3).toString('hex') + '-' + path.basename(request.command).replace(/[^\w.-]/g, '_') + '.log');
 	const log = fs.createWriteStream(logFile, { flags: 'wx', mode: 0o600 });
+	// A full disk or a vanished folder must cost the log, never the run: the output tail still reaches the agent.
+	log.on('error', () => undefined);
 	const env = { ...toolchainEnv, ...(resolved.embeddedNode ? { ELECTRON_RUN_AS_NODE: '1' } : {}) };
 	// A project Harness resolves `--cwd` against its own root, which it may take from the process directory (for example
 	// `Path.cwd()` in a Python `ide-run`): starting it inside the subfolder made it look for `<cwd>/<cwd>`.
@@ -102,6 +107,7 @@ export async function runCommand(request: CommandRequest): Promise<CommandResult
 		const decoder = new StringDecoder('utf8');
 		const collect = (chunk: Buffer): void => {
 			if (request.interactive) { request.interactive.onOutput(chunk.toString('utf8')); }
+			request.observe?.(chunk.toString('utf8'));
 			if (logged < MAX_LOG_BYTES) { log.write(chunk.subarray(0, MAX_LOG_BYTES - logged)); logged += chunk.length; }
 			tail += decoder.write(chunk);
 			lastOutputAt = Date.now();
@@ -121,6 +127,8 @@ export async function runCommand(request: CommandRequest): Promise<CommandResult
 		watcher.unref();
 		const onAbort = (): void => { cancelled = true; stopProcess(child); };
 		request.signal?.addEventListener('abort', onAbort, { once: true });
+		// The caller may have stopped it while the command was still being resolved; an abort that already happened raises no event.
+		if (request.signal?.aborted) { onAbort(); }
 		const finish = (exitCode: number | null): void => {
 			if (done) { return; }
 			done = true; clearTimeout(timer); clearInterval(watcher); stopInput?.(); request.signal?.removeEventListener('abort', onAbort);
