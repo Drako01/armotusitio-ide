@@ -272,3 +272,8 @@ test('only integrity refusals end git delivery; a user denial covers its own cal
 		'POLICY_DENIED: protected-branch', 'POLICY_DENIED: path-not-found', 'POLICY_DENIED: invalid-message', 'POLICY_DENIED: all-paths-ignored', 'COMMITTED abc on feat/x: 1 file(s)'].map(endsGitDelivery),
 		[false, true, true, true, false, false, false, false, false]);
 });
+
+test('NTFS spellings of a sensitive folder are sensitive too', () => {
+	const aliases = ['.ssh::$DATA/id', '.git.', '.aws /credentials', '.kube::$INDEX_ALLOCATION/config', 'a/.GNUPG../x'];
+	assert.deepEqual(aliases.map(file => isSensitiveGitPath(file)), aliases.map(() => true));
+});
