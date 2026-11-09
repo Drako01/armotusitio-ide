@@ -72,6 +72,8 @@ export interface ApprovalRequest {
 	rule: string;
 	/** Why the action cannot be remembered, when `rule` is empty; the card says so instead of hiding the options silently. */
 	noRemember?: NoRememberReason;
+	/** The rule may also be remembered for every project; set only for exact rules of inspection commands (`globalRuleAllowed`). */
+	global?: boolean;
 	/** How much harm a wrong yes can do, shown on the card next to what, where and for how long. */
 	risk?: ApprovalRisk;
 }
@@ -79,8 +81,8 @@ export interface ApprovalRequest {
 export type ApprovalRisk = 'low' | 'medium' | 'high';
 /**
  * How far an approval reaches: this action only, the rest of the current run, the rest of the IDE session in this project,
- * or always in this project. Anything else is a denial.
+ * always in this project, or in every project (`global`, offered only for inspection commands). Anything else is a denial.
  */
-export type ApprovalAnswer = 'once' | 'task' | 'session' | 'always' | 'deny';
+export type ApprovalAnswer = 'once' | 'task' | 'session' | 'always' | 'global' | 'deny';
 /** Why an approval is offered only once: dependency installs, irreversible file changes, publication, or no exact rule exists. */
 export type NoRememberReason = 'dependency' | 'irreversible' | 'publication' | 'inexact';

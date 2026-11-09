@@ -81,7 +81,8 @@ export interface ChatRuntime {
 	/** Undo the files a run changed, under the same fence and lease as a writer; files the user touched are skipped. */
 	discard?(diff: RunDiffSummary): Promise<{ discarded: string[]; skipped: string[] }>;
 	/** Persists the rule of an "always allow" answer in the USER permissions file. */
-	rememberApproval?(rule: string): Promise<void>;
+	/** Persists an allow rule in the user's permissions file: for this project only, or for every project. */
+	rememberApproval?(rule: string, scope: 'project' | 'global'): Promise<void>;
 	/** Limits a provider keeps outside its run output (Codex rollouts); bounded and silent on failure. */
 	readQuota?(provider: NativeProvider): Promise<ProviderQuota | undefined>;
 	/** Local machine checks (Node, package manager, shell, git, gh), run before the first act turn of a session. */
@@ -459,14 +460,19 @@ export class HarnessChatSession {
 		const pending = this.approvals.get(id);
 		if (!pending || pending.resolving || !APPROVAL_ANSWERS.includes(answer)) { return; }
 		if (REMEMBERING_ANSWERS.includes(answer) && !pending.request.rule) { return; }
-		if (answer === 'always' && !this.runtime.rememberApproval) { return; }
+		const persistent = answer === 'always' || answer === 'global';
+		// Only exact rules of inspection commands may leave the project: the card says so through `global`.
+		if (answer === 'global' && !pending.request.global) { return; }
+		if (persistent && !this.runtime.rememberApproval) { return; }
 		// Claim this card before asynchronous persistence; cancellation and timeout can still deny it.
 		pending.resolving = true;
 		let final = answer;
-		if (answer === 'always') {
+		if (persistent) {
 			try {
-				await this.runtime.rememberApproval?.(pending.request.rule);
-				this.conversation.messages.push(chatMessage('notice', this.t('Se guard\u00f3 la regla \u00ab{0}\u00bb en tu archivo de permisos (~/.armotusitio/permissions.json). Revocala con /permisos quitar {0}', redactSecrets(pending.request.rule)), { tone: 'info' }));
+				await this.runtime.rememberApproval?.(pending.request.rule, answer === 'global' ? 'global' : 'project');
+				this.conversation.messages.push(chatMessage('notice', answer === 'global'
+					? this.t('Se guard\u00f3 la regla \u00ab{0}\u00bb para todos tus proyectos (~/.armotusitio/permissions.json). Revocala con /permisos quitar {0}', redactSecrets(pending.request.rule))
+					: this.t('Se guard\u00f3 la regla \u00ab{0}\u00bb en tu archivo de permisos (~/.armotusitio/permissions.json). Revocala con /permisos quitar {0}', redactSecrets(pending.request.rule)), { tone: 'info' }));
 			} catch {
 				final = 'once';
 				this.conversation.messages.push(chatMessage('notice', this.t('No se pudo guardar la regla \u00ab{0}\u00bb; se permiti\u00f3 solo esta vez.', redactSecrets(pending.request.rule)), { tone: 'error' }));

@@ -629,10 +629,12 @@ function renderApprovals(): void {
 		const detail = el('ul', 'approval-detail'); for (const line of item.detail) { detail.append(el('li', undefined, line)); }
 		// Without a rule the card says why it can only be allowed once, instead of silently hiding the other options.
 		const rule = el('p', 'muted approval-rule', item.rule ? format(L.alwaysRule, item.rule, L.permissionsFile) : (L.noRemember[item.noRemember] ?? '')); rule.id = 'rule-' + item.id;
+		if (item.global) { rule.textContent += ' ' + L.globalRule; }
 		rule.hidden = !rule.textContent;
 		const actions = el('div', 'approval-actions');
-		for (const [answer, label, className] of [['once', L.allowOnce, ''], ['task', L.allowTask, 'secondary'], ['session', L.allowSession, 'secondary'], ['always', L.allowAlways, 'secondary'], ['deny', L.denyApproval, 'secondary']]) {
+		for (const [answer, label, className] of [['once', L.allowOnce, ''], ['task', L.allowTask, 'secondary'], ['session', L.allowSession, 'secondary'], ['always', L.allowAlways, 'secondary'], ['global', L.allowGlobal, 'secondary'], ['deny', L.denyApproval, 'secondary']]) {
 			if (answer !== 'once' && answer !== 'deny' && !item.rule) { continue; }
+			if (answer === 'global' && !item.global) { continue; }
 			const button = el('button', className, label) as HTMLButtonElement; button.type = 'button';
 			button.addEventListener('click', () => { button.disabled = true; api.postMessage({ action: 'approval', id: item.id, answer }); });
 			actions.append(button);

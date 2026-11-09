@@ -556,7 +556,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 				return { native: true, lastInputRef: await nativeChat.lastInputRef(await rootOf(), provider, conversationId) };
 			},
 			fork: async (provider, conversationId, next) => nativeChat.fork(await rootOf(), provider, conversationId, next),
-			rememberApproval: async rule => addUserRule(rule, 'allow', undefined, await rootOf()),
+			rememberApproval: async (rule, scope) => addUserRule(rule, 'allow', undefined, scope === 'project' ? await rootOf() : undefined),
 			preflight: async () => doctorFor(await rootOf(), true),
 			readQuota: async provider => provider === 'codex' ? readLatestCodexQuota() : undefined,
 			async discard(diff) {

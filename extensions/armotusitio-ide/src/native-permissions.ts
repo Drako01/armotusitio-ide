@@ -353,6 +353,14 @@ export function suggestRule(request: PermissionRequest, root?: string): string {
 	return rule.length <= MAX_RULE_LENGTH ? rule : '';
 }
 
+/** Inspection commands whose exact rule may be remembered for every project: none runs project code, reads secrets or changes anything. */
+const GLOBAL_SAFE_SUBCOMMANDS = new Map<string, readonly string[]>([['docker', ['ps', 'images', 'version', 'info']], ['terraform', ['version']], ['kubectl', ['version']]]);
+
+/** Whether the "every project" answer may be offered: only exact rules of those commands, never git, edits or anything that runs project code. */
+export function globalRuleAllowed(request: PermissionRequest, root?: string): boolean {
+	return request.kind === 'run' && !!suggestRule(request, root) && request.args.length === 1 && GLOBAL_SAFE_SUBCOMMANDS.get(commandName(request.command))?.includes(request.args[0]) === true;
+}
+
 /** Validates the raw `atsHarness.permissionsPreset` setting; `undefined` lets the permission files decide. */
 export function configuredPreset(value: unknown): PermissionPreset | undefined {
 	return PRESETS.find(preset => preset === value);

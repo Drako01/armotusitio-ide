@@ -195,7 +195,7 @@ function labels(t) {
 		change: { added: t('nuevo'), modified: t('modificado'), deleted: t('borrado') },
 		continueRun: t('Continuar'), retry: t('Reintentar'), continuedRun: t('Continuaci\u00f3n'), maxMessageChars: MAX_USER_MESSAGE_CHARS,
 		discardRun: t('Deshacer esta ejecuci\u00f3n'), openHome: t('Ver en Inicio'),
-		approvals: t('Aprobaciones pendientes'), allowOnce: t('Permitir una vez'), allowTask: t('Esta tarea'), allowSession: t('Esta sesi\u00f3n'), allowAlways: t('Siempre en este proyecto'), denyApproval: t('Denegar'),
+		approvals: t('Aprobaciones pendientes'), allowOnce: t('Permitir una vez'), allowTask: t('Esta tarea'), allowSession: t('Esta sesi\u00f3n'), allowAlways: t('Siempre en este proyecto'), allowGlobal: t('En todos mis proyectos'), globalRule: t('\u00abEn todos mis proyectos\u00bb se ofrece solo para comandos de inspecci\u00f3n y vale en cualquier proyecto.'), denyApproval: t('Denegar'),
 		alwaysRule: t('\u00abSiempre en este proyecto\u00bb guarda la regla \u00ab{0}\u00bb en {1}; \u00abEsta tarea\u00bb y \u00abEsta sesi\u00f3n\u00bb no guardan nada.', '{0}', '{1}'), permissionsFile: '~/.armotusitio/permissions.json',
 		noRemember: {
 			dependency: t('Solo una vez: instalar o cambiar dependencias se aprueba cada vez.'),

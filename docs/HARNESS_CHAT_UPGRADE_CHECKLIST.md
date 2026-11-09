@@ -68,7 +68,9 @@ Gaps: no **global** scope (the user layer is keyed per project), no management U
 Design rule: extend `ApprovalBroker` and `native-permissions`; no second broker. A global grant is allowed only for explicitly allow-listed low-risk rules and can never cover destructive operations, secrets, privilege elevation or high-risk commands.
 Depends on: Phase 1 (policy is the single source of decision).
 Acceptance: project grants survive an IDE restart; a global grant works only for its listed rules; revocation applies to the next operation; both providers see identical verdicts; unauthorized operations fail closed. Tests: unit (broker/store), integration (restart, two projects), E2E (card -> persist -> restart).
-Status: PENDING.
+Progress (block W1a, commit see PR): **DONE** the `global` answer on the approval card, only for exact rules of inspection commands (allowlist in `native-permissions.ts`, `globalRuleAllowed`), host-enforced, persisted in the existing user permissions file (global lists), revocable with `/permisos quitar`. Files: `native-permissions(.types).ts`, `native-approval.ts`, `native-chat-session.ts`, `native-integration.ts`, `runtime/contracts.ts`, `chat.ts`, `resources/chat.ts`. Tests: `native-permission-scopes.test.mts` (allowlist, card flag, restart persistence, project isolation, immediate revocation) and the browser card test; related suites 38/38 and 33/33 pass. Project scope (`always`) and session/task/once already existed.
+**Still PENDING in W1:** management screen (list, revoke, audit) inside the chat; automatic invalidation of grants when the security context changes beyond the existing project-permissions digest; E2E restart through the real chat; both providers sharing the verdict is covered by the existing contract suite but not re-run for `global`.
+Status: PARTIAL.
 
 ### W2 - Chat tool gaps versus Claude Code and Codex
 

@@ -119,7 +119,7 @@ export interface AdapterEvent {
 export interface ApprovalVerdict {
 	allowed: boolean;
 	/** How long the user allowed it; adapters translate only what the provider really supports. */
-	scope: 'once' | 'task' | 'session' | 'always';
+	scope: 'once' | 'task' | 'session' | 'always' | 'global';
 	/** Text the model receives on a denial (`POLICY_DENIED: ...`, `DENIED: ...`). */
 	reason?: string;
 }

@@ -50,6 +50,11 @@ test('a pending approval is a named, keyboard-operable card that answers with a 
 			const group = document.querySelector('#approvals [role="group"]');
 			return { rule: document.getElementById(group.getAttribute('aria-describedby')).textContent, buttons: [...group.querySelectorAll('button')].map(button => button.textContent) };
 		}), { rule: 'Solo una vez: instalar o cambiar dependencias se aprueba cada vez.', buttons: ['Permitir una vez', 'Denegar'] });
+		// Only inspection commands carry `global`; the card then adds the "every project" answer and says what it covers.
+		const inspect = { id: 'ap-0123456789abcdef', kind: 'run', title: 'Ejecutar comando', detail: ['command: docker ps'], rule: 'run:docker ps', global: true };
+		await push(withApprovals([inspect]));
+		assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#approvals button')].map(button => button.textContent)),
+			['Permitir una vez', 'Esta tarea', 'Esta sesi\u00f3n', 'Siempre en este proyecto', 'En todos mis proyectos', 'Denegar']);
 		await push(withApprovals([]));
 		assert.equal(await page.locator('#approvals').isHidden(), true);
 	} finally { await browser.close(); }
