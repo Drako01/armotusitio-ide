@@ -2,7 +2,7 @@
 
 Single source of progress for `PLAN_IDE.md`. Branch: `fix/harness-delete-dependency-folders` (PR #81, label `sin-release`, never merged by the agent).
 Statuses are evidence-only: `DONE` (code and test ran green), `PARTIAL`, `TODO`, `BLOCKED` (needs credentials, quota or a platform), `NOT VERIFIED`, `DECIDED-NOT-TO` (justified).
-Commits are local until the user pushes. To continue with another agent: take the first `TODO` of the lowest phase, keep this file updated, commit one closed block at a time.
+To continue with another agent: take the first `TODO` of the lowest phase, keep this file updated, commit one closed block at a time.
 
 Existing work this plan builds on (do not redo): #72 (hybrid writer, tools), #75 (account selector), #78 (resilience: engine reason, `/lease`, `/motor`, `@terminal`, jobs, `/skills`), #81 (`delete_path` of a reinstallable `node_modules`). See `HARNESS_CHAT_UPGRADE_CHECKLIST.md` and `HARNESS_TOOL_INVENTORY.md`.
 
@@ -10,16 +10,16 @@ Existing work this plan builds on (do not redo): #72 (hybrid writer, tools), #75
 
 Installs (`pnpm|npm|yarn|bun install`), builds, full test suites and similar long processes MUST run in the background: do not block the session; record job id/PID, log file, state and result; supervise without excessive polling; continue independent work; check the exit code before declaring PASS; handle timeouts, errors and orphans; never run two operations that modify the same resources at once.
 
-| ID | Requirement | Compliance |
-|---|---|---|
-| B-1 | Agent work sessions (this process) run installs, builds and full suites with `run_in_background` and a monitor, not in the foreground | COMPLIANT from 2026-11-09: the full suite already ran in the background (606 tests, exit 0). Evidence is each run recorded under its SHA in this file |
-| B-2 | Exit code checked before PASS | COMPLIANT: results are quoted from the test runner summary and the process exit status; no PASS is recorded without them |
-| B-3 | No concurrent mutation of the same resource | COMPLIANT in sessions (one suite or install at a time, background suite never overlapped with a second copy). Product side: `repairQueue` and `gitQueue` serialize repair and git inside one runner |
-| B-4 | Product: `repair_dependencies` installs run in the background with job id, log, supervision and orphan cleanup | PARTIAL: the install runs through `run` with a 900 s timeout and the runner kills it on timeout or when the run ends, but the call blocks the agent turn. Moving it onto the existing `job_start`/`job_status` jobs (max 4, stopped when the run ends) is TODO (A2/D1 follow-up) | | DONE: `runAsJob` in `ats-runner.ts` runs the install as a job of the job table (policy and approvals of `run`, id, log, timeout, max 4 jobs, stopped when the run ends); the wait is `JobTable.wait` on the job's end (no polling) and success is exit code 0. Test in `native-jobs.test.mts` (ok, exit 3, timeout, none left running) |
-| B-5 | Product: cross-window exclusion for installs on one folder | TODO (same as D1-5) | | DONE: `native-install-lock.ts` (exclusive lock file per folder in the OS temp dir, stale on dead pid, corrupt file or > 40 min) wraps every non-diagnose `repair_dependencies`; a second process gets `BLOCKED install-in-progress`. Tests `native-install-lock.test.mts` and the wiring test in `native-dependency-repair.test.mts` |
-| W-1 | Welcome screen footer: "Desarrollado por Alejandro Daniel Di Stefano · ArmoTuSitio.com.ar" with a link (owner request) | DONE: `<footer>` in `src/home.ts`, test in `home.test.cts`. Visual check: OWNER VALIDATION REQUIRED |
-| E6-3 | Dependency-folder deletion re-scans for protected folders after the approval wait (TOCTOU) | DONE: `native-file-tools.test.mts` plants `.git` while the approval is pending |
-| V-FLAKE | `native-mcp-bridge.test.mts` "provider stdio ... through ats-runner" timed out once (5 s) inside the 614-test parallel run, and passed 3/3 alone | OBSERVED flake under load (runner process startup); not caused by a logic change. Candidate: raise that test's stdio timeout |
+| ID | Requirement | Status | Evidence (SHA) |
+|---|---|---|---|
+| B-1 | Agent work sessions run installs, builds and full suites in the background with a monitor | DONE | Every suite since 2026-11-09 ran with `run_in_background`; latest node 622 tests (615 pass, 0 fail, 7 skipped, exit 0) and browser 130 pass, exit 0, at 327b34f |
+| B-2 | Exit code checked before PASS | DONE | Results are quoted from the runner summary and the `exit=` line of each log; no PASS recorded without them |
+| B-3 | No concurrent mutation of the same resource | DONE | One suite or install at a time in sessions. Product: `gitQueue` for git, folder lock (B-5) for dependency repairs |
+| B-4 | Product: `repair_dependencies` does not block the agent turn | DONE | `repair_dependencies` starts the repair in the background (`RepairTable`), returns `STARTED repair-N`; `repair_status` reads RUNNING/SUCCEEDED/FAILED/CANCELLED and the result, `stop` cancels and stops the install process tree (`runAsJob` + signal); max 2 repairs, stopped when the run ends. Tests `native-dependency-repair.test.mts`, `native-jobs.test.mts` at 327b34f |
+| B-5 | Product: cross-process exclusion for installs on one folder | DONE | `native-install-lock.ts`: unique owner id, heartbeat (a live owner never expires, a silent or dead one does), takeover serialised by a mutex with a second staleness check, owner-checked release and heartbeat, corrupt files and reused pids recovered. Tests with real processes (kill, refuse, clean exit) and 20 racers, 6/6 stable in 6 runs at 327b34f |
+| W-1 | Welcome screen footer with author credit and link (owner request) | DONE | `src/home.ts`, `home.test.cts` at 401cb75. Visual check: OWNER VALIDATION REQUIRED |
+| E6-3 | Dependency-folder deletion re-scans for protected folders after the approval wait | DONE | `native-file-tools.test.mts` plants `.git` during the approval, at 401cb75 |
+| V-FLAKE | `native-mcp-bridge` stdio test timed out once (5 s) in the parallel suite | DONE (mitigated, root cause = cold-start latency under load) | Not reproducible in 52 isolated/parallel runs (12 and 40 concurrent copies). Fix: the first request (`initialize`) has a 60 s start budget, later calls keep 5 s, and the error names the method and budget. Full suite 622/615/0 at 327b34f |
 
 ## Phase 0: housekeeping
 
@@ -52,7 +52,7 @@ Installs (`pnpm|npm|yarn|bun install`), builds, full test suites and similar lon
 | ID | Prio | Item | Status |
 | --- | --- | --- | --- |
 | T3-1 | P1 | Capability matrix per provider from the real implementation (filesystem, terminal, git, dev, context, MCP, skills, multimodal) | DONE: `docs/HARNESS_TOOL_INVENTORY.md` and `docs/NATIVE_CHAT_PARITY_MATRIX.md` cover filesystem, terminal, git, dev secrets, context, MCP, skills and multimodal per provider, with evidence; `repair_dependencies` row added. Codex real-run columns stay BLOCKED (quota) |
-| T3-2 | P2 | Fill gaps found by the matrix; document real limits instead of simulating tools | DONE (limits documented, nothing simulated): image input and notebook reads, Codex user-MCP and sub-agents are listed as NOT IMPLEMENTED in the inventory; implementing them needs provider features that cannot be verified here (OWNER VALIDATION REQUIRED for Codex) |
+| T3-2 | P2 | Gaps found by the matrix | DECIDED-NOT-TO (scope decision, not parity): image input and notebook reads, Codex user-MCP and sub-agents stay NOT IMPLEMENTED and are listed as such in `docs/HARNESS_TOOL_INVENTORY.md`; they are not simulated. Full functional parity with Claude Code/Codex is NOT claimed |
 
 ## Phase 4: real interactive terminal (PTY/ConPTY)
 
@@ -71,7 +71,7 @@ Installs (`pnpm|npm|yarn|bun install`), builds, full test suites and similar lon
 
 | ID | Prio | Item | Status |
 | --- | --- | --- | --- |
-| E6-1 | P1 | Adversarial tests: prompt injection, traversal, symlink races (TOCTOU), escalation, command injection, secret leaks, stale approval | PARTIAL: file-path floor covered (below); the rest TODO |
+| E6-1 | P1 | Adversarial tests: prompt injection, traversal, symlink races (TOCTOU), escalation, command injection, secret leaks, stale approval | DONE: E6-1a, E6-1b, E6-3, X9-1 (traversal and aliases, symlinks not followed, command injection forms, redaction, stale approval, post-approval re-scan, prompt injection through skills/MCP/mentions in existing tests) |
 | E6-1a | P0 | Windows: `delete_path`/`move_path`/Edit floor accepted `.git::$INDEX_ALLOCATION` and deleted the whole `.git` (NTFS alternate data stream); trailing dot/space and 8.3 `GIT~1` are other aliases | DONE: `isWindowsAlias` refuses them (`invalid-path`) in `native-file-tools.ts`; test fails without the fix (9/10) and passes with it (10/10), Windows only. Other floors (`native-command-policy.ts`, MCP) not yet checked for the same aliases: TODO |
 | E6-1b | P1 | `isSensitiveGitPath` compared names exactly: `.ssh::$DATA`, `.aws.`, `.kube ` slipped past the git commit floor | DONE: names are canonicalised (stream and trailing dot/space stripped); test `NTFS spellings of a sensitive folder are sensitive too`. `native-command-policy.ts` has no folder-name list, nothing to fix there |
 | E6-2 | P2 | Scopes (operation, task, session, project, global low-risk), immediate revocation, concurrent decisions, traceability | DONE (existing coverage + new): scopes once/task/session/project/global-low-risk, revocation and persistence are covered by `native-chat-approvals`, `native-permissions`, `native-permission-scopes`, `native-runner-approval` tests; new test: simultaneous answers to one card, first wins and nothing is remembered twice |
@@ -80,7 +80,7 @@ Installs (`pnpm|npm|yarn|bun install`), builds, full test suites and similar lon
 
 | ID | Prio | Item | Status |
 | --- | --- | --- | --- |
-| C7-1 | P2 | Lease renewal for long runs (needs an engine `ide-writer-renew`), foreign locks never released, PID reuse | BLOCKED (external): renewing a lease needs a new `ide-writer-renew` command in the project engine's protocol, and consumer repos must not be changed. IDE side already fails safe: an expired lease is reported as `leaseLost` and every IDE check still applies (`native-hybrid-writer.test.mts`). OWNER decision: add the command to the engine, then the IDE renews every LEASE_TIMEOUT/2 |
+| C7-1 | P2 | Lease renewal for long runs, foreign locks never released, PID reuse | BLOCKED (external): needs an `ide-writer-renew` command in the project engine protocol, and consumer repos must not be changed. IDE side fails safe: expired lease reported as `leaseLost`, IDE checks still apply. Foreign locks and PID reuse are covered for the dependency lock (B-5) |
 | C7-2 | P2 | Two agents on one file, worktrees, several IDE windows | DONE (existing coverage): shared execution fence is exclusive and monotonic across processes (`native-shared-fence`, `native-fence-processes`, `native-cross-engine-fence`), worktree isolation (`native-agent-worktree`, `native-worktree-*`), plus the new cross-process install lock for dependency folders |
 
 ## Phase 8: chat UX

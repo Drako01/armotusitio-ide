@@ -17,7 +17,7 @@ Compared with Claude Code and Codex CLI, as seen from the Chat Harness (native t
 | **User MCP servers** | `claude mcp`, `/mcp` | `codex mcp` | **`/mcp add|remove|enable|disable`, per-call card** (`mcp:<server>/<tool>` rules) | **NOT IMPLEMENTED** (needs Codex quota to verify) | PASS unit; real Claude M02 `docs/r8-evidence/w4-mcp-real-claude.json` |
 | Git (branch, commit, push, PR, fetch) | via shell | via shell | structured tools with their own cards, protected branches | same tools through the runner | PASS (existing) |
 | Delete and move files | via shell | via shell | structured `delete_path`, `move_path` with `edit:` rules | same | PASS (existing) |
-| Repair a corrupt dependency install | manual shell loop | manual shell loop | structured `repair_dependencies` (diagnose, reinstall in place, one approved clean reinstall), under the command and file policies | same | PASS (fixtures; real session NOT VERIFIED) |
+| Repair a corrupt dependency install | manual shell loop | manual shell loop | structured `repair_dependencies` (diagnose, reinstall in place, one approved clean reinstall; starts in the background, read with `repair_status`; one repair per folder across processes), under the command and file policies | same | PASS (fixtures; real session NOT VERIFIED) |
 | Development secrets | env | env | keychain-backed, redacted | same | PASS (existing) |
 | Work Management (ArmoTuSitio MCP) | n/a | n/a | tools through the runner | same | PASS (existing) |
 | Sub-agents (`Task`) | yes | no | denied (`tool-unavailable`) | n/a | NOT IMPLEMENTED: the Harness has its own multi-agent workflow with plan, review and fences |
