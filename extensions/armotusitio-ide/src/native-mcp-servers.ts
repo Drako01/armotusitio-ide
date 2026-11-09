@@ -9,6 +9,7 @@
  * a name the model can address as `mcp__<name>__<tool>`: names have no underscores so the split is unambiguous.
  */
 import { LockedJson } from './native-locked-json.ts';
+import { freshTokens, type OAuthDeps, type OAuthTokens } from './native-mcp-oauth.ts';
 
 export const MCP_SERVERS_SCHEMA_VERSION = 1;
 export const RESERVED_SERVER_NAMES: readonly string[] = ['ats-runner', 'armotusitio'];
@@ -33,12 +34,14 @@ export interface McpServer {
 	/** http: the endpoint; a bearer token, when needed, is kept in secret storage. */
 	url?: string;
 	hasToken?: boolean;
+	/** http: signed in with OAuth by the IDE; the tokens are kept in secret storage and renewed before each run. */
+	oauth?: boolean;
 	enabled: boolean;
 }
 export interface McpSecrets { get(key: string): PromiseLike<string | undefined>; store(key: string, value: string): PromiseLike<void>; delete(key: string): PromiseLike<void> }
 interface ServersFile { schemaVersion: number; servers: McpServer[] }
 /** What the user supplies when adding a server; `token` and `env` go to secret storage. */
-export interface McpServerInput { name: string; url?: string; command?: string; args?: string[]; token?: string; env?: Record<string, string> }
+export interface McpServerInput { name: string; url?: string; command?: string; args?: string[]; token?: string; env?: Record<string, string>; oauth?: OAuthTokens }
 /** The server entry Claude's `--mcp-config` reads. */
 export type McpLaunch = { type: 'stdio'; command: string; args: string[]; env?: Record<string, string> } | { type: 'http'; url: string; headers?: Record<string, string> };
 
@@ -57,7 +60,7 @@ function validUrl(text: unknown): text is string {
 function validServer(server: unknown): server is McpServer {
 	const value = server as Partial<McpServer> | undefined;
 	if (!value || typeof value.name !== 'string' || !NAME.test(value.name) || RESERVED_SERVER_NAMES.includes(value.name) || typeof value.enabled !== 'boolean') { return false; }
-	if (value.transport === 'http') { return validUrl(value.url) && !value.command; }
+	if (value.transport === 'http') { return validUrl(value.url) && !value.command && !(value.hasToken && value.oauth); }
 	return value.transport === 'stdio' && typeof value.command === 'string' && !!value.command && value.command.length <= MAX_ARG_LENGTH && !CONTROL.test(value.command) && !value.url &&
 		Array.isArray(value.args) && value.args.length <= MAX_ARGS && value.args.every(arg => typeof arg === 'string' && arg.length <= MAX_ARG_LENGTH && !CONTROL.test(arg)) &&
 		(value.envNames ?? []).every(name => ENV_NAME.test(name));
@@ -85,8 +88,10 @@ export function parseServerWords(name: string, words: readonly string[]): McpSer
 export class McpServerStore {
 	private readonly store: LockedJson<ServersFile>;
 	private readonly secrets: McpSecrets;
+	private readonly oauth: OAuthDeps | undefined;
 
-	constructor(directory: string, secrets: McpSecrets) {
+	constructor(directory: string, secrets: McpSecrets, oauth?: OAuthDeps) {
+		this.oauth = oauth;
 		this.store = new LockedJson(directory, 'servers.json', MAX_BYTES, empty, validFile, 'HARNESS_MCP_SERVERS_UNSAFE');
 		this.secrets = secrets;
 	}
@@ -97,7 +102,7 @@ export class McpServerStore {
 		const name = input.name.trim().toLowerCase();
 		const envNames = Object.keys(input.env ?? {});
 		const server: McpServer = input.url !== undefined
-			? { name, transport: 'http', url: input.url, ...(input.token ? { hasToken: true } : {}), enabled: true }
+			? { name, transport: 'http', url: input.url, ...(input.token ? { hasToken: true } : {}), ...(input.oauth ? { oauth: true } : {}), enabled: true }
 			: { name, transport: 'stdio', command: input.command, args: input.args ?? [], ...(envNames.length ? { envNames } : {}), enabled: true };
 		const secretsOk = Object.values(input.env ?? {}).every(validSecret) && (input.token === undefined || validSecret(input.token)) && envNames.length <= MAX_ENV;
 		if (!validServer(server) || !secretsOk) { throw Error('HARNESS_MCP_SERVER_INVALID'); }
@@ -105,6 +110,7 @@ export class McpServerStore {
 			if (file.servers.some(item => item.name === name)) { throw Error('HARNESS_MCP_SERVER_EXISTS'); }
 			if (file.servers.length >= MAX_SERVERS) { throw Error('HARNESS_MCP_SERVER_LIMIT'); }
 			if (input.token) { await this.secrets.store(this.key(name, 'token'), input.token); }
+			if (input.oauth) { await this.secrets.store(this.key(name, 'oauth'), JSON.stringify(input.oauth)); }
 			if (envNames.length) { await this.secrets.store(this.key(name, 'env'), JSON.stringify(input.env)); }
 			file.servers.push(server);
 			return { ...server };
@@ -115,7 +121,7 @@ export class McpServerStore {
 		return this.store.update(async file => {
 			const before = file.servers.length;
 			file.servers = file.servers.filter(server => server.name !== name);
-			await Promise.all([this.secrets.delete(this.key(name, 'token')), this.secrets.delete(this.key(name, 'env'))]);
+			await Promise.all([this.secrets.delete(this.key(name, 'token')), this.secrets.delete(this.key(name, 'env')), this.secrets.delete(this.key(name, 'oauth'))]);
 			return file.servers.length !== before;
 		});
 	}
@@ -129,7 +135,9 @@ export class McpServerStore {
 		const entries: Record<string, McpLaunch> = {};
 		for (const server of (await this.store.read()).servers.filter(item => item.enabled)) {
 			if (server.transport === 'http') {
-				const token = server.hasToken ? await this.secrets.get(this.key(server.name, 'token')) : undefined;
+				const token = server.oauth ? (await this.oauthTokens(server.name))?.access : server.hasToken ? await this.secrets.get(this.key(server.name, 'token')) : undefined;
+				// An OAuth server whose session cannot be renewed is left out until the user signs in again.
+				if (server.oauth && !token) { continue; }
 				entries[server.name] = { type: 'http', url: server.url!, ...(token ? { headers: { Authorization: 'Bearer ' + token } } : {}) };
 			} else {
 				const raw = server.envNames?.length ? await this.secrets.get(this.key(server.name, 'env')) : undefined;
@@ -139,5 +147,22 @@ export class McpServerStore {
 		return entries;
 	}
 
-	private key(name: string, part: 'token' | 'env'): string { return 'atsHarness.mcp.' + name + '.' + part; }
+	/** Names of OAuth servers whose session is gone or cannot be renewed: the user has to sign in again. */
+	async needsSignIn(): Promise<string[]> {
+		const names: string[] = [];
+		for (const server of (await this.store.read()).servers.filter(item => item.oauth)) { if (!await this.oauthTokens(server.name)) { names.push(server.name); } }
+		return names;
+	}
+
+	/** Stored tokens, renewed when they are about to expire (the renewed set replaces the stored one). */
+	private async oauthTokens(name: string): Promise<OAuthTokens | undefined> {
+		const raw = await this.secrets.get(this.key(name, 'oauth'));
+		if (!raw || !this.oauth) { return undefined; }
+		const stored = JSON.parse(raw) as OAuthTokens;
+		const tokens = await freshTokens(stored, this.oauth);
+		if (tokens && tokens !== stored) { await this.secrets.store(this.key(name, 'oauth'), JSON.stringify(tokens)); }
+		return tokens;
+	}
+
+	private key(name: string, part: 'token' | 'env' | 'oauth'): string { return 'atsHarness.mcp.' + name + '.' + part; }
 }

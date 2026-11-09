@@ -13,6 +13,7 @@ import type { ChatMode } from './native-chat.ts';
 const { parseCodexSandbox, useCodexSandbox } = require('./native-codex-sandbox.ts');
 const { diagnoseProvider } = require('./native-provider-diagnostics.ts');
 const { listProviderModels } = require('./native-provider-models.ts');
+const { authorizeMcpServer } = require('./native-mcp-oauth.ts');
 const { validModel, validEffort } = require('./native-providers.ts');
 const { endpoint } = require('./mcp.ts');
 const { TtlCache } = require('./native-ttl-cache.ts');
@@ -413,6 +414,7 @@ function registerChat(context, controller, projects, mcp, vscode, options: { dia
 		mcp: controller.mcpServers && {
 			t, store: controller.mcpServers,
 			confirm: async (summary: string) => { const confirm = t('Conectar'); return await vscode.window.showWarningMessage(summary, { modal: true }, confirm) === confirm; },
+			authorize: (url: string) => authorizeMcpServer(url, controller.mcpOAuth),
 			askSecret: (prompt: string) => vscode.window.showInputBox({ title: prompt, password: true, ignoreFocusOut: true }),
 			workManagement: async () => mcp.enabled() ? handle('/mcp', new vscode.CancellationTokenSource().token) : undefined
 		}

@@ -69,6 +69,9 @@ const EXACT: Record<string, Hint> = {
 	HARNESS_MCP_SERVER_EXISTS: t => t('Ya hay un servidor MCP con ese nombre. Quitalo primero con /mcp remove.'),
 	HARNESS_MCP_SERVER_LIMIT: t => t('Alcanzaste el m\u00e1ximo de servidores MCP. Quit\u00e1 uno que no uses y reintent\u00e1.'),
 	HARNESS_MCP_SERVERS_UNSAFE: t => t('El archivo de servidores MCP est\u00e1 da\u00f1ado o es de una versi\u00f3n m\u00e1s nueva. No se modific\u00f3; revis\u00e1lo o us\u00e1 {0}.', DIAGNOSE),
+	HARNESS_MCP_OAUTH_UNSUPPORTED: t => t('El servidor no admite el inicio de sesi\u00f3n que usa el IDE (OAuth con PKCE y registro din\u00e1mico sobre https). Pedile al proveedor un token y us\u00e1 --token.'),
+	HARNESS_MCP_OAUTH_FAILED: t => t('No se pudo completar el inicio de sesi\u00f3n del servidor MCP. Reintent\u00e1 /mcp add con --oauth.'),
+	HARNESS_MCP_OAUTH_TIMEOUT: t => t('No volviste del navegador a tiempo. Reintent\u00e1 /mcp add con --oauth.'),
 	HARNESS_TIMEOUT: t => t('La operaci\u00f3n super\u00f3 su tiempo m\u00e1ximo. Reintent\u00e1 o acot\u00e1 el pedido.'),
 	HARNESS_OPERATION_FAILED: t => t('La conversaci\u00f3n se conserva; pod\u00e9s reintentar. Si se repite, us\u00e1 {0}.', DIAGNOSE)
 };

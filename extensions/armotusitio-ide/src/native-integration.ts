@@ -375,13 +375,15 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 	 */
 	// Each AI profile is a private config directory (CLAUDE_CONFIG_DIR / CODEX_HOME) under the IDE storage, never inside a project.
 	/** MCP servers the user connected with `/mcp`; credentials stay in the IDE's secret storage. */
-	const mcpServers = new McpServerStore(path.join(context.globalStorageUri.fsPath, 'mcp-servers'), context.secrets);
+	const mcpOAuth = { fetch: globalThis.fetch, openBrowser: async (url: string) => { await vscode.env.openExternal(vscode.Uri.parse(url)); } };
+	const mcpServers = new McpServerStore(path.join(context.globalStorageUri.fsPath, 'mcp-servers'), context.secrets, mcpOAuth);
 	const profiles = new ProfileRegistry(path.join(context.globalStorageUri.fsPath, 'ai-profiles'), (provider, env) => new Promise(resolve => {
 		resolveNativeCommand(provider, provider === 'claude' ? ['auth', 'status'] : ['login', 'status'], env).then(resolved => execFile(resolved.executable, resolved.args, { env, timeout: 15_000, windowsHide: true, maxBuffer: 64 * 1024 }, (error, stdout, stderr) => resolve({ code: error ? 1 : 0, output: stdout + stderr })), () => resolve(undefined));
 	}));
 	// The chat reads and assigns accounts through the same registry the commands use.
 	controller.profiles = profiles;
 	controller.mcpServers = mcpServers;
+	controller.mcpOAuth = mcpOAuth;
 	const profileDeps = {
 		registry: profiles,
 		rootOf: async () => {

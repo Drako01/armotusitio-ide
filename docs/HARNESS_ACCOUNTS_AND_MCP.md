@@ -24,6 +24,7 @@ Answers on an approval card: once, this task, this session, this project, and (o
 ```
 
 - Remote servers need `https://` (plain `http://` only for localhost). Local servers are a command with arguments, never run through a shell.
+- Remote servers with OAuth: `/mcp add NAME URL --oauth` signs in in your browser (discovery, dynamic client registration, PKCE S256, loopback redirect); tokens live only in secret storage and are renewed before each run. A server that cannot renew is left out and `/mcp` says it needs a new sign-in. Servers without dynamic registration need `--token`.
 - Secrets are never typed in the chat: `--token` and `--env VAR` open a masked prompt and are kept in the IDE's secret storage.
 - Adding a server needs one modal confirmation that shows the exact command or URL. Every tool call still asks (`mcp:<server>/<tool>` rules can allow a specific tool).
 - Today only Claude Code conversations use these servers, from the next conversation (`Empezar de nuevo`).
