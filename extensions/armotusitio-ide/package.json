@@ -732,7 +732,7 @@
 	"scripts": {
 		"compile": "node esbuild.mts",
 		"test": "node --test test/*.test.cts test/native-*.test.mts",
-		"check": "node ../../node_modules/@typescript/native/bin/tsc --project tsconfig.json && node ../../node_modules/@typescript/native/bin/tsc --project tsconfig.strict.json && node check-resources.mts",
+		"check": "node ../../node_modules/@typescript/native/bin/tsc --project tsconfig.json && node check-resources.mts",
 		"vscode:prepublish": "npm run compile",
 		"check:native-package": "node check-native-package.mts",
 		"check:conformance": "node check-conformance.mts"

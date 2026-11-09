@@ -20,7 +20,7 @@ async function main() {
 	const vscode = { l10n: { t: value => value }, ViewColumn: { One: 1 }, Uri: { joinPath: (base, ...parts) => base + '/' + parts.join('/') }, workspace: { isTrusted: true, onDidGrantWorkspaceTrust: noop }, window: { createWebviewPanel: () => panel }, commands: { registerCommand: (id, fn) => { commands.set(id, fn); return noop(); }, executeCommand() { } } };
 	const workspace = { views: () => [], toolResult: () => undefined, receive: async () => false };
 	const module = { exports: {} };
-	vm.runInNewContext(fs.readFileSync(path.join(root, 'src/home.ts'), 'utf8'), { module, require: name => name === 'vscode' ? vscode : name === './home-labels.ts' ? require('../src/home-labels.ts') : name === './workspace.ts' ? { createWorkspace: () => workspace } : require(name) });
+	vm.runInNewContext(stripTypeScriptTypes(fs.readFileSync(path.join(root, 'src/home.ts'), 'utf8')), { module, require: name => name === 'vscode' ? vscode : name === './home-labels.ts' ? require('../src/home-labels.ts') : name === './workspace.ts' ? { createWorkspace: () => workspace } : require(name) });
 	module.exports.registerHome({ extensionUri: 'https://audit.invalid', subscriptions: [] }, { getProvider: async () => ({ label: 'Codex', supported: true }), getHistory: () => [], progress: [], onDidChangeTreeData: noop }, async () => [{ profile: { id: 'redevent', name: 'RedEvent', root: '/repo', actions: [], workflow: true, tools: [] } }]);
 	commands.get('atsIde.home')(); await receive({ action: 'ready' });
 	let html = panel.webview.html.replace(/<meta http-equiv="Content-Security-Policy"[^>]*>/, '').replace(/<script[^>]*src=[^>]*><\/script>/g, '').replace(/<link[^>]*>/g, '');

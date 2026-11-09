@@ -21,18 +21,18 @@ type Plan = { domain?: string; dag?: { id?: string; agent?: string; kind?: strin
 type NativeNode = { attempt?: number; previousAttempt?: string; failure?: { category?: string; cause?: string; action?: string }; gates?: { done?: number; total?: number }; gateDetail?: { typicalMs?: number; elapsedMs?: number; slow?: boolean }; id?: string; agent?: string; domain?: string; status?: string; state?: string; elapsedMs?: number; durationMs?: number; log?: string; phase?: string; cause?: string; dependencies?: string[]; dependsOn?: string[] };
 type NativeData = { eta?: { remainingMs?: number; basis?: string }; text?: string; complete?: boolean; domain?: string; planDigest?: string; outcome?: string; liveness?: string; aborted?: object | boolean; finishedAt?: string; startedAt?: string; createdAt?: string; updatedAt?: string; attempt?: { number?: number; outcome?: string; endedAt?: string }; attempts?: { number?: number; kind?: string; outcome?: string; startedAt?: string; endedAt?: string }[]; currentGate?: { node?: string; id?: string; domain?: string; elapsedMs?: number }; observation?: { generatedAt?: string; heartbeatAgeMs?: number }; finalGates?: NativeNode[] | { done?: number; total?: number; current?: string }; workers?: { id?: string; state?: string; agent?: string }[] | { active?: number; queued?: number; recommended?: number }; phases?: { id?: string; status?: string }[]; lastEvent?: { at?: string; event?: string; state?: string; gate?: string }; title?: string; id?: string; state?: string; status?: string; live?: boolean; percent?: number; elapsedMs?: number; cause?: string; children?: NativeData[]; nodes?: NativeNode[]; ready?: boolean; questions?: Question[]; plan?: Plan[]; checks?: { id?: string; status?: string; message?: string; action?: string; severity?: string }[]; warnings?: { id?: string; message?: string; title?: string; hint?: string; action?: string; severity?: string }[]; mode?: string };
 type NativeOptions = { authorize?: () => boolean; node?: string; host?: string; timeout?: number; started?: (child: import('node:child_process').ChildProcess) => void; log?: (text: string) => void };
-type Entry = { nodeStates?: Record<string, string>; evidence?: Record<string, string>; nativePlanRevision?: string; creationUncertain?: boolean; providerRevision?: string; logs?: string; issueKey?: string; planDigest?: string; reviewed?: string; previousPlan?: object[]; cancellation?: boolean; observedAt?: number; detectedEndedAt?: number; detectedAt?: number; origin?: string; timeline?: { phase: string; at: number; attempt?: number; unit?: string }[]; title?: string; id: string; project: string; profile: { id: string; root: string }; host: string; phase: string; startedAt: number; endedAt?: number; questions: Question[]; knownQuestions: Question[]; answers: Record<string, string>; file?: string; nativeId?: string; error?: string; mode?: string; ready?: boolean; plan?: { domain: string; nodes: { id: string; agent: string; kind?: string; dependencies?: string[] }[] }[]; warnings?: { id?: string; message: string; hint: string; blocking: boolean }[]; progress?: ReturnType<typeof progressView>; progressError?: boolean; checkedAt?: number; restored?: boolean };
+type Entry = { nodeStates?: Record<string, string>; evidence?: Record<string, string>; nativePlanRevision?: string; creationUncertain?: boolean; providerRevision?: string; logs?: string; issueKey?: string; planDigest?: string; reviewed?: string; previousPlan?: object[]; cancellation?: boolean; observedAt?: number; detectedEndedAt?: number; detectedAt?: number; origin?: string; timeline?: { phase: string; at: number; attempt?: number; unit?: string }[]; title?: string; id: string; project: string; profile?: { id: string; root: string }; host: string; phase: string; startedAt: number; endedAt?: number; questions: Question[]; knownQuestions: Question[]; answers: Record<string, string>; file?: string; nativeId?: string; error?: string; mode?: string; ready?: boolean; plan?: { domain: string; nodes: { id: string; agent: string; kind?: string; dependencies?: string[] }[] }[]; warnings?: { id?: string; message: string; hint: string; blocking: boolean }[]; progress?: ReturnType<typeof progressView>; progressError?: boolean; checkedAt?: number; restored?: boolean };
 
 /** Keep user prompts and credentials out of execution summaries and diagnostic output. */
 const { redactSecrets: redact } = require('./native-redact.ts');
 
 const sharedReads = new Map();
 const rootReads = new Map();
-const readQueue = [];
+const readQueue: any[] = [];
 let activeReads = 0;
 
 /** Share equivalent observations, serialize each root and bound read subprocesses across projects. */
-async function nativeRun(profile, args, options: NativeOptions = {}): Promise<{ code: number; value?: NativeData; error: string; output?: string }> {
+async function nativeRun(profile: any, args: any, options: NativeOptions = {}): Promise<{ code: number; value?: NativeData; error: string; output?: string }> {
 	if (options.authorize && !options.authorize()) { throw new Error('HARNESS_WORKSPACE'); }
 	if (!['progress', 'list', 'status', 'metrics', 'source', 'version', 'capabilities', 'objective'].includes(args[0])) { return executeNative(profile, args, options); }
 	const { root } = await nativeEntry(profile);
@@ -55,7 +55,7 @@ async function nativeRun(profile, args, options: NativeOptions = {}): Promise<{ 
 }
 
 /** Invoke only the native Harness entrypoint, with literal arguments and bounded output. */
-async function executeNative(profile, args, options: NativeOptions = {}): Promise<{ code: number; value?: NativeData; error: string; output?: string }> {
+async function executeNative(profile: any, args: any, options: NativeOptions = {}): Promise<{ code: number; value?: NativeData; error: string; output?: string }> {
 	const { root, entry } = await nativeEntry(profile);
 	if (profile.id !== 'redevent' && options.host && options.host !== 'project') { throw new Error('HARNESS_PROVIDER'); }
 	if (options.host && profile.id === 'redevent') {
@@ -71,7 +71,7 @@ async function executeNative(profile, args, options: NativeOptions = {}): Promis
 		});
 		options.started?.(child);
 		let stdout = '', stderr = '', line = '', dropping = false, overflow = false, timedOut = false;
-		const log = chunk => {
+		const log = (chunk: any) => {
 			for (const part of chunk.split(/(?<=\n)/)) {
 				if (!dropping) { line += part; if (line.length > 65536) { line = ''; dropping = true; } }
 				if (part.endsWith('\n')) { if (!dropping) { const safe = redact(line); stderr = (stderr + safe).slice(-65536); options.log?.(safe); } line = ''; dropping = false; }
@@ -80,10 +80,10 @@ async function executeNative(profile, args, options: NativeOptions = {}): Promis
 		const limit = 4 * 1024 * 1024;
 		const timer = options.timeout ? setTimeout(() => { timedOut = true; void terminateChild(child); }, options.timeout) : undefined;
 		child.stdout.setEncoding('utf8'); child.stderr.setEncoding('utf8');
-		child.stdout.on('data', chunk => { if (overflow) { return; } if (stdout.length + chunk.length > limit) { overflow = true; void terminateChild(child); } else { stdout += chunk; } });
-		child.stderr.on('data', chunk => { log(chunk); });
-		child.once('error', error => { clearTimeout(timer); reject(error); });
-		child.once('close', code => {
+		child.stdout.on('data', (chunk: any) => { if (overflow) { return; } if (stdout.length + chunk.length > limit) { overflow = true; void terminateChild(child); } else { stdout += chunk; } });
+		child.stderr.on('data', (chunk: any) => { log(chunk); });
+		child.once('error', (error: any) => { clearTimeout(timer); reject(error); });
+		child.once('close', (code: any) => {
 			clearTimeout(timer);
 			if (line && !dropping) { const safe = redact(line); stderr = (stderr + safe).slice(-65536); options.log?.(safe); }
 			if (overflow || timedOut) { reject(new Error(overflow ? 'HARNESS_OUTPUT_LIMIT' : 'HARNESS_TIMEOUT')); return; }
@@ -95,7 +95,7 @@ async function executeNative(profile, args, options: NativeOptions = {}): Promis
 }
 
 /** Terminate only a subprocess tree started by this instance, never a PID found in another task's state. */
-async function terminateChild(child) {
+async function terminateChild(child: any) {
 	if (!child?.pid) { return false; }
 	if (child.exitCode !== null || child.signalCode) { return true; }
 	if (process.platform === 'win32') {
@@ -113,9 +113,9 @@ async function terminateChild(child) {
 }
 
 /** Only pass answers to question IDs actually raised by the native preflight. */
-function answerArgs(questions, answers) {
+function answerArgs(questions: any, answers: any) {
 	if (!answers || typeof answers !== 'object' || Array.isArray(answers)) { throw new Error('HARNESS_ANSWERS'); }
-	const allowed = new Set(questions.map(question => question.id));
+	const allowed = new Set(questions.map((question: any) => question.id));
 	return Object.entries(answers).flatMap(([id, value]) => {
 		if (!allowed.has(id) || !/^[a-z0-9_-]{1,100}$/i.test(id) || typeof value !== 'string' || !value.trim() || value.length > 4000 || /\0|,(?=[a-z0-9_-]+=)/i.test(value)) { throw new Error('HARNESS_ANSWERS'); }
 		return ['--answer', `${id}=${value.trim()}`];
@@ -123,43 +123,43 @@ function answerArgs(questions, answers) {
 }
 
 /** Expose measured native progress, including the units, without leaking raw task sources or tool output. */
-function progressView(value: NativeData) {
+function progressView(value: any) {
 	if (!value || !identityPattern.test(value.id || '') || !['running', 'stalled', 'completed', 'failed'].includes(value.state)) { throw new Error('HARNESS_PROGRESS'); }
-	const clean = (text, limit = 180) => typeof text === 'string' ? redact(text).slice(0, limit) : undefined;
-	const time = text => typeof text === 'string' && Number.isFinite(Date.parse(text)) ? Date.parse(text) : undefined;
-	const normalizeNodes = (nodes: NativeNode[], domain = '') => (Array.isArray(nodes) ? nodes : []).slice(0, 150).map(node => ({
+	const clean = (text: any, limit = 180) => typeof text === 'string' ? redact(text).slice(0, limit) : undefined;
+	const time = (text: any) => typeof text === 'string' && Number.isFinite(Date.parse(text)) ? Date.parse(text) : undefined;
+	const normalizeNodes = (nodes: any[], domain = '') => (Array.isArray(nodes) ? nodes : []).slice(0, 150).map(node => ({
 		id: clean(node.id || node.agent || '', 100), agent: clean(node.agent || node.id || '', 100), domain: clean(node.domain || domain, 80),
 		status: ['pending', 'running', 'passed', 'failed', 'blocked', 'skipped', 'cancelled', 'aborted'].includes(node.status || node.state) ? node.status || node.state : 'unknown',
 		elapsedMs: Number.isFinite(node.elapsedMs ?? node.durationMs) && (node.elapsedMs ?? node.durationMs) >= 0 ? node.elapsedMs ?? node.durationMs : undefined,
-		gateDetail: node.gateDetail && Number.isFinite(node.gateDetail.typicalMs) && node.gateDetail.typicalMs > 0 ? { typicalMs: node.gateDetail.typicalMs, elapsedMs: Number.isFinite(node.gateDetail.elapsedMs) ? Math.max(0, node.gateDetail.elapsedMs) : undefined, slow: node.gateDetail.slow === true } : undefined,
-		gates: node.gates && Number.isSafeInteger(node.gates.done) && Number.isSafeInteger(node.gates.total) && node.gates.done >= 0 && node.gates.total > 0 ? { done: node.gates.done, total: node.gates.total } : undefined,
+		gateDetail: node.gateDetail && Number.isFinite(node.gateDetail.typicalMs) && node.gateDetail.typicalMs! > 0 ? { typicalMs: node.gateDetail.typicalMs, elapsedMs: Number.isFinite(node.gateDetail.elapsedMs) ? Math.max(0, node.gateDetail.elapsedMs) : undefined, slow: node.gateDetail.slow === true } : undefined,
+		gates: node.gates && Number.isSafeInteger(node.gates.done) && Number.isSafeInteger(node.gates.total) && node.gates.done! >= 0 && node.gates.total! > 0 ? { done: node.gates.done, total: node.gates.total } : undefined,
 		attempt: Number.isSafeInteger(node.attempt) ? node.attempt : undefined, previousAttempt: clean(node.previousAttempt, 500), failure: node.failure ? { category: clean(node.failure.category, 80), cause: clean(node.failure.cause, 1000), action: clean(node.failure.action, 1000) } : undefined,
 		evidence: logReference(node.log),
 		cause: clean(node.cause, 1200), phase: clean(node.phase, 80),
-		dependencies: (Array.isArray(node.dependencies || node.dependsOn) ? node.dependencies || node.dependsOn : []).slice(0, 50).map(item => clean(item, 100))
+		dependencies: (Array.isArray(node.dependencies || node.dependsOn) ? node.dependencies || node.dependsOn : []).slice(0, 50).map((item: any) => clean(item, 100))
 	}));
-	const children = (Array.isArray(value.children) ? value.children : []).slice(0, 30).map(child => ({ domain: clean(child.domain || child.id, 80), nodes: normalizeNodes(child.nodes, child.domain || child.id) }));
+	const children = (Array.isArray(value.children) ? value.children : []).slice(0, 30).map((child: any) => ({ domain: clean(child.domain || child.id, 80), nodes: normalizeNodes(child.nodes, child.domain || child.id) }));
 	const unique = new Map();
-	for (const node of [...normalizeNodes(value.nodes, value.domain), ...children.flatMap(child => child.nodes)]) { unique.set(`${node.domain || ''}/${node.id}`, node); }
+	for (const node of [...normalizeNodes(value.nodes, value.domain), ...children.flatMap((child: any) => child.nodes)]) { unique.set(`${node.domain || ''}/${node.id}`, node); }
 	const final = value.finalGates;
-	const finalGates = Array.isArray(final) ? normalizeNodes(final, 'final') : final && Number.isSafeInteger(final.total) && final.total > 0 ? normalizeNodes([{ id: 'final-gates', domain: 'final', agent: 'verifier', status: final.done >= final.total ? 'passed' : value.live ? 'running' : 'unknown', gates: { done: final.done, total: final.total } }], 'final') : [];
+	const finalGates = Array.isArray(final) ? normalizeNodes(final, 'final') : final && Number.isSafeInteger(final.total) && final.total! > 0 ? normalizeNodes([{ id: 'final-gates', domain: 'final', agent: 'verifier', status: final.done! >= final.total! ? 'passed' : value.live ? 'running' : 'unknown', gates: { done: final.done, total: final.total } }], 'final') : [];
 	const gate = value.currentGate;
 	const currentNode = [...unique.values()].find(node => node.id === (gate?.id || gate?.node)) || [...unique.values()].find(node => node.status === 'running');
 	const outcome = ['pending', 'running', 'interrupted', 'unknown', 'retry-pending', 'completed', 'failed', 'cancelled'].includes(value.outcome) ? value.outcome : value.aborted && value.state === 'failed' ? 'cancelled' : undefined;
 	return {
 		id: value.id, title: clean(value.title), state: value.state, live: value.live === true, outcome,
 		liveness: ['alive', 'dead', 'foreign', 'unknown', 'not-running'].includes(value.liveness) ? value.liveness : undefined,
-		percent: Number.isFinite(value.percent) && value.percent >= 0 && value.percent <= 100 ? value.percent : undefined,
-		elapsedMs: Number.isFinite(value.elapsedMs) && value.elapsedMs >= 0 ? value.elapsedMs : undefined,
-		eta: value.eta && Number.isFinite(value.eta.remainingMs) && value.eta.remainingMs > 0 ? { remainingMs: value.eta.remainingMs, basis: clean(value.eta.basis, 400) } : undefined,
+		percent: Number.isFinite(value.percent) && value.percent! >= 0 && value.percent! <= 100 ? value.percent : undefined,
+		elapsedMs: Number.isFinite(value.elapsedMs) && value.elapsedMs! >= 0 ? value.elapsedMs : undefined,
+		eta: value.eta && Number.isFinite(value.eta.remainingMs) && value.eta.remainingMs! > 0 ? { remainingMs: value.eta.remainingMs, basis: clean(value.eta.basis, 400) } : undefined,
 		cause: clean(value.cause, 1200), nodes: [...unique.values()].slice(0, 200), children, finalGates,
-		attempt: Number.isSafeInteger(value.attempt?.number) ? value.attempt.number : undefined,
-		attempts: (Array.isArray(value.attempts) ? value.attempts : []).slice(-30).map(item => ({ number: item.number, kind: clean(item.kind, 30), outcome: clean(item.outcome, 30), startedAt: time(item.startedAt), endedAt: time(item.endedAt) })),
+		attempt: Number.isSafeInteger(value.attempt?.number) ? value.attempt!.number : undefined,
+		attempts: (Array.isArray(value.attempts) ? value.attempts : []).slice(-30).map((item: any) => ({ number: item.number, kind: clean(item.kind, 30), outcome: clean(item.outcome, 30), startedAt: time(item.startedAt), endedAt: time(item.endedAt) })),
 		finishedAt: time(value.finishedAt || value.attempt?.endedAt), startedAt: time(value.startedAt || value.createdAt),
 		currentGate: gate || currentNode ? { id: clean(gate?.id || gate?.node || currentNode?.id, 100), domain: clean(gate?.domain || currentNode?.domain || value.domain, 80), elapsedMs: Number.isFinite(gate?.elapsedMs ?? currentNode?.elapsedMs) ? Math.max(0, gate?.elapsedMs ?? currentNode?.elapsedMs) : undefined } : undefined,
 		workerSummary: value.workers && !Array.isArray(value.workers) ? { active: Number.isSafeInteger(value.workers.active) ? value.workers.active : undefined, queued: Number.isSafeInteger(value.workers.queued) ? value.workers.queued : undefined, recommended: Number.isSafeInteger(value.workers.recommended) ? value.workers.recommended : undefined } : undefined,
-		workers: (Array.isArray(value.workers) ? value.workers : []).slice(0, 30).map(item => ({ id: clean(item.id, 100), state: clean(item.state, 40), agent: clean(item.agent, 80) })),
-		heartbeatAgeMs: Number.isFinite(value.observation?.heartbeatAgeMs) ? Math.max(0, value.observation.heartbeatAgeMs) : undefined,
+		workers: (Array.isArray(value.workers) ? value.workers : []).slice(0, 30).map((item: any) => ({ id: clean(item.id, 100), state: clean(item.state, 40), agent: clean(item.agent, 80) })),
+		heartbeatAgeMs: Number.isFinite(value.observation?.heartbeatAgeMs) ? Math.max(0, value.observation!.heartbeatAgeMs) : undefined,
 		lastEvent: value.lastEvent ? { at: time(value.lastEvent.at), event: clean(value.lastEvent.event || value.lastEvent.state, 100), gate: clean(value.lastEvent.gate, 100) } : undefined
 	};
 }
@@ -176,7 +176,7 @@ class HarnessWorkflow {
 	persist = Promise.resolve();
 	lastSaved = '';
 	disposed = false;
-	constructor(options) {
+	constructor(options: any) {
 		this.options = options;
 		this.run = options.run || nativeRun;
 		const stored = options.storage.get('atsHarness.workflows.v1', []);
@@ -187,9 +187,9 @@ class HarnessWorkflow {
 		}
 	}
 	all() { return [...this.entries.values()]; }
-	view(entry) {
+	view(entry: any) {
 		const { file, profile, answers, questions, knownQuestions, reviewed, providerRevision, nativePlanRevision, evidence, nodeStates, logs, ...publicValue } = entry;
-		return { ...publicValue, owned: this.children.has(entry.id), editable: !!entry.file && !entry.nativeId && !entry.creationUncertain && !this.busy.has(entry.project), questions: (questions || []).map(question => ({ id: question.id, question: question.question || question.prompt || question.message || question.id, options: Array.isArray(question.options) ? question.options.filter(item => typeof item === 'string').slice(0, 8) : [] })) };
+		return { ...publicValue, owned: this.children.has(entry.id), editable: !!entry.file && !entry.nativeId && !entry.creationUncertain && !this.busy.has(entry.project), questions: (questions || []).map((question: any) => ({ id: question.id, question: question.question || question.prompt || question.message || question.id, options: Array.isArray(question.options) ? question.options.filter((item: any) => typeof item === 'string').slice(0, 8) : [] })) };
 	}
 	changed() {
 		for (const entry of this.entries.values()) {
@@ -217,21 +217,21 @@ class HarnessWorkflow {
 		}
 		this.options.changed();
 	}
-	entry(id, profile) {
+	entry(id: any, profile: any) {
 		const entry = this.entries.get(id);
 		if (!entry || entry.project !== profile.root || !this.options.allowed(profile)) { throw new Error('HARNESS_WORKSPACE'); }
 		return entry;
 	}
-	async call(entry, command, args = [], timeout = 120000) {
+	async call(entry: any, command: any, args: any[] = [], timeout = 120000) {
 		if (!this.options.allowed(entry.profile)) { throw new Error('HARNESS_WORKSPACE'); }
 		const profile = entry.profile;
 		return this.run(profile, [command, ...args], {
 			authorize: () => this.options.allowed(profile),
 			host: entry.host === 'project' ? undefined : entry.host, timeout,
-			started: child => { this.children.set(entry.id, child); this.options.changed(); }, log: text => { entry.logs = ((entry.logs || '') + redact(text)).slice(-64000); this.options.log?.(`[${entry.nativeId || entry.id}] ${redact(text)}`); }
+			started: (child: any) => { this.children.set(entry.id, child); this.options.changed(); }, log: (text: any) => { entry.logs = ((entry.logs || '') + redact(text)).slice(-64000); this.options.log?.(`[${entry.nativeId || entry.id}] ${redact(text)}`); }
 		}).finally(() => this.children.delete(entry.id));
 	}
-	async prepare(profile, text, host) {
+	async prepare(profile: any, text: any, host: any) {
 		if (!this.options.allowed(profile) || !['redevent', 'armotusitio'].includes(profile.id) || profile.id !== 'redevent' && host !== 'project' || !['codex', 'claude', 'project'].includes(host) || typeof text !== 'string' || !text.trim() || text.length > 32000 || text.includes('\0')) { throw new Error('HARNESS_REQUEST'); }
 		if (this.all().some(entry => entry.project === profile.root && entry.creationUncertain)) { throw new Error('HARNESS_RECONCILE'); }
 		if (this.busy.has(profile.root) || this.all().some(entry => entry.project === profile.root && entry.phase === 'stopping')) { throw new Error('HARNESS_BUSY'); }
@@ -248,11 +248,11 @@ class HarnessWorkflow {
 			await fs.writeFile(entry.file, text.trim(), { flag: 'wx', mode: 0o600 });
 			if (['stopping', 'cancelled'].includes(entry.phase)) { await this.cleanInput(entry); return entry.id; }
 			await this.preflight(entry);
-		} catch (error) { if (entry.phase !== 'stopping' && entry.phase !== 'cancelled') { entry.phase = 'blocked'; entry.error = error.message; this.changed(); throw error; } }
+		} catch (error: any) { if (entry.phase !== 'stopping' && entry.phase !== 'cancelled') { entry.phase = 'blocked'; entry.error = error.message; this.changed(); throw error; } }
 		finally { this.busy.delete(profile.root); }
 		return entry.id;
 	}
-	async preflight(entry) {
+	async preflight(entry: any) {
 		const profile = entry.profile;
 		entry.phase = 'preparing'; entry.error = undefined; this.changed();
 		const result = await this.call(entry, 'preflight', ['auto', '--file', entry.file, ...answerArgs(entry.knownQuestions, entry.answers)], 1800000);
@@ -260,10 +260,10 @@ class HarnessWorkflow {
 		if (!this.options.allowed(profile) || this.disposed) { throw new Error('HARNESS_WORKSPACE'); }
 		const data = result.value;
 		if (!data || typeof data.ready !== 'boolean' || !Array.isArray(data.questions) || !Array.isArray(data.plan)) { throw new Error('HARNESS_PREFLIGHT'); }
-		entry.questions = data.questions.filter(question => question && /^[a-z0-9_-]{1,100}$/i.test(question.id || '')).slice(0, 20);
-		for (const question of entry.questions) { if (!entry.knownQuestions.some(item => item.id === question.id)) { entry.knownQuestions.push(question); } }
-		entry.plan = data.plan.map(item => ({ domain: String(item.domain || '').slice(0, 80), nodes: (item.dag || []).slice(0, 100).map(node => ({ id: String(node.id || '').slice(0, 100), agent: String(node.agent || '').slice(0, 80), kind: node.kind, dependencies: node.dependencies || node.dependsOn || [] })) }));
-		entry.warnings = [...(data.warnings || []), ...(data.checks || []).filter(item => item.severity === 'blocking' && item.status === 'fail')].slice(0, 25).map(item => ({ id: String(item.id || '').slice(0, 150), message: redact(item.message || item.title || ''), hint: redact(item.hint || item.action || ''), blocking: item.severity === 'blocking' }));
+		entry.questions = data.questions.filter((question: any) => question && /^[a-z0-9_-]{1,100}$/i.test(question.id || '')).slice(0, 20);
+		for (const question of entry.questions) { if (!entry.knownQuestions.some((item: any) => item.id === question.id)) { entry.knownQuestions.push(question); } }
+		entry.plan = data.plan.map((item: any) => ({ domain: String(item.domain || '').slice(0, 80), nodes: (item.dag || []).slice(0, 100).map((node: any) => ({ id: String(node.id || '').slice(0, 100), agent: String(node.agent || '').slice(0, 80), kind: node.kind, dependencies: node.dependencies || node.dependsOn || [] })) }));
+		entry.warnings = [...(data.warnings || []), ...(data.checks || []).filter((item: any) => item.severity === 'blocking' && item.status === 'fail')].slice(0, 25).map(item => ({ id: String(item.id || '').slice(0, 150), message: redact(item.message || item.title || ''), hint: redact(item.hint || item.action || ''), blocking: item.severity === 'blocking' }));
 		if (entry.profile.id === 'redevent') { if ((await readProvider(entry.profile)).error) { throw new Error('HARNESS_PROVIDER'); } entry.providerRevision = await providerRevision(entry.profile); }
 		entry.nativePlanRevision = createHash('sha256').update(JSON.stringify(data.plan, (key, value) => ['generatedAt', 'elapsedMs', 'durationMs'].includes(key) ? undefined : value)).digest('hex');
 		entry.mode = data.mode;
@@ -273,25 +273,25 @@ class HarnessWorkflow {
 		if (entry.phase === 'blocked') { entry.error = 'HARNESS_PREFLIGHT'; }
 		this.changed();
 	}
-	async answer(id, profile, answers) {
+	async answer(id: any, profile: any, answers: any) {
 		const entry = this.entry(id, profile);
 		if (entry.phase !== 'questions' || this.busy.has(profile.root)) { throw new Error('HARNESS_BUSY'); }
 		answerArgs(entry.questions, answers);
 		entry.answers = { ...entry.answers, ...answers };
 		this.busy.add(profile.root);
 		try { await this.preflight(entry); }
-		catch (error) { if (!['stopping', 'cancelled'].includes(entry.phase)) { entry.phase = 'blocked'; entry.error = error.message; this.changed(); } }
+		catch (error: any) { if (!['stopping', 'cancelled'].includes(entry.phase)) { entry.phase = 'blocked'; entry.error = error.message; this.changed(); } }
 		finally { this.busy.delete(profile.root); }
 	}
-	async edit(id, profile) {
+	async edit(id: any, profile: any) {
 		const entry = this.entry(id, profile);
 		if (entry.nativeId || !entry.file || this.busy.has(profile.root) || !['review', 'questions', 'blocked'].includes(entry.phase)) { throw new Error('HARNESS_BUSY'); }
 		const text = await fs.readFile(entry.file, 'utf8');
 		await this.cleanInput(entry); this.entries.delete(id); this.changed();
 		return text;
 	}
-	fingerprint(entry) { return createHash('sha256').update(JSON.stringify([entry.host, entry.providerRevision, entry.nativePlanRevision, entry.planDigest, entry.plan, (entry.warnings || []).filter(item => item.blocking)])).digest('hex'); }
-	async start(id, profile) {
+	fingerprint(entry: any) { return createHash('sha256').update(JSON.stringify([entry.host, entry.providerRevision, entry.nativePlanRevision, entry.planDigest, entry.plan, (entry.warnings || []).filter((item: any) => item.blocking)])).digest('hex'); }
+	async start(id: any, profile: any) {
 		const entry = this.entry(id, profile);
 		if (entry.phase !== 'review' || !entry.ready || this.busy.has(profile.root)) { throw new Error('HARNESS_BUSY'); }
 		this.busy.add(profile.root);
@@ -308,10 +308,10 @@ class HarnessWorkflow {
 			if (created.code !== 0 || !identityPattern.test(created.value?.id || '')) { if (profile.id !== 'redevent' && created.code === 2) { entry.creationUncertain = false; } throw new Error('HARNESS_CREATE'); }
 			entry.nativeId = created.value.id; entry.creationUncertain = false; this.changed();
 			await this.execute(entry, 'execute');
-		} catch (error) { if (!['stopping', 'cancelled'].includes(entry.phase)) { entry.phase = entry.creationUncertain ? 'unknown' : 'blocked'; entry.error = entry.creationUncertain ? 'HARNESS_CREATE_UNKNOWN' : error.message; this.changed(); } }
+		} catch (error: any) { if (!['stopping', 'cancelled'].includes(entry.phase)) { entry.phase = entry.creationUncertain ? 'unknown' : 'blocked'; entry.error = entry.creationUncertain ? 'HARNESS_CREATE_UNKNOWN' : error.message; this.changed(); } }
 		finally { this.busy.delete(profile.root); if (entry.nativeId) { await this.cleanInput(entry); } }
 	}
-	async execute(entry, command) {
+	async execute(entry: any, command: any) {
 		entry.phase = 'running'; entry.error = undefined; this.changed();
 		const result = await this.call(entry, command, [entry.nativeId], 0);
 		await this.refresh(entry.id, entry.profile);
@@ -322,7 +322,7 @@ class HarnessWorkflow {
 		else { entry.phase = 'interrupted'; }
 		entry.endedAt = entry.progress?.finishedAt || Date.now(); this.changed();
 	}
-	async refresh(id, profile) {
+	async refresh(id: any, profile: any) {
 		this.entry(id, profile);
 		const current = this.readings.get(id);
 		if (current) { return current; }
@@ -330,7 +330,7 @@ class HarnessWorkflow {
 		this.readings.set(id, reading);
 		try { await reading; } finally { if (this.readings.get(id) === reading) { this.readings.delete(id); } }
 	}
-	async sampleProgress(id, profile, seed = undefined) {
+	async sampleProgress(id: any, profile: any, seed = undefined) {
 		const entry = this.entry(id, profile);
 		entry.profile = profile;
 		if (!entry.nativeId) { return; }
@@ -345,7 +345,7 @@ class HarnessWorkflow {
 				if (status.code === 0 && status.value?.id === entry.nativeId) { result.value.aborted = status.value.aborted; result.value.finishedAt ||= status.value.updatedAt; }
 			}
 			const progress = progressView(result.value);
-			const evidence = [...(Array.isArray(result.value.nodes) ? result.value.nodes : []).map(node => ({ ...node, domain: node.domain || result.value.domain })), ...(Array.isArray(result.value.children) ? result.value.children : []).flatMap(child => (Array.isArray(child.nodes) ? child.nodes : []).map(node => ({ ...node, domain: node.domain || child.domain || child.id })))];
+			const evidence = [...(Array.isArray(result.value.nodes) ? result.value.nodes : []).map((node: any) => ({ ...node, domain: node.domain || result.value.domain })), ...(Array.isArray(result.value.children) ? result.value.children : []).flatMap((child: any) => (Array.isArray(child.nodes) ? child.nodes : []).map((node: any) => ({ ...node, domain: node.domain || child.domain || child.id })))];
 			entry.progress = progress;
 			entry.evidence = Object.fromEntries(evidence.filter(node => logReference(node.log)).map(node => [`${node.domain || ''}/${node.id}`, node.log]));
 			entry.progressError = false;
@@ -363,7 +363,7 @@ class HarnessWorkflow {
 		}
 		this.changed();
 	}
-	async observe(profile, nativeId, seed = undefined) {
+	async observe(profile: any, nativeId: any, seed = undefined) {
 		if (!this.options.allowed(profile) || !identityPattern.test(nativeId || '')) { throw new Error('HARNESS_WORKSPACE'); }
 		let entry = this.all().find(item => item.project === profile.root && item.nativeId === nativeId);
 		if (!entry) {
@@ -373,7 +373,7 @@ class HarnessWorkflow {
 		if (seed) { await this.sampleProgress(entry.id, profile, seed); } else { await this.refresh(entry.id, profile); }
 		return entry.id;
 	}
-	async resume(id, profile) {
+	async resume(id: any, profile: any) {
 		const entry = this.entry(id, profile);
 		entry.profile = profile;
 		if (!entry.nativeId || this.busy.has(profile.root)) { throw new Error('HARNESS_BUSY'); }
@@ -386,10 +386,10 @@ class HarnessWorkflow {
 				if (retried.code !== 0) { throw new Error('HARNESS_RETRY'); }
 				await this.execute(entry, 'execute');
 			} else { await this.execute(entry, entry.phase === 'pending' ? 'execute' : 'resume'); }
-		} catch (error) { entry.phase = 'blocked'; entry.error = error.message; this.changed(); }
+		} catch (error: any) { entry.phase = 'blocked'; entry.error = error.message; this.changed(); }
 		finally { this.busy.delete(profile.root); }
 	}
-	async stop(id, profile) {
+	async stop(id: any, profile: any) {
 		const entry = this.entry(id, profile);
 		const child = this.children.get(id);
 		if (profile.id !== 'redevent' && entry.nativeId && ['running', 'pending', 'interrupted', 'stopping'].includes(entry.phase)) {
@@ -422,7 +422,7 @@ class HarnessWorkflow {
 		entry.cancellation = true; entry.phase = 'cancelled'; entry.endedAt = Date.now(); this.changed();
 		await this.cleanInput(entry);
 	}
-	async cleanInput(entry) { if (entry.file) { await fs.rm(entry.file, { force: true }); entry.file = undefined; } }
+	async cleanInput(entry: any) { if (entry.file) { await fs.rm(entry.file, { force: true }); entry.file = undefined; } }
 	async dispose() {
 		this.disposed = true;
 		// Closing an editor panel never terminates a user's native Harness execution.

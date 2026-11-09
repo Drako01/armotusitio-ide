@@ -32,7 +32,7 @@ const tools = [
 	['hygiene', 'maintenance', 'Revisar tareas y espacios abandonados', 'Gener\u00e1 un diagn\u00f3stico de limpieza. Esta consulta no elimina archivos.']
 ].map(([id, group, title, description, input = 'none']) => ({ id, group, title, description, input }));
 
-function toolArgs(id, task, host = undefined) {
+function toolArgs(id: any, task: any, host: any = undefined) {
 	const tool = tools.find(item => item.id === id);
 	if (!tool) { throw new Error('HARNESS_TOOL'); }
 	if (tool.input === 'task' && (typeof task !== 'string' || !/^[a-z0-9][a-z0-9._-]{0,99}$/i.test(task))) { throw new Error('HARNESS_TASK'); }

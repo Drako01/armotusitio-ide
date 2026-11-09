@@ -11,7 +11,7 @@
 		],
 		"noEmit": true,
 		"skipLibCheck": true,
-		"strict": false,
+		"strict": true,
 		"allowImportingTsExtensions": true
 	},
 	"include": [

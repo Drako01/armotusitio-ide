@@ -12,7 +12,7 @@ const states = ['running', 'passed', 'failed', 'cancelled', 'ended', 'unknown'];
 const POLL = Object.freeze({ activeMs: 3000, idleMs: 60000, maxBackoffMs: 5 * 60 * 1000 });
 
 /** Delay before the next poll: the base interval doubled per consecutive failure, capped. */
-function nextDelay(active, failures) {
+function nextDelay(active: any, failures: any) {
 	return Math.min((active ? POLL.activeMs : POLL.idleMs) * 2 ** Math.min(failures, 10), POLL.maxBackoffMs);
 }
 
@@ -22,7 +22,7 @@ class History {
 	reportError;
 	rows: { id: string; project: string; action: string; host?: string; state: string; startedAt: number; endedAt?: number }[] = [];
 	pending = Promise.resolve();
-	constructor(storage, reportError) {
+	constructor(storage: any, reportError: any) {
 		this.storage = storage;
 		this.reportError = reportError;
 		const saved = storage.get(key, []);
@@ -30,7 +30,7 @@ class History {
 			for (const row of saved) { this.put(row, true); }
 		}
 	}
-	put(row, restored = false) {
+	put(row: any, restored = false) {
 		if (!row || typeof row.id !== 'string' || row.id.length > 100 || typeof row.project !== 'string' || row.project.length > 4096 || !ACTIONS.includes(row.action) || !states.includes(row.state) || !Number.isSafeInteger(row.startedAt) || row.startedAt < 0) { return; }
 		const state = restored && row.state === 'running' ? 'unknown' : row.state;
 		const entry = { id: row.id, project: row.project, action: row.action, host: ['codex', 'claude', 'custom', 'plan'].includes(row.host) ? row.host : undefined, state, startedAt: row.startedAt, endedAt: undefined };
@@ -50,7 +50,7 @@ class History {
 }
 
 /** Read the native, read-only progress view; never execute or retry a harness task. */
-async function readProgress(profile) {
+async function readProgress(profile: any) {
 	const result = await nativeRun(profile, ['progress', '--json'], { timeout: 15000 });
 	if (result.code === 0) { return normalizeProgress(result.value); }
 	if (/E_NO_ACTIVE_TASK|No active task; pass a <task-id>/.test(result.error || '')) { return null; }
@@ -58,18 +58,18 @@ async function readProgress(profile) {
 }
 
 /** Preserve sanitized operational fields shared with every other surface. */
-function normalizeProgress(value) { return progressView(value); }
+function normalizeProgress(value: any) { return progressView(value); }
 
 /** Poll trusted projects with bounded subprocesses and discard obsolete responses. */
 /** Workflow phases of Inicio's task form, as feed states and needs. */
-const WORKFLOW_STATES = {
+const WORKFLOW_STATES: Record<string, string[]> = {
 	preparing: ['running'], creating: ['running'], running: ['running'], stopping: ['running'], pending: ['queued'],
 	questions: ['paused', 'answer'], review: ['queued', 'approval'], blocked: ['blocked', 'decision'],
 	completed: ['completed'], failed: ['failed'], cancelled: ['cancelled'], interrupted: ['interrupted']
 };
 
 /** Publish the task form's workflows and the project Harness progress to the feed, so Inicio reads one source. */
-function publishSources(feed, controller, progress) {
+function publishSources(feed: any, controller: any, progress: any) {
 	const workflows = controller.getWorkflowActivity?.() || [];
 	const ids = new Set();
 	for (const entry of workflows) {
@@ -90,31 +90,31 @@ function publishSources(feed, controller, progress) {
 		const state = row.live ? 'running' : row.outcome === 'passed' || row.outcome === 'completed' ? 'completed' : row.outcome === 'failed' ? 'failed' : row.state === 'stalled' ? 'interrupted' : 'completed';
 		feed.publish({ id, kind: 'external', project: row.project, title: row.title || row.id, state, startedAt: row.startedAt || 0, updatedAt: row.checkedAt || row.startedAt || 0, ...(row.percent === undefined ? {} : { detail: row.percent + '%' }), actions: ['open'], origin: 'external' });
 	}
-	feed.retain(item => (item.kind !== 'task' && item.kind !== 'external') || ids.has(item.id));
+	feed.retain((item: any) => (item.kind !== 'task' && item.kind !== 'external') || ids.has(item.id));
 }
 
-function registerActivity(context, controller, projects, vscode, reader = readProgress, feed = undefined) {
-	const t = message => vscode.l10n.t(message);
+function registerActivity(context: any, controller: any, projects: any, vscode: any, reader = readProgress, feed: any = undefined) {
+	const t = (message: any) => vscode.l10n.t(message);
 	const bar = vscode.window.createStatusBarItem('atsHarness.activity', vscode.StatusBarAlignment.Left, 20);
 	bar.name = t('Actividad del Harness');
 	bar.command = 'atsIde.home';
-	let disposed = false, polling, trailing = false;
+	let disposed = false, polling: any, trailing = false;
 	controller.progress = [];
 	if (feed) { context.subscriptions.push(feed.onDidChange(() => render())); }
 	function render() {
 		const progress = controller.readHarnessProgress?.() || controller.progress;
 		const items = feed?.snapshot() || [];
-		const feedRunning = items.filter(item => item.kind === 'chat-run' && item.state === 'running').length;
-		const attention = items.filter(item => item.needs).length;
+		const feedRunning = items.filter((item: any) => item.kind === 'chat-run' && item.state === 'running').length;
+		const attention = items.filter((item: any) => item.needs).length;
 		const running = [...controller.jobs.values()].filter(job => job.state === 'running').length + (controller.nativeRunning?.() || 0) + feedRunning;
 		const workflows = controller.getWorkflowActivity?.() || [];
-		const owned = sortActivity(workflows).find(entry => (entry.owned || entry.progress?.live || ['preparing', 'creating', 'stopping'].includes(entry.phase)) && ['preparing', 'creating', 'running', 'stopping'].includes(entry.phase));
-		const live = progress.find(row => row.live);
-		const stalled = progress.find(row => row.state === 'stalled');
+		const owned = sortActivity(workflows).find((entry: any) => (entry.owned || entry.progress?.live || ['preparing', 'creating', 'stopping'].includes(entry.phase)) && ['preparing', 'creating', 'running', 'stopping'].includes(entry.phase));
+		const live = progress.find((row: any) => row.live);
+		const stalled = progress.find((row: any) => row.state === 'stalled');
 		bar.text = live ? `$(sync~spin) Harness \u00b7 ${live.id}${live.percent === undefined ? '' : ' \u00b7 ' + live.percent + '%'}` : running ? `$(sync~spin) Harness \u00b7 ${running}` : '$(pulse) Harness';
 		bar.tooltip = t('Abr\u00ed el inicio para ver el progreso y el historial del Harness.');
 		if (!live && !running && stalled) { bar.text = '$(warning) Harness'; bar.tooltip = t('El Harness tiene una tarea sin proceso activo. Abr\u00ed el inicio para ver su progreso registrado.'); }
-		if (progress.some(row => row.error)) { bar.text = '$(warning) Harness'; bar.tooltip = t('No se pudo consultar el progreso. Abr\u00ed el inicio para volver a intentar.'); }
+		if (progress.some((row: any) => row.error)) { bar.text = '$(warning) Harness'; bar.tooltip = t('No se pudo consultar el progreso. Abr\u00ed el inicio para volver a intentar.'); }
 		if (owned) {
 			const stale = owned.progressError || (owned.checkedAt && Date.now() - owned.checkedAt > 15000);
 			const label = owned.phase === 'preparing' ? t('Revisando tarea') : owned.phase === 'creating' ? t('Preparando ejecuci\u00f3n') : owned.phase === 'stopping' ? t('Deteniendo tarea') : t('Ejecutando tarea');
@@ -122,7 +122,7 @@ function registerActivity(context, controller, projects, vscode, reader = readPr
 			bar.tooltip = stale ? t('El progreso no est\u00e1 actualizado. Abr\u00ed el Harness para revisar la conexi\u00f3n y la tarea actual.') : `${label}\n${owned.project}\n${owned.nativeId || ''}`;
 		}
 		const finished = [...workflows].reverse().find(entry => ['completed', 'failed', 'cancelled'].includes(entry.phase) && entry.endedAt && Date.now() - entry.endedAt < 60000);
-		if (!owned && !live && !running && finished && !progress.some(row => row.error)) {
+		if (!owned && !live && !running && finished && !progress.some((row: any) => row.error)) {
 			bar.text = `${finished.phase === 'completed' ? '$(check)' : finished.phase === 'cancelled' ? '$(circle-slash)' : '$(error)'} Harness \u00b7 ${finished.phase === 'completed' ? t('Tarea completada') : finished.phase === 'cancelled' ? t('Tarea cancelada') : t('La tarea fall\u00f3')}`;
 			bar.tooltip = `${finished.title || ''}\n${finished.project}\n${finished.nativeId || ''}`;
 		}
@@ -139,7 +139,7 @@ function registerActivity(context, controller, projects, vscode, reader = readPr
 		if (!vscode.workspace.isTrusted) { bar.text = '$(lock) Harness'; bar.tooltip = t('Marc\u00e1 el workspace como confiable para consultar el progreso.'); }
 		if (feed) { bar.show(); }
 	}
-	async function sample(manual) {
+	async function sample(manual: any) {
 		try {
 			const all = await projects();
 			if (disposed) { return; }
@@ -147,9 +147,9 @@ function registerActivity(context, controller, projects, vscode, reader = readPr
 			if (!all.length && !native.length) { controller.progress = []; bar.hide(); controller.refresh(); return; }
 			bar.show();
 			await controller.refreshWorkflowActivity?.(manual);
-			const rows = vscode.workspace.isTrusted ? await Promise.all(all.map(async ({ profile }) => {
+			const rows = vscode.workspace.isTrusted ? await Promise.all(all.map(async ({ profile }: any) => {
 				if (profile.workflow && controller.getWorkflowActivity) {
-					return sortActivity(controller.getWorkflowActivity().filter(entry => entry.project === profile.root && entry.progress)).map(entry => ({ project: profile.root, ...entry.progress, checkedAt: entry.checkedAt, error: entry.progressError === true }));
+					return sortActivity(controller.getWorkflowActivity().filter((entry: any) => entry.project === profile.root && entry.progress)).map((entry: any) => ({ project: profile.root, ...entry.progress, checkedAt: entry.checkedAt, error: entry.progressError === true }));
 				}
 				if (profile.id !== 'redevent' || !profile.actions.includes('progress')) { return []; }
 				try { const result = await reader(profile); return result ? [{ project: profile.root, ...result, error: false }] : []; }
@@ -157,7 +157,7 @@ function registerActivity(context, controller, projects, vscode, reader = readPr
 			})) : [];
 			if (disposed) { return; }
 			const current = await projects();
-			controller.progress = vscode.workspace.isTrusted ? rows.flat().filter(row => current.some(({ profile }) => profile.root === row.project)) : [];
+			controller.progress = vscode.workspace.isTrusted ? rows.flat().filter(row => current.some(({ profile }: any) => profile.root === row.project)) : [];
 			if (feed) { publishSources(feed, controller, controller.readHarnessProgress?.() || controller.progress); }
 			if (!current.length && !native.length) { bar.hide(); }
 			render(); controller.refresh();
@@ -173,8 +173,8 @@ function registerActivity(context, controller, projects, vscode, reader = readPr
 		polling = (async () => { do { const full = manual || trailing; trailing = false; await sample(full); manual = false; } while (trailing && !disposed); })();
 		try { await polling; } finally { polling = undefined; }
 	}
-	let debounce;
-	const watchers = [];
+	let debounce: any;
+	const watchers: any[] = [];
 	if (vscode.workspace.createFileSystemWatcher && vscode.RelativePattern) {
 		for (const folder of vscode.workspace.workspaceFolders || []) {
 			const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(folder, '.harness/{tasks,locks,active,completed,failed}/**/*'));
@@ -183,19 +183,19 @@ function registerActivity(context, controller, projects, vscode, reader = readPr
 		}
 	}
 	context.subscriptions.push(...watchers);
-	let timer, failures = 0;
+	let timer: any, failures = 0;
 	function schedule() {
 		clearTimeout(timer); if (disposed) { return; }
-		const active = (controller.getWorkflowActivity?.() || []).some(entry => entry.progress?.live || ['preparing', 'creating', 'running', 'stopping'].includes(entry.phase)) || [...controller.jobs.values()].some(job => job.state === 'running');
+		const active = (controller.getWorkflowActivity?.() || []).some((entry: any) => entry.progress?.live || ['preparing', 'creating', 'running', 'stopping'].includes(entry.phase)) || [...controller.jobs.values()].some(job => job.state === 'running');
 		// Errors are counted per completed poll, not per re-schedule, so tree redraws never inflate the backoff.
-		timer = setTimeout(() => { void refresh().finally(() => { failures = controller.progress.some(row => row.error) ? failures + 1 : 0; schedule(); }); }, nextDelay(active, failures));
+		timer = setTimeout(() => { void refresh().finally(() => { failures = controller.progress.some((row: any) => row.error) ? failures + 1 : 0; schedule(); }); }, nextDelay(active, failures));
 	}
 	const changed = controller.onDidChangeTreeData(() => { render(); schedule(); });
 	context.subscriptions.push(bar, changed,
-		vscode.window.onDidChangeWindowState?.(state => { if (state.focused && skipped) { skipped = false; void refresh(); } }) ?? { dispose() { } },
+		vscode.window.onDidChangeWindowState?.((state: any) => { if (state.focused && skipped) { skipped = false; void refresh(); } }) ?? { dispose() { } },
 		vscode.workspace.onDidGrantWorkspaceTrust(() => { void refresh(); }),
 		vscode.workspace.onDidChangeWorkspaceFolders(() => { void refresh(); }),
-		vscode.workspace.onDidChangeConfiguration(e => { if (e.affectsConfiguration('atsHarness.enabled')) { void refresh(); } }),
+		vscode.workspace.onDidChangeConfiguration((e: any) => { if (e.affectsConfiguration('atsHarness.enabled')) { void refresh(); } }),
 		{ dispose() { disposed = true; clearTimeout(timer); clearTimeout(debounce); } });
 	controller.refreshActivity = refresh;
 	void refresh().finally(schedule);
