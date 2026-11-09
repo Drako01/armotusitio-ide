@@ -107,11 +107,17 @@ Requested: typing `/mcp` in the chat manages MCP servers the way Claude Code doe
 
 Current Phase 1 items first (P1-004), then W1 inside Phase 1, W3 after the Phase 2 contracts, W2 inventory in Phase 2 and its UI in Phase 5. Each block gets its own commit, tests and a checklist update.
 
-## Next executable step (state for resuming)
+## Next executable step (state for resuming, updated after the AI Accounts block)
 
-1. W1 permissions: add a project/global scope on top of `ApprovalBroker` + `native-permissions` (extend, no second broker), with tests for restart persistence, revocation and project isolation.
-2. AUD-P1-004 two-writer/crash E2E, then W3 (profile registry + session identity) and the AI Accounts editor tab, then W4 `/mcp`.
-3. Open: Codex adapter streaming bound not audited; `strict:true`; DoD-08; a11y with screen readers (BLOCKED); macOS run (NOT VERIFIED).
+Done on this branch (see the sections above for evidence): P2-004, P2-005, P1-001 (probed commands), P1-003 workflow, Linux channel fix, hermetic tests, W1a global permission scope, W3a registry, W3b-1/2 profile identity and environment for native and structured transports, W3b-3a Command Palette accounts, W3b-3b-1 chat account selector, W3b-3b-2 AI Accounts editor tab, fake-CLI proof of two independent accounts per provider.
+
+Next, in this order:
+1. **W3 onboarding and states:** guided add flow (provider, alias, isolated environment, official login, verify, scope, confirm) with progress and recovery; add states `expired`, `reauthentication-required`, `connecting`, `connection-failed`, `active-session` to `AuthState` and both UIs; banner "next run uses X, this session uses Y"; warn before a switch discards a chat draft; models per account; multi-root assignment picker in the screen; README/docs; apply profiles to the multi-agent workflow engine (`native-agent-workflow.ts`, 2 call sites).
+2. **W1 remainder:** permissions management screen (list, revoke, audit) inside the chat or as a tab sharing the accounts panel pattern; invalidate grants on security-context change; E2E restart through the real chat.
+3. **W4 `/mcp`:** the chat already has a `/mcp` command for the ArmotuSitio integration only. Needed: store server definitions per user/project (secrets in SecretStorage), per-server trust consent through the permission broker, inject into the Claude `--mcp-config` (today `--strict-mcp-config` allows only `ats-runner`) and into Codex config, allow `mcp` tool calls per tool in `decideProviderCall` (today every `mcp` call from a provider is denied as `tool-unavailable`), `/mcp list|add|remove|status`.
+4. **W2 tool inventory** versus Claude Code and Codex, then close the gaps through the central approval path.
+5. **AUD-P1-004:** two-writer and crash E2E (20 consecutive cancel/crash runs), then `strict:true`, DoD-08, Codex streaming bound audit.
+6. **Owner actions:** Codex real runs (after quota reset), second real account per provider to unblock the real two-account checks, "Require branches to be up to date" in the ruleset, `sin-release` label before merge if no release is wanted.
 
 ## Blocked or owned by the repository owner
 
