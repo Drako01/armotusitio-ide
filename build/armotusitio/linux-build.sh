@@ -32,9 +32,15 @@ if [[ ! -f /work/dependencies-ready ]]; then
     npm ci --ignore-scripts --no-audit --no-fund
     npm ci --prefix build --ignore-scripts --no-audit --no-fund
     export npm_config_arch="$ATS_LINUX_ARCH" VSCODE_ARCH="$ATS_LINUX_ARCH"
-    source ./build/azure-pipelines/linux/setup-env.sh
-    export CC="ccache $CC" CXX="ccache $CXX"
-    export VSCODE_REMOTE_CC="ccache $VSCODE_REMOTE_CC" VSCODE_REMOTE_CXX="ccache $VSCODE_REMOTE_CXX"
+    if [[ "$ATS_LINUX_ARCH" == arm64 && "$(uname -m)" == aarch64 ]]; then
+        # Upstream ships an x86_64 cross toolchain for arm64; it cannot run on a native arm64 host
+        # ("Exec format error"). Build with the image's own compiler instead (glibc 2.35 floor).
+        export CC="ccache gcc" CXX="ccache g++"
+    else
+        source ./build/azure-pipelines/linux/setup-env.sh
+        export CC="ccache $CC" CXX="ccache $CXX"
+        export VSCODE_REMOTE_CC="ccache $VSCODE_REMOTE_CC" VSCODE_REMOTE_CXX="ccache $VSCODE_REMOTE_CXX"
+    fi
     # Match upstream ordering: install and patch headers before native modules run in parallel.
     node build/npm/preinstall.ts
     npm ci --no-audit --no-fund
