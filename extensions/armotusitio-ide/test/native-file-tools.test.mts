@@ -137,3 +137,37 @@ test('without a way to ask the user, an irreversible deletion is denied instead 
 		assert.deepEqual([result.text, await exists(path.join(root, 'scratch.txt'))], ['DENIED: this run has no way to ask the user', true]);
 	});
 });
+
+test('a corrupt, git-ignored node_modules with a lockfile can be deleted whatever its size, so the agent can repair an install', async () => {
+	await withProject(async ({ root, context, asked }) => {
+		const populate = async (folder: string) => {
+			await fs.mkdir(path.join(root, folder, 'pkg'), { recursive: true });
+			await Promise.all(Array.from({ length: 2100 }, (_, index) => fs.writeFile(path.join(root, folder, 'pkg', index + '.js'), 'x')));
+		};
+		await fs.writeFile(path.join(root, '.gitignore'), 'node_modules\nlib/node_modules\n');
+		await populate('node_modules');
+		await populate('lib/node_modules');
+		await fs.writeFile(path.join(root, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n');
+		git(root, 'add', '.');
+		git(root, 'commit', '-qm', 'lock');
+		// Without a lockfile beside it the folder is not provably reinstallable, so the entry cap still applies.
+		const noLockfile = await handleFileTool(context, 'delete_path', { path: 'lib/node_modules' });
+		const repaired = await handleFileTool(context, 'delete_path', { path: 'node_modules' });
+		assert.deepEqual({
+			noLockfile: noLockfile.text,
+			repaired: repaired.text,
+			asked: asked.length,
+			left: await Promise.all(['node_modules', 'lib/node_modules'].map(folder => exists(path.join(root, folder))))
+		}, { noLockfile: 'POLICY_DENIED: too-many-entries', repaired: 'DELETED node_modules', asked: 0, left: [false, true] });
+	});
+});
+
+test('a node_modules that git does not ignore is still capped, because reinstalling would not restore local changes', async () => {
+	await withProject(async ({ root, context }) => {
+		await fs.mkdir(path.join(root, 'node_modules', 'pkg'), { recursive: true });
+		await Promise.all(Array.from({ length: 2100 }, (_, index) => fs.writeFile(path.join(root, 'node_modules', 'pkg', index + '.js'), 'x')));
+		await fs.writeFile(path.join(root, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n');
+		const result = await handleFileTool(context, 'delete_path', { path: 'node_modules' });
+		assert.deepEqual([result.text, await exists(path.join(root, 'node_modules'))], ['POLICY_DENIED: too-many-entries', true]);
+	});
+});
