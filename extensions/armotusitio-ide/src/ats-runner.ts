@@ -18,6 +18,9 @@ import { secretVariants } from './native-dev-secrets.ts';
 import { APPROVAL_TIMEOUT_MS, channelApprover, requestApproval, type ApprovalAsk } from './native-approval.ts';
 import { GIT_TOOLS, endsGitDelivery, handleGitTool } from './native-git-tools.ts';
 import { FILE_TOOLS, handleFileTool } from './native-file-tools.ts';
+import { repairDependencies } from './native-dependency-repair.ts';
+import { detectEcosystems } from './native-ecosystems.ts';
+import { syncCommands } from './native-dependency-sync.ts';
 import { APPROVE_TOOL, decidePermissionPrompt, type ApproveContext, type PromptDecision } from './native-approve-tool.ts';
 import type { QuestionAnswers } from './runtime/contracts.ts';
 import { loadPermissions, type PermissionSet } from './native-permissions.ts';
@@ -232,6 +235,36 @@ export async function handleFiles(config: RunnerConfig, name: string, input: unk
 	return result;
 }
 
+const REPAIR_TOOL = {
+	name: 'repair_dependencies',
+	description: 'Diagnose and repair the dependency install of a Node project (corrupt or incomplete node_modules, missing packages) with the least invasive step: ' +
+		'nothing if healthy, a lockfile-exact reinstall in place, and only if that fails one approved deletion of node_modules plus a clean install. ' +
+		'It runs under the same command and file policies and approvals as `run` and `delete_path`, never loops, and reports the cause, the attempts and the next step. Use it instead of asking the user to delete node_modules.',
+	inputSchema: {
+		type: 'object',
+		properties: {
+			path: { type: 'string', description: 'Project-relative folder of the Node project; "." (default) is the root.' },
+			mode: { type: 'string', enum: ['repair', 'diagnose'], description: 'diagnose only reports; repair (default) fixes.' }
+		},
+		additionalProperties: false
+	}
+};
+const REPAIR_INSTALL_TIMEOUT_SEC = 900;
+
+/** Answer one `repair_dependencies` call: every effect is delegated to the policy-checked handlers above. Exported for tests. */
+export async function handleRepair(config: RunnerConfig, input: unknown, calls: number, deps: RunnerDeps = {}): Promise<{ isError: boolean; text: string }> {
+	if (!config.files) { return { isError: true, text: 'Unknown tool' }; }
+	const subprojects = await detectEcosystems(config.root);
+	const result = await repairDependencies({
+		root: config.root, subprojects,
+		installCommands: () => syncCommands(config.root, subprojects),
+		run: (command, args, cwd) => handleRun(config, { command, args, cwd, timeoutSec: REPAIR_INSTALL_TIMEOUT_SEC }, calls, deps),
+		remove: relative => handleFiles(config, 'delete_path', { path: relative }, deps)
+	}, (input ?? {}) as Record<string, unknown>);
+	await auditTool(config, REPAIR_TOOL.name, result);
+	return result;
+}
+
 /** Answer one structured git delivery tool call; exported for tests. */
 export async function handleGit(config: RunnerConfig, name: string, input: unknown, deps: RunnerDeps = {}, signal?: AbortSignal): Promise<{ isError: boolean; text: string }> {
 	if (!config.git) { return { isError: true, text: 'Unknown tool' }; }
@@ -263,6 +296,7 @@ async function main(): Promise<void> {
 	const send = (message: unknown): void => { process.stdout.write(JSON.stringify(message) + '\n'); };
 	const stopped = new AbortController();
 	let gitQueue = Promise.resolve();
+	let repairQueue = Promise.resolve();
 	let gitDenied = false;
 	// The user's "no" covers that exact call for the rest of the run (or of the turn, in a native session): asking again for
 	// the same thing is not a new question. Any other call (another command, another branch) is still asked normally.
@@ -294,7 +328,7 @@ async function main(): Promise<void> {
 		if (request.id === undefined) { return; }
 		const reply = (result: unknown): void => send({ jsonrpc: '2.0', id: request.id, result });
 		if (request.method === 'initialize') { return reply({ protocolVersion: request.params?.protocolVersion ?? '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'ats-runner', version: '1.0.0' } }); }
-		if (request.method === 'tools/list') { return reply({ tools: [TOOL, ...(config.terminal ? [TERMINAL_TOOL] : []), ...(config.jobs ? JOB_TOOLS : []), ...(config.git ? GIT_TOOLS : []), ...(config.files ? FILE_TOOLS : []), ...(config.approve ? [APPROVE_TOOL] : []), ...(config.channel ? EDITOR_TOOLS : []), ...(config.channel ? config.mcpTools ?? [] : [])] }); }
+		if (request.method === 'tools/list') { return reply({ tools: [TOOL, ...(config.terminal ? [TERMINAL_TOOL] : []), ...(config.jobs ? JOB_TOOLS : []), ...(config.git ? GIT_TOOLS : []), ...(config.files ? [...FILE_TOOLS, REPAIR_TOOL] : []), ...(config.approve ? [APPROVE_TOOL] : []), ...(config.channel ? EDITOR_TOOLS : []), ...(config.channel ? config.mcpTools ?? [] : [])] }); }
 		if (request.method === 'ping') { return reply({}); }
 		if (request.method === 'tools/call' && config.channel && request.params?.name?.startsWith(MCP_TOOL_PREFIX) && config.mcpTools?.some(tool => tool.name === request.params!.name)) {
 			calls++;
@@ -343,6 +377,15 @@ async function main(): Promise<void> {
 				return result;
 			});
 			gitQueue = task.then(() => undefined, () => undefined);
+			const result = await task;
+			return reply({ isError: result.isError, content: [{ type: 'text', text: result.text }] });
+		}
+		if (request.method === 'tools/call' && config.files && request.params?.name === REPAIR_TOOL.name) {
+			calls++;
+			const key = callKey(REPAIR_TOOL.name, request.params.arguments);
+			// One repair at a time in this run: two installs on the same folder would corrupt each other.
+			const task = repairQueue.then(async () => await isRefused(key) ? ALREADY_REFUSED : await remember(key, await handleRepair(config, request.params!.arguments, calls)));
+			repairQueue = task.then(() => undefined, () => undefined);
 			const result = await task;
 			return reply({ isError: result.isError, content: [{ type: 'text', text: result.text }] });
 		}

@@ -20,15 +20,15 @@ Existing work this plan builds on (do not redo): #72 (hybrid writer, tools), #75
 | D1-1 | P0 | `node_modules` exception skips the inventory, so a nested `.git`/`.armotusitio` or a link leaving the project is no longer refused | Bounded directory-only scan for protected segments and escaping links before deleting a dependency folder | `native-file-tools.ts` | DONE | `native-file-tools.test.mts`: nested `.git` under `.pnpm/.../dep` refused; links not followed (target kept) |
 | D1-2 | P1 | Lockfile and ignore check do not prove the folder holds only reproducible data | Refuse when the scan finds a protected path, a nested repository or an over-budget tree; otherwise reinstallable | `native-file-tools.ts` | DONE | scan is directory-only, depth 7, 50k directories, over budget refuses `too-many-entries`; tests above |
 | D1-3 | P1 | npm, yarn, bun workspaces: lockfile at the workspace root, not beside `node_modules` | Look for the lockfile in the folder and its ancestors up to the project root | `native-file-tools.ts` | DONE | test: lockfile at root, `apps/web/node_modules` deleted |
-| D1-4 | P1 | Agent has no structured way to repair a broken install; it improvises delete and install | `repair_dependencies` tool: detect manager, diagnose, minimal repair, verify, report | new `native-dependency-repair.ts`, `ats-runner.ts` | TODO | |
-| D1-5 | P1 | Concurrent installs or repair while another install runs | Mutual exclusion through the shared execution fence | `native-dependency-repair.ts` | TODO | |
-| D1-6 | P2 | Install fails again after deleting the folder (antivirus, store corruption) | Classified error with the concrete cause and next step, no delete loop | `native-dependency-repair.ts` | TODO | |
+| D1-4 | P1 | Agent has no structured way to repair a broken install; it improvises delete and install | `repair_dependencies` tool: detect manager, diagnose, minimal repair, verify, report | `native-dependency-repair.ts`, `ats-runner.ts`, `native-agent-contract.ts` | DONE (node) | `native-dependency-repair.test.mts` 10/10: healthy untouched, in-place reinstall, one clean reinstall, no deletion after policy/disk-full, refused deletion reported, network backoff, no lockfile blocked. Non-node ecosystems: TODO |
+| D1-5 | P1 | Concurrent installs or repair while another install runs | One repair at a time per run (queue in the runner); cross-process exclusion is not done | `ats-runner.ts` | PARTIAL | in-process only; another IDE window can still install at the same time |
+| D1-6 | P2 | Install fails again after deleting the folder (antivirus, store corruption) | Classified error with the concrete cause and next step, no delete loop (two installs at most) | `native-dependency-repair.ts`, `native-failure-class.ts` | DONE | `FAILED [locked-files, change-strategy]` test shows attempts, cause and next step |
 
 ## Phase 2: autonomy and recovery
 
 | ID | Prio | Item | Status |
 | --- | --- | --- | --- |
-| A2-1 | P1 | Explicit error classification (auto-recoverable, needs approval, change strategy, security-blocked, unrecoverable) | TODO |
+| A2-1 | P1 | Explicit error classification (auto-recoverable, needs approval, change strategy, security-blocked, unrecoverable) | PARTIAL: `native-failure-class.ts` exists and is used by `repair_dependencies`; not yet wired into `run`, `delete_path`, git or MCP results |
 | A2-2 | P1 | Bounded retries with backoff, execution budget, loop detection, idempotency for non-idempotent operations | TODO |
 | A2-3 | P2 | Report cause, attempts made and next step on failure | TODO |
 
