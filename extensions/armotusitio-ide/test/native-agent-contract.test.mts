@@ -44,9 +44,12 @@ test('the native transport pilot keeps Bash, Edit and Write behind the IDE appro
 		mode: option(native.args, '--permission-mode'), prompts: option(native.args, '--permission-prompts'), tool: option(native.args, '--permission-prompt-tool'),
 		allowed: option(native.args, '--allowedTools'), denied: option(native.args, '--disallowedTools'), contract: native.stdin.includes('Your Bash tool is available in this run'),
 		reader: option(buildAgentInvocation({ ...draft, role: 'planner', readOnly: true }, [], launch).args, '--permission-mode'),
-		codex: buildAgentInvocation({ ...draft, provider: 'codex' }, [], launch).stdin.includes('Your Bash tool')
+		codex: buildAgentInvocation({ ...draft, provider: 'codex' }, [], launch).stdin.includes('Your Bash tool'),
+		// An `ask` rule makes Claude send even the shell commands it considers read-only to the IDE (AUD-P1-001); only native writers get it.
+		shellRule: option(native.args, '--settings'), readerSettings: buildAgentInvocation({ ...draft, role: 'planner', readOnly: true }, [], launch).args.includes('--settings')
 	}, {
-		mode: 'default', prompts: 'host', tool: 'mcp__ats-runner__approve', allowed: 'Read,Glob,Grep,mcp__ats-runner', denied: 'WebFetch,WebSearch', contract: true, reader: 'plan', codex: false
+		mode: 'default', prompts: 'host', tool: 'mcp__ats-runner__approve', allowed: 'Read,Glob,Grep,mcp__ats-runner', denied: 'WebFetch,WebSearch', contract: true, reader: 'plan', codex: false,
+		shellRule: '{"permissions":{"ask":["Bash"]}}', readerSettings: false
 	});
 });
 

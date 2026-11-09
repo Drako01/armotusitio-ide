@@ -132,6 +132,12 @@ export function buildAgentInvocation(draft: AgentDraft, writableRoots: readonly 
 }
 
 /**
+ * Claude Code approves shell commands it judges read-only (`docker ps`, `cat .env`) without consulting the permission prompt tool.
+ * An `ask` rule outranks that heuristic, so every shell call reaches the IDE policy. Passed inline: user, project and local settings stay off.
+ */
+const MEDIATE_SHELL_SETTINGS = JSON.stringify({ permissions: { ask: ['Bash'] } });
+
+/**
  * Claude's permission mode and tool lists, shared by one-shot runs and native sessions (r8). WebFetch is never allowed;
  * WebSearch only when the project enabled it (D9). Native: Bash, Edit and Write are not pre-allowed, so every use reaches
  * the IDE's `approve` tool, which also answers `AskUserQuestion` through the IDE's card.
@@ -141,7 +147,7 @@ export function claudeToolArgs(options: { readOnly: boolean; runner: boolean; na
 	const tools = (readOnly ? 'Read,Glob,Grep' : native ? 'Read,Glob,Grep,' + RUNNER_TOOL : 'Read,Glob,Grep,Edit,Write' + (runner ? ',' + RUNNER_TOOL : '')) + (webSearch ? ',WebSearch' : '');
 	const denied = (native ? '' : 'Bash,') + (webSearch ? 'WebFetch' : 'WebFetch,WebSearch');
 	const mode = readOnly ? 'plan' : native ? 'default' : 'dontAsk';
-	return ['--permission-mode', mode, '--allowedTools', tools, '--disallowedTools', denied];
+	return ['--permission-mode', mode, '--allowedTools', tools, '--disallowedTools', denied, ...(native ? ['--settings', MEDIATE_SHELL_SETTINGS] : [])];
 }
 
 /**
