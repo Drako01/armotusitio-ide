@@ -67,6 +67,9 @@ export async function shareWithBuildUser(folders: string[], ci = process.env.GIT
 	if (ci && process.platform !== 'win32') { await Promise.all(folders.map(folder => chmod(folder, 0o777))); }
 }
 
+/** Hosted runners lose downloads to transient 5xx now and then; the work volume keeps what was fetched, so a retry resumes. */
+export const linuxBuildAttempts = (ci = process.env.GITHUB_ACTIONS === 'true'): number => ci ? 3 : 1;
+
 /** Build Linux artifacts without sharing native modules across architectures. */
 export async function buildLinux(architectures = ['x64', 'arm64'], root = path.resolve(import.meta.dirname, '..'), resume = false): Promise<void> {
 	if (!architectures.length || architectures.some(arch => !['x64', 'arm64'].includes(arch))) { throw new Error('Expected Linux x64 and/or arm64.'); }
@@ -91,7 +94,15 @@ export async function buildLinux(architectures = ['x64', 'arm64'], root = path.r
 			await execute(['build', '--platform', platform, '--build-arg', `NODE_VERSION=${nodeVersion}`, '-f', 'build/armotusitio/Dockerfile.linux', '-t', image, 'build/armotusitio'], root);
 			const cache = process.env.ATS_LINUX_BIND_CACHE === '1' ? path.join(root, '.build', 'cache', 'linux', arch) : undefined;
 			if (cache) { await mkdir(cache, { recursive: true }); }
-			await execute(linuxRunArgs(arch, commit, { source, output, logs: directory, cache }, image, !!sysrootToken), root, sysrootToken ? { ...process.env, GITHUB_TOKEN: sysrootToken } : undefined);
+			const runArgs = linuxRunArgs(arch, commit, { source, output, logs: directory, cache }, image, !!sysrootToken);
+			const environment = sysrootToken ? { ...process.env, GITHUB_TOKEN: sysrootToken } : undefined;
+			for (let attempt = 1; ; attempt++) {
+				try { await execute(runArgs, root, environment); break; }
+				catch (error) {
+					if (attempt >= linuxBuildAttempts()) { throw error; }
+					console.warn(`Linux ${arch} build attempt ${attempt} failed; retrying.`);
+				}
+			}
 			console.log(`Linux ${arch} build log: ${path.join(directory, `linux-${arch}.log`)}`);
 			const receipt = JSON.parse(await readFile(path.join(output, `linux-${arch}-receipt.json`), 'utf8'));
 			if (receipt.commit !== commit || receipt.arch !== arch || receipt.quality !== 'stable' || receipt.serverHelp !== true) { throw new Error(`Linux ${arch} receipt does not match this build.`); }
