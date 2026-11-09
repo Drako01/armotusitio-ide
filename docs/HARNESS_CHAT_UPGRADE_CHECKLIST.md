@@ -41,6 +41,18 @@ Not run yet: `scripts/ats-harness-check.mts`, Linux/macOS, real Codex. Real Clau
 
 `S09` (cancel a streaming turn) failed once in `check:conformance` under load. Reproduced on the original adapter too (8/8 failures under 32 CPU-bound processes), so it is not caused by this work: it aborted on a fixed 400 ms timer and asserted wall-clock time including the provider start. It now aborts on the first streamed delta and measures cancellation latency. Idle 8/8 pass; under the same extreme synthetic load 5/8 (was 0/8). Full suite and conformance pass after the change.
 
+## CI failures found by the new gate (PR #72) and fixed
+
+The first `ATS gate` run failed because the contract suite had never run on Linux in CI. Reproduced locally in WSL Ubuntu with the CI Node (24.22.1).
+
+| Failure | Root cause | Fix | Evidence |
+|---|---|---|---|
+| 2 chat e2e tests (`native-chat-e2e`) | **Product bug on Linux/macOS**: the runner channel socket path (IDE storage plus hash directories, about 200 characters) exceeds the 104/108-byte socket limit, so `listen` failed with `EINVAL` and the native chat could not run any implementation. Windows uses a named pipe and was unaffected | `native-tool-server.ts` uses the storage path when it fits and otherwise a short private directory under the OS temp folder; new error catalog message `HARNESS_CHANNEL_PATH_TOO_LONG` | e2e failed 2/2 on the original code and pass on the fix (WSL); new `native-tool-server.test.mts` red on original, green on Windows and Linux |
+| `required writer isolation` test | Hidden environment dependency: it needed a real Claude on the machine (`~/.local/bin`) | The test installs a fake `claude` | passes on Windows and Linux |
+| `native-claude-toolchain` could not load | Static `import 'esbuild'` in a Windows-only fixture; CI does not install `extensions/` dependencies | Dynamic import inside the Windows-only branch | Windows still runs it (pass); Linux skips it as designed |
+
+Full suites after the fixes: Windows `npm test` 660 tests, 653 pass, 0 fail, 7 skipped; Linux (WSL, Node 24.22.1) 660 tests, 646 pass, 0 fail, 14 skipped; Windows `check:conformance` 161 pass, 0 fail. **GitHub CI result for this push: see the PR checks; not claimed here until it runs.**
+
 ## Added scope requested during the work (same branch and Draft PR #72, separate commits)
 
 Nothing in this section is implemented yet unless a row says so. Impact was assessed against the code on this branch.
@@ -66,12 +78,18 @@ Status: PENDING (inventory not started).
 
 ### W3 - AI profile manager (several accounts per provider)
 
+Detailed spec: `F:\armotusitio-ide-plans\harness-ide\UPGRADE_cHAT.md` (owner-provided). It adds, on top of the points below: an **AI Accounts** screen as an editor tab (not the sidebar), a Provider -> Account -> Model popover in the chat (models only from verified provider capabilities), a guided onboarding that starts the official login without capturing passwords or tokens, nine authentication states distinguishable without color, assignment precedence (workspace profile, then provider default, then ask; never silently fall back to another account), stable profile ids independent of aliases, multi-root and multi-window handling, Command Palette integration, WCAG 2.2 AA, and real screenshots from the built app. It asks for a self-assessed UX score of at least 95/100; that score is reported only for dimensions that have evidence, and unmeasured dimensions are listed as NOT VERIFIED, not counted. Real screenshots of the running IDE need a build of the fork (NOT VERIFIED until built).
+
 Current state (verified): no profile concept. `CLAUDE_CONFIG_DIR` and `CODEX_HOME` are only read to list models and diagnostics, and `CODEX_HOME` is passed through the toolchain environment. Sessions are keyed by provider, root and conversation (`SessionIdentity`), so the account is not part of a session identity yet.
 Plan: a profile registry (alias, provider, state; default global plus per-workspace assignment, persisted outside the repository), one private config directory per profile (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`), the profile id added to `SessionIdentity` and to the session-store key (schema migration, never overwriting a newer schema), a Provider -> Account -> Model selector in the chat, and account changes applied only to new turns.
 Rules: no token copying, no credentials in the repository or project files, no automatic rotation to avoid quotas. Provider limits (where each CLI really keeps credentials on Windows, macOS and Linux) must be verified before isolation is declared.
 **BLOCKED / NOT VERIFIED until the owner authenticates a second Claude Code account and a second Codex account in their own profile directories**: this session cannot complete an interactive login. Real two-account checks stay BLOCKED; the isolation logic itself can be tested with fake CLIs.
 Depends on: Phase 2 (session contracts frozen) and W1 (grants must not widen on account change).
 Status: PENDING.
+
+### W4 - `/mcp` in the Chat Harness (connect any MCP server like Claude Code)
+
+Requested: typing `/mcp` in the chat manages MCP servers the way Claude Code does. Existing pieces to reuse (not yet audited in detail): the chat already has a slash-command mechanism (`native-chat-commands.test.mts`), `native-mcp-bridge.ts` and the `ats-runner` MCP server. Security: server definitions (command, args, env) are code execution, so adding one must go through the permission broker and Workspace Trust, secrets must stay in SecretStorage and never in project files, and tools of a connected server must be listed per tool in the permission UI. Depends on W1. Status: PENDING (design not started).
 
 ### Order
 
