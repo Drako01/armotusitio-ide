@@ -58,6 +58,7 @@ Existing work this plan builds on (do not redo): #72 (hybrid writer, tools), #75
 | --- | --- | --- | --- |
 | E6-1 | P1 | Adversarial tests: prompt injection, traversal, symlink races (TOCTOU), escalation, command injection, secret leaks, stale approval | PARTIAL: file-path floor covered (below); the rest TODO |
 | E6-1a | P0 | Windows: `delete_path`/`move_path`/Edit floor accepted `.git::$INDEX_ALLOCATION` and deleted the whole `.git` (NTFS alternate data stream); trailing dot/space and 8.3 `GIT~1` are other aliases | DONE: `isWindowsAlias` refuses them (`invalid-path`) in `native-file-tools.ts`; test fails without the fix (9/10) and passes with it (10/10), Windows only. Other floors (`native-command-policy.ts`, MCP) not yet checked for the same aliases: TODO |
+| E6-1b | P1 | `native-git-tools.ts` `SENSITIVE_SEGMENTS`/`isSensitiveGitPath` and `native-command-policy.ts` compare names exactly, so they may share the NTFS-alias blind spot fixed in E6-1a | TODO: probe with `.ssh::$DATA`, `.aws.`, `.env ` and reuse `isWindowsAlias` |
 | E6-2 | P2 | Scopes (operation, task, session, project, global low-risk), immediate revocation, concurrent decisions, traceability | TODO |
 
 ## Phase 7: concurrency and external harnesses
@@ -83,7 +84,7 @@ Existing work this plan builds on (do not redo): #72 (hybrid writer, tools), #75
 
 | ID | Prio | Item | Status |
 | --- | --- | --- | --- |
-| V10-1 | P1 | Strict typecheck, unit, contract tests, hygiene, workflows, adversarial diff review, PR #81 Actions green | TODO |
+| V10-1 | P1 | Strict typecheck, unit, contract tests, hygiene, workflows, adversarial diff review, PR #81 Actions green | PARTIAL: after blocks D1-1..D1-6 and E6-1a, strict `tsc` clean and `node --test test/*.test.mts` 602 tests, 595 pass, 0 fail, 7 skipped (Windows run). Commits are local, so PR #81 Actions have not run on them; adversarial diff review TODO |
 | V10-2 | P1 | Final executive summary and verdict (READY / READY WITH CONDITIONS / NOT READY) | TODO |
 
 ## Residual risks and limits (kept current)
