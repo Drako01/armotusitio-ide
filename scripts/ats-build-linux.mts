@@ -67,8 +67,8 @@ export async function shareWithBuildUser(folders: string[], ci = process.env.GIT
 	if (ci && process.platform !== 'win32') { await Promise.all(folders.map(folder => chmod(folder, 0o777))); }
 }
 
-/** Hosted runners lose downloads to transient 5xx now and then; the work volume keeps what was fetched, so a retry resumes. */
-export const linuxBuildAttempts = (ci = process.env.GITHUB_ACTIONS === 'true'): number => ci ? 4 : 1;
+/** Hosted runners lose downloads to GitHub 5xx incidents that can last an hour; the work volume keeps what was fetched, so a retry resumes. */
+export const linuxBuildAttempts = (ci = process.env.GITHUB_ACTIONS === 'true'): number => ci ? 6 : 1;
 
 /** Build Linux artifacts without sharing native modules across architectures. */
 export async function buildLinux(architectures = ['x64', 'arm64'], root = path.resolve(import.meta.dirname, '..'), resume = false): Promise<void> {
@@ -100,8 +100,8 @@ export async function buildLinux(architectures = ['x64', 'arm64'], root = path.r
 				try { await execute(runArgs, root, environment); break; }
 				catch (error) {
 					if (attempt >= linuxBuildAttempts()) { throw error; }
-					console.warn(`Linux ${arch} build attempt ${attempt} failed; retrying in ${attempt} minute(s).`);
-					await new Promise(resolve => setTimeout(resolve, attempt * 60000));
+					console.warn(`Linux ${arch} build attempt ${attempt} failed; retrying in ${attempt * 5} minute(s).`);
+					await new Promise(resolve => setTimeout(resolve, attempt * 300000));
 				}
 			}
 			console.log(`Linux ${arch} build log: ${path.join(directory, `linux-${arch}.log`)}`);
