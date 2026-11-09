@@ -51,7 +51,7 @@ The first `ATS gate` run failed because the contract suite had never run on Linu
 | `required writer isolation` test | Hidden environment dependency: it needed a real Claude on the machine (`~/.local/bin`) | The test installs a fake `claude` | passes on Windows and Linux |
 | `native-claude-toolchain` could not load | Static `import 'esbuild'` in a Windows-only fixture; CI does not install `extensions/` dependencies | Dynamic import inside the Windows-only branch | Windows still runs it (pass); Linux skips it as designed |
 
-Full suites after the fixes: Windows `npm test` 660 tests, 653 pass, 0 fail, 7 skipped; Linux (WSL, Node 24.22.1) 660 tests, 646 pass, 0 fail, 14 skipped; Windows `check:conformance` 161 pass, 0 fail. **GitHub CI result for this push: see the PR checks; not claimed here until it runs.**
+Full suites after the fixes: Windows `npm test` 660 tests, 653 pass, 0 fail, 7 skipped; Linux (WSL, Node 24.22.1) 660 tests, 646 pass, 0 fail, 14 skipped; Windows `check:conformance` 161 pass, 0 fail. Two more Linux-only test fragilities surfaced and were fixed: the ephemeral-environment test depended on the OS ephemeral port range (first port now injectable) and the chat panel test raced a late write during cleanup (retrying removal). **GitHub CI on PR #72 at 15c6b2a5d43: `changes`, `contract` and `ATS gate` all success.** The owner has already added `ATS gate` as a required check; "require branches to be up to date" is still unchecked.
 
 ## Added scope requested during the work (same branch and Draft PR #72, separate commits)
 
@@ -94,6 +94,12 @@ Requested: typing `/mcp` in the chat manages MCP servers the way Claude Code doe
 ### Order
 
 Current Phase 1 items first (P1-004), then W1 inside Phase 1, W3 after the Phase 2 contracts, W2 inventory in Phase 2 and its UI in Phase 5. Each block gets its own commit, tests and a checklist update.
+
+## Next executable step (state for resuming)
+
+1. W1 permissions: add a project/global scope on top of `ApprovalBroker` + `native-permissions` (extend, no second broker), with tests for restart persistence, revocation and project isolation.
+2. AUD-P1-004 two-writer/crash E2E, then W3 (profile registry + session identity) and the AI Accounts editor tab, then W4 `/mcp`.
+3. Open: Codex adapter streaming bound not audited; `strict:true`; DoD-08; a11y with screen readers (BLOCKED); macOS run (NOT VERIFIED).
 
 ## Blocked or owned by the repository owner
 
