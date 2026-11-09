@@ -102,7 +102,7 @@ export function registerProfileCommands(context: Host, vscode: Host, deps: Profi
 		try {
 			const provider = await vscode.window.showQuickPick((['claude', 'codex'] as const).map(value => ({ label: PROVIDER_LABEL[value], value })), { title: t('Agregar cuenta de IA'), placeHolder: t('Proveedor') });
 			if (!provider) { return; }
-			const alias = await vscode.window.showInputBox({ title: t('Alias de la cuenta'), prompt: t('Un nombre para reconocerla, por ejemplo Personal o Trabajo'), validateInput: value => value.trim().length < 1 || value.trim().length > 40 ? t('Entre 1 y 40 caracteres') : undefined });
+			const alias = await vscode.window.showInputBox({ title: t('Alias de la cuenta'), prompt: t('Un nombre para reconocerla, por ejemplo Personal o Trabajo'), validateInput: (value: string) => value.trim().length < 1 || value.trim().length > 40 ? t('Entre 1 y 40 caracteres') : undefined });
 			if (alias === undefined) { return; }
 			const profile = await deps.registry.add(provider.value, alias);
 			const next = await vscode.window.showInformationMessage(t('Cuenta {0} creada. Falta iniciar sesi\u00f3n.', profile.alias), t('Iniciar sesi\u00f3n'));

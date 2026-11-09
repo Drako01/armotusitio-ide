@@ -287,7 +287,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 	/** Command policy configuration of a project: the project Harness delegates commands when it declares `command-runner`. */
 	const policyConfigOf = async (root: string): Promise<{ policy: CommandPolicyConfig; authority: Awaited<ReturnType<typeof inspectHarnessAuthority>>; subprojects: Awaited<ReturnType<typeof detectEcosystems>>; delegate: boolean }> => {
 		const authority = await inspectHarnessAuthority(root);
-		const delegate = authority.engine === 'project' && !!authority.entry && (await readProjectCapabilities(root).catch(() => [])).includes('command-runner');
+		const delegate = authority.engine === 'project' && !!authority.entry && (await readProjectCapabilities(root).catch(() => [] as string[])).includes('command-runner');
 		const subprojects = delegate ? [] : await detectEcosystems(root);
 		return { policy: { subprojects, delegate, extras: commandExtras() }, authority, subprojects, delegate };
 	};
@@ -828,7 +828,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 				if (!value) { return; }
 				const rules = await vscode.window.showInputBox({ title: vscode.l10n.t('Comandos que pueden usarlo'), prompt: vscode.l10n.t('Separados por coma; @carpeta limita la carpeta. Ejemplo: go test @apps/api'), ignoreFocusOut: true });
 				if (!rules?.trim()) { return; }
-				await devSecrets.set(key, name, value, rules.split(',').map(rule => rule.trim()).filter(Boolean));
+				await devSecrets.set(key, name, value, rules.split(',').map((rule: string) => rule.trim()).filter(Boolean));
 				void vscode.window.showInformationMessage(vscode.l10n.t('Secreto {0} guardado en el llavero del sistema.', name));
 			}
 			if (picked?.label === remove) {
@@ -839,7 +839,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 	}));
 	controller.nativeRunning = () => running.size + runningAgents.size + pendingAgents.size + runningWorkflows.size + pendingWorkflows.size + goalIntegration.running();
 	controller.nativeProjects = async () => {
-		const rows = [];
+		const rows: any[] = [];
 		if (!vscode.workspace.getConfiguration('atsHarness').get('enabled', true)) { return rows; }
 		for (const folder of vscode.workspace.workspaceFolders || []) {
 			try {
@@ -1013,7 +1013,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			if (JSON.stringify((await loadProjectConfig(root))?.plan || null) !== verificationSnapshot) { throw Error('HARNESS_WORKFLOW_VERIFICATION_CHANGED'); }
 			assertProviderCapacity();
 			pendingWorkflows.add(root); controller.refresh();
-			const engine = new NativeAgentWorkflow(executionRoot, path.join(metricsDirectory(root), 'workflows'), root, modelFor, effortFor, provider => profileEnvironment(root, provider));
+			const engine = new NativeAgentWorkflow(executionRoot, path.join(metricsDirectory(root), 'workflows'), root, modelFor, effortFor, provider => profileEnvironment(root!, provider));
 			const unsubscribeEvents = engine.onEvent(() => { controller.refresh(); });
 			const validationEngine = isolation ? new NativeHarness(executionRoot, path.join(metricsDirectory(root), 'isolated-verification', isolation.id)) : chosen.engine;
 			let checkpoint: WorktreeCheckpoint | undefined;

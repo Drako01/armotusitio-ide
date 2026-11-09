@@ -1,0 +1,28 @@
+{
+	"extends": "./tsconfig.json",
+	"compilerOptions": {
+		"strict": true
+	},
+	"include": [
+		"src/**/*.ts"
+	],
+	"exclude": [
+		"extension.ts",
+		"src/activity.ts",
+		"src/adapter.ts",
+		"src/catalog.ts",
+		"src/chat.ts",
+		"src/context.ts",
+		"src/core.ts",
+		"src/evidence.ts",
+		"src/git.ts",
+		"src/home-labels.ts",
+		"src/home.ts",
+		"src/integrations.ts",
+		"src/mcp.ts",
+		"src/presentation.ts",
+		"src/provider.ts",
+		"src/workflow.ts",
+		"src/workspace.ts"
+	]
+}
