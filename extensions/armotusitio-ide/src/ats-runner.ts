@@ -240,7 +240,7 @@ export async function handleFiles(config: RunnerConfig, name: string, input: unk
 
 const REPAIR_TOOL = {
 	name: 'repair_dependencies',
-	description: 'Diagnose and repair the dependency install of a Node project (corrupt or incomplete node_modules, missing packages) with the least invasive step: ' +
+	description: 'Diagnose and repair the dependency install of a project (Node: corrupt or incomplete node_modules, missing packages; Go, Rust, .NET, Python uv, PHP: a lockfile reinstall) with the least invasive step: ' +
 		'nothing if healthy, a lockfile-exact reinstall in place, and only if that fails one approved deletion of node_modules plus a clean install. ' +
 		'It runs under the same command and file policies and approvals as `run` and `delete_path`, never loops, and reports the cause, the attempts and the next step. Use it instead of asking the user to delete node_modules.',
 	inputSchema: {

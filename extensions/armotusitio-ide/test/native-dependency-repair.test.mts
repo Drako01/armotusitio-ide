@@ -101,7 +101,7 @@ test('without a lockfile or a Node project the repair is blocked with a reason',
 		const noLock = await repairDependencies(h.deps, {});
 		const unknown = await repairDependencies(h.deps, { path: 'apps/none' });
 		const invalid = await repairDependencies(h.deps, { mode: 'wipe' });
-		assert.deepEqual({ noLock: noLock.text.split(':')[0], unknown: unknown.text.split(':')[0], invalid: invalid.text.slice(0, 14), calls: h.calls }, { noLock: 'BLOCKED no-lockfile', unknown: 'BLOCKED no-node-project', invalid: 'Invalid input:', calls: [] });
+		assert.deepEqual({ noLock: noLock.text.split(':')[0], unknown: unknown.text.split(':')[0], invalid: invalid.text.slice(0, 14), calls: h.calls }, { noLock: 'BLOCKED no-lockfile', unknown: 'BLOCKED no-project', invalid: 'Invalid input:', calls: [] });
 	});
 });
 
@@ -130,5 +130,16 @@ test('a repair is refused while another process holds the folder, and diagnose i
 		await held?.release();
 		const after = await handleRepair(base, {}, 0);
 		assert.deepEqual([blocked.text.split(':')[0], diagnosed.text.slice(0, 9), after.text.startsWith('BLOCKED install-in-progress')], ['BLOCKED install-in-progress', 'DIAGNOSIS', false]);
+	});
+});
+
+test('other ecosystems are repaired by their lockfile install, judged by the exit code, and never by deleting anything', async () => {
+	await withProject({ run: async n => n === 1 ? fail('ETIMEDOUT: proxy') : OK }, async h => {
+		const deps = { ...h.deps, subprojects: [{ path: 'svc', ecosystem: 'go' as const }], installCommands: async () => [{ command: 'go', args: ['mod', 'download'], cwd: 'svc', cacheOnly: true }] };
+		const diagnosis = await repairDependencies(deps, { path: 'svc', mode: 'diagnose' });
+		const repaired = await repairDependencies(deps, { path: 'svc' });
+		const broken = await repairDependencies({ ...deps, run: async () => fail('EBUSY') }, { path: 'svc' });
+		assert.deepEqual({ diagnosis: diagnosis.text.slice(0, 22), repaired: repaired.text.slice(0, 17), brokenFailed: broken.text.startsWith('FAILED'), removed: h.calls.some(call => call.startsWith('remove')) },
+			{ diagnosis: 'DIAGNOSIS svc (go): no', repaired: 'REPAIRED svc (go ', brokenFailed: true, removed: false });
 	});
 });

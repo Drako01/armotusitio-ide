@@ -68,12 +68,34 @@ function failed(projectPath: string, attempts: string[], last: RepairStepResult)
 	return { isError: true, text: 'FAILED ' + projectPath + ' [' + failure.kind + ', ' + failure.class + ']. Attempts: ' + attempts.join('; ') + '.\nCause: ' + tail(last.text) + '\nNext: ' + failure.hint };
 }
 
+/**
+ * Go, Rust, .NET, Python (uv) and PHP have no `node_modules`-style integrity probe and their caches are not deleted by the agent: the
+ * repair is the lockfile-exact install again (bounded retries for network failures), judged by its exit code.
+ */
+async function repairOtherEcosystem(deps: RepairDeps, project: Subproject, projectPath: string, mode: unknown): Promise<RepairStepResult> {
+	const install = (await deps.installCommands()).find(command => command.cwd === projectPath);
+	if (!install) { return { isError: true, text: 'BLOCKED no-lockfile: ' + projectPath + ' (' + project.ecosystem + ') has no lockfile, so an exact repair is not possible. Ask the user whether to generate one.' }; }
+	if (mode === 'diagnose') { return { isError: false, text: 'DIAGNOSIS ' + projectPath + ' (' + project.ecosystem + '): no integrity check exists for this ecosystem; a repair runs "' + [install.command, ...install.args].join(' ') + '".' }; }
+	const sleep = deps.sleep ?? (ms => new Promise<void>(resolve => setTimeout(resolve, ms)));
+	const attempts: string[] = [];
+	let result = await deps.run(install.command, install.args, install.cwd);
+	for (const delay of NETWORK_RETRY_DELAYS_MS) {
+		if (!result.isError || classifyFailure(result.text).kind !== 'network') { break; }
+		attempts.push('install failed (network), retrying in ' + delay / 1000 + ' s');
+		await sleep(delay);
+		result = await deps.run(install.command, install.args, install.cwd);
+	}
+	attempts.push(result.isError ? 'install failed' : 'install ran');
+	return result.isError ? failed(projectPath, attempts, result) : { isError: false, text: 'REPAIRED ' + projectPath + ' (' + project.ecosystem + ' reinstall from the lockfile). ' + attempts.join('; ') + '. The ecosystem cannot verify the result: run the relevant tests next.' };
+}
+
 export async function repairDependencies(deps: RepairDeps, input: RepairInput): Promise<RepairStepResult> {
 	const projectPath = typeof input.path === 'string' && input.path.trim() ? path.posix.normalize(input.path.replace(/\\/g, '/')).replace(/\/+$/, '') || '.' : '.';
 	const mode = input.mode === undefined ? 'repair' : input.mode;
 	if (mode !== 'repair' && mode !== 'diagnose') { return { isError: true, text: 'Invalid input: { path?: string, mode?: "repair" | "diagnose" }' }; }
-	const project = deps.subprojects.find(candidate => candidate.path === projectPath && candidate.ecosystem === 'node');
-	if (!project) { return { isError: true, text: 'BLOCKED no-node-project: no Node project at "' + projectPath + '". Known: ' + (deps.subprojects.filter(p => p.ecosystem === 'node').map(p => p.path).join(', ') || 'none') + '.' }; }
+	const project = deps.subprojects.find(candidate => candidate.path === projectPath);
+	if (!project) { return { isError: true, text: 'BLOCKED no-project: no project at "' + projectPath + '". Known: ' + (deps.subprojects.map(p => p.path).join(', ') || 'none') + '.' }; }
+	if (project.ecosystem !== 'node') { return await repairOtherEcosystem(deps, project, projectPath, mode); }
 
 	const before = await diagnose(deps.root, projectPath);
 	if (mode === 'diagnose') { return { isError: false, text: 'DIAGNOSIS ' + projectPath + ' (' + (project.packageManager ?? 'npm') + '): ' + describe(before) + '.' }; }
