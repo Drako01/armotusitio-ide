@@ -102,6 +102,11 @@ function shell(): void {
 		(switcher.querySelector('[data-provider="' + next + '"]') as HTMLElement)?.focus();
 		event.preventDefault();
 	});
+	const account = el('select', 'account-select') as HTMLSelectElement; account.id = 'account';
+	account.addEventListener('change', () => {
+		if (account.value === '__manage') { account.value = state?.accounts?.[state?.chat?.provider]?.selected ?? ''; api.postMessage({ action: 'accounts' }); return; }
+		api.postMessage({ action: 'account', provider: state?.chat?.provider, profileId: account.value });
+	});
 	const model = el('select', 'model-select') as HTMLSelectElement; model.id = 'model';
 	model.addEventListener('change', () => api.postMessage({ action: 'model', provider: state?.chat?.provider, model: model.value }));
 	const effort = el('select', 'effort-select') as HTMLSelectElement; effort.id = 'effort';
@@ -123,7 +128,7 @@ function shell(): void {
 	more.addEventListener('click', () => toggle('menu', more));
 	const quota = el('span', 'quota'); quota.id = 'quota'; quota.hidden = true; quota.setAttribute('role', 'group'); quota.tabIndex = 0;
 	quota.append(el('span', 'quota-icon'), el('span', 'quota-text'));
-	controls.append(switcher, quota, model, effort, mode, sandbox, mcp, more);
+	controls.append(switcher, account, quota, model, effort, mode, sandbox, mcp, more);
 	header.append(brand, controls);
 
 	const details = el('section', 'popover mcp-details'); details.id = 'mcp-details'; details.hidden = true; details.setAttribute('aria-label', L.mcp);
@@ -252,6 +257,7 @@ function renderHeader(): void {
 		button.title = providerName(provider) + ' \u00b7 ' + (L.providerStatus[info.status] || info.status) + (info.version ? ' \u00b7 v' + info.version : '');
 	}
 	renderModel(selected);
+	renderAccount(selected);
 	renderEffort(selected);
 	renderQuota(selected);
 	const mcp = state.mcp; const pill = document.getElementById('mcp-pill');
@@ -278,6 +284,23 @@ function renderHeader(): void {
 	action('mcpCheck', L.mcpCheck);
 	action('mcpSettings', L.mcpSettings);
 	details.append(actions);
+}
+
+/** Accounts of the selected provider: the real login state is written in words, never only as a color. */
+function renderAccount(provider: string | undefined): void {
+	const select = document.getElementById('account') as HTMLSelectElement;
+	const info = provider ? state.accounts?.[provider] : undefined;
+	select.hidden = !info;
+	if (!info) { return; }
+	select.textContent = '';
+	select.setAttribute('aria-label', format(L.account, providerName(provider)));
+	const option = (value: string, label: string) => { const item = el('option', undefined, label) as HTMLOptionElement; item.value = value; select.append(item); };
+	option('', L.accountIde);
+	for (const account of info.options) { option(account.id, account.alias + ' \u00b7 ' + (L.authState[account.state] ?? account.state)); }
+	option('__manage', L.accountManage);
+	select.value = info.options.some((account: any) => account.id === info.selected) ? info.selected : '';
+	select.disabled = !state.chat || busy();
+	select.title = format(L.account, providerName(provider)) + ': ' + (select.selectedOptions[0]?.textContent ?? '');
 }
 
 /** Models of the selected provider; the empty value is the CLI default, named when its configuration says which. */

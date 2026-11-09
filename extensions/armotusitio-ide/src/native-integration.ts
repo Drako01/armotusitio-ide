@@ -372,6 +372,8 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 	const profiles = new ProfileRegistry(path.join(context.globalStorageUri.fsPath, 'ai-profiles'), (provider, env) => new Promise(resolve => {
 		resolveNativeCommand(provider, provider === 'claude' ? ['auth', 'status'] : ['login', 'status'], env).then(resolved => execFile(resolved.executable, resolved.args, { env, timeout: 15_000, windowsHide: true, maxBuffer: 64 * 1024 }, (error, stdout, stderr) => resolve({ code: error ? 1 : 0, output: stdout + stderr })), () => resolve(undefined));
 	}));
+	// The chat reads and assigns accounts through the same registry the commands use.
+	controller.profiles = profiles;
 	registerProfileCommands(context, vscode, {
 		registry: profiles,
 		rootOf: async () => {
