@@ -496,7 +496,7 @@ export class HarnessChatSession {
 		const titles: Record<ApprovalDraft['kind'], string> = {
 			run: this.t('Ejecutar un comando'), edit: this.t('Borrar o mover archivos del proyecto'), git_commit: this.t('Hacer commit'), git_push: this.t('Hacer push'),
 			git_branch_create: this.t('Crear una rama'), git_pr_upsert: this.t('Crear o actualizar un pull request'), git_fetch: this.t('Traer cambios del remoto (fetch)'),
-			sandbox: this.t('Ampliar los permisos del sandbox'), mcp: this.t('Usar una herramienta de un servidor MCP')
+			sandbox: this.t('Ampliar los permisos del sandbox'), mcp: this.t('Usar una herramienta de un servidor MCP'), web: this.t('Leer una p\u00e1gina de internet')
 		};
 		const title = titles[draft.kind];
 		return new Promise<ApprovalAnswer>(resolve => {

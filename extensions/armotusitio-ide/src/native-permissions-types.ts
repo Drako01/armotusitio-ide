@@ -12,6 +12,7 @@
  *   edit:<glob>       RESERVED, not enforced yet: edits are made by the provider's native tools, which nothing here intercepts
  *   edit:<glob>       also decides the structured delete_path / move_path tools (project-relative path)
  *   mcp:<glob>       a tool of a user-added MCP server, written `server/tool` (e.g. `mcp:github/*`); asked unless a rule allows it
+ *   web:<glob>        a page fetch by the agent (WebFetch), written as the host name (e.g. `web:docs.python.org`); asked unless a rule allows it
  *   git_commit        the structured commit tool, in every project
  *   git_push          the structured push tool, in every project
  *   git_branch_create the structured branch creation tool, in every project
@@ -51,7 +52,8 @@ export type PermissionRequest =
 	| { kind: 'git_branch_create'; repo: string; branch: string; from: string }
 	| { kind: 'git_pr_upsert'; repo: string; branch: string; base: string; title: string; body: string }
 	| { kind: 'git_fetch'; remote: string; branch?: string }
-	| { kind: 'mcp'; server: string; tool: string };
+	| { kind: 'mcp'; server: string; tool: string }
+	| { kind: 'web'; host: string };
 
 export interface PermissionVerdict {
 	decision: PermissionDecision;

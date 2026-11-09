@@ -161,6 +161,22 @@ function argumentLines(input: Record<string, unknown>): string[] {
 	return Object.entries(input).slice(0, 6).map(([key, value]) => 'arg ' + key.slice(0, 40) + ': ' + (typeof value === 'string' ? value : JSON.stringify(value) ?? '').slice(0, 200));
 }
 
+/** Hosts that name this machine or a private network are never fetched: a page request must not become a way into the LAN. */
+function publicHost(host: string): boolean {
+	return /^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}$/.test(host) && !/\.(?:local|internal|localdomain|lan|home|corp)$/.test(host) && !/^\d+\.\d+\.\d+\.\d+$/.test(host);
+}
+
+async function webFetch(context: ApproveContext, input: Record<string, unknown>): Promise<PromptDecision> {
+	let url: URL | undefined;
+	try { url = new URL(String(input.url)); } catch { url = undefined; }
+	if (!url || url.protocol !== 'https:' || url.username || url.password || !publicHost(url.hostname)) { return deny('POLICY_DENIED: web-host\nNext: only https pages on public host names can be fetched.'); }
+	const verdict = context.permissions.decide({ kind: 'web', host: url.hostname });
+	if (verdict.decision === 'deny') { return deny('POLICY_DENIED: ' + (verdict.rule ?? 'web fetch denied by permissions')); }
+	const denial = verdict.decision === 'allow' ? undefined
+		: await settleVerdict(context, { verdict: 'ask', draft: { kind: 'web', title: 'Fetch web page', rule: '', host: url.hostname, detail: ['host: ' + url.hostname, 'url: ' + (url.origin + url.pathname).slice(0, 300)] } });
+	return denial ? deny(denial) : allow(input);
+}
+
 async function mcpTool(context: ApproveContext, server: string, tool: string, input: Record<string, unknown>): Promise<PromptDecision> {
 	const verdict = context.permissions.decide({ kind: 'mcp', server, tool });
 	if (verdict.decision === 'deny') { return deny('POLICY_DENIED: ' + (verdict.rule ?? 'mcp tool denied by permissions')); }
@@ -187,6 +203,7 @@ export async function decidePermissionPrompt(context: ApproveContext, value: unk
 	try {
 		if (request.tool_name === 'Bash') { return await bash(context, input); }
 		if (request.tool_name === 'AskUserQuestion') { return await question(context, input); }
+		if (request.tool_name === 'WebFetch') { return await webFetch(context, input); }
 		const mcp = MCP_TOOL.exec(request.tool_name)?.groups;
 		if (mcp && context.mcpServers?.includes(mcp.server)) { return await mcpTool(context, mcp.server, mcp.tool, input); }
 		const editField = EDIT_TOOLS.get(request.tool_name);

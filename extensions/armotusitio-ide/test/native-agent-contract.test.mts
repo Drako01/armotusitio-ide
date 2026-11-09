@@ -48,7 +48,7 @@ test('the native transport pilot keeps Bash, Edit and Write behind the IDE appro
 		// An `ask` rule makes Claude send even the shell commands it considers read-only to the IDE (AUD-P1-001); only native writers get it.
 		shellRule: option(native.args, '--settings'), readerSettings: buildAgentInvocation({ ...draft, role: 'planner', readOnly: true }, [], launch).args.includes('--settings')
 	}, {
-		mode: 'default', prompts: 'host', tool: 'mcp__ats-runner__approve', allowed: 'Read,Glob,Grep,mcp__ats-runner', denied: 'WebFetch,WebSearch', contract: true, reader: 'plan', codex: false,
+		mode: 'default', prompts: 'host', tool: 'mcp__ats-runner__approve', allowed: 'Read,Glob,Grep,mcp__ats-runner', denied: 'WebSearch', contract: true, reader: 'plan', codex: false,
 		shellRule: '{"permissions":{"ask":["Bash"]}}', readerSettings: false
 	});
 });

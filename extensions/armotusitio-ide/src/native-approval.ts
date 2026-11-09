@@ -21,7 +21,7 @@ export const REMEMBERING_ANSWERS: readonly ApprovalAnswer[] = ['task', 'session'
 /** What the tool server asks; the extension assigns the id. */
 export type ApprovalDraft = Omit<ApprovalRequest, 'id'>;
 /** The structured fields the extension derives the "always" rule from; the runner's own `rule` is only a hint and is never trusted. */
-export interface ApprovalSubject { server?: string; tool?: string; command?: string; args?: string[]; cwd?: string; path?: string; repo?: string; branch?: string; from?: string; base?: string; prTitle?: string; prBody?: string; action?: string }
+export interface ApprovalSubject { host?: string; server?: string; tool?: string; command?: string; args?: string[]; cwd?: string; path?: string; repo?: string; branch?: string; from?: string; base?: string; prTitle?: string; prBody?: string; action?: string }
 export type ApprovalAsk = (request: ApprovalDraft & ApprovalSubject) => Promise<ApprovalAnswer>;
 
 const MAX_PENDING_ARGS = 100;
@@ -36,6 +36,7 @@ function subjectRequest(draft: Partial<ApprovalDraft> & ApprovalSubject): Permis
 			return { kind: 'run', command, args, cwd: cwd ?? '.' };
 		}
 		case 'edit': return typeof draft.path === 'string' && draft.path ? { kind: 'edit', path: draft.path } : undefined;
+		case 'web': return typeof draft.host === 'string' && draft.host.length > 0 && draft.host.length <= 253 ? { kind: 'web', host: draft.host } : undefined;
 		case 'mcp': return [draft.server, draft.tool].every(value => typeof value === 'string' && value.length > 0 && value.length <= 100) ? { kind: 'mcp', server: draft.server!, tool: draft.tool! } : undefined;
 		case 'git_commit': return { kind: 'git_commit', branch: '', files: [], message: '' };
 		case 'git_push': return { kind: 'git_push', branch: '', remote: '' };

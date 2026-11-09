@@ -138,16 +138,17 @@ export function buildAgentInvocation(draft: AgentDraft, writableRoots: readonly 
 const MEDIATE_SHELL_SETTINGS = JSON.stringify({ permissions: { ask: ['Bash'] } });
 
 /**
- * Claude's permission mode and tool lists, shared by one-shot runs and native sessions (r8). WebFetch is never allowed;
+ * Claude's permission mode and tool lists, shared by one-shot runs and native sessions (r8). WebFetch is denied outright except in native sessions, where it asks per host;
  * WebSearch only when the project enabled it (D9). Native: Bash, Edit and Write are not pre-allowed, so every use reaches
  * the IDE's `approve` tool, which also answers `AskUserQuestion` through the IDE's card.
  */
 export function claudeToolArgs(options: { readOnly: boolean; runner: boolean; native: boolean; webSearch?: boolean }): string[] {
 	const { readOnly, runner, native, webSearch } = options;
 	const tools = (readOnly ? 'Read,Glob,Grep' : native ? 'Read,Glob,Grep,' + RUNNER_TOOL : 'Read,Glob,Grep,Edit,Write' + (runner ? ',' + RUNNER_TOOL : '')) + (webSearch ? ',WebSearch' : '');
-	const denied = (native ? '' : 'Bash,') + (webSearch ? 'WebFetch' : 'WebFetch,WebSearch');
+	// Native: WebFetch reaches `approve` (a card per host, public https hosts only); the structured transport still denies it.
+	const denied = native ? (webSearch ? '' : 'WebSearch') : 'Bash,' + (webSearch ? 'WebFetch' : 'WebFetch,WebSearch');
 	const mode = readOnly ? 'plan' : native ? 'default' : 'dontAsk';
-	return ['--permission-mode', mode, '--allowedTools', tools, '--disallowedTools', denied, ...(native ? ['--settings', MEDIATE_SHELL_SETTINGS] : [])];
+	return ['--permission-mode', mode, '--allowedTools', tools, ...(denied ? ['--disallowedTools', denied] : []), ...(native ? ['--settings', MEDIATE_SHELL_SETTINGS] : [])];
 }
 
 /**
