@@ -104,7 +104,7 @@ export async function harness(provider: Provider, extraEnv: Record<string, strin
 	const managers: AgentSessionManager[] = [];
 	const store = new AgentSessionStore(path.join(base, 'store'));
 	const services = {
-		async prepare(_identity: SessionIdentity, role: SessionRole) {
+		async prepare(identity: SessionIdentity, role: SessionRole) {
 			const directory = path.join(base, 'runs', String(++runs));
 			await fs.mkdir(directory, { recursive: true });
 			const config: RunnerConfig = {
@@ -120,7 +120,9 @@ export async function harness(provider: Provider, extraEnv: Record<string, strin
 			await fs.writeFile(toolServer.mcpConfigFile, JSON.stringify({ mcpServers: { 'ats-runner': { type: 'stdio', command: toolServer.command, args: toolServer.args, env: toolServer.env } } }));
 			// Real providers get the same session contract as the IDE; fakes only need a marker.
 			const instructions = fake ? 'IDE contract (' + role + ')' : agentContract({ provider, role: role === 'writer' ? 'implementer' : 'planner', maxTurns: 40, runner: true, git: role === 'writer', files: role === 'writer', nativeShell: true });
-			return { options: { instructions, env, toolServer, maxTurns: Number(process.env.ATS_E2E_MAX_TURNS) || 40 }, dispose: async () => undefined };
+			// An AI profile gives the provider its own private config directory, like the IDE's environment builder does.
+			const profileEnv = identity.profileId ? { ...env, [provider === 'claude' ? 'CLAUDE_CONFIG_DIR' : 'CODEX_HOME']: path.join(base, 'profiles', identity.profileId) } : env;
+			return { options: { instructions, env: profileEnv, toolServer, maxTurns: Number(process.env.ATS_E2E_MAX_TURNS) || 40 }, dispose: async () => undefined };
 		},
 		approve: (_session: ManagedSession, call: ToolCall) => {
 			mediated.push(call);

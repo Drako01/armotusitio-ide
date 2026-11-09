@@ -49,7 +49,7 @@ async function runTurn(id, params) {
 	const all = loadSessions();
 	const previous = all[thread].messages.at(-1);
 	write({ method: 'turn/started', params: { threadId: thread, turn: { id } , turnId: id } });
-	let answer = 'Echo: ' + text + (previous ? ' | prev=' + previous : '');
+	let answer = 'Echo: ' + text + (previous ? ' | prev=' + previous : '') + (process.env.CODEX_HOME ? ' | cfg=' + process.env.CODEX_HOME : '');
 	const delta = piece => write({ method: 'item/agentMessage/delta', params: { threadId: thread, turnId: id, itemId: 'msg-' + id, delta: piece } });
 	if (text.includes('GARBAGE')) { process.stdout.write('this is not json\n'); }
 	const flood = /FLOOD (\d+)/.exec(text);
@@ -129,7 +129,7 @@ async function turn(message) {
 	write({ type: 'system', subtype: 'init', session_id: session, tools: [], model: 'fake' });
 	write({ type: 'stream_event', event: { type: 'message_start' }, session_id: session });
 	const delta = piece => write({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: piece } }, session_id: session });
-	let answer = 'Echo: ' + text + (previous ? ' | prev=' + previous : '') + ' | mode=' + sessions[session].mode;
+	let answer = 'Echo: ' + text + (previous ? ' | prev=' + previous : '') + ' | mode=' + sessions[session].mode + (process.env.CLAUDE_CONFIG_DIR ? ' | cfg=' + process.env.CLAUDE_CONFIG_DIR : '');
 	if (text.includes('GARBAGE')) { process.stdout.write('this is not json\n'); }
 	const flood = /FLOOD (\d+)/.exec(text);
 	if (flood) { for (let i = 0; i < Number(flood[1]); i++) { delta('d' + i + ' '); } }

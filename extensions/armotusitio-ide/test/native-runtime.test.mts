@@ -316,3 +316,24 @@ test('an installed CLI that speaks another protocol version keeps the structured
 		} finally { await h.close(); }
 	}
 });
+
+for (const provider of ['codex', 'claude'] as const) {
+	test('two accounts of ' + provider + ' run side by side with their own directory and each session keeps the identity it started with (W3)', async () => {
+		const h = await harness(provider);
+		try {
+			const manager = h.manager();
+			const personal = await manager.session({ ...h.identity, profileId: 'personal' });
+			const work = await manager.session({ ...h.identity, profileId: 'work' });
+			const [one, two] = await Promise.all([personal.runTurn('remember PERSONAL-CODE', 'conversation'), work.runTurn('remember WORK-CODE', 'conversation')]);
+			// Each session continues independently: its own context, its own directory, never the other account's.
+			const [again, other] = [await personal.runTurn('what did I say', 'conversation'), await work.runTurn('what did I say', 'conversation')];
+			const dir = (name: string) => path.join(h.base, 'profiles', name);
+			assert.deepEqual({
+				distinctSessions: personal.key !== work.key && one.nativeSessionId !== two.nativeSessionId,
+				personal: [one.output.includes('cfg=' + dir('personal')), again.output.includes('prev=remember PERSONAL-CODE'), again.output.includes(dir('work'))],
+				work: [two.output.includes('cfg=' + dir('work')), other.output.includes('prev=remember WORK-CODE'), other.output.includes(dir('personal'))],
+				sameKeyForSameProfile: (await manager.session({ ...h.identity, profileId: 'personal' })).key === personal.key
+			}, { distinctSessions: true, personal: [true, true, false], work: [true, true, false], sameKeyForSameProfile: true });
+		} finally { await h.close(); }
+	});
+}
