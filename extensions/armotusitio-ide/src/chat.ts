@@ -22,7 +22,7 @@ const { TtlCache } = require('./native-ttl-cache.ts');
 const { chatCommands, commandHelp, runSessionCommand } = require('./native-chat-commands.ts');
 const { resolveMentions, mentionNotice } = require('./native-chat-mentions.ts');
 const { safeChatDraft } = require('./native-chat-draft.ts');
-const { chooseChatImage } = require('./native-chat-images.ts');
+const { chooseChatImage, chatImageFromData } = require('./native-chat-images.ts');
 const { captureTerminalOutput } = require('./native-terminal-capture.ts');
 const { resolveSkillInvocation } = require('./native-chat-skills.ts');
 const { configuredPreset } = require('./native-permissions.ts');
@@ -548,12 +548,12 @@ function registerChat(context: any, controller: any, projects: any, mcp: any, vs
 			if (chosen && vscode.workspace.isTrusted && selectedFolder()?.uri.toString() === currentProject && !session.busy) { await session.resume(chosen.id); }
 			return;
 		}
-		const sendTurn = async (body: string, attachments: { context?: string; notice?: string }) => {
+		const sendTurn = async (body: string, attachments: { context?: string; notice?: string; images?: readonly import('./native-chat-images.ts').ChatImage[] }, mode: 'ask' | 'act' = chatMode()) => {
 			if (participantTurn?.token.isCancellationRequested) { return; }
 			const queued = session.busy;
 			const queuedBefore = new Set(session.snapshot().queue?.map((item: { id: string }) => item.id));
 			if (participantTurn && !queued) { participantTurn.started = true; participantTurn.observe(); }
-			const sent = session.send(body, chatMode(), attachments);
+			const sent = session.send(body, mode, attachments);
 			if (participantTurn && queued) { participantTurn.queued = session.snapshot().queue?.find((item: { id: string }) => !queuedBefore.has(item.id))?.id; }
 			await sent;
 		};
@@ -563,6 +563,27 @@ function registerChat(context: any, controller: any, projects: any, mcp: any, vs
 				if (!text) { return; }
 				if (text.length > MAX_USER_MESSAGE_CHARS) {
 					await session.note(t('El mensaje tiene {0} caracteres y el m\u00e1ximo es {1}: sobran {2}. Guard\u00e1 el detalle en un archivo del proyecto y mencion\u00e1 su ruta.', String(text.length), String(MAX_USER_MESSAGE_CHARS), String(text.length - MAX_USER_MESSAGE_CHARS)), 'error');
+					return;
+				}
+				// Pasted/dropped image bytes are untrusted IPC input: validate on the host and require a new modal approval.
+				if (message.image !== undefined) {
+					if (!vscode.workspace.getConfiguration('atsHarness').get('imageInput', false)) { throw Error('HARNESS_IMAGE_TRANSPORT_UNAVAILABLE'); }
+					if (session.busy) { throw Error('HARNESS_ALREADY_RUNNING'); }
+					if (!message.image || typeof message.image !== 'object' || Array.isArray(message.image)
+						|| Object.keys(message.image).some(key => !['data', 'mime', 'name'].includes(key))) { throw Error('HARNESS_IMAGE_INVALID'); }
+					const image = chatImageFromData(message.image.mime, message.image.data);
+					const folderId = folder.uri.toString(), provider = session.snapshot().provider, profile = accounts[provider]?.selected;
+					const accept = t('Enviar imagen');
+					const answer = await vscode.window.showWarningMessage(
+						t('\u00bfEnviar la imagen previsualizada a {0}? Se transmitir\u00e1n {1} bytes y el proveedor podr\u00eda retenerlos. Si no la revisaste, cancel\u00e1.', provider, String(Buffer.from(image.data, 'base64').length)),
+						{ modal: true }, accept
+					);
+					if (answer !== accept) { await session.note(t('El env\u00edo de la imagen fue cancelado.')); return; }
+					if (!vscode.workspace.isTrusted || selectedFolder()?.uri.toString() !== folderId
+						|| session.snapshot().provider !== provider || accounts[provider]?.selected !== profile || session.busy) {
+						throw Error('HARNESS_IMAGE_CONTEXT_CHANGED');
+					}
+					await sendTurn(text, { images: [image], notice: t('Imagen enviada con confirmaci\u00f3n: {0}.', image.digest.slice(0, 12)) }, 'ask');
 					return;
 				}
 				if (text.startsWith('/')) {
@@ -737,7 +758,7 @@ function registerChat(context: any, controller: any, projects: any, mcp: any, vs
 		current.webview.options = surfaceOptions;
 		const nonce = randomBytes(24).toString('base64');
 		const uri = (name: any) => current.webview.asWebviewUri(vscode.Uri.joinPath(resources, name)).toString();
-		current.webview.html = `<!doctype html><html lang="es-AR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${current.webview.cspSource}; style-src ${current.webview.cspSource}; script-src 'nonce-${nonce}';"><link rel="stylesheet" href="${uri('chat.css')}"><title>Chat Harness</title></head><body><div id="app" class="chat-app" data-logo="${uri('logo.png')}"></div><script nonce="${nonce}" src="${current.webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'dist', 'chat.js'))}"></script></body></html>`;
+		current.webview.html = `<!doctype html><html lang="es-AR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${current.webview.cspSource} data:; style-src ${current.webview.cspSource}; script-src 'nonce-${nonce}';"><link rel="stylesheet" href="${uri('chat.css')}"><title>Chat Harness</title></head><body><div id="app" class="chat-app" data-logo="${uri('logo.png')}"></div><script nonce="${nonce}" src="${current.webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'dist', 'chat.js'))}"></script></body></html>`;
 		const subscriptions = [current.webview.onDidReceiveMessage((message: any) => receive(message, current).catch(error => report(selectedFolder(), error)))];
 		const refreshVisible = (visible: boolean) => {
 			const age = mcpStatus.checkedAt ? Date.now() - Date.parse(mcpStatus.checkedAt) : Infinity;
