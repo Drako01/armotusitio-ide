@@ -373,13 +373,22 @@ Al escribir `@` el compositor sugiere archivos del proyecto (hasta 50, los que c
 - se rechazan, con un aviso en el chat, las rutas con `..` o absolutas, los enlaces simbólicos que salen del proyecto, los archivos sensibles (`.env*`, claves, `id_rsa`, `.npmrc`…), las carpetas ignoradas (`node_modules`, `dist`, `.git`…), los binarios, los directorios y los archivos inexistentes;
 - el historial guarda el texto con `@ruta`, no el contenido del archivo: en un turno posterior hay que volver a mencionarlo.
 
-**Imágenes**: pegar una imagen en el compositor no está soportado. Hacerlo sin riesgo exige guardarla fuera del proyecto y que el proveedor pueda leer esa ruta, y eso depende de los permisos de lectura del CLI de cada proveedor, que no se pueden comprobar sin una corrida real. Hasta verificarlo, guardá la imagen dentro del proyecto y pedile a la IA que la lea por su ruta.
+**Imágenes**: activá `atsHarness.imageInput` y usá `/imagen [pedido]` para elegir un PNG o JPEG del proyecto.
+El IDE valida formato, tamaño y dimensiones, abre una vista previa y pide confirmación antes de enviar los bytes.
+Requiere transporte nativo y modelo con visión. No guarda archivos temporales ni imágenes en el journal local.
+El proveedor puede conservar la imagen en su propia sesión. Pegado, arrastre, PDF y notebooks siguen pendientes.
+
+**Diagnóstico y sesiones**: `/debug COMANDO | ERROR` propone un plan de reproducción, hipótesis, experimento y regresión.
+Los experimentos y cambios requieren aprobar el plan. `/sesiones [búsqueda]` busca conversaciones archivadas.
+Usá `/sesion ID` para retomarlas. Se conservan hasta 32 por proyecto; no se borran automáticamente.
 
 ## Chat @harness y Work Management
 
 También se registra `@harness` en el chat nativo cuando ese chat tiene un proveedor predeterminado disponible.
 La integración no reemplaza al agente predeterminado ni requiere activar APIs propuestas.
-En ese participante solo se aceptan comandos explícitos; el texto libre indica abrir Chat Harness.
+El texto libre de `@harness` usa el mismo motor, conversación, contexto y herramientas que el panel Chat Harness.
+Las aprobaciones y preguntas abren el panel compartido; no se conceden permisos por usar otra superficie.
+Los comandos de consulta de Work Management conservan su ruta local sin llamadas a modelos.
 Esta versión de la extensión requiere la base Code - OSS 1.144 del IDE.
 
 ```text
@@ -425,7 +434,8 @@ Las respuestas se muestran como texto sin interpretar HTML o instrucciones del s
 Cada consulta HTTP tiene límites de tiempo y tamaño.
 **Detener** interrumpe la espera; no revierte una modificación que ya aceptó el servidor.
 Si falla una modificación, consultá el estado actual antes de repetirla.
-No se transmite contexto del editor a un modelo de IA desde el participante `@harness`.
+El contexto solicitado mediante `@` se valida, limita y redacta antes de enviarse al modelo seleccionado.
+El uso de modelos y la cuota corresponde al perfil seleccionado en Chat Harness, también desde `@harness`.
 
 ## Bienvenida y actualización local
 

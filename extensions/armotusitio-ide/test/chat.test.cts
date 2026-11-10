@@ -143,7 +143,7 @@ async function panelFixture(replies, providerStatus = { claude: 'authenticated',
 	const storage = await fsp.mkdtemp(path.join(os.tmpdir(), 'ats-chat-panel-'));
 	const root = await fsp.realpath(storage);
 	const posted = [], executed = [], calls = [], instructions = [], approvals = [];
-	let receive, sidebarProvider;
+	let receive, sidebarProvider, participantHandler;
 	const noop = () => ({ dispose() { } });
 	const panel = { reveal() { }, onDidDispose: noop, dispose() { }, webview: { cspSource: 'csp', asWebviewUri: value => value, onDidReceiveMessage: fn => { receive = fn; return noop(); }, postMessage: async value => { posted.push(JSON.parse(JSON.stringify(value))); return true; } } };
 	const commands = new Map();
@@ -157,10 +157,12 @@ async function panelFixture(replies, providerStatus = { claude: 'authenticated',
 	const settings = new Map([['chatMode', 'ask']]);
 	const vscode = {
 		l10n: { t: (text, ...args) => text.replace(/\{(\d+)\}/g, (_, i) => String(args[i])) }, ViewColumn: { One: 1 },
+		chat: { createChatParticipant: (_id, handler) => { participantHandler = handler; return noop(); } },
+		MarkdownString: class { value = ''; appendText(value) { this.value += value; } },
 		Uri: { joinPath: (base, ...parts) => base + '/' + parts.join('/'), file: fsPath => ({ fsPath }) },
 		workspace: { isTrusted: true, workspaceFolders, getConfiguration: () => ({ get: (key, fallback) => settings.get(key) ?? fallback, update: async (key, value) => { settings.set(key, value); } }) },
 		window: { registerWebviewViewProvider: (_id, provider) => { sidebarProvider = provider; return noop(); }, createWebviewPanel: () => panel, showWarningMessage: async (_text, _options, choice) => options.confirm ? choice : undefined, showErrorMessage: async () => undefined },
-		commands: { registerCommand: (id, fn) => { commands.set(id, fn); return noop(); }, executeCommand: async (...args) => { executed.push(args); } },
+		commands: { registerCommand: (id, fn) => { commands.set(id, fn); return noop(); }, executeCommand: async (...args) => { executed.push(args); if (args[0] === 'vscode.executeWorkspaceSymbolProvider') { return options.symbols?.(root, args[1]); } } },
 		CancellationTokenSource: class { token = { isCancellationRequested: false, onCancellationRequested: noop }; cancel() { this.token.isCancellationRequested = true; } dispose() { } }
 	};
 	const answer = text => ({ status: 'passed', exitCode: 0, durationMs: 1, output: text, truncated: false });
@@ -168,8 +170,9 @@ async function panelFixture(replies, providerStatus = { claude: 'authenticated',
 		nativeChatRuntime: folder => ({
 			root: folder.uri.fsPath,
 			async context() { return { root: this.root, writer: true, skills: [], guides: [], verification: { revision: 'c'.repeat(64), gates: [{ id: 'unit', command: 'npm test' }] } }; },
-			async converse(provider, instruction, hooks) {
+			async converse(provider, instruction, hooks, signal) {
 				calls.push(['converse', provider]); instructions.push(instruction); hooks.started(() => undefined); hooks.progress(8192); hooks.progress(16384);
+				if (options.converse) { return options.converse(provider, instruction, hooks, signal); }
 				const reply = replies.shift();
 				return typeof reply === 'string' ? answer(reply) : { ...answer(reply.text), usage: reply.usage, quota: reply.quota };
 			},
@@ -206,7 +209,7 @@ async function panelFixture(replies, providerStatus = { claude: 'authenticated',
 		await receive({ action: 'ready' });
 		return { receive, posted };
 	};
-	return { receive, state, posted, calls, executed, instructions, approvals, root, settings, cleanup, openSidebar };
+	return { receive, state, posted, calls, executed, instructions, approvals, root, settings, cleanup, openSidebar, workspace: vscode.workspace, participant: (prompt, stream, token, command) => participantHandler({ prompt, command }, {}, stream, token) };
 }
 
 test('Chat Harness panel: converse, revise, approve and follow execution without leaving the chat', async () => {
@@ -559,5 +562,120 @@ test('sidebar and editor share one conversation and drafts stay scoped, bounded 
 		assert.deepEqual({ draft: f.state().draft, conversations: f.calls.filter(call => call[0] === 'converse').length }, { draft: 'saved in A', conversations: 1 });
 		await side.receive({ action: 'expandChat' });
 		assert.deepEqual(f.executed.at(-1), ['atsIde.chat']);
+	} finally { await f.cleanup(); }
+});
+
+
+test('@ autocomplete integrates language-server symbols and local contents while cancelling superseded requests', async () => {
+	const fsp = require('node:fs/promises'); const path = require('node:path');
+	const f = await panelFixture([], undefined, {
+		folders: 1, symbols: (root, query) => query === 'old' ? new Promise(() => { }) : [
+			{ name: 'authenticationService', location: { uri: { scheme: 'file', fsPath: path.join(root, 'src/b.ts') } } },
+			{ name: 'authenticationSecret', location: { uri: { scheme: 'file', fsPath: path.join(root, '.env') } } },
+			{ name: 'authenticationOutside', location: { uri: { scheme: 'file', fsPath: path.join(root, '../outside.ts') } } }
+		]
+	});
+	try {
+		await fsp.mkdir(path.join(f.root, 'src'), { recursive: true });
+		await fsp.writeFile(path.join(f.root, 'src/a.ts'), 'const authentication = true;');
+		await fsp.writeFile(path.join(f.root, 'src/b.ts'), 'export {};');
+		await fsp.writeFile(path.join(f.root, '.env'), 'private');
+		const stale = f.receive({ action: 'complete', kind: 'mention', query: 'old', seq: 10 });
+		const current = f.receive({ action: 'complete', kind: 'mention', query: 'authentication', seq: 11 });
+		await Promise.all([stale, current]);
+		assert.deepEqual(f.posted.filter(item => item.type === 'completions').map(({ seq, items }) => ({ seq, items })), [{ seq: 10, items: [] }, { seq: 11, items: ['src/b.ts', 'src/a.ts'] }]);
+	} finally { await f.cleanup(); }
+});
+
+
+function participantStream() {
+	const responses = [], progress = [], buttons = [];
+	return { responses, progress, buttons, stream: { markdown: value => responses.push(value.value), progress: value => progress.push(value), button: value => buttons.push(value) } };
+}
+
+test('native participant and canonical panel use the same provider, conversation, mentions and tool policy', async () => {
+	const f = await panelFixture(['Upstream answer', 'Panel answer']);
+	try {
+		await f.receive({ action: 'provider', provider: 'codex' });
+		const response = participantStream();
+		await f.participant('first via upstream', response.stream, { isCancellationRequested: false });
+		await f.receive({ action: 'send', text: 'second via panel' });
+		assert.deepEqual({ calls: f.calls, nativeAnswer: response.responses, shared: f.state().chat.messages.filter(item => item.role === 'user').map(item => item.text), progress: response.progress.length > 0 }, {
+			calls: [['converse', 'codex'], ['converse', 'codex']], nativeAnswer: ['Upstream answer'], shared: ['first via upstream', 'second via panel'], progress: true
+		});
+		assert.ok(f.instructions[1].includes('Upstream answer'));
+	} finally { await f.cleanup(); }
+});
+
+test('native participant Act requests reach the same approval card and cannot grant themselves permission', async () => {
+	const f = await panelFixture([]);
+	try {
+		await f.receive({ action: 'mode', mode: 'act' });
+		const response = participantStream();
+		const running = f.participant('pedir aprobacion', response.stream, { isCancellationRequested: false });
+		for (let count = 0; count < 100 && !f.state().chat?.approvals?.length; count++) { await new Promise(resolve => setTimeout(resolve, 5)); }
+		const card = f.state().chat.approvals[0];
+		assert.deepEqual({ resolvedBeforeUser: f.approvals.length, openCanonical: f.executed.some(call => call[0] === 'atsIde.chat') }, { resolvedBeforeUser: 0, openCanonical: true });
+		await f.receive({ action: 'approval', id: card.id, answer: 'deny' });
+		await running;
+		assert.equal(f.approvals[0], 'deny');
+	} finally { await f.cleanup(); }
+});
+
+test('native participant cancellation aborts only its own guarded run, and untrusted requests never invoke a model', async () => {
+	let stop, reached = false, aborted = false;
+	const f = await panelFixture([], undefined, {
+		folders: 1, converse: async (_provider, _instruction, _hooks, signal) => {
+			reached = true;
+			return new Promise(resolve => signal.addEventListener('abort', () => { aborted = true; resolve({ status: 'cancelled', exitCode: 1, durationMs: 1, output: '', truncated: false }); }, { once: true }));
+		}
+	});
+	try {
+		const response = participantStream();
+		const token = { isCancellationRequested: false, onCancellationRequested: callback => { stop = callback; return { dispose() { } }; } };
+		const running = f.participant('cancel my request', response.stream, token);
+		for (let count = 0; count < 100 && !reached; count++) { await new Promise(resolve => setTimeout(resolve, 5)); }
+		token.isCancellationRequested = true; stop(); await running;
+		f.workspace.isTrusted = false;
+		const untrusted = participantStream();
+		await f.participant('must not start', untrusted.stream, { isCancellationRequested: false });
+		assert.deepEqual({ aborted, calls: f.calls.length, busy: !!f.state().chat.activity, refused: untrusted.responses.some(text => text.includes('confiable')) }, { aborted: true, calls: 1, busy: false, refused: true });
+	} finally { await f.cleanup(); }
+});
+
+
+test('participant session commands share mode and do not invoke a model for local queries', async () => {
+	const f = await panelFixture([]);
+	try {
+		const response = participantStream();
+		await f.participant('actuar', response.stream, { isCancellationRequested: false }, 'modo');
+		assert.deepEqual({ mode: f.settings.get('chatMode'), calls: f.calls.length, response: response.responses.some(text => text.includes('Actuar')) }, { mode: 'act', calls: 0, response: true });
+	} finally { await f.cleanup(); }
+});
+
+test('a completed participant turn never streams or cancels a later queued panel turn', async () => {
+	let completeFirst, completeSecond, laterStarted = false, laterAborted = false, cancel;
+	const outcome = text => ({ status: 'passed', exitCode: 0, durationMs: 1, output: text, truncated: false });
+	const f = await panelFixture([], undefined, {
+		folders: 1, converse: async (_provider, instruction, _hooks, signal) => {
+			if (!completeFirst) { return new Promise(resolve => { completeFirst = () => resolve(outcome('first answer')); }); }
+			laterStarted = true;
+			signal.addEventListener('abort', () => { laterAborted = true; }, { once: true });
+			return new Promise(resolve => { completeSecond = () => resolve(outcome('second answer')); });
+		}
+	});
+	try {
+		const response = participantStream();
+		const token = { isCancellationRequested: false, onCancellationRequested: callback => { cancel = callback; return { dispose() { } }; } };
+		const first = f.participant('upstream first', response.stream, token);
+		for (let count = 0; count < 100 && !completeFirst; count++) { await new Promise(resolve => setTimeout(resolve, 5)); }
+		await f.receive({ action: 'send', text: 'queued panel turn' });
+		completeFirst();
+		await first;
+		for (let count = 0; count < 100 && !laterStarted; count++) { await new Promise(resolve => setTimeout(resolve, 5)); }
+		token.isCancellationRequested = true; cancel();
+		assert.deepEqual({ laterStarted, laterAborted, response: response.responses }, { laterStarted: true, laterAborted: false, response: ['first answer'] });
+		completeSecond();
+		for (let count = 0; count < 100 && f.state().chat.activity; count++) { await new Promise(resolve => setTimeout(resolve, 5)); }
 	} finally { await f.cleanup(); }
 });

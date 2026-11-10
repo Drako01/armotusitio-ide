@@ -11,6 +11,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { resolveNativeCommand } from '../native-runtime.ts';
+import { validateChatImages } from '../native-chat-images.ts';
 import {
 	CODEX_PROTOCOL_VERSION,
 	type AskForApproval, type CommandExecutionRequestApprovalParams, type CommandExecutionRequestApprovalResponse, type FileChangeRequestApprovalParams,
@@ -160,11 +161,12 @@ class CodexConnection implements AgentConnection {
 	}
 
 	startTurn(input: TurnInput): Promise<TurnResult> {
+		if (input.images) { validateChatImages(input.images); }
 		if (this.turn) { return Promise.reject(new RuntimeError('RUNTIME_TURN_ALREADY_RUNNING')); }
 		return new Promise<TurnResult>((resolve, reject) => {
 			this.turn = { clientTurnId: input.clientTurnId, output: '', resolve };
 			const params: TurnStartParams = {
-				threadId: this.nativeSessionId, input: textInput(input.text), clientUserMessageId: input.clientTurnId,
+				threadId: this.nativeSessionId, input: [...textInput(input.text), ...(input.images ?? []).map(image => ({ type: 'image' as const, url: 'data:' + image.mime + ';base64,' + image.data }))], clientUserMessageId: input.clientTurnId,
 				approvalPolicy: approvalPolicy(input.role), sandboxPolicy: sandboxPolicy(input.role, [this.options.identity.root, ...(this.options.writableRoots ?? [])], this.fullAccess)
 			};
 			this.rpc.request<TurnStartResponse>('turn/start', params).then(

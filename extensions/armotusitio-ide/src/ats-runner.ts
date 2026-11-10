@@ -31,6 +31,8 @@ import { loadPermissions, type PermissionSet } from './native-permissions.ts';
 import type { PermissionPreset } from './native-permissions-types.ts';
 import { projectPermissionsDigest } from './native-run-integrity.ts';
 import { MCP_TOOL_PREFIX, type WorkMcpTool } from './native-mcp-bridge.ts';
+import { USER_MCP_TOOL_PREFIX } from './native-user-mcp.ts';
+import { DELEGATE_TOOL } from './native-agent-delegation.ts';
 
 export interface RunnerConfig {
 	schemaVersion: 1;
@@ -59,6 +61,8 @@ export interface RunnerConfig {
 	jobs?: boolean;
 	/** User-added MCP servers wired into this run (names only; their credentials stay in the extension). */
 	mcpServers?: string[];
+	/** IDE read-only role fallback, only in an explicitly approved writer's run. */
+	delegation?: boolean;
 	/**
 	 * A long-lived native session (r8): refusals and the command budget last one turn, not the whole process. The extension
 	 * names the current turn through the channel (`epoch`); an unreadable epoch never matches, so nothing is forgotten early.
@@ -397,13 +401,18 @@ async function main(): Promise<void> {
 		if (request.id === undefined) { return; }
 		const reply = (result: unknown): void => send({ jsonrpc: '2.0', id: request.id, result });
 		if (request.method === 'initialize') { return reply({ protocolVersion: request.params?.protocolVersion ?? '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'ats-runner', version: '1.0.0' } }); }
-		if (request.method === 'tools/list') { return reply({ tools: [TOOL, ...(config.terminal ? [TERMINAL_TOOL] : []), ...(config.jobs ? JOB_TOOLS : []), ...(config.git ? GIT_TOOLS : []), ...(config.files ? [...FILE_TOOLS, REPAIR_TOOL, REPAIR_STATUS_TOOL] : []), ...(config.approve ? [APPROVE_TOOL] : []), ...(config.channel ? EDITOR_TOOLS : []), ...(config.channel ? config.mcpTools ?? [] : [])] }); }
+		if (request.method === 'tools/list') { return reply({ tools: [TOOL, ...(config.terminal ? [TERMINAL_TOOL] : []), ...(config.jobs ? JOB_TOOLS : []), ...(config.git ? GIT_TOOLS : []), ...(config.files ? [...FILE_TOOLS, REPAIR_TOOL, REPAIR_STATUS_TOOL] : []), ...(config.approve ? [APPROVE_TOOL] : []), ...(config.channel ? EDITOR_TOOLS : []), ...(config.channel ? config.mcpTools ?? [] : []), ...(config.channel && config.delegation ? [DELEGATE_TOOL] : [])] }); }
 		if (request.method === 'ping') { return reply({}); }
-		if (request.method === 'tools/call' && config.channel && request.params?.name?.startsWith(MCP_TOOL_PREFIX) && config.mcpTools?.some(tool => tool.name === request.params!.name)) {
+		if (request.method === 'tools/call' && config.channel && config.delegation && request.params?.name === DELEGATE_TOOL.name) {
+			if (!await permissionsUntouched(config)) { return reply({ isError: true, content: [{ type: 'text', text: 'POLICY_DENIED: project-permissions-changed' }] }); }
+			try { return reply(await callToolChannel(config.channel.address, config.channel.token, 'delegate-readonly', request.params.arguments ?? {}, 16 * 60 * 1000)); }
+			catch (error) { const message = (error as Error).message; return reply({ isError: true, content: [{ type: 'text', text: /^HARNESS_[A-Z_]+$/.test(message) ? message : 'HARNESS_DELEGATION_FAILED' }] }); }
+		}
+		if (request.method === 'tools/call' && config.channel && (request.params?.name?.startsWith(MCP_TOOL_PREFIX) || request.params?.name?.startsWith(USER_MCP_TOOL_PREFIX)) && config.mcpTools?.some(tool => tool.name === request.params!.name)) {
 			calls++;
 			if (!await permissionsUntouched(config)) { return reply({ isError: true, content: [{ type: 'text', text: 'POLICY_DENIED: project-permissions-changed' }] }); }
 			try {
-				const result = await callToolChannel(config.channel.address, config.channel.token, 'work-mcp', { name: request.params.name, input: request.params.arguments ?? {} }, 11 * 60 * 1000);
+				const result = await callToolChannel(config.channel.address, config.channel.token, request.params.name.startsWith(USER_MCP_TOOL_PREFIX) ? 'user-mcp' : 'work-mcp', { name: request.params.name, input: request.params.arguments ?? {} }, 11 * 60 * 1000);
 				return reply(result);
 			} catch (error) {
 				const message = (error as Error).message;

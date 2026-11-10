@@ -5,7 +5,8 @@
 /** Explicitly approved, bounded agent CLI execution. No shell, no bypass-permissions modes. */
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
+import { promisify } from 'node:util';
 import { resolveNativeCommand, stopProcess } from './native-runtime.ts';
 import { captureAgentScope, scopeChanged } from './native-agent-scope.ts';
 import { parseProviderOutput, ClaudeEventAccumulator, CodexEventAccumulator, type ProviderUsage } from './native-provider-output.ts';
@@ -87,14 +88,15 @@ const toml = (value: string): string => JSON.stringify(value);
  * `writableRoots` are toolchain caches a Codex writer may also write to (block B); readers never get them.
  * `toolServer` gives a writer the `ats-runner` command tool; Claude's own shell stays disallowed.
  */
-export function buildAgentInvocation(draft: AgentDraft, writableRoots: readonly string[] = [], toolServer?: ToolServerLaunch): AgentInvocation {
+export function buildAgentInvocation(draft: AgentDraft, writableRoots: readonly string[] = [], toolServer?: ToolServerLaunch, isolatedReadOnly = false): AgentInvocation {
+	if (isolatedReadOnly && (draft.provider !== 'claude' || !draft.readOnly || draft.role === 'implementer' || draft.resumeSession || draft.webSearch || toolServer)) { throw Error('HARNESS_DELEGATION_ISOLATION_UNSUPPORTED'); }
 	reviewAgentDraft(draft);
 	if (draft.role !== 'implementer' && !draft.readOnly) { throw Error('HARNESS_READ_ONLY_ROLE_REQUIRED'); }
 	if (draft.role === 'implementer' && draft.readOnly) { throw Error('HARNESS_IMPLEMENTER_MODE_MISMATCH'); }
 	const runner = !draft.readOnly && !!toolServer;
 	// Native transport pilot: Claude keeps Bash, Edit and Write, and each permission prompt is answered by the IDE's `approve` tool.
 	const native = runner && draft.provider === 'claude' && !!toolServer?.approve;
-	const instruction = agentContract({ provider: draft.provider, role: draft.role, maxTurns: draft.maxTurns, runner, webSearch: draft.webSearch, git: runner && !!toolServer?.git, files: runner && !!toolServer?.files, nativeShell: native }) + '\n\n' + draft.instruction;
+	const instruction = (isolatedReadOnly ? 'This child has no tools. Analyze only the context supplied below; do not claim to inspect files, run tests or delegate.\n\n' : agentContract({ provider: draft.provider, role: draft.role, maxTurns: draft.maxTurns, runner, webSearch: draft.webSearch, git: runner && !!toolServer?.git, files: runner && !!toolServer?.files, nativeShell: native }) + '\n\n') + draft.instruction;
 	const model = draft.model ? ['--model', draft.model] : [];
 	// Keep effort as a reviewed, per-invocation override. Never modify CLI config files.
 	const effort = draft.effort ? draft.provider === 'codex'
@@ -126,7 +128,9 @@ export function buildAgentInvocation(draft: AgentDraft, writableRoots: readonly 
 	const prompts = native ? ['--permission-prompts', 'host', '--permission-prompt-tool', RUNNER_TOOL + '__approve'] : [];
 	return {
 		executable: 'claude',
-		args: ['--print', ...resume, ...model, ...effort, ...server, ...prompts, ...claudeToolArgs({ readOnly: draft.readOnly, runner, native, webSearch: draft.webSearch }), '--max-turns', String(draft.maxTurns ?? READ_ONLY_MAX_TURNS), '--output-format', 'stream-json', '--verbose'],
+		args: ['--print', ...resume, ...model, ...effort, ...server, ...prompts, ...claudeToolArgs({ readOnly: draft.readOnly, runner, native, webSearch: draft.webSearch }),
+			...(isolatedReadOnly ? ['--tools', '', '--setting-sources', '', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}'] : []),
+			'--max-turns', String(draft.maxTurns ?? READ_ONLY_MAX_TURNS), '--output-format', 'stream-json', '--verbose'],
 		stdin: draft.resumeSession ? draft.instruction : instruction
 	};
 }
@@ -155,7 +159,7 @@ export function claudeToolArgs(options: { readOnly: boolean; runner: boolean; na
  * Caller MUST verify Workspace Trust, project authority and consent immediately before invoking.
  * `onMessage` receives redacted intermediate assistant messages as the provider streams them (Codex JSONL, Claude stream-json).
  */
-export async function executeReviewedAgent(review: AgentReview, current: AgentDraft, durationMs = MAX_DURATION_MS, onProgress?: (progress: Readonly<AgentProgress>) => void, onMessage?: (text: string) => void, toolServer?: ToolServerLaunch, sensitive?: (text: string) => boolean, onStep?: (step: ChatStep) => void, profileEnvironment?: (base: NodeJS.ProcessEnv) => NodeJS.ProcessEnv): Promise<AgentExecution> {
+export async function executeReviewedAgent(review: AgentReview, current: AgentDraft, durationMs = MAX_DURATION_MS, onProgress?: (progress: Readonly<AgentProgress>) => void, onMessage?: (text: string) => void, toolServer?: ToolServerLaunch, sensitive?: (text: string) => boolean, onStep?: (step: ChatStep) => void, profileEnvironment?: (base: NodeJS.ProcessEnv) => NodeJS.ProcessEnv, isolatedReadOnly = false): Promise<AgentExecution> {
 	validateReviewedAgent(review, current);
 	if (!Number.isSafeInteger(durationMs) || durationMs < 1000 || durationMs > MAX_DURATION_MS) { throw Error('HARNESS_AGENT_TIMEOUT_INVALID'); }
 	const canonical = await fs.realpath(current.projectRoot);
@@ -163,7 +167,12 @@ export async function executeReviewedAgent(review: AgentReview, current: AgentDr
 	const toolchain = await currentToolchainEnvironment();
 	// An AI profile replaces the provider credentials of the IDE environment with its own private directory.
 	const base = profileEnvironment ? profileEnvironment(toolchain.env) : toolchain.env;
-	const invocation = buildAgentInvocation(current, toolchain.writableRoots, toolServer);
+	const invocation = buildAgentInvocation(current, toolchain.writableRoots, toolServer, isolatedReadOnly);
+	if (isolatedReadOnly) {
+		const probe = await resolveNativeCommand(current.provider, ['--help'], base);
+		const { stdout } = await promisify(execFile)(probe.executable, probe.args, { env: { ...base, ...(probe.embeddedNode ? { ELECTRON_RUN_AS_NODE: '1' } : {}) }, windowsHide: true, timeout: 15000, maxBuffer: 1024 * 1024 });
+		if (!['--tools', '--setting-sources', '--strict-mcp-config', '--mcp-config'].every(flag => stdout.includes(flag))) { throw Error('HARNESS_DELEGATION_ISOLATION_UNSUPPORTED'); }
+	}
 	const initialScope = current.readOnly ? await captureAgentScope(canonical) : undefined;
 	const command = await resolveNativeCommand(invocation.executable, invocation.args, base);
 	const env: NodeJS.ProcessEnv = base;

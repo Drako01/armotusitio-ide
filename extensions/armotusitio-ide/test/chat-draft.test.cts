@@ -13,14 +13,16 @@ test('the draft is restored after the view reloads, and never kept when sent or 
 	const browser = await launchBrowser();
 	try {
 		const page = await browser.newPage({ viewport: { width: 900, height: 700 }, reducedMotion: 'reduce' });
-		const push = await mountChat(page, undefined, { draft: 'arreglar el login' });
-		await push(state(undefined));
+		const initial = state(undefined);
+		const project = initial.project.id;
+		const push = await mountChat(page, undefined, { drafts: { [project]: 'arreglar el login' } });
+		await push(initial);
 		const restored = await page.evaluate(() => document.getElementById('prompt').value);
 		const type = text => page.evaluate(value => { const input = document.getElementById('prompt'); input.value = value; input.dispatchEvent(new Event('input')); return window.savedState; }, text);
 		const typed = await type('otra cosa');
 		const secret = await type('mi password: hunter2');
 		await type('hola');
 		const sent = await page.evaluate(() => { document.getElementById('send').click(); return window.savedState; });
-		assert.deepEqual({ restored, typed, secret, sent }, { restored: 'arreglar el login', typed: { draft: 'otra cosa' }, secret: { draft: '' }, sent: { draft: '' } });
+		assert.deepEqual({ restored, typed, secret, sent }, { restored: 'arreglar el login', typed: { drafts: { [project]: 'otra cosa' } }, secret: { drafts: { [project]: '' } }, sent: { drafts: { [project]: '' } } });
 	} finally { await browser.close(); }
 });

@@ -10,6 +10,8 @@ const { ChatStore, harnessErrorCode, MAX_USER_MESSAGE_CHARS } = require('./nativ
 const { HarnessChatSession, describeFailure, chatActivityItems } = require('./native-chat-session.ts');
 import type { ActivityFeed } from './native-activity-feed.ts';
 import type { ChatMode } from './native-chat.ts';
+import type { ChatSnapshot, HarnessChatSession as ChatSession } from './native-chat-session.ts';
+import type { ContextIndex, ContextSymbol } from './context-index-types.ts';
 const { parseCodexSandbox, useCodexSandbox } = require('./native-codex-sandbox.ts');
 const { diagnoseProvider } = require('./native-provider-diagnostics.ts');
 const { listProviderModels } = require('./native-provider-models.ts');
@@ -18,19 +20,19 @@ const { validModel, validEffort } = require('./native-providers.ts');
 const { endpoint } = require('./mcp.ts');
 const { TtlCache } = require('./native-ttl-cache.ts');
 const { chatCommands, commandHelp, runSessionCommand } = require('./native-chat-commands.ts');
-const { resolveMentions, mentionNotice, suggestMentionFiles } = require('./native-chat-mentions.ts');
+const { resolveMentions, mentionNotice } = require('./native-chat-mentions.ts');
 const { safeChatDraft } = require('./native-chat-draft.ts');
+const { chooseChatImage } = require('./native-chat-images.ts');
 const { captureTerminalOutput } = require('./native-terminal-capture.ts');
 const { resolveSkillInvocation } = require('./native-chat-skills.ts');
 const { configuredPreset } = require('./native-permissions.ts');
 const { APPROVAL_ANSWERS } = require('./native-approval.ts');
-const { indexProject, IGNORED } = require('./context.ts');
-
-/** The project file list for `@` autocomplete changes slowly; typing must not rescan the tree on every key. */
-const MENTION_INDEX_TTL_MS = 30 * 1000;
+const { IncrementalContextIndex, IGNORED } = require('./context.ts');
 const { buildSetupItems, setupIcon } = require('./native-setup-check.ts');
 const { doctorReport } = require('./native-machine-doctor.ts');
 const { registerRunDiffView, validRunPath, RUN_DIFF_COMMAND } = require('./native-run-diff-view.ts');
+
+interface ParticipantTurn { token: { isCancellationRequested: boolean }; started: boolean; queued?: string; observe(): void }
 
 /** Provider CLI evidence changes rarely; the explicit "verify providers" action always bypasses it. */
 const PROVIDER_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -213,7 +215,7 @@ function labels(t: any) {
 		verification: t('Verificaciones'), verificationSkipped: t('Sin verificaciones configuradas'), duration: t('Duraci\u00f3n'), copy: t('Copiar'), copied: t('Copiado'),
 		copyMessage: t('Copiar respuesta'), partial: t('Respuesta en curso'), copyCode: t('Copiar c\u00f3digo'), activity: t('Actividad en curso'), idle: t('Sin actividad en curso'), cancelling: t('Deteniendo\u2026'),
 		setupCheck: t('Revisar mi entorno'),
-		expandChat: t('Expandir Chat'), sidebarChat: t('Abrir Chat Lateral'), menu: t('M\u00e1s opciones'), newChat: t('Nueva conversaci\u00f3n'), openTasks: t('Abrir panel de tareas'), refreshProviders: t('Verificar proveedores'), commands: t('Ver comandos'),
+		expandChat: t('Expandir Chat'), sidebarChat: t('Abrir Chat Lateral'), sessions: t('Sesiones guardadas'), menu: t('M\u00e1s opciones'), newChat: t('Nueva conversaci\u00f3n'), openTasks: t('Abrir panel de tareas'), refreshProviders: t('Verificar proveedores'), commands: t('Ver comandos'),
 		noProject: t('Abr\u00ed una carpeta para empezar a conversar sobre su c\u00f3digo.'), untrusted: t('Este workspace no es confiable. Marcalo como confiable para conversar y ejecutar.'), hybrid: t('Este proyecto tiene su propio Harness: pod\u00e9s conversar y planificar, pero la ejecuci\u00f3n con escritura requiere habilitar \u00abatsHarness.coordinatedProjectWriters\u00bb y un motor con lease de escritura.'),
 		isolation: t('Aislamiento de escritura: {0}.', '{0}'),
 		isolationLevel: { 'os-kernel': t('kernel del sistema'), 'provider-sandbox': t('sandbox del proveedor; las lecturas fuera del proyecto no est\u00e1n confinadas'), 'tool-allowlist': t('solo permisos de herramientas del proveedor, sin sandbox del sistema operativo'), none: t('sin aislamiento') },
@@ -238,6 +240,7 @@ function registerChat(context: any, controller: any, projects: any, mcp: any, vs
 	const diagnose = options.diagnose || diagnoseProvider;
 	const listModels = options.listModels || listProviderModels;
 	const sessions = new Map();
+	const participantObservers = new Map<string, Set<(snapshot: ChatSnapshot) => void>>();
 	const providers: Record<string, any> = { codex: { status: 'checking' }, claude: { status: 'checking' } };
 	// Discovered from each CLI's own configuration; the choice itself lives in `atsHarness.<provider>Model`.
 	const models: Record<string, any> = { codex: { options: [] }, claude: { options: [] } };
@@ -252,7 +255,9 @@ function registerChat(context: any, controller: any, projects: any, mcp: any, vs
 	const codexFullAccess = () => parseCodexSandbox(vscode.workspace.getConfiguration('atsHarness').get('codexSandbox')) === 'danger-full-access';
 	useCodexSandbox(vscode.workspace.getConfiguration('atsHarness').get('codexSandbox'));
 	const chatMode = (): ChatMode => vscode.workspace.getConfiguration('atsHarness').get('chatMode', 'act') === 'ask' ? 'ask' : 'act';
-	const mentionIndex = new TtlCache(MENTION_INDEX_TTL_MS);
+	const mentionIndexes = new Map<string, ContextIndex>();
+	const mentionRequests = new Map<object, AbortController>();
+	context.subscriptions.push({ dispose() { for (const request of mentionRequests.values()) { request.abort(); } mentionRequests.clear(); mentionIndexes.clear(); } });
 	// `@terminal` attaches the last command the user ran in an IDE terminal (needs shell integration).
 	const terminalCapture = captureTerminalOutput(vscode.window ?? {});
 	context.subscriptions.push(terminalCapture);
@@ -272,14 +277,7 @@ function registerChat(context: any, controller: any, projects: any, mcp: any, vs
 		update();
 		context.subscriptions.push(vscode.workspace.onDidChangeConfiguration((event: any) => { if (event.affectsConfiguration('atsHarness.enabled')) { update(); } }));
 	}
-	if (vscode.chat?.createChatParticipant) {
-		const participant = vscode.chat.createChatParticipant('atsIde.harness', async (request: any, _context: any, stream: any, token: any) => {
-			const output = await handle((request.command ? request.command + ' ' : '') + request.prompt, token);
-			const markdown = new vscode.MarkdownString(); markdown.appendText(output); stream.markdown(markdown);
-		});
-		participant.iconPath = vscode.Uri.joinPath(context.extensionUri, 'resources', 'logo.png');
-		context.subscriptions.push(participant);
-	}
+
 	const folders = () => vscode.workspace.workspaceFolders || [];
 	if (vscode.workspace.registerTextDocumentContentProvider) { registerRunDiffView(vscode, context, folders, t); }
 	/** Short, colon-free key of a folder for feed item ids (`chat:<key>:<suffix>`). */
@@ -322,7 +320,8 @@ function registerChat(context: any, controller: any, projects: any, mcp: any, vs
 				if (!runtime) { throw Error('HARNESS_CHAT_UNAVAILABLE'); }
 				const preferred = providers.claude.status === 'ready' || providers.codex.status !== 'ready' ? 'claude' : 'codex';
 				const feedKey = feedKeyOf(key);
-				entry.session = new HarnessChatSession(new ChatStore(directory), runtime, (snapshot: any) => {
+				entry.session = new HarnessChatSession(new ChatStore(directory), runtime, (snapshot: ChatSnapshot) => {
+					for (const observer of participantObservers.get(key) ?? []) { observer(snapshot); }
 					if (selectedFolder()?.uri.toString() === key) { publish(folder); }
 					if (options.feed) {
 						const items = chatActivityItems(snapshot, { key: feedKey, name: folder.name }, t);
@@ -417,6 +416,27 @@ function registerChat(context: any, controller: any, projects: any, mcp: any, vs
 		return await vscode.window.showWarningMessage(t('\u00bfDescartar los archivos que cambi\u00f3 esta ejecuci\u00f3n? Los que ten\u00edan cambios tuyos no se tocan.'), { modal: true }, confirm) === confirm;
 	};
 	const sessionCommands = {
+		image: async (request: string, root: string, session: ChatSession, turn?: ParticipantTurn) => {
+			if (turn?.token.isCancellationRequested) { return t('Env\u00edo de imagen cancelado.'); }
+			if (!vscode.workspace.getConfiguration('atsHarness').get('imageInput', false)) { return t('Para adjuntar im\u00e1genes, activ\u00e1 atsHarness.imageInput. Requiere transporte nativo y un modelo con visi\u00f3n.'); }
+			if (session.snapshot().activity) { return t('Esper\u00e1 a que termine la tarea antes de adjuntar una imagen.'); }
+			const folderId = selectedFolder()?.uri.toString();
+			const imageProvider = session.snapshot().provider;
+			const profileId = accounts[imageProvider]?.selected;
+			const image = await chooseChatImage(root, {
+				pick: async () => (await vscode.window.showOpenDialog({ canSelectMany: false, filters: { Images: ['png', 'jpg', 'jpeg'] }, defaultUri: vscode.Uri.file(root) }))?.[0]?.fsPath,
+				preview: async (file: string) => { await vscode.commands.executeCommand('vscode.open', vscode.Uri.file(file)); },
+				confirm: async (info: { mime: string; bytes: number }) => {
+					const accept = t('Enviar imagen');
+					return await vscode.window.showWarningMessage(t('\u00bfEnviar la imagen que revisaste a {0}? Puede contener informaci\u00f3n privada. Se enviar\u00e1n {1} bytes y el proveedor puede conservarlos en su sesi\u00f3n.', imageProvider, String(info.bytes)), { modal: true }, accept) === accept;
+				}
+			});
+			if (!image || turn?.token.isCancellationRequested) { return t('Env\u00edo de imagen cancelado.'); }
+			if (!vscode.workspace.isTrusted || selectedFolder()?.uri.toString() !== folderId || session.snapshot().provider !== imageProvider || accounts[imageProvider]?.selected !== profileId || session.snapshot().activity) { throw Error('HARNESS_IMAGE_CONTEXT_CHANGED'); }
+			if (turn) { turn.started = true; turn.observe(); }
+			await session.send(request || t('Describ\u00ed esta imagen y su relaci\u00f3n con el proyecto.'), 'ask', { images: [image], notice: t('Imagen adjunta con confirmaci\u00f3n: {0}.', image.digest.slice(0, 12)) });
+			return t('Revis\u00e1 el resultado del turno de imagen en la conversaci\u00f3n.');
+		},
 		nativeSkillsDirectory: vscode.Uri.joinPath(context.extensionUri, 'resources', 'engineering-skills').fsPath,
 		t, chatMode, setChatMode, confirmDiscard,
 		permissionsPreset: () => configuredPreset(vscode.workspace.getConfiguration('atsHarness').get('permissionsPreset')),
@@ -436,17 +456,46 @@ function registerChat(context: any, controller: any, projects: any, mcp: any, vs
 			workManagement: async () => mcp.enabled() ? handle('/mcp', new vscode.CancellationTokenSource().token) : undefined
 		}
 	};
-	/** Project files matching what the user typed after `@`; the webview asks on every keystroke. */
-	const suggestFiles = async (folder: any, query: string) => {
-		const files = await mentionIndex.get(folder.uri.toString(), async () => (await indexProject(folder.uri.fsPath)).files);
-		return suggestMentionFiles(files, query);
+	/** Local lexical + language-server retrieval; newer input cancels each surface's previous request. */
+	const suggestFiles = async (folder: any, query: string, surface?: object) => {
+		const owner = surface ?? folder;
+		mentionRequests.get(owner)?.abort();
+		const request = new AbortController();
+		mentionRequests.set(owner, request);
+		const key = folder.uri.toString();
+		let index = mentionIndexes.get(key);
+		if (!index) {
+			index = new IncrementalContextIndex(folder.uri.fsPath) as ContextIndex;
+			mentionIndexes.set(key, index);
+			while (mentionIndexes.size > 4) { mentionIndexes.delete(mentionIndexes.keys().next().value!); }
+		}
+		type WorkspaceSymbol = { name: string; location?: { uri?: { scheme?: string; fsPath?: string } } };
+		try {
+			const symbols = query ? await new Promise<ContextSymbol[]>(resolve => {
+				const finish = (items: ContextSymbol[]) => { clearTimeout(timer); request.signal.removeEventListener('abort', cancelled); resolve(items); };
+				const cancelled = () => finish([]);
+				const timer = setTimeout(cancelled, 250);
+				request.signal.addEventListener('abort', cancelled, { once: true });
+				Promise.resolve(vscode.commands.executeCommand('vscode.executeWorkspaceSymbolProvider', query)).then((items: WorkspaceSymbol[] | undefined) => {
+					const candidates: ContextSymbol[] = [];
+					for (const item of (items ?? []).slice(0, 200)) {
+						if (item.location?.uri?.scheme !== 'file' || !item.location.uri.fsPath || typeof item.name !== 'string') { continue; }
+						const relative = path.relative(folder.uri.fsPath, item.location.uri.fsPath).split(path.sep).join('/');
+						if (relative && relative !== '..' && !relative.startsWith('../') && !path.isAbsolute(relative)) { candidates.push({ path: relative, name: item.name }); }
+					}
+					finish(candidates);
+				}, () => finish([]));
+			}) : [];
+			const special = ['selection', 'symbol', 'diagnostics', 'terminal', 'folder', 'diff'].filter(name => name.startsWith(query.toLowerCase()));
+			return [...special, ...(await index.search(query, { signal: request.signal, symbols })).files].slice(0, 50);
+		} finally { if (mentionRequests.get(owner) === request) { mentionRequests.delete(owner); } }
 	};
 	const report = (folder: any, error: any) => {
 		const entry = folder && sessions.get(folder.uri.toString());
 		if (entry?.loaded) { void entry.session.note(describeFailure(t, error), 'error').catch(() => undefined); }
 		else { void vscode.window.showErrorMessage(t('Chat Harness: {0}', harnessErrorCode(error))); }
 	};
-	const receive = async (message: any, source?: any) => {
+	const receive = async (message: any, source?: any, participantTurn?: ParticipantTurn) => {
 		const folder = selectedFolder();
 		const action = message?.action;
 		if (action === 'ready') {
@@ -483,7 +532,7 @@ function registerChat(context: any, controller: any, projects: any, mcp: any, vs
 		if (action === 'openTasks') { await vscode.commands.executeCommand('atsIde.home'); return; }
 		if (action === 'setupCheck') { await vscode.commands.executeCommand('atsIde.setupCheck'); return; }
 		if (action === 'complete' && message.kind === 'mention' && typeof message.query === 'string' && message.query.length <= 300 && Number.isSafeInteger(message.seq)) {
-			if (folder && vscode.workspace.isTrusted) { post({ type: 'completions', kind: 'mention', seq: message.seq, items: await suggestFiles(folder, message.query).catch(() => []) }, source); }
+			if (folder && vscode.workspace.isTrusted) { post({ type: 'completions', kind: 'mention', seq: message.seq, items: await suggestFiles(folder, message.query, source).catch(() => []) }, source); }
 			return;
 		}
 		if (!folder) { return; }
@@ -491,6 +540,23 @@ function registerChat(context: any, controller: any, projects: any, mcp: any, vs
 		const entry = await sessionFor(folder).catch((error: any) => { report(folder, error); return undefined; });
 		if (!entry) { return; }
 		const { session } = entry;
+		if (action === 'sessions') {
+			if (session.busy) { await session.note(t('Esper\u00e1 a que termine la tarea antes de cambiar de conversaci\u00f3n.')); return; }
+			const currentProject = folder.uri.toString();
+			const choices = (await session.sessions()).map((item: { id: string; title: string; provider: string; at: string }) => ({ label: item.title, description: item.provider + ' ' + item.at, id: item.id }));
+			const chosen = await vscode.window.showQuickPick(choices, { title: t('Sesiones guardadas'), placeHolder: t('Busc\u00e1 una conversaci\u00f3n del proyecto'), matchOnDescription: true });
+			if (chosen && vscode.workspace.isTrusted && selectedFolder()?.uri.toString() === currentProject && !session.busy) { await session.resume(chosen.id); }
+			return;
+		}
+		const sendTurn = async (body: string, attachments: { context?: string; notice?: string }) => {
+			if (participantTurn?.token.isCancellationRequested) { return; }
+			const queued = session.busy;
+			const queuedBefore = new Set(session.snapshot().queue?.map((item: { id: string }) => item.id));
+			if (participantTurn && !queued) { participantTurn.started = true; participantTurn.observe(); }
+			const sent = session.send(body, chatMode(), attachments);
+			if (participantTurn && queued) { participantTurn.queued = session.snapshot().queue?.find((item: { id: string }) => !queuedBefore.has(item.id))?.id; }
+			await sent;
+		};
 		try {
 			if (action === 'send' && typeof message.text === 'string') {
 				const text = message.text.trim();
@@ -507,10 +573,11 @@ function registerChat(context: any, controller: any, projects: any, mcp: any, vs
 						if (name.toLowerCase() === 'skill') {
 							// A skill is not a report: it becomes the request of a turn, with the skill as data.
 							const invocation = await resolveSkillInvocation(folder.uri.fsPath, words.join(' '), t, sessionCommands.nativeSkillsDirectory);
-							if (typeof invocation === 'string') { await session.note(invocation); } else { await session.send(invocation.message, chatMode(), { context: invocation.context, notice: invocation.notice }); }
+							if (typeof invocation === 'string') { await session.note(invocation); } else { await sendTurn(invocation.message, { context: invocation.context, notice: invocation.notice }); }
 							return;
 						}
-						const output = await runSessionCommand(sessionCommands, name.toLowerCase(), words, folder.uri.fsPath, session) ?? await handle(text, source.token);
+						const commandDeps = participantTurn ? { ...sessionCommands, image: (request: string, root: string, target: ChatSession) => sessionCommands.image(request, root, target, participantTurn) } : sessionCommands;
+						const output = await runSessionCommand(commandDeps, name.toLowerCase(), words, folder.uri.fsPath, session) ?? await handle(text, source.token);
 						await session.note('`' + text.slice(0, 200).replace(/`/g, '') + '`\n\n````text\n' + output + '\n````');
 					}
 					finally { source.dispose(); }
@@ -550,7 +617,7 @@ function registerChat(context: any, controller: any, projects: any, mcp: any, vs
 						}
 					}
 				});
-				await session.send(text, chatMode(), { context: mentions.context, notice: mentionNotice(mentions, t) });
+				await sendTurn(text, { context: mentions.context, notice: mentionNotice(mentions, t) });
 			}
 			if (action === 'approve' && typeof message.digest === 'string' && /^[a-f0-9]{64}$/.test(message.digest)) { await session.approve(message.digest); }
 			if (action === 'continue' && typeof message.messageId === 'string' && message.messageId.length <= 64) { await session.continueRun(message.messageId); }
@@ -601,6 +668,67 @@ function registerChat(context: any, controller: any, projects: any, mcp: any, vs
 			}
 		} catch (error: any) { report(folder, error); }
 	};
+	if (vscode.chat?.createChatParticipant) {
+		const participant = vscode.chat.createChatParticipant('atsIde.harness', async (request: any, _context: any, stream: any, token: any) => {
+			const write = (output: string) => { const markdown = new vscode.MarkdownString(); markdown.appendText(output); stream.markdown(markdown); };
+			// Existing explicit queries keep their deterministic, model-free path.
+			if (request.command && !chatCommands(t).some((command: { name: string; session: boolean }) => command.name === request.command && command.session)) { write(await handle(request.command + ' ' + request.prompt, token)); return; }
+			if (token?.isCancellationRequested) { return; }
+			const folder = selectedFolder();
+			if (!folder || !vscode.workspace.isTrusted) { write(t('Abr\u00ed un proyecto confiable para conversar con el Harness.')); return; }
+			const entry = await sessionFor(folder).catch((error: Error) => { write(describeFailure(t, error)); return undefined; });
+			if (!entry || token?.isCancellationRequested) { return; }
+			const key = folder.uri.toString();
+			const seen = new Set<string>(entry.session.snapshot().messages.map((item: { id: string }) => item.id));
+			let progress = '', opened = false, observing = false, completed = false;
+			let finishRequest: () => void = () => { };
+			const finished = new Promise<void>(resolve => { finishRequest = resolve; });
+			const observer = (snapshot: ChatSnapshot) => {
+				if (!observing || token?.isCancellationRequested) { return; }
+				try {
+					const current = snapshot.activity;
+					const detail = current?.partial?.slice(-300) || current?.steps?.at(-1)?.label || (current?.stage ? labels(t).stage[current.stage] : current ? t('Procesando el pedido con el Harness\u2026') : undefined);
+					if (detail && detail !== progress) { progress = detail; stream.progress?.(detail); }
+					for (const item of snapshot.messages) {
+						if (seen.has(item.id)) { continue; }
+						seen.add(item.id);
+						if (item.role !== 'user') { write(item.text); }
+					}
+					if (!opened && ((snapshot.approvals?.length ?? 0) > 0 || (snapshot.questions?.length ?? 0) > 0)) {
+						opened = true;
+						stream.progress?.(t('Revis\u00e1 la aprobaci\u00f3n o pregunta en Chat Harness.'));
+						void Promise.resolve(vscode.commands.executeCommand('atsIde.chat')).catch(() => undefined);
+					}
+					// send() may drain later queued turns. This request stops observing/cancelling at its own safe point.
+					if (turn.started && !snapshot.activity) { turn.started = false; observing = false; completed = true; finishRequest(); }
+				} catch { observing = false; }
+			};
+			const turn = {
+				token, started: false, queued: undefined as string | undefined, observe: () => {
+					seen.clear();
+					for (const item of entry.session.snapshot().messages) { seen.add(item.id); }
+					observing = true;
+					const listeners = participantObservers.get(key) ?? new Set(); listeners.add(observer); participantObservers.set(key, listeners);
+				}
+			};
+			const cancellation = token?.onCancellationRequested?.(() => {
+				if (turn.started) { entry.session.cancel(); }
+				else if (turn.queued) { entry.session.unqueue(turn.queued); }
+			});
+			try {
+				const sending = receive({ action: 'send', text: request.command ? '/' + request.command + ' ' + request.prompt : request.prompt }, undefined, turn);
+				await Promise.race([sending, finished]);
+				if (turn.queued) { write(t('Mensaje en cola. Pod\u00e9s seguirlo en Chat Harness.')); }
+				else if (!completed) { observing = true; observer(entry.session.snapshot()); }
+				stream.button?.({ command: 'atsIde.chat', title: t('Abrir Chat Harness') });
+			} finally {
+				observing = false; cancellation?.dispose();
+				const listeners = participantObservers.get(key); listeners?.delete(observer); if (!listeners?.size) { participantObservers.delete(key); }
+			}
+		});
+		participant.iconPath = vscode.Uri.joinPath(context.extensionUri, 'resources', 'logo.png');
+		context.subscriptions.push(participant);
+	}
 	const resources = vscode.Uri.joinPath(context.extensionUri, 'resources');
 	const surfaceOptions = { enableScripts: true, localResourceRoots: [resources, vscode.Uri.joinPath(context.extensionUri, 'dist')] };
 	/** A single renderer and receiver serve both the editor and the sidebar. */
@@ -617,6 +745,7 @@ function registerChat(context: any, controller: any, projects: any, mcp: any, vs
 		};
 		subscriptions.push(current.onDidChangeViewState?.((event: any) => refreshVisible(event.webviewPanel.visible)) ?? current.onDidChangeVisibility?.(() => refreshVisible(current.visible)) ?? { dispose() { } });
 		subscriptions.push(current.onDidDispose(() => {
+			mentionRequests.get(current)?.abort(); mentionRequests.delete(current);
 			surfaces.delete(current);
 			if (panel === current) { panel = undefined; }
 			subscriptions.forEach(item => item.dispose());

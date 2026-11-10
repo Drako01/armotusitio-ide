@@ -50,6 +50,7 @@ async function runTurn(id, params) {
 	const previous = all[thread].messages.at(-1);
 	write({ method: 'turn/started', params: { threadId: thread, turn: { id } , turnId: id } });
 	let answer = 'Echo: ' + text + (previous ? ' | prev=' + previous : '') + (process.env.CODEX_HOME ? ' | cfg=' + process.env.CODEX_HOME : '');
+	if (text.includes('INSPECT_IMAGE')) { answer += ' | images=' + params.input.filter(item => item.type === 'image' && item.url.startsWith('data:image/png;base64,')).length; }
 	const delta = piece => write({ method: 'item/agentMessage/delta', params: { threadId: thread, turnId: id, itemId: 'msg-' + id, delta: piece } });
 	if (text.includes('GARBAGE')) { process.stdout.write('this is not json\n'); }
 	const flood = /FLOOD (\d+)/.exec(text);
@@ -130,6 +131,7 @@ async function turn(message) {
 	write({ type: 'stream_event', event: { type: 'message_start' }, session_id: session });
 	const delta = piece => write({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: piece } }, session_id: session });
 	let answer = 'Echo: ' + text + (previous ? ' | prev=' + previous : '') + ' | mode=' + sessions[session].mode + (process.env.CLAUDE_CONFIG_DIR ? ' | cfg=' + process.env.CLAUDE_CONFIG_DIR : '');
+	if (text.includes('INSPECT_IMAGE')) { answer += ' | images=' + message.message.content.filter(item => item.type === 'image' && item.source?.type === 'base64' && item.source.media_type === 'image/png').length; }
 	if (text.includes('GARBAGE')) { process.stdout.write('this is not json\n'); }
 	const flood = /FLOOD (\d+)/.exec(text);
 	if (flood) { for (let i = 0; i < Number(flood[1]); i++) { delta('d' + i + ' '); } }

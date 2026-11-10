@@ -11,6 +11,7 @@ import { createHash } from 'node:crypto';
 import type { NativeProvider } from '../native-providers.ts';
 import type { ProviderUsage } from '../native-provider-output.ts';
 import type { ProviderQuota } from '../native-quota.ts';
+import type { ChatImage } from '../native-chat-images.ts';
 
 export type SessionState = 'starting' | 'ready' | 'running' | 'awaiting_approval' | 'awaiting_user_input' | 'interrupted' | 'recovering' | 'failed' | 'closed';
 
@@ -136,6 +137,8 @@ export interface AdapterHost {
 }
 
 export interface TurnInput {
+	/** Explicitly consented, short-lived image bytes. Never stored in the local journal. */
+	images?: readonly ChatImage[];
 	/** The user's text for this turn (the conversation contract is sent once, when the session starts). */
 	text: string;
 	/** Client-side id written to the journal before the turn starts; the provider never sees it as content. */

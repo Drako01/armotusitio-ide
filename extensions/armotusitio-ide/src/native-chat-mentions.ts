@@ -12,6 +12,7 @@ import * as path from 'node:path';
 import { parseMentions } from './native-chat-mention-syntax.ts';
 import { redactSecrets } from './native-redact.ts';
 import { SECRET_NAME } from './native-sensitive-scope.ts';
+import { gitOutput } from './native-git.ts';
 
 export const MAX_MENTION_FILES = 5;
 export const MAX_MENTION_BYTES = 8 * 1024;
@@ -41,7 +42,7 @@ export type MentionTranslator = (text: string, ...args: string[]) => string;
 const ABSOLUTE = /^(?:[a-zA-Z]:|[\\/])/;
 const CONTROL = /[\u0000-\u001f\u007f]/;
 
-const isSensitiveName = (name: string): boolean => name.startsWith('.env') || SECRET_NAME.test(name);
+const isSensitiveName = (name: string): boolean => name.toLowerCase().startsWith('.env') || SECRET_NAME.test(name);
 
 /** Project-relative segments of a typed mention, or the reason it cannot be one. */
 function mentionSegments(mention: string, ignored: ReadonlySet<string>): string[] | MentionRejection {
@@ -50,7 +51,7 @@ function mentionSegments(mention: string, ignored: ReadonlySet<string>): string[
 	const segments = mention.replace(/\\/g, '/').split('/').filter(segment => segment && segment !== '.');
 	if (!segments.length) { return 'invalid'; }
 	if (segments.includes('..')) { return 'outside'; }
-	return segments.some(segment => ignored.has(segment) || isSensitiveName(segment)) ? 'sensitive' : segments;
+	return segments.some(segment => ignored.has(segment.toLowerCase()) || isSensitiveName(segment)) ? 'sensitive' : segments;
 }
 
 /** Reads at most `MAX_MENTION_BYTES` of a regular file already resolved inside the project. */
@@ -87,13 +88,68 @@ async function resolveOne(rootReal: string, mention: string, ignored: ReadonlySe
 	if (!relative || relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative)) { return 'outside'; }
 	const target = relative.split(path.sep);
 	// A link inside the project can still point at a credential file or an ignored tree.
-	if (target.some(segment => ignored.has(segment) || isSensitiveName(segment))) { return 'sensitive'; }
+	if (target.some(segment => ignored.has(segment.toLowerCase()) || isSensitiveName(segment))) { return 'sensitive'; }
 	// Only a regular file is opened: opening a FIFO or device could block or stream forever.
 	if (!(await fs.lstat(real).catch(() => undefined))?.isFile()) { return 'not-file'; }
 	let content: Awaited<ReturnType<typeof readBounded>>;
 	try { content = await readBounded(real, range); } catch { return 'missing'; }
 	if (typeof content === 'string') { return content; }
 	return { file: { path: target.join('/') + (range ? ':' + range.start + '-' + range.end : ''), bytes: content.bytes, truncated: content.truncated }, text: redactSecrets(content.text) };
+}
+
+/** Directory context starts with metadata only; it never recursively attaches arbitrary file contents. */
+async function resolveFolder(root: string, requested: string, ignored: ReadonlySet<string>): Promise<{ file: MentionedFile; text: string } | MentionRejection> {
+	const segments = requested === '.' ? [] : mentionSegments(requested, ignored);
+	if (typeof segments === 'string') { return segments; }
+	const real = await fs.realpath(path.join(root, ...segments)).catch(() => undefined);
+	if (!real) { return 'missing'; }
+	const relative = path.relative(root, real);
+	if (relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative)) { return 'outside'; }
+	if (relative && typeof mentionSegments(relative.split(path.sep).join('/'), ignored) === 'string') { return 'sensitive'; }
+	if (!(await fs.lstat(real)).isDirectory()) { return 'invalid'; }
+	const entries: string[] = [];
+	let scanned = 0, truncated = false;
+	for await (const entry of await fs.opendir(real)) {
+		if (++scanned > 512) { truncated = true; break; }
+		if (entry.isSymbolicLink() || ignored.has(entry.name.toLowerCase()) || isSensitiveName(entry.name) || CONTROL.test(entry.name)) { continue; }
+		entries.push(entry.name + (entry.isDirectory() ? '/' : ''));
+	}
+	entries.sort();
+	const listed = entries.slice(0, 100);
+	const text = 'Directory metadata only: ' + (relative.split(path.sep).join('/') || '.') + '\n' + listed.join('\n') + (truncated || entries.length > 100 ? '\n[listing limited]' : '');
+	const content = Buffer.from(redactSecrets(text));
+	return { file: { path: 'folder:' + (relative.split(path.sep).join('/') || '.'), bytes: content.length, truncated: content.length > MAX_MENTION_BYTES }, text: content.subarray(0, MAX_MENTION_BYTES).toString('utf8') };
+}
+
+/** Tracked worktree/index changes only, with external diff drivers and text conversion disabled. */
+async function resolveDiff(root: string, requested: string | undefined, ignored: ReadonlySet<string>): Promise<{ file: MentionedFile; text: string } | MentionRejection> {
+	if (requested) { const checked = mentionSegments(requested, ignored); if (typeof checked === 'string') { return checked; } }
+	const args = ['-c', 'core.fsmonitor=false', 'diff', '--no-ext-diff', '--no-textconv', '--no-renames'];
+	let paths: string[];
+	try { paths = requested ? [requested] : (await gitOutput(root, [...args, '--name-only', '-z', 'HEAD', '--'])).toString('utf8').split('\0').filter(Boolean); }
+	catch { return 'no-output'; }
+	const allowed: string[] = [];
+	let limited = paths.length > 100;
+	for (const file of paths.slice(0, 100)) {
+		if (allowed.length >= MAX_MENTION_FILES) { limited = true; break; }
+		const segments = mentionSegments(file, ignored);
+		if (typeof segments === 'string') { continue; }
+		const absolute = path.join(root, ...segments);
+		const parent = await fs.realpath(path.dirname(absolute)).catch(() => undefined);
+		if (!parent) { continue; }
+		const relativeParent = path.relative(root, parent).split(path.sep).join('/');
+		if (relativeParent && typeof mentionSegments(relativeParent, ignored) === 'string') { continue; }
+		const stat = await fs.lstat(absolute).catch(() => undefined);
+		if (stat && (!stat.isFile() || stat.isSymbolicLink() || stat.size > 2 * 1024 * 1024)) { continue; }
+		allowed.push(segments.join('/'));
+	}
+	if (!allowed.length) { return 'no-output'; }
+	try {
+		const diff = redactSecrets((await gitOutput(root, [...args, '--unified=3', 'HEAD', '--', ...allowed])).toString('utf8'));
+		if (!diff) { return 'no-output'; }
+		const content = Buffer.from(diff);
+		return { file: { path: 'diff:' + (requested ?? 'tracked'), bytes: content.length, truncated: limited || content.length > MAX_MENTION_BYTES }, text: content.subarray(0, MAX_MENTION_BYTES).toString('utf8') };
+	} catch { return 'no-output'; }
 }
 
 /**
@@ -109,6 +165,16 @@ export async function resolveMentions(root: string, text: string, ignored: Reado
 	const seen = new Set<string>();
 	for (const mention of mentions) {
 		if (result.included.length >= MAX_MENTION_FILES) { result.rejected.push({ mention, reason: 'limit' }); continue; }
+		if (mention === 'folder' || mention.startsWith('folder:') || mention === 'diff' || mention.startsWith('diff:')) {
+			const folder = mention === 'folder' || mention.startsWith('folder:');
+			const requested = mention.includes(':') ? mention.slice(mention.indexOf(':') + 1) : undefined;
+			const resolved = folder ? await resolveFolder(rootReal, requested ?? '.', ignored) : await resolveDiff(rootReal, requested, ignored);
+			if (typeof resolved === 'string') { result.rejected.push({ mention, reason: resolved }); continue; }
+			if (seen.has(resolved.file.path)) { continue; }
+			seen.add(resolved.file.path); result.included.push(resolved.file);
+			blocks.push('<mention path="' + resolved.file.path.replace(/["<>&]/g, char => '&#' + char.charCodeAt(0) + ';') + '">\n' + resolved.text.replace(/<\/mention/gi, '<\\/mention') + '\n</mention>');
+			continue;
+		}
 		if (mention === TERMINAL_MENTION && sources.terminal) {
 			const captured = sources.terminal();
 			if (!captured) { result.rejected.push({ mention, reason: 'no-output' }); continue; }

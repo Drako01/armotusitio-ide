@@ -59,6 +59,10 @@ export function chatCommands(t: CommandTranslator): ChatCommand[] {
 		{ name: 'skills', description: t('Lista las skills nativas y del proyecto (carpetas .agents, .codex o .claude).'), session: true },
 		{ name: 'skill', usage: 'NOMBRE [pedido]', description: t('Aplica una skill nativa o del proyecto a tu pedido: su contenido llega a la IA como convenciones, nunca como permisos.'), session: true },
 		{ name: 'doctor', description: t('Revisa la m\u00e1quina y el proyecto (Node, gestor de paquetes, git, Docker, disco) y dice c\u00f3mo arreglar cada problema.'), session: true },
+		{ name: 'debug', usage: 'COMANDO | ERROR', description: t('Analiza un fallo reproducible y propone un plan de diagn\u00f3stico. Los cambios y las pruebas requieren aprobar el plan.'), session: true },
+		{ name: 'imagen', usage: '[pedido]', description: t('Eleg\u00ed una imagen del proyecto, revisala y confirm\u00e1 su env\u00edo al proveedor seleccionado.'), session: true },
+		{ name: 'sesiones', usage: '[b\u00fasqueda]', description: t('Busca las conversaciones guardadas de este proyecto.'), session: true },
+		{ name: 'sesion', usage: 'ID', description: t('Retoma una conversaci\u00f3n guardada del proyecto sin repetir operaciones interrumpidas.'), session: true },
 		{ name: 'auditoria', description: t('\u00daltimas acciones de las herramientas del agente en este proyecto (comandos, git, archivos) y su resultado.'), session: true },
 		{ name: 'costo', description: t('Muestra los tokens que inform\u00f3 el proveedor en el \u00faltimo turno.'), session: true },
 		{ name: 'estado', description: t('Progreso de las tareas del Harness.'), session: false },
@@ -147,6 +151,7 @@ export interface SessionCommandDeps {
 	lease?: { status(): Promise<EngineLease>; clear(): Promise<EngineLeaseState>; confirmClear(): Promise<boolean> };
 	/** Runs a project command in the visible IDE terminal and returns its result as text (`/motor`). */
 	motor?: (command: string, args: string[]) => Promise<string>;
+	image?: (request: string, root: string, session: HarnessChatSession) => Promise<string>;
 }
 
 const LEASE_TEXT: Record<EngineLeaseState, (t: CommandTranslator, until?: string) => string> = {
@@ -182,6 +187,23 @@ export async function runSessionCommand(deps: SessionCommandDeps, action: string
 	if (action === 'mcp' && deps.mcp) { return await runMcpCommand(deps.mcp, words); }
 	if (action === 'lease') { return await runLeaseCommand(deps, words); }
 	if (action === 'skills') { return await skillsListing(root, t, deps.nativeSkillsDirectory); }
+	if (action === 'imagen') { return deps.image ? await deps.image(words.join(' '), root, session) : t('Las im\u00e1genes no est\u00e1n disponibles en este chat.'); }
+	if (action === 'sesiones') {
+		const found = await session.sessions(words.join(' '));
+		return found.length ? found.map(item => item.id + '  ' + item.provider + '  ' + item.title).join('\n') : t('No hay conversaciones guardadas para esa b\u00fasqueda.');
+	}
+	if (action === 'sesion') {
+		if (words.length !== 1) { return t('Uso: /sesion ID. Encontr\u00e1 el ID con /sesiones.'); }
+		await session.resume(words[0]);
+		return t('Conversaci\u00f3n retomada. Las operaciones interrumpidas requieren revisi\u00f3n antes de reintentar.');
+	}
+	if (action === 'debug') {
+		const evidence = words.join(' ');
+		const separator = evidence.indexOf('|');
+		if (separator <= 0 || !evidence.slice(separator + 1).trim()) { return t('Uso: /debug COMANDO | ERROR. Inclu\u00ed el comando que falla y el error observado.'); }
+		await session.diagnose(evidence.slice(0, separator).trim(), evidence.slice(separator + 1).trim());
+		return t('Diagn\u00f3stico solicitado. Revis\u00e1 el plan antes de autorizar experimentos o cambios.');
+	}
 	if (action === 'motor') {
 		if (!deps.motor) { return t('Este chat no puede abrir la terminal del IDE.'); }
 		if (!words.length) { return t('Uso: /motor COMANDO [ARGUMENTOS] (por ejemplo /motor pnpm harness:preflight).'); }

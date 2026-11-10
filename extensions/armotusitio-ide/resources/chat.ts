@@ -135,7 +135,7 @@ function shell(): void {
 
 	const details = el('section', 'popover mcp-details'); details.id = 'mcp-details'; details.hidden = true; details.setAttribute('aria-label', L.mcp);
 	const menu = el('div', 'popover menu'); menu.id = 'menu'; menu.hidden = true; menu.setAttribute('role', 'group'); menu.setAttribute('aria-label', L.menu);
-	for (const [action, label] of [['expandChat', L.expandChat], ['sidebarChat', L.sidebarChat], ['reset', L.newChat], ['commands', L.commands], ['providerCheck', L.refreshProviders], ['setupCheck', L.setupCheck], ['openTasks', L.openTasks]]) {
+	for (const [action, label] of [['expandChat', L.expandChat], ['sidebarChat', L.sidebarChat], ['sessions', L.sessions], ['reset', L.newChat], ['commands', L.commands], ['providerCheck', L.refreshProviders], ['setupCheck', L.setupCheck], ['openTasks', L.openTasks]]) {
 		const item = el('button', 'menu-item', label) as HTMLButtonElement; item.type = 'button';
 		item.addEventListener('click', () => {
 			closePopovers();

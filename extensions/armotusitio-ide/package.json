@@ -4,6 +4,11 @@
 	"description": "Project-aware harness control for RedEvent and ArmoTuSitio 2.0",
 	"version": "0.6.0",
 	"publisher": "armotusitio",
+	"author": {
+		"name": "Alejandro Daniel Di Stefano",
+		"url": "https://ArmoTuSitio.com.ar"
+	},
+	"homepage": "https://ArmoTuSitio.com.ar",
 	"license": "MIT",
 	"engines": {
 		"vscode": "^1.144.0"
@@ -39,8 +44,60 @@
 				"id": "atsIde.harness",
 				"name": "harness",
 				"fullName": "ArmotuSitio Harness",
-				"description": "Harness local y Work Management de ArmotuSitio, sin llamadas a modelos de IA.",
+				"description": "Chat Harness con el mismo agente, herramientas y permisos del panel, m\u00e1s consultas locales de Work Management.",
 				"commands": [
+					{
+						"name": "permisos",
+						"description": "Consultar y revocar los permisos del Harness"
+					},
+					{
+						"name": "modo",
+						"description": "Consultar o cambiar el modo del agente"
+					},
+					{
+						"name": "skills",
+						"description": "Listar las skills disponibles"
+					},
+					{
+						"name": "skill",
+						"description": "Aplicar una skill al pedido"
+					},
+					{
+						"name": "bifurcar",
+						"description": "Bifurcar la conversación del proveedor"
+					},
+					{
+						"name": "deshacer",
+						"description": "Revisar y revertir cambios del agente"
+					},
+					{
+						"name": "lease",
+						"description": "Consultar el lease de escritura del proyecto"
+					},
+					{
+						"name": "motor",
+						"description": "Ejecutar un comando del Harness del proyecto"
+					},
+					{
+						"name": "doctor",
+						"description": "Diagnosticar la máquina y el proyecto"
+					},
+					{
+						"name": "debug",
+						"description": "Preparar un diagnóstico basado en evidencia"
+					},
+					{
+						"name": "imagen",
+						"description": "Elegir y confirmar una imagen para el proveedor"
+					},
+					{
+						"name": "auditoria",
+						"description": "Consultar las acciones de herramientas"
+					},
+					{
+						"name": "costo",
+						"description": "Consultar el consumo informado por el proveedor"
+					},
 					{
 						"name": "estado",
 						"description": "Consultar el progreso y el historial del Harness"
@@ -123,6 +180,11 @@
 					"default": "",
 					"pattern": "^$|^[A-Za-z0-9][A-Za-z0-9._:\\[\\]-]{0,63}$",
 					"description": "Modelo o alias de Claude Code (opus, sonnet, haiku) para el Chat Harness y los agentes nativos. Vacio usa el predeterminado de Claude Code."
+				},
+				"atsHarness.imageInput": {
+					"type": "boolean",
+					"default": false,
+					"description": "Habilita /imagen en el Chat Harness. Requiere transporte nativo y modelo con visión. Cada envío exige vista previa y confirmación; los bytes pueden quedar en la sesión del proveedor."
 				},
 				"atsHarness.chatMode": {
 					"type": "string",

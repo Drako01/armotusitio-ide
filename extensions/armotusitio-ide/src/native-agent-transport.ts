@@ -17,6 +17,7 @@ import type { CommandPolicy } from './native-command-policy.ts';
 import type { PermissionSet } from './native-permissions.ts';
 import type { NativeProvider } from './native-providers.ts';
 import { redactSecrets } from './native-redact.ts';
+import type { ChatImage } from './native-chat-images.ts';
 import { MAX_STEP_DETAIL, MAX_STEP_LABEL, relativeStepPath, type ChatStep, type ChatStepKind } from './native-run-steps.ts';
 import { ClaudeAdapter } from './runtime/claude-adapter.ts';
 import { CodexAdapter } from './runtime/codex-adapter.ts';
@@ -47,7 +48,7 @@ export interface NativeTransportDeps {
 	/** The AI profile this project uses for the provider (workspace assignment, then default); `undefined` keeps the IDE's own login. */
 	profileFor?(root: string, provider: NativeProvider): Promise<string | undefined>;
 	/** The `ats-runner` tool server of a session; `approve`/`question`/`epoch` reach the current turn through these callbacks. */
-	toolServer(root: string, provider: NativeProvider, role: SessionRole, channel: { approve: ApprovalAsk; question: NonNullable<NativeTurnHooks['question']>; epoch(): number }): Promise<{ launch: ToolServerLaunch; dispose(): Promise<void> }>;
+	toolServer(root: string, provider: NativeProvider, role: SessionRole, channel: { approve: ApprovalAsk; question: NonNullable<NativeTurnHooks['question']>; epoch(): number; profileEnvironment?: NodeJS.ProcessEnv; step?(step: ChatStep): void }): Promise<{ launch: ToolServerLaunch; dispose(): Promise<void> }>;
 	/** Policy and permissions of the project, read fresh for each provider-initiated approval. */
 	policy(root: string): Promise<{ policy: CommandPolicy; permissions: PermissionSet }>;
 	/** Session-level contract and project guidance for this role. */
@@ -149,7 +150,7 @@ export class NativeChatTransport {
 
 	/** One chat turn over the persistent native session, as an `AgentExecution` for the guarded pipeline. */
 	/** `freshText`: the full input, used instead of a follow-up `text` when the provider had to start a new session. */
-	async execute(request: { root: string; provider: NativeProvider; conversationId: string; role: SessionRole; text: string; freshText?: string; inputRef?: string; durationMs: number }, hooks: NativeTurnHooks): Promise<AgentExecution> {
+	async execute(request: { root: string; provider: NativeProvider; conversationId: string; role: SessionRole; text: string; freshText?: string; inputRef?: string; images?: readonly ChatImage[]; durationMs: number }, hooks: NativeTurnHooks): Promise<AgentExecution> {
 		const { root, role } = request;
 		const session = await this.session(root, request.provider, request.conversationId);
 		const redact = (text: string): string => this.deps.redact ? this.deps.redact(redactSecrets(text)) : redactSecrets(text);
@@ -165,7 +166,7 @@ export class NativeChatTransport {
 		const started = Date.now();
 		const outcome = (async (): Promise<AgentOutcome> => {
 			try {
-				const result = await session.runTurn(request.text, role, controller.signal, request.inputRef, request.freshText);
+				const result = await session.runTurn(request.text, role, controller.signal, request.inputRef, request.freshText, request.images);
 				const outcome = outcomeOf(result, Date.now() - started, timedOut, redact);
 				if (scope) {
 					// A conversation is read-only: a changed tree fails the turn, exactly like the structured transport.
@@ -284,7 +285,9 @@ export class NativeChatTransport {
 							if (!hooks?.question || !session) { return undefined; }
 							return session.awaitUser('question', () => hooks.question!(questions), answers => !!answers);
 						},
-						epoch: () => session?.turnNumber ?? 0
+						epoch: () => session?.turnNumber ?? 0,
+						profileEnvironment: { ...env },
+						step: step => current()?.onStep?.(step)
 					});
 					return {
 						options: {
