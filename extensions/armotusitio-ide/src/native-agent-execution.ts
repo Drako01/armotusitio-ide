@@ -103,6 +103,13 @@ export function buildAgentInvocation(draft: AgentDraft, writableRoots: readonly 
 		? ['--config', 'model_reasoning_effort="' + draft.effort + '"']
 		: ['--effort', draft.effort] : [];
 	if (draft.provider === 'codex') {
+		// Native children inherit the parent's read-only sandbox and never receive independent grants.
+		// A single parent process owns their lifetime and usage; the limit is per approved review.
+		const nativeSubagents = draft.nativeSubagents ? [
+			'--config', 'agents.enabled=true',
+			'--config', 'agents.max_concurrent_threads_per_session=2',
+			'--config', 'agents.interrupt_message=true'
+		] : [];
 		const sandbox = draft.readOnly ? 'read-only' : codexSandbox();
 		const caches = sandbox === 'workspace-write' ? writableRoots.flatMap(root => ['--add-dir', root]) : [];
 		// Codex's native search tool; it is off unless the project enabled web search (D9).
@@ -114,7 +121,7 @@ export function buildAgentInvocation(draft: AgentDraft, writableRoots: readonly 
 		return {
 			executable: 'codex',
 			// The approval flag is global and must precede the exec subcommand on current Codex CLIs.
-			args: ['--ask-for-approval', 'never', ...effort, ...search, ...server, 'exec', ...model, '--sandbox', sandbox, ...caches, '--skip-git-repo-check', '--ephemeral', '--json', '-'],
+			args: ['--ask-for-approval', 'never', ...effort, ...search, ...nativeSubagents, ...server, 'exec', ...model, '--sandbox', sandbox, ...caches, '--skip-git-repo-check', '--ephemeral', '--json', '-'],
 			stdin: instruction
 		};
 	}
