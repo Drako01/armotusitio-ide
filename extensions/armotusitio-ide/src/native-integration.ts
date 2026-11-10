@@ -1342,7 +1342,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			const checkpoints = await listChatToolCheckpoints(root, storage);
 			if (!checkpoints.length) { vscode.window.showInformationMessage('No hay checkpoints granulares seguros disponibles.'); return; }
 			const selected = await vscode.window.showQuickPick(checkpoints.map(item => ({
-				label: item.stepId.slice(0, 64), description: item.kind + ' \u00b7 ' + item.files.length + ' archivos \u00b7 ' + item.at, checkpoint: item
+				label: item.stepId.slice(0, 64), description: item.kind + ' \u00b7 ' + item.files.length + ' archivos \u00b7 ' + item.at + (item.turnId ? ' \u00b7 turno ' + item.turnId.slice(0, 8) + ' #' + String(item.sequence ?? 1) : ''), checkpoint: item
 			})), { title: 'Restaurar una herramienta del Chat Harness' });
 			if (!selected) { return; }
 			const approval = await vscode.window.showWarningMessage(

@@ -1,8 +1,8 @@
 /*---------------------------------------------------------------------------------------------
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
- *  ArmoTuSitio integration: Alejandro Daniel Di Stefano - ArmoTuSitio.com.ar.
  *--------------------------------------------------------------------------------------------*/
+/** ArmoTuSitio integration: Alejandro Daniel Di Stefano - ArmoTuSitio.com.ar. */
 /**
  * Bounded, private, attributed checkpoints for sequential chat writer tools.
  * Ambiguous/concurrent events are not assigned to tools; the existing run-level
@@ -22,6 +22,8 @@ const MAX_CHECKPOINTS = 24;
 const MAX_FILES = 12;
 const MAX_FILE_BYTES = 128 * 1024;
 const MAX_RECORD_BYTES = 1024 * 1024;
+/** Directory entries examined per listing: a flooded store is truncated instead of being read without bound. */
+const MAX_STORE_ENTRIES = 256;
 const UUID = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 const SHA = /^[a-f0-9]{64}$/;
 interface FileRevision {
@@ -36,6 +38,10 @@ export interface ToolCheckpoint {
 	id: string;
 	rootDigest: string;
 	at: string;
+	/** The writer run (one chat turn) that owned the tool; absent in records written before turns were attributed. */
+	turnId?: string;
+	/** Position of the tool among the checkpoints of its turn, starting at 1. */
+	sequence?: number;
 	stepId: string;
 	kind: 'edit' | 'command';
 	state: 'ready' | 'restored';
@@ -88,6 +94,8 @@ function validate(value: unknown, root: string): ToolCheckpoint | undefined {
 	if (row.schemaVersion !== 1 || !UUID.test(row.id) || row.rootDigest !== digest(root)
 		|| !['ready', 'restored'].includes(row.state) || !['edit', 'command'].includes(row.kind)
 		|| typeof row.stepId !== 'string' || row.stepId.length > 64
+		|| (row.turnId !== undefined && !UUID.test(row.turnId))
+		|| (row.sequence !== undefined && (!Number.isSafeInteger(row.sequence) || row.sequence < 1 || row.sequence > MAX_CHECKPOINTS))
 		|| typeof row.at !== 'string' || Number.isNaN(Date.parse(row.at))
 		|| !Array.isArray(row.files) || !row.files.length || row.files.length > MAX_FILES) { return; }
 	for (const file of row.files) {
@@ -107,60 +115,73 @@ async function load(root: string, storage: string, id: string): Promise<ToolChec
 	if (!record || record.id !== id) { throw Error('HARNESS_TOOL_CHECKPOINT_INVALID'); }
 	return record;
 }
-export async function listChatToolCheckpoints(root: string, storage: string): Promise<ToolCheckpoint[]> {
+const intentFile = (storage: string, id: string): string => path.join(storage, id + '.restore.intent');
+const exists = (file: string): Promise<boolean> => fs.lstat(file).then(() => true, () => false);
+
+/** Every valid record of this root, newest first. File names are random, so age comes from the record itself. */
+async function storedCheckpoints(root: string, storage: string): Promise<ToolCheckpoint[]> {
 	await safeStorage(storage);
-	const entries = (await fs.readdir(storage)).filter(name => UUID.test(name.replace(/\.json$/, '')) && name.endsWith('.json')).sort().reverse().slice(0, MAX_CHECKPOINTS);
-	const records = await Promise.all(entries.map(async name => load(root, storage, name.slice(0, -5)).catch(() => undefined)));
-	return records.filter((record): record is ToolCheckpoint => !!record && record.state === 'ready');
+	const ids = (await fs.readdir(storage)).filter(name => name.endsWith('.json') && UUID.test(name.slice(0, -5))).slice(0, MAX_STORE_ENTRIES).map(name => name.slice(0, -5));
+	const records = await Promise.all(ids.map(id => load(root, storage, id).catch(() => undefined)));
+	return records.filter((record): record is ToolCheckpoint => !!record)
+		.sort((a, b) => Date.parse(b.at) - Date.parse(a.at) || (b.sequence ?? 0) - (a.sequence ?? 0) || b.id.localeCompare(a.id));
 }
 
-/** An explicit writer-fenced restore. If a file changed after its tool, nothing is overwritten. */
+export async function listChatToolCheckpoints(root: string, storage: string): Promise<ToolCheckpoint[]> {
+	return (await storedCheckpoints(root, storage)).filter(record => record.state === 'ready').slice(0, MAX_CHECKPOINTS);
+}
+
+/**
+ * An explicit writer-fenced restore. If a file changed after its tool, nothing is overwritten.
+ * A restore interrupted half-way leaves its intent on disk; a new, freshly confirmed call resumes it: files that
+ * already hold the checkpoint's previous bytes count as restored, and any other content still blocks the whole restore.
+ */
 export async function restoreChatToolCheckpoint(root: string, storage: string, id: string, assertFence: () => Promise<void>): Promise<{ restored: string[]; skipped: string[] }> {
 	await assertFence();
 	const record = await load(root, storage, id);
 	if (record.state !== 'ready') { throw Error('HARNESS_TOOL_CHECKPOINT_USED'); }
-	const journal = path.join(storage, id + '.restore.intent');
-	if (await fs.lstat(journal).then(() => true, () => false)) { throw Error('HARNESS_TOOL_CHECKPOINT_RECOVERY_REQUIRED'); }
+	const journal = intentFile(storage, id);
+	const intent = await fs.lstat(journal).catch(() => undefined);
+	// Only the regular file this module writes is an intent; anything else in its place is not trusted.
+	if (intent && (!intent.isFile() || intent.isSymbolicLink())) { throw Error('HARNESS_TOOL_CHECKPOINT_RECOVERY_REQUIRED'); }
+	const resuming = !!intent;
 	const candidates: Array<{ path: string; file: string; before: Buffer | null; after: string }> = [];
 	const skipped: string[] = [];
+	const restored: string[] = [];
 	for (const entry of record.files) {
 		const target = await safeTarget(root, entry.path);
 		const current = target ? await bytesOf(root, entry.path) : undefined;
-		if (!target || hashOf(current) !== entry.after) { skipped.push(entry.path); continue; }
 		const before = entry.before === null ? null : Buffer.from(entry.before, 'base64');
-		if (before && before.length > MAX_FILE_BYTES) { skipped.push(entry.path); continue; }
+		if (!target || (before && before.length > MAX_FILE_BYTES)) { skipped.push(entry.path); continue; }
+		if (resuming && hashOf(current) === hashOf(before) && entry.after !== hashOf(before)) { restored.push(entry.path); continue; }
+		if (hashOf(current) !== entry.after) { skipped.push(entry.path); continue; }
 		candidates.push({ path: entry.path, file: target, before, after: entry.after });
 	}
 	// A partial or ambiguous restore is rejected atomically before changing files.
 	if (skipped.length) { return { restored: [], skipped }; }
 	await assertFence();
-	await writeDurable(journal, { schemaVersion: 1, id, at: new Date().toISOString() }, true);
-	const restored: string[] = [];
-	try {
-		for (const item of candidates) {
-			await assertFence();
-			if (hashOf(await bytesOf(root, item.path)) !== item.after) { throw Error('HARNESS_TOOL_CHECKPOINT_CHANGED'); }
-			if (item.before === null) {
-				await fs.rm(item.file, { force: true });
-			} else {
-				await fs.mkdir(path.dirname(item.file), { recursive: true });
-				const temporary = item.file + '.' + randomUUID() + '.checkpoint.tmp';
-				try {
-					await fs.writeFile(temporary, item.before, { flag: 'wx', mode: 0o600 });
-					await assertFence();
-					if (hashOf(await bytesOf(root, item.path)) !== item.after) { throw Error('HARNESS_TOOL_CHECKPOINT_CHANGED'); }
-					await fs.rename(temporary, item.file);
-				} finally { await fs.rm(temporary, { force: true }); }
-			}
-			restored.push(item.path);
+	if (!resuming) { await writeDurable(journal, { schemaVersion: 1, id, at: new Date().toISOString() }, true); }
+	// A failure below keeps the intent on disk, so the interruption stays visible and resumable.
+	for (const item of candidates) {
+		await assertFence();
+		if (hashOf(await bytesOf(root, item.path)) !== item.after) { throw Error('HARNESS_TOOL_CHECKPOINT_CHANGED'); }
+		if (item.before === null) {
+			await fs.rm(item.file, { force: true });
+		} else {
+			await fs.mkdir(path.dirname(item.file), { recursive: true });
+			const temporary = item.file + '.' + randomUUID() + '.checkpoint.tmp';
+			try {
+				await fs.writeFile(temporary, item.before, { flag: 'wx', mode: 0o600 });
+				await assertFence();
+				if (hashOf(await bytesOf(root, item.path)) !== item.after) { throw Error('HARNESS_TOOL_CHECKPOINT_CHANGED'); }
+				await fs.rename(temporary, item.file);
+			} finally { await fs.rm(temporary, { force: true }); }
 		}
-		await writeDurable(path.join(storage, id + '.json'), { ...record, state: 'restored' }, false, MAX_RECORD_BYTES);
-		await fs.rm(journal, { force: true });
-		return { restored, skipped: [] };
-	} catch (error) {
-		// Preserve intent: a crash or partial write never silently retries.
-		throw error;
+		restored.push(item.path);
 	}
+	await writeDurable(path.join(storage, id + '.json'), { ...record, state: 'restored' }, false, MAX_RECORD_BYTES);
+	await fs.rm(journal, { force: true });
+	return { restored, skipped: [] };
 }
 
 /** Sequential tool observation: concurrent editing invalidates attribution for this run. */
@@ -172,6 +193,8 @@ export class ChatToolCheckpointRecorder {
 	private queue: Promise<void> = Promise.resolve();
 	private ambiguous = false;
 	private written = 0;
+	/** One recorder observes one writer run, so its id attributes every checkpoint to that turn. */
+	readonly turnId = randomUUID();
 	private readonly root: string;
 	private readonly storage: string;
 	constructor(root: string, storage: string) { this.root = root; this.storage = storage; }
@@ -208,7 +231,8 @@ export class ChatToolCheckpointRecorder {
 			if (afterBytes === undefined) { this.ambiguous = true; return; }
 			let before: Buffer | null | undefined = this.contents.get(change.path);
 			if (before === undefined) {
-				const committed = await gitOutput(this.root, ['show', 'HEAD:' + change.path]).catch(() => undefined);
+				// `--filters` yields the bytes a checkout writes (line endings, smudge), not the normalized blob.
+				const committed = await gitOutput(this.root, ['cat-file', '--filters', 'HEAD:' + change.path]).catch(() => undefined);
 				before = committed === undefined ? null : committed;
 			}
 			if (before && before.length > MAX_FILE_BYTES) { this.ambiguous = true; return; }
@@ -221,16 +245,13 @@ export class ChatToolCheckpointRecorder {
 		const id = randomUUID();
 		const record: ToolCheckpoint = {
 			schemaVersion: 1, id, rootDigest: digest(this.root), at: new Date().toISOString(),
-			stepId: step.id, kind: step.kind as 'edit' | 'command', state: 'ready', files: revisions
+			turnId: this.turnId, sequence: this.written + 1, stepId: step.id, kind: step.kind as 'edit' | 'command', state: 'ready', files: revisions
 		};
 		await writeDurable(path.join(this.storage, id + '.json'), record, true, MAX_RECORD_BYTES);
 		this.written++;
-		// Keep at most 24 records across runs. Only our UUID-named JSON files are eligible.
-		const names = (await fs.readdir(this.storage)).filter(name => UUID.test(name.replace(/\.json$/, '')) && name.endsWith('.json')).sort();
-		for (const old of names.slice(0, Math.max(0, names.length - MAX_CHECKPOINTS))) {
-			if (!await fs.lstat(path.join(this.storage, old.slice(0, -5) + '.restore.intent')).then(() => true, () => false)) {
-				await fs.rm(path.join(this.storage, old), { force: true });
-			}
+		// Keep the newest 24 records across runs; one with a pending restore intent is never pruned.
+		for (const old of (await storedCheckpoints(this.root, this.storage)).slice(MAX_CHECKPOINTS)) {
+			if (!await exists(intentFile(this.storage, old.id))) { await fs.rm(path.join(this.storage, old.id + '.json'), { force: true }); }
 		}
 	}
 	async finish(): Promise<number> { await this.queue; return this.written; }
