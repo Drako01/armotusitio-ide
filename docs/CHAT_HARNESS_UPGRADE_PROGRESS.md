@@ -169,3 +169,24 @@
 - CI status at authoring: PENDING/NOT VERIFIED for new head; previous run is FAIL, not reclassified as PASS.
 - No changes to workflow gates, provider credentials, feature flags, `main`, release or tags. No authenticated model calls.
 - Next: verify the CI for the exact candidate SHA on Linux and Windows, retain 13 platform SKIPs as SKIP, and only then reassess merge readiness.
+
+
+### Continuation 2026-11-10: local document attachment handoff
+
+- OWNER: Alejandro Daniel Di Stefano, ArmoTuSitio.com.ar; retain upstream Microsoft notices and custom author metadata.
+- Local source: user-provided console logs. The 51 KiB staged patch on F:/PR86-local-changes.patch.txt is **not in the remote PR** and **not attached to the current conversation**. Never claim document implementation has landed before integrating it.
+- LOCAL EVIDENCE: extension compile PASS; TypeScript/resource check PASS; native package resource checks PASS after changing the worker path to .mjs.
+- LOCAL EVIDENCE: 859 extension tests, 841 PASS, 6 FAIL, 12 SKIP. Three failures in native-chat-attachments.test.mts (HARNESS_DOCUMENT_WORKER_FAILED, notebook/PDF extraction); one catalog failure (nine missing hints); two runtime failures (Claude R06 startup retry and Codex W3 profile separation).
+- LOCAL EVIDENCE: precommit hygiene FAIL with 13 unexpected Unicode characters in esbuild.mts, src/chat.ts and src/native-chat-commands.ts; formatting of native-chat-attachments.ts was fixed locally. No Husky bypass authorized.
+- REMOTE FIX: 14 attachment/document/PDF/notebook recovery hints (d1f3949355c) and focused regression (a4055e6ccf1) landed independently of the unavailable local patch.
+- REQUIRED: receive and integrate staged patch, reconcile newer remote head without dropping user changes, eliminate Unicode hygiene failures, verify ESM worker/PDF.js, run focused tests then full Linux/Windows contracts.
+- Codex native subagents: TODO; demonstrate inherited deny/trust, read-only isolation, aggregate budget and cancellation/reaping. Claude remains tool-free isolated role fallback, not provider-native children.
+- Multimodal paste/drop and document extraction: PARTIAL locally, not merged remotely; preview, consent, MIME/size validation and hostile document fixtures remain to verify.
+- Per-turn/per-tool checkpoints: TODO; require ownership attribution, bounded persistence, conflict detection and granular restoration preserving newer human changes.
+- MCP legacy SSE/server-initiated requests: TODO; preserve request-response HTTP JSON/SSE and deny unapproved sampling, roots or elicitation.
+- Installed Windows x64 keyboard/screen-reader/recovery/six extensions: BLOCKED BY INSTALLED CANDIDATE EVIDENCE, not equivalent to browser fixture PASS.
+- Authenticated E2E and real-provider benchmarks: BLOCKED BY EXPLICIT QUOTA AUTHORIZATION; no paid model calls.
+- Rust cargo test: BLOCKED BY LOCAL CARGO TOOLCHAIN; absence is not a PASS.
+- Optional browser/cloud: NOT ENABLED; require separate authority and isolation.
+- CI must be checked on the exact post-integration SHA, not earlier green candidates.
+- PR remains Draft; no merge, tags or release.
