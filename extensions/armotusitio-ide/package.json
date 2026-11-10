@@ -44,7 +44,7 @@
 				"id": "atsIde.harness",
 				"name": "harness",
 				"fullName": "ArmotuSitio Harness",
-				"description": "Chat Harness con el mismo agente, herramientas y permisos del panel, m\u00e1s consultas locales de Work Management.",
+				"description": "Chat Harness con el mismo agente, herramientas y permisos del panel, más consultas locales de Work Management.",
 				"commands": [
 					{
 						"name": "permisos",
@@ -815,5 +815,8 @@
 			"supported": "limited",
 			"description": "La ejecución de comandos requiere un workspace confiable."
 		}
+	},
+	"dependencies": {
+		"pdfjs-dist": "5.4.296"
 	}
 }
