@@ -55,6 +55,10 @@ jobs:
         run: npm ci --prefix extensions/armotusitio-ide --ignore-scripts --omit=optional --no-audit --no-fund
       - name: Syntax checks
         run: npm run check --prefix extensions/armotusitio-ide
+      - name: Build candidate extension resources
+        run: npm run compile --prefix extensions/armotusitio-ide
+      - name: Verify packaged extension and PDF worker
+        run: npm run check:native-package --prefix extensions/armotusitio-ide
       - name: Contract tests
         run: npm test --prefix extensions/armotusitio-ide
       - name: Release tooling tests
@@ -76,6 +80,12 @@ jobs:
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Install pinned offline PDF parser on Windows
         run: npm ci --prefix extensions/armotusitio-ide --ignore-scripts --omit=optional --no-audit --no-fund
+      - name: Windows syntax and worker typechecks
+        run: npm run check --prefix extensions/armotusitio-ide
+      - name: Build candidate extension resources on Windows
+        run: npm run compile --prefix extensions/armotusitio-ide
+      - name: Verify Windows packaged extension and PDF worker
+        run: npm run check:native-package --prefix extensions/armotusitio-ide
       - name: Extension tests on Windows
         shell: pwsh
         env:

@@ -440,6 +440,12 @@
 					"scope": "application",
 					"description": "Patrones adicionales de ramas a las que git_push no puede publicar (por ejemplo release/* o prod*). Se suman a las ramas protegidas del IDE; git_commit puede crear commits en la rama actual."
 				},
+				"atsHarness.codexReadOnlySubagents": {
+					"type": "boolean",
+					"default": false,
+					"scope": "application",
+					"description": "Opt-in EXCLUSIVO de usuario: hasta dos subagentes nativos de solo lectura para Codex, sin IDE MCP y sin web. Consume cuota adicional; presupuesto rigido de tokens/USD bloquea la delegacion. Cambiar el valor cierra sesiones anteriores."
+				},
 				"atsHarness.documentInput": {
 					"type": "boolean",
 					"default": false,

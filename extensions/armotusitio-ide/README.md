@@ -488,3 +488,17 @@ conflicto, la restauración se cancela sin tocar archivos. Un error en mitad de
 la operación deja un marcador de recuperación, nunca un retry automático.
 El descarte por corrida anterior sigue disponible; los checkpoints no sustituyen
 los commits convencionales ni garantizan restauración de herramientas concurrentes.
+
+
+### Subagentes en chat nativo persistente (opt-in de usuario)
+
+La preferencia **de aplicación** `atsHarness.codexReadOnlySubagents` se activa
+únicamente en el perfil de usuario (no en `.vscode/settings.json` ni desde el proyecto).
+Por defecto es `false`. Al habilitarla, solo las sesiones Codex de conversación
+read-only sin búsqueda web pueden usar hasta dos hijos, profundidad uno. El
+adaptador omite el servidor MCP del IDE en esa sesión y aplica aprobación
+`never` con sandbox `readOnly`; no concede permisos de escritura a los hijos.
+Cambiar la preferencia cierra procesos de sesiones anteriores para que un opt-out
+surta efecto sin dejar hijos activos. Con presupuestos de tokens o USD estrictos,
+se deniega la ejecución hasta disponer de contabilidad auditable por hijo.
+Se mantiene pendiente la aceptación con una CLI Codex autenticada y cuota autorizada.

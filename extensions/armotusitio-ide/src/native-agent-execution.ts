@@ -16,6 +16,7 @@ import { StringDecoder } from 'node:string_decoder';
 import { redactSecrets } from './native-redact.ts';
 import { currentToolchainEnvironment } from './native-toolchain-env.ts';
 import { codexSandbox } from './native-codex-sandbox.ts';
+import { readonlyCodexSubagentOverrides } from './native-codex-subagents.ts';
 import { agentContract, RUN_MINUTES } from './native-agent-contract.ts';
 import { reviewAgentDraft, validateReviewedAgent, type AgentDraft, type AgentReview } from './native-providers.ts';
 import { APPROVAL_TIMEOUT_MS } from './native-approval.ts';
@@ -105,12 +106,7 @@ export function buildAgentInvocation(draft: AgentDraft, writableRoots: readonly 
 	if (draft.provider === 'codex') {
 		// Native children inherit the parent's read-only sandbox and never receive independent grants.
 		// A single parent process owns their lifetime and usage; the limit is per approved review.
-		const nativeSubagents = draft.nativeSubagents ? [
-			'--config', 'agents.enabled=true',
-			'--config', 'agents.max_concurrent_threads_per_session=2',
-			'--config', 'agents.max_depth=1',
-			'--config', 'agents.interrupt_message=true'
-		] : [];
+		const nativeSubagents = readonlyCodexSubagentOverrides(draft.nativeSubagents === true);
 		const sandbox = draft.readOnly ? 'read-only' : codexSandbox();
 		const caches = sandbox === 'workspace-write' ? writableRoots.flatMap(root => ['--add-dir', root]) : [];
 		// Codex's native search tool; it is off unless the project enabled web search (D9).

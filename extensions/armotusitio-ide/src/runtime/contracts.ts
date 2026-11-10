@@ -174,6 +174,8 @@ export interface SessionOpenOptions {
 	env: NodeJS.ProcessEnv;
 	maxTurns?: number;
 	webSearch?: boolean;
+	/** Explicit user-level opt-in, only for read-only Codex sessions with no IDE MCP tools. */
+	nativeSubagents?: boolean;
 }
 
 /** A live provider connection. `startTurn` resolves when the turn ends; events stream through the host meanwhile. */

@@ -10,6 +10,7 @@ import * as os from 'node:os';
 import { installFakeCodex } from './native-fake-provider.mts';
 import { execFileSync } from 'node:child_process';
 import { buildAgentInvocation, executeReviewedAgent } from '../src/native-agent-execution.ts';
+import { readonlyCodexSubagentOverrides } from '../src/native-codex-subagents.ts';
 import { reviewAgentDraft, validateReviewedAgent, type NativeEffort } from '../src/native-providers.ts';
 
 const base = {
@@ -252,12 +253,8 @@ test('a profile environment reaches the one-shot CLI with its own directory and 
 test('native Codex child threads are explicit, reviewed and read-only', () => {
 	const reviewed = { ...base, nativeSubagents: true };
 	const command = buildAgentInvocation(reviewed);
-	assert.deepEqual(command.args.slice(0, 10), [
-		'--ask-for-approval', 'never', '--config', 'agents.enabled=true',
-		'--config', 'agents.max_concurrent_threads_per_session=2',
-		'--config', 'agents.max_depth=1',
-		'--config', 'agents.interrupt_message=true'
-	]);
+	for (const value of ['features.multi_agent_v2=false', 'agents.enabled=true', 'agents.max_concurrent_threads_per_session=2',
+		'agents.max_depth=1', 'agents.interrupt_message=true']) { assert.ok(command.args.includes(value)); }
 	assert.ok(command.args.includes('read-only'));
 	assert.ok(!command.args.includes('workspace-write'));
 	assert.ok(!buildAgentInvocation(base).args.includes('agents.enabled=true'));
@@ -267,4 +264,16 @@ test('native Codex child threads are explicit, reviewed and read-only', () => {
 	const review = reviewAgentDraft(reviewed);
 	assert.throws(() => validateReviewedAgent(review, base), /HARNESS_AGENT_REVIEW_CHANGED/);
 	assert.throws(() => validateReviewedAgent(review, { ...reviewed, nativeSubagents: false }), /HARNESS_AGENT_REVIEW_CHANGED/);
+});
+
+
+test('shared native Codex overrides are disabled by default and force V1 depth enforcement', () => {
+	assert.deepEqual(readonlyCodexSubagentOverrides(false), []);
+	assert.deepEqual(readonlyCodexSubagentOverrides(true), [
+		'--config', 'features.multi_agent_v2=false',
+		'--config', 'agents.enabled=true',
+		'--config', 'agents.max_concurrent_threads_per_session=2',
+		'--config', 'agents.max_depth=1',
+		'--config', 'agents.interrupt_message=true'
+	]);
 });

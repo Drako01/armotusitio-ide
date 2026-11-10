@@ -12,6 +12,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { resolveNativeCommand } from '../native-runtime.ts';
 import { validateChatImages } from '../native-chat-images.ts';
+import { readonlyCodexSubagentOverrides } from '../native-codex-subagents.ts';
 import {
 	CODEX_PROTOCOL_VERSION,
 	type AskForApproval, type CommandExecutionRequestApprovalParams, type CommandExecutionRequestApprovalResponse, type FileChangeRequestApprovalParams,
@@ -90,8 +91,11 @@ export class CodexAdapter implements AgentAdapter {
 		const mcp = server ? ['-c', 'mcp_servers.ats-runner.command=' + toml(server.command), '-c', 'mcp_servers.ats-runner.args=[' + server.args.map(toml).join(',') + ']',
 			'-c', 'mcp_servers.ats-runner.env={' + Object.entries(server.env).map(([key, value]) => key + '=' + toml(value)).join(',') + '}',
 			'-c', 'mcp_servers.ats-runner.default_tools_approval_mode="approve"', '-c', 'mcp_servers.ats-runner.tool_timeout_sec=1800'] : [];
+		if (options.nativeSubagents && (options.role !== 'conversation' || options.toolServer || options.webSearch || this.options.fullAccess?.())) {
+			throw new RuntimeError('RUNTIME_SUBAGENTS_UNSAFE');
+		}
 		const search = options.webSearch ? ['-c', 'tools.web_search=true'] : [];
-		const child = await startProviderProcess('codex', ['app-server', ...mcp, ...search], options.identity.root, options.env);
+		const child = await startProviderProcess('codex', [...readonlyCodexSubagentOverrides(options.nativeSubagents === true), 'app-server', ...mcp, ...search], options.identity.root, options.env);
 		const connection = new CodexConnection(child, options, host, !!this.options.fullAccess?.());
 		try {
 			await connection.handshake(this.options.clientVersion ?? '0');
@@ -190,6 +194,10 @@ class CodexConnection implements AgentConnection {
 	async interrupt(): Promise<void> {
 		const turn = this.turn;
 		if (!turn) { return; }
+		// The process owns every native child; stopping it prevents orphaned subagent work.
+		if (this.options.nativeSubagents) {
+			this.finishTurn({ status: 'interrupted' }); this.child.stop(); return;
+		}
 		if (!turn.id) { this.finishTurn({ status: 'interrupted' }); return; }
 		try { await this.rpc.request('turn/interrupt', { threadId: this.nativeSessionId, turnId: turn.id }, 10_000); }
 		catch {
@@ -299,6 +307,7 @@ class CodexConnection implements AgentConnection {
 			case 'mcpToolCall': return { kind: 'mcp', name: 'mcpToolCall', server: String(item.server ?? ''), tool: String(item.tool ?? '') };
 			case 'dynamicToolCall': return { kind: 'other', name: String(item.tool ?? 'dynamicToolCall') };
 			case 'webSearch': return { kind: 'web_search', name: 'webSearch', command: typeof item.query === 'string' ? item.query : undefined };
+			case 'collabAgentToolCall': return { kind: 'other', name: 'subagents.' + (typeof item.tool === 'string' ? item.tool : 'activity') };
 			default: return undefined;
 		}
 	}

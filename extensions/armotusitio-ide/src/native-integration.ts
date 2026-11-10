@@ -463,8 +463,10 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 		};
 	};
 	/** Every IDE agent draft: read-only unless implementing, with the model and effort chosen for its provider. */
-	const draftOf = (root: string, provider: NativeProvider, role: AgentRole, instruction: string, extra: Pick<AgentDraft, 'maxTurns' | 'resumeSession'> = {}): AgentDraft =>
-		({ schemaVersion: 1, provider, role, projectRoot: root, instruction, readOnly: role !== 'implementer', ...modelOption(modelFor(provider)), ...effortOption(effortFor(provider)), ...(webSearchOn(root) ? { webSearch: true } : {}), ...extra });
+	const codexReadonlyOptIn = (): boolean => vscode.workspace.getConfiguration('atsHarness').inspect('codexReadOnlySubagents')?.globalValue === true;
+	const draftOf = (root: string, provider: NativeProvider, role: AgentRole, instruction: string, extra: Pick<AgentDraft, 'maxTurns' | 'resumeSession' | 'nativeSubagents'> = {}): AgentDraft =>
+		({ schemaVersion: 1, provider, role, projectRoot: root, instruction, readOnly: role !== 'implementer', ...modelOption(modelFor(provider)), ...effortOption(effortFor(provider)), ...(webSearchOn(root) ? { webSearch: true } : {}),
+			...(provider === 'codex' && role !== 'implementer' && !webSearchOn(root) && codexReadonlyOptIn() ? { nativeSubagents: true } : {}), ...extra });
 	/**
 	 * Native transport of the chat (r8): persistent provider sessions behind the same guarded pipeline. The setting decides
 	 * (structured | native | auto); an incompatible CLI keeps the structured transport and says why once per provider.
@@ -520,12 +522,19 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 		model: provider => modelFor(provider),
 		effort: provider => effortFor(provider),
 		codexFullAccess: () => codexSandbox() === 'danger-full-access',
+		codexReadOnlySubagents: root => codexReadonlyOptIn() && !webSearchOn(root),
 		maxTurns: role => role === 'writer' ? implementerMaxTurns() : 12,
 		webSearch: root => webSearchOn(root),
 		redact: text => devSecrets.redact(text),
 		clientVersion: String(context.extension?.packageJSON?.version ?? '0')
 	});
 	context.subscriptions.push({ dispose: () => { void nativeChat.dispose(); } });
+	// Turning off the user-level switch closes already-open sessions and their children.
+	if (vscode.workspace.onDidChangeConfiguration) {
+		context.subscriptions.push(vscode.workspace.onDidChangeConfiguration((event: any) => {
+			if (event.affectsConfiguration('atsHarness.codexReadOnlySubagents')) { void nativeChat.dispose(); }
+		}));
+	}
 	const transportWarned = new Set<NativeProvider>();
 	/** Native execution of one chat turn, for `runGuardedAgent`. */
 	const nativeTurn = (root: string, provider: NativeProvider, role: SessionRole, text: string, transport: TurnTransport, hooks: { message?: (text: string) => void; step?: ChatRunHooks['step']; approval?: ApprovalAsk; question?: ChatRunHooks['question']; notice?: ChatRunHooks['notice'] }) =>
@@ -818,7 +827,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 					beforeLaunch: async () => { before = await captureWorkingTree(root); await toolCheckpoints.begin(); },
 					afterOutcome: async (outcome, fence) => {
 						// Finalize tool-attributed records while the shared writer fence is held.
-						await toolCheckpoints.finish().catch(() => { void vscode.window.showWarningMessage('No se pudo persistir un checkpoint granular; la reversión por corrida sigue disponible.'); });
+						await toolCheckpoints.finish().catch(() => { void vscode.window.showWarningMessage('No se pudo persistir un checkpoint granular; la reversi\u00f3n por corrida sigue disponible.'); });
 						// Measured before verification, so build output of the gates is never attributed to the writer.
 						if (before) { diff = diffWorkingTree(before, await captureWorkingTree(root)); diff = { ...diff, after: await fingerprintFiles(root, diff.files) }; }
 						if (outcome.status !== 'passed' && verification) {
@@ -1109,11 +1118,11 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 				const delegation = await vscode.window.showQuickPick([
 					{ label: 'Sin subagentes (predeterminado)', value: false },
 					{ label: 'Hasta dos subagentes nativos Codex (consumo adicional de cuota)', value: true }
-				], { title: 'Delegación opt-in de solo lectura' });
+				], { title: 'Delegaci\u00f3n opt-in de solo lectura' });
 				if (!delegation) { return; }
 				nativeSubagents = delegation.value;
 			}
-			const draft: AgentDraft = { ...draftOf(root, provider, role, instruction), ...(nativeSubagents ? { nativeSubagents: true } : {}) };
+			const draft: AgentDraft = { ...draftOf(root, provider, role, instruction), nativeSubagents };
 			const invocation = buildAgentInvocation(draft);
 			const preview = JSON.stringify({
 				project: root, role, provider, permissionMode: draft.readOnly ? 'read-only' : 'workspace-write (Codex) / dontAsk (Claude)',
@@ -1333,11 +1342,11 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			const checkpoints = await listChatToolCheckpoints(root, storage);
 			if (!checkpoints.length) { vscode.window.showInformationMessage('No hay checkpoints granulares seguros disponibles.'); return; }
 			const selected = await vscode.window.showQuickPick(checkpoints.map(item => ({
-				label: item.stepId.slice(0, 64), description: item.kind + ' · ' + item.files.length + ' archivos · ' + item.at, checkpoint: item
+				label: item.stepId.slice(0, 64), description: item.kind + ' \u00b7 ' + item.files.length + ' archivos \u00b7 ' + item.at, checkpoint: item
 			})), { title: 'Restaurar una herramienta del Chat Harness' });
 			if (!selected) { return; }
 			const approval = await vscode.window.showWarningMessage(
-				'Restaurar únicamente archivos con huella idéntica a la salida de esa herramienta. Cualquier edición posterior bloqueará la restauración completa. No modifica commits ni la rama. ¿Confirmar?',
+				'Restaurar \u00fanicamente archivos con huella id\u00e9ntica a la salida de esa herramienta. Cualquier edici\u00f3n posterior bloquear\u00e1 la restauraci\u00f3n completa. No modifica commits ni la rama. \u00bfConfirmar?',
 				{ modal: true }, 'Restaurar checkpoint');
 			if (approval !== 'Restaurar checkpoint' || !authorized(chosen.folder)) { return; }
 			assertIdle(root, chosen.folder);

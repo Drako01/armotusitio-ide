@@ -248,3 +248,12 @@
 - En [run 42910325497](https://github.com/Drako01/armotusitio-ide/actions/runs/42910325497), el test negativo de SSE sin endpoint tomó aproximadamente **303.7 segundos** por runner, pese a una ventana de descubrimiento de 50 ms. El resultado era PASS pero la limpieza de streams bloqueaba el CI.
 - Se acotó la obtención de headers y el cierre del reader SSE para que los peers que nunca terminan un stream no bloqueen el test ni el IDE durante minutos; se mantiene el aborto de la sesión y la denegación de permisos.
 - Se agregó aserción explícita de tiempo al test de timeout. **Pendiente de validar** en Linux/Windows; no se declara PASS hasta el nuevo workflow.
+
+
+### Candidato verde anterior a integración final de Codex — 2026-11-10
+
+- **SHA evaluado:** `f8dffb0780c0b207720ea8ea521482b380f16f3d` — [run 42913039996](https://github.com/Drako01/armotusitio-ide/actions/runs/42913039996). Contratos Linux **PASS**, contratos Windows **PASS**, ATS gate **PASS**. Los dos errores originales PDF/MCP y las seis regresiones del journal quedaron resueltos por pruebas en ambos runners. Esta evidencia aplica **solo al SHA indicado**, no a commits posteriores.
+- **Bloque nuevo de esta revisión:** se conecta la opción explícita `atsHarness.codexReadOnlySubagents` de ámbito aplicación a las sesiones persistentes Codex de solo lectura; no se inyecta `ats-runner` MCP en esas sesiones; sin web, sin writer y sin full-access. Solo cuando la persona lo habilita; los límites heredados son dos hijos y profundidad V1 uno. Se fuerza `features.multi_agent_v2=false` porque la versión V2 de Codex no respeta `agents.max_depth`, según el código/configuración del proveedor. La interrupción detiene el árbol supervisado; faltan pruebas reales de aislamiento de la CLI instalada.
+- **Nuevas pruebas/gates:** tests de CLI arguments, aislamiento de roles y rechazo de permiso no válido sin consumir tokens; el CI ejecutará adicionalmente `compile` y `check:native-package` en Linux y Windows, además de sus contratos previos.
+- **Estado del bloque nuevo:** IMPLEMENTADO PERO NO VALIDADO; requiere CI completo sobre el siguiente SHA. No equivale a validar proveedores autenticados, VSIX instalado, accesibilidad ni seis extensiones. Presupuestos estrictos de tokens/USD siguen rechazando subagentes por falta de recibos agregados por hijo.
+- Mantener PR #86 **Draft**, `main` intacto, sin release, sin merge ni cuota consumida.
