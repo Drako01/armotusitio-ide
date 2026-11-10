@@ -375,7 +375,14 @@ export class ExtensionsListView extends AbstractExtensionsListView<IExtension> {
 		const includeBuiltin = /@builtin/i.test(value);
 		const canIncludeInstalledExtensions = !includeBuiltin;
 
-		if (/@installed/i.test(value)) {
+		if (/@armotusitio(?:\s|$)/i.test(value)) {
+			const ids = new Set((this.productService.armotusitioOfficialExtensions ?? []).map(id => id.toLowerCase()));
+			const text = value.replace(/@armotusitio(?:\s|$)/ig, '').trim().toLowerCase();
+			extensions = this.sortExtensions(local.filter(extension => ids.has(extension.identifier.id.toLowerCase())
+				&& (!text || [extension.name, extension.displayName, extension.description].some(value => value.toLowerCase().includes(text)))), options);
+		}
+
+		else if (/@installed/i.test(value)) {
 			extensions = this.filterInstalledExtensions(local, runningExtensions, query, options);
 		}
 
@@ -1166,7 +1173,8 @@ export class ExtensionsListView extends AbstractExtensionsListView<IExtension> {
 	}
 
 	static isLocalExtensionsQuery(query: string, sortBy?: string): boolean {
-		return this.isInstalledExtensionsQuery(query)
+		return /@armotusitio(?:\s|$)/i.test(query)
+			|| this.isInstalledExtensionsQuery(query)
 			|| this.isSearchInstalledExtensionsQuery(query)
 			|| this.isOutdatedExtensionsQuery(query)
 			|| this.isEnabledExtensionsQuery(query)
@@ -1303,6 +1311,13 @@ export class DefaultPopularExtensionsView extends ExtensionsListView {
 		return super.show(query);
 	}
 
+}
+
+/** Official shipped extensions remain visible even when Installed hides up-to-date builtins. */
+export class ArmotusitioExtensionsView extends ExtensionsListView {
+	override show(): Promise<IPagedModel<IExtension>> {
+		return super.show('@armotusitio');
+	}
 }
 
 export class ServerInstalledExtensionsView extends ExtensionsListView {

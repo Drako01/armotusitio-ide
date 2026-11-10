@@ -269,6 +269,8 @@ export interface IProductConfiguration {
 	readonly builtInExtensionsEnabledWithAutoUpdates: readonly string[];
 	/** Shipped extensions whose auto-update default remains configurable by the user. */
 	readonly autoUpdateBuiltinExtensionsByDefault?: readonly string[];
+	/** Official ArmotuSitio extensions shown together, including bundled system extensions. */
+	readonly armotusitioOfficialExtensions?: readonly string[];
 	readonly sessionsWindowAllowedExtensions?: readonly string[];
 
 	readonly msftInternalDomains?: string[];
