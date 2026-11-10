@@ -117,4 +117,4 @@
 - Logs: `.harness/runtime/competitive-*.log`, `upstream-1453-*.log`, `finish-runtime-reviewed-final.log`.
 - Markdown checker PASS for new reports; README retains preexisting long-line debt to preserve repository prose style.
 - The parity report identifies checkpoint, unsupported transport/media and installed-acceptance limits.
-- Runtime/documentation commit: recorded by the final branch log; no pending intended source is omitted deliberately.
+- Runtime/documentation commit: `2226364e371`; remaining untracked prompt/review inputs are intentionally excluded.
