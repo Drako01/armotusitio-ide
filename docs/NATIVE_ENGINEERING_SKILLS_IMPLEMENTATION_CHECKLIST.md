@@ -5,9 +5,9 @@
 ### Estado general
 
 - Rama: `feat/native-engineering-skills-pack`.
-- Base: `ef4570db8d473596ecd8a955dde893bd7705cd92`; último checkpoint local: `6609eff15e3`.
-- Fase actual: 5, integración y regresión; requerimiento 18 en implementación paralela acotada.
-- Estado: implementación local autorizada; sin push, PR, merge, tags ni release.
+- Base: `ef4570db8d473596ecd8a955dde893bd7705cd92`; último checkpoint local: `b0f349e01e8`.
+- Fase actual: 6, entrega en Draft PR solicitada por el usuario.
+- Estado: implementación completada con condiciones de aceptación; el usuario autorizó después publicar y crear un único Draft PR contra main. Sin merge, tags ni release.
 - Fecha: 2026-11-10 (America/Buenos_Aires).
 - Registro canónico de esta tarea: este archivo, solicitado por `PROMPT_CODEX.md`; no se mantiene un segundo estado.
 
@@ -57,7 +57,7 @@
 
 ### Fase 6 — Documentación y entrega
 
-- [ ] Documentación de uso, precedencia, seguridad y extensión del pack.
+- [x] Documentación de uso, precedencia, seguridad y extensión del pack.
 - [ ] Checklist final y commits locales completos.
 - [ ] Estado final del árbol y rama comprobado.
 
@@ -101,11 +101,11 @@
 
 - [x] Seis publicaciones y manifiestos reales contrastados con Open VSX, hashes descargados y licencias MIT.
 - [x] Identificador corregido según registro y captura del usuario: `armotusitio.vestigivo`, no `armotusitio.vestigivo-rca` (404).
-- [ ] Manifiesto reproducible de versiones y SHA-256 conectado al empaquetado nativo de Code OSS.
-- [ ] Recursos extraídos para primer inicio offline en todas las plataformas soportadas.
-- [ ] Actualización automática tildada por defecto; preferencias explícitas del usuario conservadas.
-- [ ] Pruebas de deduplicación, versiones más recientes y compatibilidad.
-- [ ] Verificación final disponible; inicio y activación de una instalación limpia, si el entorno lo permite.
+- [x] Manifiesto reproducible de versiones y SHA-256 conectado al empaquetado nativo de Code OSS.
+- [x] Seis archivos universales incluidos por el pipeline nativo; extracción offline real PASS6/6. Ejecución de otras plataformas: NOT VERIFIED.
+- [x] Actualización automática tildada por defecto; preferencias explícitas del usuario conservadas.
+- [x] Pruebas de deduplicación, versiones más recientes y compatibilidad.
+- [x] Perfil aislado del producto desde fuentes: reconocimiento y activación PASS6/6, sin duplicados, fallo sintético aislado. Instalador completo: NOT VERIFIED.
 
 | ID real | Versión fijada | SHA-256 |
 |---|---|---|
@@ -117,6 +117,8 @@
 | `armotusitio.vestigivo` | 0.1.2 | `0e1997a5efc844406432ae4993f6233814783c0f25675b93552b69656b018519` |
 
 Procedencia observada: namespace verificado, publicación confiable por Drako01, todas `preRelease=false`. Orquestivo declara `preview=true` en todas sus versiones publicadas: no existe una alternativa no-preview y no se oculta esa limitación. Seis VSIX `universal`, sin binarios nativos ni shell scripts detectados. Sin dependencias de extensiones ni APIs propuestas; motores VS Code `^1.99.0` o `^1.96.0` compatibles con el IDE 1.145.2. Probato requiere Node `>=22.12.0`; el Electron local real 43.8.3 devolvió Node 24.22.0. Integraciones opcionales GitHub/IA y Sentry/Grafana mantienen sus controles; Saturivo requiere k6/Go para sus funciones respectivas. Firma criptográfica y uso real de servicios externos: NOT VERIFIED. Escaneo limitado de los VSIX sin archivos sensibles ni patrones de credenciales de alta confianza; no equivale a auditoría exhaustiva.
+
+Verificaciones adicionales del requerimiento18: build tests9/9 PASS; typecheck build PASS con compilador nativo, fuente/DTO generado idénticos tras EPERM del wrapper; ESLint PASS. Build-fast de cliente/extensiones/Copilot PASS; Electron25/25 PASS (servicio, checkbox y scanner). Primer inicio con seis archivos locales y proxy inaccesible PASS, sin usar cuentas ni descargar extensiones. Errores de canales AgentHost de inicio reproducidos con baseline vacío; un timeout de apagado adicional no atribuido queda NOT VERIFIED. Actualización real desde galería con conservación de configuración, instalador limpio Windows x64 y ejecución Linux/macOS/WSL: NOT VERIFIED. Orquestivo solo tiene versiones preview; condición explícita de entrega.
 
 ### Decisiones arquitectónicas
 
@@ -142,7 +144,7 @@ Procedencia observada: namespace verificado, publicación confiable por Drako01,
 
 ### Próxima acción concreta
 
-- Finalizar gate integral del pack; integrar preinstalación y controles de actualización, verificar paquete nativo y registrar límites de aceptación manual.
+- Publicar la rama y crear Draft PR contra main, autorizado expresamente al final de la sesión. No ejecutar merge ni release. Veredicto: READY WITH CONDITIONS; revisar las condiciones de aceptación registradas.
 
 ### Historial de checkpoints
 
@@ -150,3 +152,5 @@ Procedencia observada: namespace verificado, publicación confiable por Drako01,
 
 - Checkpoint `6609eff15e3`: lector compartido acotado y baseline persistente.
 - Checkpoint de contenido: diez skills con validadores estáticos y muestra conductual independiente de ocho escenarios; no certifica decisiones futuras.
+
+- `b0f349e01e8`: pack de diez skills, integración, tests y documentación; gate precommit PASS tras usar escapes Unicode exigidos por higiene.

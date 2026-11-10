@@ -1064,6 +1064,7 @@ export class ToggleAutoUpdateForExtensionAction extends ExtensionAction {
 		@IWorkbenchExtensionEnablementService private readonly extensionEnablementService: IWorkbenchExtensionEnablementService,
 		@IAllowedExtensionsService private readonly allowedExtensionsService: IAllowedExtensionsService,
 		@IConfigurationService configurationService: IConfigurationService,
+		@IProductService private readonly productService: IProductService,
 	) {
 		super(ToggleAutoUpdateForExtensionAction.ID, ToggleAutoUpdateForExtensionAction.LABEL.value, ToggleAutoUpdateForExtensionAction.DisabledClass);
 		this._register(configurationService.onDidChangeConfiguration(e => {
@@ -1081,7 +1082,7 @@ export class ToggleAutoUpdateForExtensionAction extends ExtensionAction {
 		if (!this.extension) {
 			return;
 		}
-		if (this.extension.isBuiltin) {
+		if (this.extension.isBuiltin && !this.productService.autoUpdateBuiltinExtensionsByDefault?.some(id => id.toLowerCase() === this.extension!.identifier.id.toLowerCase())) {
 			return;
 		}
 		if (this.extension.deprecationInfo?.disallowInstall) {

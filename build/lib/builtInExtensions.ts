@@ -15,6 +15,7 @@ import { getCurrentExtensionTarget, getPlatformSpecificAssetName } from './exten
 import fancyLog from 'fancy-log';
 import ansiColors from 'ansi-colors';
 import { Stream } from 'stream';
+import { withOfficialExtensions } from './armotusitioOfficialExtensions.ts';
 
 export interface IExtensionDefinition {
 	name: string;
@@ -23,6 +24,7 @@ export interface IExtensionDefinition {
 	repo: string;
 	platforms?: string[];
 	vsix?: string;
+	downloadUrl?: string;
 	/**
 	 * Per-target checksums for a platform-specific extension published to a GitHub release.
 	 * Keyed by marketplace target platform (e.g. `win32-x64`, `linux-armhf`, `alpine-x64`).
@@ -30,8 +32,8 @@ export interface IExtensionDefinition {
 	 */
 	platformSpecific?: { [target: string]: string };
 	metadata: {
-		id: string;
-		publisherId: {
+		id?: string;
+		publisherId?: {
 			publisherId: string;
 			publisherName: string;
 			displayName: string;
@@ -43,7 +45,7 @@ export interface IExtensionDefinition {
 
 const root = path.dirname(path.dirname(import.meta.dirname));
 const productjson = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, '../../product.json'), 'utf8'));
-const builtInExtensions = productjson.builtInExtensions as IExtensionDefinition[] || [];
+const builtInExtensions = withOfficialExtensions(productjson.builtInExtensions as IExtensionDefinition[] || []);
 const webBuiltInExtensions = productjson.webBuiltInExtensions as IExtensionDefinition[] || [];
 const controlFilePath = path.join(os.homedir(), '.vscode-oss-dev', 'extensions', 'control.json');
 const ENABLE_LOGGING = !process.env['VSCODE_BUILD_BUILTIN_EXTENSIONS_SILENCE_PLEASE'];
@@ -84,6 +86,8 @@ function getExtensionDownloadStream(extension: IExtensionDefinition) {
 
 	if (extension.vsix) {
 		input = ext.fromVsix(path.join(root, extension.vsix), extension);
+	} else if (extension.downloadUrl) {
+		input = ext.fromMarketplace('', extension);
 	} else if (extension.platformSpecific) {
 		// A platform-specific extension publishes its VSIX assets on a GitHub release using a
 		// specific asset naming convention, so it is always downloaded from GitHub and never falls

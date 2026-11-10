@@ -1676,6 +1676,61 @@ suite('ExtensionsWorkbenchServiceTest', () => {
 		assert.strictEqual(actual[0].local, remoteExtension);
 	});
 
+	test('configurable shipped extensions default to auto-update and preserve explicit opt-out across queries', async () => {
+		instantiationService.stub(IProductService, { ...TestProductService, autoUpdateBuiltinExtensionsByDefault: ['PUB.A'] });
+		const local = aLocalExtension('a', {}, { type: ExtensionType.System, isBuiltin: true, forceAutoUpdate: true });
+		instantiationService.stubPromise(IExtensionManagementService, 'getInstalled', [local]);
+		testObject = await aWorkbenchService();
+		assert.strictEqual(testObject.isAutoUpdateEnabledFor(testObject.local[0]), true);
+
+		await testObject.updateAutoUpdateEnablementFor(testObject.local[0], false);
+		await testObject.queryLocal();
+		assert.deepStrictEqual({ enabled: testObject.isAutoUpdateEnabledFor(testObject.local[0]), disabled: testObject.getDisabledAutoUpdateExtensions(), forcedMetadata: local.forceAutoUpdate, global: testObject.getAutoUpdateValue() }, {
+			enabled: false, disabled: ['pub.a'], forcedMetadata: true, global: 'on'
+		});
+
+		await testObject.updateAutoUpdateEnablementFor(testObject.local[0], true);
+		assert.deepStrictEqual({ enabled: testObject.isAutoUpdateEnabledFor(testObject.local[0]), disabled: testObject.getDisabledAutoUpdateExtensions() }, { enabled: true, disabled: [] });
+	});
+
+	test('configurable shipped extension keeps user opt-out after a marketplace update moves it to the user directory', async () => {
+		instantiationService.stub(IProductService, { ...TestProductService, autoUpdateBuiltinExtensionsByDefault: ['pub.a'] });
+		const updated = aLocalExtension('a', { version: '2.0.0' }, { type: ExtensionType.User, isBuiltin: false, forceAutoUpdate: true });
+		instantiationService.stubPromise(IExtensionManagementService, 'getInstalled', [updated]);
+		testObject = await aWorkbenchService();
+		await testObject.updateAutoUpdateEnablementFor(testObject.local[0], false);
+		await testObject.queryLocal();
+		assert.deepStrictEqual({ builtin: testObject.local[0].isBuiltin, version: testObject.local[0].version, autoUpdate: testObject.isAutoUpdateEnabledFor(testObject.local[0]) }, { builtin: false, version: '2.0.0', autoUpdate: false });
+	});
+
+	test('configurable shipped extensions respect global off and retain per-extension opt-in without changing configuration', async () => {
+		stubConfiguration('off');
+		instantiationService.stub(IProductService, { ...TestProductService, autoUpdateBuiltinExtensionsByDefault: ['pub.a'] });
+		const local = aLocalExtension('a', {}, { type: ExtensionType.System, isBuiltin: true, forceAutoUpdate: true });
+		const mandatory = aLocalExtension('b', {}, { type: ExtensionType.System, isBuiltin: true, forceAutoUpdate: true });
+		instantiationService.stubPromise(IExtensionManagementService, 'getInstalled', [local, mandatory]);
+		testObject = await aWorkbenchService();
+		const optionalExtension = testObject.local.find(extension => extension.identifier.id === 'pub.a')!;
+		const mandatoryExtension = testObject.local.find(extension => extension.identifier.id === 'pub.b')!;
+		assert.deepStrictEqual([testObject.isAutoUpdateEnabledFor(optionalExtension), testObject.isAutoUpdateEnabledFor(mandatoryExtension)], [false, true]);
+
+		await testObject.updateAutoUpdateEnablementFor(optionalExtension, true);
+		assert.deepStrictEqual({ enabled: testObject.isAutoUpdateEnabledFor(optionalExtension), global: testObject.getAutoUpdateValue(), explicit: testObject.getEnabledAutoUpdateExtensions() }, { enabled: true, global: 'off', explicit: ['pub.a'] });
+		await testObject.updateAutoUpdateEnablementFor(optionalExtension, false);
+		assert.deepStrictEqual({ enabled: testObject.isAutoUpdateEnabledFor(optionalExtension), mandatory: testObject.isAutoUpdateEnabledFor(mandatoryExtension), global: testObject.getAutoUpdateValue() }, { enabled: false, mandatory: true, global: 'off' });
+	});
+
+	test('configurable shipped extensions honor pinned versions and extension disablement', async () => {
+		instantiationService.stub(IProductService, { ...TestProductService, autoUpdateBuiltinExtensionsByDefault: ['pub.a', 'pub.b'] });
+		const pinned = aLocalExtension('a', {}, { type: ExtensionType.System, isBuiltin: true, forceAutoUpdate: true, pinned: true });
+		const disabled = aLocalExtension('b', {}, { type: ExtensionType.System, isBuiltin: true, forceAutoUpdate: true });
+		instantiationService.stubPromise(IExtensionManagementService, 'getInstalled', [pinned, disabled]);
+		testObject = await aWorkbenchService();
+		await instantiationService.get(IWorkbenchExtensionEnablementService).setEnablement([disabled], EnablementState.DisabledGlobally);
+		await testObject.queryLocal();
+		assert.deepStrictEqual(testObject.local.map(extension => testObject.isAutoUpdateEnabledFor(extension)), [false, false]);
+	});
+
 	test('Test disable autoupdate for extension when auto update is enabled for all', async () => {
 		const extension1 = aLocalExtension('a');
 		const extension2 = aLocalExtension('b');

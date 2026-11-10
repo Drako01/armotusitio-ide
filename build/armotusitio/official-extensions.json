@@ -1,0 +1,53 @@
+{
+	"schemaVersion": 1,
+	"extensions": [
+		{
+			"name": "armotusitio.orquestivo",
+			"version": "0.1.1",
+			"sha256": "60310406a2a852704c2554c45900986e9f51670e834db7f63b52c94cd6e6175f",
+			"downloadUrl": "https://open-vsx.org/api/armotusitio/orquestivo/0.1.1/file/armotusitio.orquestivo-0.1.1.vsix",
+			"repo": "https://github.com/Drako01/orquestivo.git",
+			"license": "MIT"
+		},
+		{
+			"name": "armotusitio.probato-pr",
+			"version": "1.0.1",
+			"sha256": "38e83c43ea5a54a4aa00e3e0529489fdb2c214de9dab66a8a15c318ea09ff873",
+			"downloadUrl": "https://open-vsx.org/api/armotusitio/probato-pr/1.0.1/file/armotusitio.probato-pr-1.0.1.vsix",
+			"repo": "https://github.com/Drako01/probato-pr.git",
+			"license": "MIT"
+		},
+		{
+			"name": "armotusitio.indizivo",
+			"version": "0.3.0",
+			"sha256": "afc190873b0530934e25c7fa583473c1e9d5fe4697b235be044baf2ba15cf28a",
+			"downloadUrl": "https://open-vsx.org/api/armotusitio/indizivo/0.3.0/file/armotusitio.indizivo-0.3.0.vsix",
+			"repo": "",
+			"license": "MIT"
+		},
+		{
+			"name": "armotusitio.saturivo",
+			"version": "0.2.2",
+			"sha256": "0e963acf6701aee4448f403728c7620fb46405128fdceaaf47775d984e77f84f",
+			"downloadUrl": "https://open-vsx.org/api/armotusitio/saturivo/0.2.2/file/armotusitio.saturivo-0.2.2.vsix",
+			"repo": "https://github.com/Drako01/saturivo.git",
+			"license": "MIT"
+		},
+		{
+			"name": "armotusitio.noditrivo",
+			"version": "0.1.1",
+			"sha256": "1d9825de71f655e66585fef777c6be97f6c7955982ff18ac4b18442449c53cb4",
+			"downloadUrl": "https://open-vsx.org/api/armotusitio/noditrivo/0.1.1/file/armotusitio.noditrivo-0.1.1.vsix",
+			"repo": "https://github.com/Drako01/noditrivo.git",
+			"license": "MIT"
+		},
+		{
+			"name": "armotusitio.vestigivo",
+			"version": "0.1.2",
+			"sha256": "0e1997a5efc844406432ae4993f6233814783c0f25675b93552b69656b018519",
+			"downloadUrl": "https://open-vsx.org/api/armotusitio/vestigivo/0.1.2/file/armotusitio.vestigivo-0.1.2.vsix",
+			"repo": "https://github.com/Drako01/vestigivo.git",
+			"license": "MIT"
+		}
+	]
+}
