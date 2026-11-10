@@ -279,3 +279,52 @@ test('shared native Codex overrides are disabled by default and force V1 depth e
 		'--config', 'agents.interrupt_message=true'
 	]);
 });
+
+test('native Codex children require an auditable Git root before launching a provider', async () => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-native-children-unaudited-'));
+	const bin = path.join(root, 'bin');
+	const previousPath = process.env.PATH;
+	try {
+		await installFakeCodex(bin, '#!/usr/bin/env node\nrequire("fs").writeFileSync("provider-started.txt", "yes");\n');
+		process.env.PATH = bin + path.delimiter + (previousPath || '');
+		const draft = { ...base, projectRoot: await fs.realpath(root), nativeSubagents: true };
+		await assert.rejects(executeReviewedAgent(reviewAgentDraft(draft), draft, 10000), /HARNESS_DELEGATION_ISOLATION_UNSUPPORTED/);
+		await assert.rejects(fs.stat(path.join(root, 'provider-started.txt')), { code: 'ENOENT' });
+	} finally {
+		if (previousPath === undefined) { delete process.env.PATH; } else { process.env.PATH = previousPath; }
+		await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+	}
+});
+
+test('native Codex children need structured token usage and unchanged read-only scope to succeed', async () => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-native-children-usage-'));
+	const bin = path.join(root, 'bin');
+	const previousPath = process.env.PATH;
+	try {
+		execFileSync('git', ['init', '-q', root]);
+		await fs.writeFile(path.join(root, 'tracked.txt'), 'unchanged');
+		execFileSync('git', ['-C', root, 'add', 'tracked.txt']);
+		execFileSync('git', ['-C', root, '-c', 'user.email=fixture@example.test', '-c', 'user.name=Fixture', 'commit', '-qm', 'seed']);
+		process.env.PATH = bin + path.delimiter + (previousPath || '');
+		const draft = { ...base, projectRoot: await fs.realpath(root), nativeSubagents: true };
+		const scripted = (usage: boolean): string => [
+			'#!/usr/bin/env node',
+			'process.stdin.resume(); process.stdin.on("end", () => {',
+			'console.log(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "Safe review" } }));',
+			...(usage ? ['console.log(JSON.stringify({ type: "turn.completed", usage: { input_tokens: 10, output_tokens: 2 } }));'] : []),
+			'});'
+		].join('\n');
+		await installFakeCodex(bin, scripted(true));
+		const verified = await (await executeReviewedAgent(reviewAgentDraft(draft), draft, 10000)).outcome;
+		assert.equal(verified.status, 'passed');
+		assert.equal(verified.scopeVerified, true);
+		assert.deepEqual(verified.usage, { inputTokens: 10, outputTokens: 2 });
+		await installFakeCodex(bin, scripted(false));
+		const unmetered = await (await executeReviewedAgent(reviewAgentDraft(draft), draft, 10000)).outcome;
+		assert.equal(unmetered.status, 'failed');
+		assert.equal(unmetered.scopeVerified, true);
+	} finally {
+		if (previousPath === undefined) { delete process.env.PATH; } else { process.env.PATH = previousPath; }
+		await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+	}
+});

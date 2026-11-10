@@ -178,6 +178,11 @@ export async function executeReviewedAgent(review: AgentReview, current: AgentDr
 		if (!['--tools', '--setting-sources', '--strict-mcp-config', '--mcp-config'].every(flag => stdout.includes(flag))) { throw Error('HARNESS_DELEGATION_ISOLATION_UNSUPPORTED'); }
 	}
 	const initialScope = current.readOnly ? await captureAgentScope(canonical) : undefined;
+	// Native child sessions cannot claim read-only isolation if the Git baseline
+	// or the sensitive-file scan is incomplete. Deny before starting Codex.
+	if (current.nativeSubagents && (initialScope?.source !== 'git' || initialScope.unscanned.length !== 0)) {
+		throw Error('HARNESS_DELEGATION_ISOLATION_UNSUPPORTED');
+	}
 	const command = await resolveNativeCommand(invocation.executable, invocation.args, base);
 	const env: NodeJS.ProcessEnv = base;
 	if (command.embeddedNode) { env.ELECTRON_RUN_AS_NODE = '1'; }
@@ -247,6 +252,12 @@ export async function executeReviewedAgent(review: AgentReview, current: AgentDr
 						// Fail closed: a reader that cannot be checked is never reported as successful.
 						status = 'failed';
 					}
+				}
+				// A parent with native child threads needs an auditable scope and
+				// provider usage to report success; parent usage alone is not a
+				// per-child cost receipt (strict budgets remain disabled).
+				if (current.nativeSubagents && (!scopeVerified || !!scopeUnscanned?.length || !parsed.structured || !parsed.usage)) {
+					status = 'failed';
 				}
 				resolve({
 					status, exitCode, durationMs: Date.now() - started, truncated,

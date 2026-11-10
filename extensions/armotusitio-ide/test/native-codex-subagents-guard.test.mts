@@ -5,6 +5,9 @@
  *--------------------------------------------------------------------------------------------*/
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { CodexAdapter } from '../src/runtime/codex-adapter.ts';
 import type { AdapterHost, SessionOpenOptions } from '../src/runtime/contracts.ts';
 
@@ -26,4 +29,14 @@ test('native Codex subagents never open with writer, MCP, web or global full-acc
 	}
 	const unrestricted = new CodexAdapter({ fullAccess: () => true });
 	await assert.rejects(unrestricted.open(base, host), /RUNTIME_SUBAGENTS_UNSAFE/);
+});
+
+test('native Codex child session refuses an unauditable root without starting a CLI', async () => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-native-child-app-server-'));
+	try {
+		await assert.rejects(
+			new CodexAdapter().open({ ...base, identity: { ...base.identity, root, worktree: root } }, host),
+			/HARNESS_DELEGATION_ISOLATION_UNSUPPORTED/
+		);
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });

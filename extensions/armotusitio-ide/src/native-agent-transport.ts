@@ -154,9 +154,14 @@ export class NativeChatTransport {
 	/** `freshText`: the full input, used instead of a follow-up `text` when the provider had to start a new session. */
 	async execute(request: { root: string; provider: NativeProvider; conversationId: string; role: SessionRole; text: string; freshText?: string; inputRef?: string; images?: readonly ChatImage[]; durationMs: number }, hooks: NativeTurnHooks): Promise<AgentExecution> {
 		const { root, role } = request;
+		const nativeChildren = request.provider === 'codex' && role === 'conversation' && !this.deps.webSearch(root)
+			&& this.deps.codexReadOnlySubagents?.(root) === true;
 		const session = await this.session(root, request.provider, request.conversationId);
 		const redact = (text: string): string => this.deps.redact ? this.deps.redact(redactSecrets(text)) : redactSecrets(text);
 		const scope = role === 'conversation' ? await captureAgentScope(root) : undefined;
+		if (nativeChildren && (scope?.source !== 'git' || scope.unscanned.length !== 0)) {
+			throw Error('HARNESS_DELEGATION_ISOLATION_UNSUPPORTED');
+		}
 		const controller = new AbortController();
 		let timedOut = false;
 		const timer = setTimeout(() => { timedOut = true; controller.abort(); }, request.durationMs);
@@ -176,7 +181,9 @@ export class NativeChatTransport {
 						const after = await captureAgentScope(root);
 						const violation = scopeChanged(scope, after);
 						const unscanned = [...new Set([...scope.unscanned, ...after.unscanned])].sort();
-						return { ...outcome, ...(violation ? { status: 'failed' as const } : {}), scopeViolation: violation, scopeVerified: scope.source === 'git' && after.source === 'git', ...(unscanned.length ? { scopeUnscanned: unscanned } : {}) };
+						const verified = scope.source === 'git' && after.source === 'git';
+						const blocked = nativeChildren && (!verified || !!unscanned.length || !outcome.usage);
+						return { ...outcome, ...((violation || blocked) ? { status: 'failed' as const } : {}), scopeViolation: violation, scopeVerified: verified, ...(unscanned.length ? { scopeUnscanned: unscanned } : {}) };
 					} catch {
 						return { ...outcome, status: 'failed' };
 					}

@@ -13,6 +13,7 @@ import { promisify } from 'node:util';
 import { resolveNativeCommand } from '../native-runtime.ts';
 import { validateChatImages } from '../native-chat-images.ts';
 import { readonlyCodexSubagentOverrides } from '../native-codex-subagents.ts';
+import { captureAgentScope } from '../native-agent-scope.ts';
 import {
 	CODEX_PROTOCOL_VERSION,
 	type AskForApproval, type CommandExecutionRequestApprovalParams, type CommandExecutionRequestApprovalResponse, type FileChangeRequestApprovalParams,
@@ -93,6 +94,14 @@ export class CodexAdapter implements AgentAdapter {
 			'-c', 'mcp_servers.ats-runner.default_tools_approval_mode="approve"', '-c', 'mcp_servers.ats-runner.tool_timeout_sec=1800'] : [];
 		if (options.nativeSubagents && (options.role !== 'conversation' || options.toolServer || options.webSearch || this.options.fullAccess?.())) {
 			throw new RuntimeError('RUNTIME_SUBAGENTS_UNSAFE');
+		}
+		if (options.nativeSubagents) {
+			// Do not start any provider subprocess if read-only scope cannot be
+			// attested locally. Native sandboxing remains the primary boundary.
+			const scope = await captureAgentScope(options.identity.root).catch(() => undefined);
+			if (scope?.source !== 'git' || scope.unscanned.length !== 0) {
+				throw new RuntimeError('HARNESS_DELEGATION_ISOLATION_UNSUPPORTED');
+			}
 		}
 		const search = options.webSearch ? ['-c', 'tools.web_search=true'] : [];
 		const child = await startProviderProcess('codex', [...readonlyCodexSubagentOverrides(options.nativeSubagents === true), 'app-server', ...mcp, ...search], options.identity.root, options.env);
