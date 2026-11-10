@@ -99,7 +99,9 @@ export async function withLegacySseMcp<T>(
 				if ((typeof value.id !== 'number' && typeof value.id !== 'string') || ++serverRequests > 8) {
 					throw Error('HARNESS_MCP_SERVER_REQUEST_DENIED');
 				}
-				void post({ jsonrpc: '2.0', id: value.id, error: { code: -32601, message: 'Method not found' } }, options.timeoutMs)
+				void post(value.method === 'ping'
+					? { jsonrpc: '2.0', id: value.id, result: {} }
+					: { jsonrpc: '2.0', id: value.id, error: { code: -32601, message: 'Method not found' } }, options.timeoutMs)
 					.catch(() => fail(Error('HARNESS_MCP_SERVER_REQUEST_DENIED')));
 			}
 			return;
