@@ -42,10 +42,12 @@ try {
 		if (bytes.subarray(0, 5).toString('ascii') !== '%PDF-' || typeof request.pdfModule !== 'string' || typeof request.pdfWorker !== 'string') {
 			throw Error('HARNESS_PDF_INVALID');
 		}
+		// PDF.js 4.7 has a Node text-only legacy build; v5 imports native canvas
+		// polyfills even before getTextContent, which fails on clean CI machines.
 		const pdfjs = await import(pathToFileURL(request.pdfModule).href);
 		pdfjs.GlobalWorkerOptions.workerSrc = pathToFileURL(request.pdfWorker).href;
 		const loading = pdfjs.getDocument({
-			data: new Uint8Array(bytes), isEvalSupported: false, useWasm: false,
+			data: new Uint8Array(bytes), isEvalSupported: false, enableScripting: false, useWasm: false,
 			disableFontFace: true, useSystemFonts: false, isOffscreenCanvasSupported: false,
 			isImageDecoderSupported: false, maxImageSize: 0, useWorkerFetch: false,
 			disableRange: true, stopAtErrors: true, disableAutoFetch: true, disableStream: true,

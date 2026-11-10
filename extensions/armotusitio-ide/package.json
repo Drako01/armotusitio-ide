@@ -822,6 +822,6 @@
 		}
 	},
 	"dependencies": {
-		"pdfjs-dist": "5.4.296"
+		"pdfjs-dist": "4.7.76"
 	}
 }

@@ -93,8 +93,8 @@ test('legacy SSE rejects server-originated tool and roots requests without grant
 	try {
 		const tools = await f.bridge.tools();
 		assert.equal(tools.length, 1);
-		// The handler emits a server-initiated roots/list request immediately after tools/list.
-		for (let i = 0; i < 20 && f.denials() === 0; i++) { await new Promise(resolve => setTimeout(resolve, 10)); }
+		// The handler emits roots/list in the same SSE batch as the tools/list response.
+		// The client must send the explicit denial before closing the session.
 		assert.equal(f.denials(), 1);
 		assert.equal(f.calls(), 0);
 		assert.equal(f.approvals(), 0);

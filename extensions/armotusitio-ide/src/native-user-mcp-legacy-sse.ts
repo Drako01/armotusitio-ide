@@ -55,6 +55,8 @@ export async function withLegacySseMcp<T>(
 	const pending = new Map<number, Reply>();
 	let nextId = 0;
 	let serverRequests = 0;
+	// Await explicit denials before disposing the SSE session. No privileges are delegated.
+	const serverReplies = new Set<Promise<void>>();
 	let settled = false;
 	let failure: Error | undefined;
 	const fail = (error: Error): void => {
@@ -99,10 +101,13 @@ export async function withLegacySseMcp<T>(
 				if ((typeof value.id !== 'number' && typeof value.id !== 'string') || ++serverRequests > 8) {
 					throw Error('HARNESS_MCP_SERVER_REQUEST_DENIED');
 				}
-				void post(value.method === 'ping'
+				let acknowledgment: Promise<void>;
+				acknowledgment = post(value.method === 'ping'
 					? { jsonrpc: '2.0', id: value.id, result: {} }
 					: { jsonrpc: '2.0', id: value.id, error: { code: -32601, message: 'Method not found' } }, options.timeoutMs)
-					.catch(() => fail(Error('HARNESS_MCP_SERVER_REQUEST_DENIED')));
+					.catch(() => fail(Error('HARNESS_MCP_SERVER_REQUEST_DENIED')))
+					.finally(() => serverReplies.delete(acknowledgment));
+				serverReplies.add(acknowledgment);
 			}
 			return;
 		}
@@ -185,6 +190,9 @@ export async function withLegacySseMcp<T>(
 		await post({ jsonrpc: '2.0', method: 'notifications/initialized', params: {} }, options.timeoutMs);
 		return await work({ request });
 	} finally {
+		// A tools/list result may be followed by a server request in the same SSE frame.
+		// Give its bounded denial POST time to settle before closing the stream.
+		await Promise.allSettled([...serverReplies]);
 		lifetime.abort();
 		signal.removeEventListener('abort', abort);
 		fail(Error('HARNESS_MCP_CANCELLED'));
