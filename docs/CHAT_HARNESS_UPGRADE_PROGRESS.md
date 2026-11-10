@@ -190,3 +190,15 @@
 - Optional browser/cloud: NOT ENABLED; require separate authority and isolation.
 - CI must be checked on the exact post-integration SHA, not earlier green candidates.
 - PR remains Draft; no merge, tags or release.
+
+
+### Session handoff — 2026-11-10 (after 51 commits)
+
+- Current authoritative continuation document: [PR86_SESSION_HANDOFF_2026-11-10.md](PR86_SESSION_HANDOFF_2026-11-10.md). The earlier phase checklist is historical evidence, **not proof that later tasks are closed**.
+- Reference head before this handoff: `10ce38ad0a83dbdcb0372afb828ec7e215d53484` (51 PR commits). CI run [42902553247](https://github.com/Drako01/armotusitio-ide/actions/runs/42902553247): Linux FAIL, Windows FAIL, ATS gate FAIL.
+- Reproduced blockers: `native-chat-attachments.test.mts` PDF returned `HARNESS_DOCUMENT_INVALID`; `native-user-mcp-legacy-sse.test.mts` server-initiated roots/list denial counted 0 instead of 1. Fix and rerun.
+- IMPLEMENTED BUT NOT ACCEPTED: media clipboard/drop, isolated PDF/notebook extraction, opt-in legacy SSE, HTTP server-message handling, Codex draft option for read-only child threads.
+- REMAINING IMPLEMENTATION: complete native Codex child execution permissions, budget/cancellation, safe per-turn/per-tool checkpoints and granular restore, README/screenshots and full integration.
+- REMAINING EVIDENCE: complete CI on final SHA, precommit/VSIX, installed Windows/a11y/six extensions; real-provider quota authorization and cargo availability are explicit external blockers.
+- Existing local stash remains the user's backup; this PR implementation was rebuilt remotely. Preserve author Alejandro Daniel Di Stefano — ArmoTuSitio.com.ar and upstream notices.
+- Do not mark the PR ready to merge, undraft, merge or release until complete acceptance evidence exists.
