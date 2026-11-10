@@ -42,7 +42,17 @@ export async function withLegacySseMcp<T>(
 	const signal = AbortSignal.any([options.signal, lifetime.signal]);
 	const openHeaders = new Headers(headers);
 	openHeaders.set('Accept', 'text/event-stream');
-	const opening = await fetch(source, { method: 'GET', headers: openHeaders, redirect: 'error', credentials: 'omit', signal });
+	// The stream may remain open after headers, but obtaining headers must be bounded.
+	const connect = new AbortController();
+	const connectTimer = setTimeout(() => connect.abort(), options.timeoutMs);
+	let opening: Response;
+	try {
+		opening = await fetch(source, { method: 'GET', headers: openHeaders, redirect: 'error', credentials: 'omit',
+			signal: AbortSignal.any([signal, connect.signal]) });
+	} catch (error) {
+		if (connect.signal.aborted) { throw Error('HARNESS_MCP_TIMEOUT'); }
+		throw error;
+	} finally { clearTimeout(connectTimer); }
 	if (!opening.ok || opening.headers.get('content-type')?.split(';')[0].trim().toLowerCase() !== 'text/event-stream' || !opening.body) {
 		await opening.body?.cancel().catch(() => undefined);
 		throw Error('HARNESS_MCP_PROTOCOL');
@@ -196,8 +206,17 @@ export async function withLegacySseMcp<T>(
 		lifetime.abort();
 		signal.removeEventListener('abort', abort);
 		fail(Error('HARNESS_MCP_CANCELLED'));
-		await reader.cancel().catch(() => undefined);
-		await reading;
-		reader.releaseLock();
+		// Node fetch may hold SSE cancellation until an idle peer closes (observed 300s).
+		// Abort is authoritative; cleanup is bounded and cannot hold the UI/CI hostage.
+		let cleanupTimer: ReturnType<typeof setTimeout> | undefined;
+		try {
+			await Promise.race([
+				Promise.allSettled([reader.cancel(), reading]),
+				new Promise<void>(resolve => { cleanupTimer = setTimeout(resolve, 750); })
+			]);
+		} finally {
+			if (cleanupTimer) { clearTimeout(cleanupTimer); }
+			try { reader.releaseLock(); } catch { /* Reader may still be unwinding an aborted read. */ }
+		}
 	}
 }

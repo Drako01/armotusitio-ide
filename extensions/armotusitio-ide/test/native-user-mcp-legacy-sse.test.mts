@@ -111,9 +111,11 @@ test('legacy SSE refuses cross-origin endpoint events before sending bearer cred
 });
 
 test('legacy SSE discovery cancels after deadline with no server tools dispatched', async () => {
+	const started = Date.now();
 	const f = await legacyFixture('no-endpoint');
 	try {
 		assert.deepEqual(await f.bridge.tools(), []);
 		assert.equal(f.calls(), 0);
+		assert.ok(Date.now() - started < 10_000, 'SSE timeout must not wait for remote stream idle timeout');
 	} finally { await f.close(); }
 });

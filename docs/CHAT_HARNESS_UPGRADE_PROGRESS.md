@@ -241,3 +241,10 @@
 - **Seis fallos actuales, reproducidos en ambos runners:** (1) test Codex esperaba flags anteriores sin `agents.max_depth=1`; (2-5) cuatro archivos de test abortan al importar `native-chat-tool-checkpoints.ts` porque Node strip-only no admite constructor parameter properties; (6) falta guía para `HARNESS_DELEGATION_BUDGET_UNVERIFIED` en catálogo de errores.
 - **Corrección de esta ronda:** reemplazar parameter properties por constructor explícito; actualizar aserción de flags Codex sin relajar límites; agregar guía de recuperación para presupuesto y códigos de checkpoint. **Resultado posterior: PENDIENTE de CI del nuevo SHA**.
 - **Aceptación aún pendiente:** CI completo, VSIX instalado, accesibilidad, seis extensiones, capturas reales, aislamiento/cancelación E2E y proveedores autenticados (sin autorización de cuota). PR sigue Draft; sin merge ni release.
+
+
+### Optimización del timeout MCP legacy SSE — 2026-11-10
+
+- En [run 42910325497](https://github.com/Drako01/armotusitio-ide/actions/runs/42910325497), el test negativo de SSE sin endpoint tomó aproximadamente **303.7 segundos** por runner, pese a una ventana de descubrimiento de 50 ms. El resultado era PASS pero la limpieza de streams bloqueaba el CI.
+- Se acotó la obtención de headers y el cierre del reader SSE para que los peers que nunca terminan un stream no bloqueen el test ni el IDE durante minutos; se mantiene el aborto de la sesión y la denegación de permisos.
+- Se agregó aserción explícita de tiempo al test de timeout. **Pendiente de validar** en Linux/Windows; no se declara PASS hasta el nuevo workflow.
