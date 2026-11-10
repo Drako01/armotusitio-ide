@@ -6,6 +6,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
+import { constants } from 'node:fs';
 import { gitOutput } from './native-git.ts';
 
 const MAX_ENTRIES = 5000;
@@ -90,17 +91,49 @@ export function diffWorkingTree(before: WorkingTreeSnapshot, after: WorkingTreeS
  * ones come back from HEAD. A file that already had the user's changes before the run is never touched, and neither is
  * one the user edited after it (its content no longer matches what the run left). Reads git; never runs a git mutation.
  */
+/** Guard stored diff paths and every ancestor: a restored record is never a filesystem authority. */
+async function safeTarget(root: string, relative: string): Promise<string | undefined> {
+	if (!relative || relative.includes('\\') || relative.includes('\\0') || path.isAbsolute(relative)
+		|| relative.split('/').some(part => !part || part === '.' || part === '..' || part === '.git')
+		|| /^[A-Za-z]:/.test(relative) || /[:<>|]/.test(relative)) { return undefined; }
+	const canonical = await fs.realpath(root).catch(() => undefined);
+	if (!canonical || canonical !== path.resolve(root)) { return undefined; }
+	const target = path.resolve(canonical, relative);
+	if (path.relative(canonical, target).startsWith('..')) { return undefined; }
+	let current = canonical;
+	for (const component of relative.split('/').slice(0, -1)) {
+		current = path.join(current, component);
+		const stat = await fs.lstat(current).catch(() => undefined);
+		if (stat && (!stat.isDirectory() || stat.isSymbolicLink())) { return undefined; }
+	}
+	const stat = await fs.lstat(target).catch(() => undefined);
+	return stat && (!stat.isFile() || stat.isSymbolicLink()) ? undefined : target;
+}
+
+/** Revert only exact, owned output fingerprints. Missing hashes and unsafe paths are never permission to write. */
 export async function discardRunChanges(root: string, summary: RunDiffSummary, after: Map<string, string>): Promise<{ discarded: string[]; skipped: string[] }> {
 	const discarded: string[] = [], skipped: string[] = [];
 	for (const file of summary.files) {
-		const target = path.join(root, file.path);
-		if (file.preexisting || (after.has(file.path) && after.get(file.path) !== await fingerprint(target))) { skipped.push(file.path); continue; }
+		const target = await safeTarget(root, file.path);
+		const expected = after.get(file.path);
+		// Old reports without fingerprints may be displayed, but never restored.
+		if (!target || file.preexisting || !expected || expected.startsWith('large:') || expected.startsWith('link:') || expected === 'special'
+			|| expected !== await fingerprint(target)) { skipped.push(file.path); continue; }
 		if (file.change === 'added') { await fs.rm(target, { force: true }); }
 		else {
 			const committed = await gitOutput(root, ['show', 'HEAD:' + file.path]).catch(() => undefined);
 			if (committed === undefined) { skipped.push(file.path); continue; }
 			await fs.mkdir(path.dirname(target), { recursive: true });
-			await fs.writeFile(target, committed);
+			// Recheck after filesystem operations, with NOFOLLOW so a late symlink cannot be opened.
+			if (await fingerprint(target) !== expected) { skipped.push(file.path); continue; }
+			const handle = await fs.open(target, constants.O_WRONLY | constants.O_CREAT | (constants.O_NOFOLLOW ?? 0), 0o600).catch(() => undefined);
+			if (!handle) { skipped.push(file.path); continue; }
+			try {
+				const stat = await handle.stat();
+				if (!stat.isFile() || !await safeTarget(root, file.path)) { skipped.push(file.path); continue; }
+				await handle.truncate(0);
+				await handle.writeFile(committed);
+			} finally { await handle.close(); }
 		}
 		discarded.push(file.path);
 	}
