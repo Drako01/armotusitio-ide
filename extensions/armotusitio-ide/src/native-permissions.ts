@@ -10,6 +10,8 @@
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { withFileLock } from './native-chat.ts';
+import { safeStorage } from './native-worktree-checkpoint.ts';
 import type { NoRememberReason, PermissionDecision, PermissionPreset, PermissionRequest, PermissionSource, PermissionVerdict } from './native-permissions-types.ts';
 
 export interface PermissionSet {
@@ -231,10 +233,14 @@ export async function loadPermissions(root: string, home: string = os.homedir(),
 /** The user file as a JSON object (`{ version: 1 }` when missing); anything unsafe or unparsable throws `PERMISSIONS_FILE_UNSAFE`. */
 async function readUserFile(file: string): Promise<Record<string, unknown>> {
 	try {
+		for (const target of [path.dirname(file), file]) {
+			if ((await fs.lstat(target)).isSymbolicLink()) { throw Error('PERMISSIONS_FILE_UNSAFE'); }
+		}
 		const stat = await fs.lstat(file);
 		if (!stat.isFile() || stat.size > MAX_FILE_BYTES) { throw Error('PERMISSIONS_FILE_UNSAFE'); }
 		const parsed: unknown = JSON.parse(await fs.readFile(file, 'utf8'));
 		if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) { throw Error('PERMISSIONS_FILE_UNSAFE'); }
+		if (!parseFile(JSON.stringify(parsed), true, file, defaultTranslator, [])) { throw Error('PERMISSIONS_FILE_UNSAFE'); }
 		return parsed as Record<string, unknown>;
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code === 'ENOENT') { return { version: 1 }; }
@@ -247,26 +253,29 @@ export async function addUserRule(rule: string, decision: PermissionDecision, ho
 	if (!parseRule(rule) || !DECISIONS.includes(decision)) { throw Error('PERMISSIONS_INVALID_RULE'); }
 	const directory = path.join(home, '.armotusitio');
 	const file = path.join(directory, 'permissions.json');
-	const data = await readUserFile(file);
-	// With a project, the rule goes to that project's section of the user file and applies nowhere else.
-	let section: Record<string, unknown> = data;
-	if (projectRoot) {
-		const projects = data.projects ?? {};
-		if (!projects || typeof projects !== 'object' || Array.isArray(projects)) { throw Error('PERMISSIONS_FILE_UNSAFE'); }
-		const key = projectKey(projectRoot);
-		const existing = (projects as Record<string, unknown>)[key] ?? {};
-		if (!existing || typeof existing !== 'object' || Array.isArray(existing)) { throw Error('PERMISSIONS_FILE_UNSAFE'); }
-		section = existing as Record<string, unknown>;
-		data.projects = { ...(projects as Record<string, unknown>), [key]: section };
-	}
-	const current = section[decision];
-	if (current !== undefined && !Array.isArray(current)) { throw Error('PERMISSIONS_FILE_UNSAFE'); }
-	const list = (current as unknown[] | undefined) ?? [];
-	if (list.includes(rule)) { return; }
-	const total = DECISIONS.reduce((sum, key) => sum + (Array.isArray(section[key]) ? (section[key] as unknown[]).length : 0), 0);
-	if (total + 1 > MAX_RULES) { throw Error('PERMISSIONS_TOO_MANY_RULES'); }
-	section[decision] = [...list, rule];
-	await writeUserFile(directory, file, { ...data, version: 1 });
+	await safeStorage(directory);
+	await withFileLock(file + '.lock', async () => {
+		const data = await readUserFile(file);
+		// With a project, the rule goes to that project's section of the user file and applies nowhere else.
+		let section: Record<string, unknown> = data;
+		if (projectRoot) {
+			const projects = data.projects ?? {};
+			if (!projects || typeof projects !== 'object' || Array.isArray(projects)) { throw Error('PERMISSIONS_FILE_UNSAFE'); }
+			const key = projectKey(projectRoot);
+			const existing = (projects as Record<string, unknown>)[key] ?? {};
+			if (!existing || typeof existing !== 'object' || Array.isArray(existing)) { throw Error('PERMISSIONS_FILE_UNSAFE'); }
+			section = existing as Record<string, unknown>;
+			data.projects = { ...(projects as Record<string, unknown>), [key]: section };
+		}
+		const current = section[decision];
+		if (current !== undefined && !Array.isArray(current)) { throw Error('PERMISSIONS_FILE_UNSAFE'); }
+		const list = (current as unknown[] | undefined) ?? [];
+		if (list.includes(rule)) { return; }
+		const total = DECISIONS.reduce((sum, key) => sum + (Array.isArray(section[key]) ? (section[key] as unknown[]).length : 0), 0);
+		if (total + 1 > MAX_RULES) { throw Error('PERMISSIONS_TOO_MANY_RULES'); }
+		section[decision] = [...list, rule];
+		await writeUserFile(directory, file, { ...data, version: 1 });
+	});
 }
 
 /** Atomic replace of the user file: a crash leaves either the old or the new content, never a partial one. */
@@ -274,7 +283,9 @@ async function writeUserFile(directory: string, file: string, data: Record<strin
 	await fs.mkdir(directory, { recursive: true });
 	const temporary = file + '.' + process.pid + '.' + Date.now() + '.tmp';
 	try {
-		await fs.writeFile(temporary, JSON.stringify(data, null, 2) + '\n', { encoding: 'utf8', flag: 'wx' });
+		const raw = JSON.stringify(data, null, 2) + '\n';
+		if (Buffer.byteLength(raw) > MAX_FILE_BYTES) { throw Error('PERMISSIONS_FILE_UNSAFE'); }
+		await fs.writeFile(temporary, raw, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
 		await fs.rename(temporary, file);
 	} catch (error) {
 		await fs.rm(temporary, { force: true });
@@ -303,20 +314,23 @@ export async function listUserRules(home: string = os.homedir()): Promise<UserRu
 export async function removeUserRule(rule: string, home: string = os.homedir(), project?: string): Promise<boolean> {
 	const directory = path.join(home, '.armotusitio');
 	const file = path.join(directory, 'permissions.json');
-	const data = await readUserFile(file);
-	const projects = data.projects as Record<string, Record<string, unknown>> | undefined;
-	const sections = [data, ...(project && projects?.[project] ? [projects[project]] : [])];
-	let removed = false;
-	for (const section of sections) {
-		for (const decision of DECISIONS) {
-			const current = section[decision];
-			if (current === undefined) { continue; }
-			if (!Array.isArray(current)) { throw Error('PERMISSIONS_FILE_UNSAFE'); }
-			if (current.includes(rule)) { section[decision] = current.filter(entry => entry !== rule); removed = true; }
+	await safeStorage(directory);
+	return withFileLock(file + '.lock', async () => {
+		const data = await readUserFile(file);
+		const projects = data.projects as Record<string, Record<string, unknown>> | undefined;
+		const sections = [data, ...(project && projects?.[project] ? [projects[project]] : [])];
+		let removed = false;
+		for (const section of sections) {
+			for (const decision of DECISIONS) {
+				const current = section[decision];
+				if (current === undefined) { continue; }
+				if (!Array.isArray(current)) { throw Error('PERMISSIONS_FILE_UNSAFE'); }
+				if (current.includes(rule)) { section[decision] = current.filter(entry => entry !== rule); removed = true; }
+			}
 		}
-	}
-	if (removed) { await writeUserFile(directory, file, data); }
-	return removed;
+		if (removed) { await writeUserFile(directory, file, data); }
+		return removed;
+	});
 }
 
 /** Package managers and launchers that can install dependencies or run another executable: their approvals are per action. */

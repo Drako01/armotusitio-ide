@@ -57,4 +57,19 @@
 - Tests: focused mention/skills suites: 35 PASS, 1 platform SKIP; extension `check`: PASS.
 - Review: range limits, ADS, untrusted data blocks, editor version and skill digest invalidation checked.
 - PARTIAL: no media, folder/diff context or incremental hybrid retrieval yet.
+- Commit: `df4a75f5fcd` (`feat(chat): add editor references and Claude command skills`).
+
+### Permission serialization and private logs
+
+- DONE: read-modify-write of user permissions re-reads under the existing interprocess file lock.
+- DONE: unsafe schema, links and oversize files fail closed; atomic replacement uses mode 0600.
+- DONE: stdout/stderr have independent UTF-8 decoders and bounded streaming redactors before persistence.
+- DONE: observers and agent results receive sanitized records; disk failures report `logError` without changing exit.
+- Files: `native-permissions.ts`, `native-command-runner.ts`, `native-redact.ts` and four test/fixture files.
+- Red: old concurrent grant/revoke fixture failed with `EEXIST` from colliding temporary files.
+- Green: 50 rounds with two real child processes passed without lost grants or resurrected revocations.
+- Tests: permissions suite PASS; runner/policy/jobs/terminal 29 PASS; logs/redactor 6 PASS; focused ESLint PASS.
+- Windows cancellation tests required sandbox escalation for `taskkill` of verified fixture processes.
+- Review: secret fragmentation, ANSI, UTF-8, truncated multiline/PEM EOF and log-close handling checked.
+- Limit: secret redaction is heuristic; private file modes do not establish Windows ACL isolation.
 - Commit: pending local commit; record SHA in the next block.

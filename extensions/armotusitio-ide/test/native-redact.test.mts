@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { redactSecrets } from '../src/native-redact.ts';
+import { redactSecrets, StreamingSecretRedactor } from '../src/native-redact.ts';
 import { samePath } from '../src/native-path.ts';
 
 test('one redactor covers assignments, JSON, bearer tokens and well-known credential shapes', () => {
@@ -44,4 +44,28 @@ test('credentials in URLs, private key blocks and more provider token shapes are
 	'glpat' + '-' + 'a'.repeat(20), 'AIza' + 'a'.repeat(35), 'sk_' + 'live_' + 'a'.repeat(24), 'aws_secret_access_key = ' + dummy, 'https://example.com/a:b/c', 'cut ' + pem('', 'BEGIN') + '\nbody'].join('\n');
 	assert.equal(redactSecrets(input), [url('postgres', 'user', '[redacted]', 'db.host:5432/app'), url('https', 'u', '[redacted]', 'github.com/x/y.git'), '[redacted private key] after',
 		'[redacted]', '[redacted]', '[redacted]', 'aws_secret_access_key = [redacted]', 'https://example.com/a:b/c', 'cut [redacted private key]'].join('\n'));
+});
+
+
+test('streaming redaction handles every split, ANSI, multiline values and bounded suppression', () => {
+	const token = 'ghp_' + 'A'.repeat(36);
+	const input = 'before\n\x1b[31mpassword="private\nmultiline"\x1b[0m\n' + token + '\n-----BEGIN PRIVATE KEY-----\nbody\n-----END PRIVATE KEY-----\nafter \u00e9\n';
+	const expected = redactSecrets(input);
+	assert.equal(redactSecrets('ghp_' + 'A'.repeat(18) + '\x1b[?25l' + 'A'.repeat(18) + '\x1b]0;private-title\x07'), '[redacted]');
+	for (let split = 0; split <= input.length; split++) {
+		const stream = new StreamingSecretRedactor();
+		assert.equal(stream.write(input.slice(0, split)) + stream.write(input.slice(split)) + stream.end(), expected, 'split=' + split);
+	}
+	const oneByte = new StreamingSecretRedactor();
+	assert.equal([...input].map(char => oneByte.write(char)).join('') + oneByte.end(), expected);
+	const oversized = new StreamingSecretRedactor(20);
+	assert.deepEqual([oversized.write('token=' + 'x'.repeat(30)), oversized.write('tail\nafter\n'), oversized.end()], ['[redacted oversized output record; remaining stream suppressed]\n', '', '']);
+	assert.equal(redactSecrets('password="unfinished\nprivate'), 'password="[redacted]"');
+});
+
+
+test('stream EOF never emits an unterminated private key block', () => {
+	const stream = new StreamingSecretRedactor();
+	const before = stream.write('before\n-----BEGIN PRIVATE KEY-----\nprivate-body');
+	assert.deepEqual([before, stream.end()], ['before\n', '[redacted private key]']);
 });

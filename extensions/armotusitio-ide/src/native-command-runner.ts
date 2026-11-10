@@ -10,7 +10,7 @@ import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { StringDecoder } from 'node:string_decoder';
 import { resolveNativeCommand, stopProcess } from './native-runtime.ts';
-import { redactSecrets } from './native-redact.ts';
+import { redactSecrets, StreamingSecretRedactor } from './native-redact.ts';
 import { withNodeRuntime } from './native-toolchain-env.ts';
 
 /** Last part of the output returned to the agent; the full output goes to the log file. */
@@ -66,6 +66,8 @@ export interface CommandResult {
 	output: string;
 	truncated: boolean;
 	logFile: string;
+	/** Persistence failed; process outcome and sanitized output are still available. */
+	logError?: string;
 }
 
 /** An executable named by path (`./gradlew`, `vendor/bin/phpunit`) must be a regular file inside the project. */
@@ -77,7 +79,7 @@ async function projectExecutable(root: string, cwd: string, command: string): Pr
 	return canonical;
 }
 
-export async function runCommand(request: CommandRequest): Promise<CommandResult> {
+export async function runCommand(request: CommandRequest, createLog: (file: string) => fs.WriteStream = file => fs.createWriteStream(file, { flags: 'wx', mode: 0o600 })): Promise<CommandResult> {
 	const started = Date.now();
 	const timeoutSec = Math.min(MAX_COMMAND_TIMEOUT_SEC, Math.max(1, request.timeoutSec ?? DEFAULT_COMMAND_TIMEOUT_SEC));
 	const cwd = path.resolve(request.root, request.cwd);
@@ -94,27 +96,39 @@ export async function runCommand(request: CommandRequest): Promise<CommandResult
 	}
 	await fsp.mkdir(request.logDirectory, { recursive: true });
 	const logFile = path.join(request.logDirectory, new Date(started).toISOString().replace(/[:.]/g, '-') + '-' + randomBytes(3).toString('hex') + '-' + path.basename(request.command).replace(/[^\w.-]/g, '_') + '.log');
-	const log = fs.createWriteStream(logFile, { flags: 'wx', mode: 0o600 });
+	const log = createLog(logFile);
 	// A full disk or a vanished folder must cost the log, never the run: the output tail still reaches the agent.
-	log.on('error', () => undefined);
+	let logError: string | undefined;
+	log.on('error', (error: NodeJS.ErrnoException) => { logError = error.code ?? 'LOG_WRITE_FAILED'; });
 	const env = { ...toolchainEnv, ...(resolved.embeddedNode ? { ELECTRON_RUN_AS_NODE: '1' } : {}) };
 	// A project Harness resolves `--cwd` against its own root, which it may take from the process directory (for example
 	// `Path.cwd()` in a Python `ide-run`): starting it inside the subfolder made it look for `<cwd>/<cwd>`.
 	const processCwd = request.delegateEntry ? request.root : realCwd;
 	return new Promise(resolve => {
 		const child = spawn(resolved.executable, resolved.args, { cwd: processCwd, env, shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: [request.interactive ? 'pipe' : 'ignore', 'pipe', 'pipe'] });
-		let tail = '', logged = 0, truncated = false, timedOut = false, cancelled = false, done = false, lastOutputAt = Date.now(), prompt: string | undefined;
-		const decoder = new StringDecoder('utf8');
-		const collect = (chunk: Buffer): void => {
-			if (request.interactive) { request.interactive.onOutput(chunk.toString('utf8')); }
-			request.observe?.(chunk.toString('utf8'));
-			if (logged < MAX_LOG_BYTES) { log.write(chunk.subarray(0, MAX_LOG_BYTES - logged)); logged += chunk.length; }
-			tail += decoder.write(chunk);
+		let tail = '', outputTail = '', logged = 0, truncated = false, timedOut = false, cancelled = false, done = false, lastOutputAt = Date.now(), prompt: string | undefined;
+		const streams = [0, 1].map(() => ({ decoder: new StringDecoder('utf8'), redactor: new StreamingSecretRedactor() }));
+		const persist = (text: string): void => {
+			if (!text) { return; }
+			request.observe?.(text);
+			outputTail += text;
+			if (Buffer.byteLength(outputTail) > RETURNED_OUTPUT_BYTES) { outputTail = Buffer.from(outputTail).subarray(-RETURNED_OUTPUT_BYTES).toString('utf8'); truncated = true; }
+			if (logged < MAX_LOG_BYTES && !logError) {
+				const bytes = Buffer.from(text, 'utf8').subarray(0, MAX_LOG_BYTES - logged);
+				log.write(bytes); logged += bytes.length;
+			}
+		};
+		const collect = (chunk: Buffer, stream: typeof streams[number]): void => {
+			const text = stream.decoder.write(chunk);
+			// A person attached to stdin needs prompts immediately; observers and disk receive only redacted records.
+			request.interactive?.onOutput(text);
+			persist(stream.redactor.write(text));
+			tail += text;
 			lastOutputAt = Date.now();
 			if (tail.length > RETURNED_OUTPUT_BYTES) { tail = tail.slice(-RETURNED_OUTPUT_BYTES); truncated = true; }
 		};
-		child.stdout?.on('data', collect);
-		child.stderr?.on('data', collect);
+		child.stdout?.on('data', (chunk: Buffer) => collect(chunk, streams[0]));
+		child.stderr?.on('data', (chunk: Buffer) => collect(chunk, streams[1]));
 		const timer = setTimeout(() => { timedOut = true; stopProcess(child); }, timeoutSec * 1000);
 		timer.unref();
 		const stopInput = request.interactive?.onInput(data => { child.stdin?.write(data, () => undefined); });
@@ -132,12 +146,15 @@ export async function runCommand(request: CommandRequest): Promise<CommandResult
 		const finish = (exitCode: number | null): void => {
 			if (done) { return; }
 			done = true; clearTimeout(timer); clearInterval(watcher); stopInput?.(); request.signal?.removeEventListener('abort', onAbort);
-			log.end();
-			resolve({ exitCode, timedOut, ...(prompt ? { prompt } : {}), cancelled, durationMs: Date.now() - started, output: redactSecrets(tail + decoder.end()), truncated, logFile });
+			for (const stream of streams) { persist(stream.redactor.write(stream.decoder.end()) + stream.redactor.end()); }
+			const complete = (): void => { resolve({ exitCode, timedOut, ...(prompt ? { prompt } : {}), cancelled, durationMs: Date.now() - started, output: outputTail, truncated, logFile, ...(logError ? { logError } : {}) }); };
+			// Resolve only after bytes have reached the stream, so callers can inspect the saved log immediately.
+			if (log.destroyed) { complete(); } else { log.once('close', complete); log.end(); }
 		};
 		child.once('error', (error: NodeJS.ErrnoException) => {
-			tail += '\n[ats-runner] could not start ' + path.basename(resolved.executable) + ' (' + (error.code ?? 'UNKNOWN') + '). ' +
+			const failure = '\n[ats-runner] could not start ' + path.basename(resolved.executable) + ' (' + (error.code ?? 'UNKNOWN') + '). ' +
 				(error.code === 'ENOENT' ? 'The executable or working directory was not found.' : 'The process failed to start; this does not establish that the tool is missing.');
+			persist(redactSecrets(failure));
 			finish(null);
 		});
 		child.once('close', code => finish(code));

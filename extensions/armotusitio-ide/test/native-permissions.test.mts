@@ -7,6 +7,8 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { fork, type ChildProcess } from 'node:child_process';
+import { once } from 'node:events';
 import { addUserRule, commandName, dependencyDecision, globMatches, loadPermissions, listUserRules, projectKey, removeUserRule, suggestRule, whyNotRemembered } from '../src/native-permissions.ts';
 import type { PermissionPreset, PermissionRequest } from '../src/native-permissions-types.ts';
 
@@ -226,4 +228,43 @@ test('a project can still force a question over a remembered git rule, and a rev
 			empty: []
 		});
 	} finally { await space.cleanup(); }
+});
+
+
+test('simultaneous grants and revocation preserve every update without resurrecting a grant', async () => {
+	const space = await workspace({ user: { version: 1, allow: ['git_push'] } });
+	try {
+		await Promise.all([
+			removeUserRule('git_push', space.home),
+			...Array.from({ length: 20 }, (_, index) => addUserRule('run:tool' + index, 'allow', space.home))
+		]);
+		const listed = (await listUserRules(space.home)).map(entry => entry.rule).sort();
+		assert.deepEqual(listed, Array.from({ length: 20 }, (_, index) => 'run:tool' + index).sort());
+	} finally { await space.cleanup(); }
+});
+
+
+test('fifty rounds of two processes adding and revoking never lose updates or resurrect revoked grants', { timeout: 60_000 }, async () => {
+	const space = await workspace();
+	const children: ChildProcess[] = [];
+	try {
+		for (const role of ['revoke', 'grant']) {
+			const child = fork(path.join(import.meta.dirname, 'native-permissions-child.mts'), [space.home, role], { execArgv: ['--no-warnings'], stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
+			children.push(child);
+			await once(child, 'message');
+		}
+		const expected: string[] = [];
+		for (let round = 0; round < 50; round++) {
+			await addUserRule('run:revoked' + round, 'allow', space.home);
+			const responses = children.map(child => once(child, 'message').then(([message]) => message));
+			for (const child of children) { child.send(round); }
+			assert.deepEqual(await Promise.all(responses), [{ round }, { round }]);
+			expected.push('run:revoke' + round, 'run:grant' + round);
+			assert.deepEqual((await listUserRules(space.home)).map(entry => entry.rule).sort(), expected.sort());
+			assert.equal((await loadPermissions(space.root, space.home, undefined, { preset: 'readonly' })).decide(run('revoked' + round)).decision, 'deny');
+		}
+	} finally {
+		await Promise.all(children.map(async child => { if (child.exitCode !== null || child.signalCode !== null) { return; } const exited = once(child, 'exit'); child.kill(); await exited; }));
+		await space.cleanup();
+	}
 });
