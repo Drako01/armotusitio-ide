@@ -11,6 +11,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
+import { constants } from 'node:fs';
 import { gitOutput } from './native-git.ts';
 import { captureWorkingTree, diffWorkingTree, type WorkingTreeSnapshot } from './native-run-diff.ts';
 import { safeStorage, writeDurable } from './native-worktree-checkpoint.ts';
@@ -68,8 +69,13 @@ async function bytesOf(root: string, relative: string): Promise<Buffer | null | 
 	const target = await safeTarget(root, relative);
 	if (!target) { return undefined; }
 	try {
-		const bytes = await fs.readFile(target);
-		return bytes.length > MAX_FILE_BYTES ? undefined : bytes;
+		const handle = await fs.open(target, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+		try {
+			const stat = await handle.stat();
+			if (!stat.isFile() || stat.size > MAX_FILE_BYTES) { return undefined; }
+			const bytes = await handle.readFile();
+			return bytes.length > MAX_FILE_BYTES ? undefined : bytes;
+		} finally { await handle.close(); }
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code === 'ENOENT') { return null; }
 		return undefined;
@@ -186,6 +192,8 @@ export class ChatToolCheckpointRecorder {
 		this.queue = this.queue.then(() => this.record(step)).catch(() => { this.ambiguous = true; });
 	}
 	private async record(step: ChatStep): Promise<void> {
+		// A later tool that started before this observation ran makes ownership uncertain.
+		if (this.active.size) { this.ambiguous = true; }
 		if (this.ambiguous || !this.previous || !this.initial || this.written >= MAX_CHECKPOINTS) { return; }
 		const next = await captureWorkingTree(this.root);
 		const changes = diffWorkingTree(this.previous, next);

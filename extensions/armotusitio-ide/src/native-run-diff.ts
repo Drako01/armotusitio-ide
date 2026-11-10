@@ -7,6 +7,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
+import { SECRET_NAME } from './native-sensitive-scope.ts';
 import { gitOutput } from './native-git.ts';
 
 const MAX_ENTRIES = 5000;
@@ -94,7 +95,7 @@ export function diffWorkingTree(before: WorkingTreeSnapshot, after: WorkingTreeS
 /** Guard stored diff paths and every ancestor: a restored record is never a filesystem authority. */
 async function safeTarget(root: string, relative: string): Promise<string | undefined> {
 	if (!relative || relative.includes('\\') || relative.includes('\\0') || path.isAbsolute(relative)
-		|| relative.split('/').some(part => !part || part === '.' || part === '..' || part === '.git')
+		|| relative.split('/').some(part => !part || part === '.' || part === '..' || part === '.git' || part === '.harness' || SECRET_NAME.test(part))
 		|| /^[A-Za-z]:/.test(relative) || /[:<>|]/.test(relative)) { return undefined; }
 	const canonical = await fs.realpath(root).catch(() => undefined);
 	if (!canonical || canonical !== path.resolve(root)) { return undefined; }
