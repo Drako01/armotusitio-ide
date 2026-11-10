@@ -190,3 +190,17 @@ test('a clean install that succeeds but leaves the tree unreadable is reported w
 			{ outcome: 'FAILED', error: true, kind: true, cause: true, calls: ['run pnpm install', 'remove node_modules', 'run pnpm install'] });
 	});
 });
+
+test('a package held by a lock right after the install is looked at again before the repair is judged', async () => {
+	await withProject({ run: async (_n, h) => { await h.installPackage(); return OK; } }, async h => {
+		let reads = 0;
+		const target = path.join(h.root, 'node_modules', 'left', 'package.json');
+		// The first reads of one package fail like an antivirus scan would; the third succeeds.
+		const readFile = async (file: string): Promise<string> => {
+			if (file === target && reads++ < 2) { throw Object.assign(new Error('busy'), { code: 'EBUSY' }); }
+			return await fs.readFile(file, 'utf8');
+		};
+		const result = await repairDependencies({ ...h.deps, readFile }, {});
+		assert.deepEqual({ outcome: result.text.split(' ')[0], sleeps: h.calls.filter(call => call.startsWith('sleep')) }, { outcome: 'REPAIRED', sleeps: ['sleep 2000', 'sleep 5000'] });
+	});
+});
