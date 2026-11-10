@@ -232,3 +232,12 @@
 - **Pendientes funcionales/aceptación:** consolidar E2E instalado multimodal/MCP/PDF, probar CLI real Codex/Claude con aprobación de cuota, verificar subprocesos hijos y contabilidad, README + capturas auténticas, Rust donde exista cargo, package VSIX y precommit/Husky; CI exacto Linux/Windows/ATS gate.
 - **Nuevo hallazgo de alcance:** snapshots por herramienta solo se crean cuando el orden es verificablemente secuencial; simultaneidad o ediciones preexistentes se rechazan y se mantiene el descarte por corrida. No afirmar reversión granular universal.
 - **Autoría, protecciones y límites:** Alejandro Daniel Di Stefano / ArmoTuSitio.com.ar; PR Draft, sin tocar `main`, sin merge, tags, release ni consumo autenticado.
+
+
+### CI verificado para SHA `6b5b08ede94fbe67a9c7abada5ac1174a06d2a0e` — 2026-11-10
+
+- [GitHub Actions 42910325497](https://github.com/Drako01/armotusitio-ide/actions/runs/42910325497): `changes` PASS, `contract` Linux FAIL, `contract-windows` FAIL, `ATS gate` FAIL. **814 PASS / 6 FAIL / 12 SKIP** en cada runner (no es candidato mergeable).
+- **Dos fallos anteriores cerrados por test:** extracción real PDF.js sobre fixture local PASS Linux/Windows y denegación de solicitudes `roots/list` legacy SSE PASS Linux/Windows; esto no reemplaza pruebas de IDE instalado.
+- **Seis fallos actuales, reproducidos en ambos runners:** (1) test Codex esperaba flags anteriores sin `agents.max_depth=1`; (2-5) cuatro archivos de test abortan al importar `native-chat-tool-checkpoints.ts` porque Node strip-only no admite constructor parameter properties; (6) falta guía para `HARNESS_DELEGATION_BUDGET_UNVERIFIED` en catálogo de errores.
+- **Corrección de esta ronda:** reemplazar parameter properties por constructor explícito; actualizar aserción de flags Codex sin relajar límites; agregar guía de recuperación para presupuesto y códigos de checkpoint. **Resultado posterior: PENDIENTE de CI del nuevo SHA**.
+- **Aceptación aún pendiente:** CI completo, VSIX instalado, accesibilidad, seis extensiones, capturas reales, aislamiento/cancelación E2E y proveedores autenticados (sin autorización de cuota). PR sigue Draft; sin merge ni release.

@@ -252,9 +252,10 @@ test('a profile environment reaches the one-shot CLI with its own directory and 
 test('native Codex child threads are explicit, reviewed and read-only', () => {
 	const reviewed = { ...base, nativeSubagents: true };
 	const command = buildAgentInvocation(reviewed);
-	assert.deepEqual(command.args.slice(0, 8), [
+	assert.deepEqual(command.args.slice(0, 10), [
 		'--ask-for-approval', 'never', '--config', 'agents.enabled=true',
 		'--config', 'agents.max_concurrent_threads_per_session=2',
+		'--config', 'agents.max_depth=1',
 		'--config', 'agents.interrupt_message=true'
 	]);
 	assert.ok(command.args.includes('read-only'));

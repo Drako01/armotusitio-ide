@@ -172,7 +172,9 @@ export class ChatToolCheckpointRecorder {
 	private queue: Promise<void> = Promise.resolve();
 	private ambiguous = false;
 	private written = 0;
-	constructor(private readonly root: string, private readonly storage: string) { }
+	private readonly root: string;
+	private readonly storage: string;
+	constructor(root: string, storage: string) { this.root = root; this.storage = storage; }
 
 	async begin(): Promise<void> {
 		this.initial = this.previous = await captureWorkingTree(this.root);
