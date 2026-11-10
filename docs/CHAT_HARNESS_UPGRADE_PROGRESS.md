@@ -257,3 +257,11 @@
 - **Nuevas pruebas/gates:** tests de CLI arguments, aislamiento de roles y rechazo de permiso no válido sin consumir tokens; el CI ejecutará adicionalmente `compile` y `check:native-package` en Linux y Windows, además de sus contratos previos.
 - **Estado del bloque nuevo:** IMPLEMENTADO PERO NO VALIDADO; requiere CI completo sobre el siguiente SHA. No equivale a validar proveedores autenticados, VSIX instalado, accesibilidad ni seis extensiones. Presupuestos estrictos de tokens/USD siguen rechazando subagentes por falta de recibos agregados por hijo.
 - Mantener PR #86 **Draft**, `main` intacto, sin release, sin merge ni cuota consumida.
+
+
+### Corrección CI del empaquetado — 2026-11-10
+
+- **Fallo reproducido:** [ATS IDE Extension 42913973674](https://github.com/Drako01/armotusitio-ide/actions/runs/42913973674), SHA `9637c1df3f3a37a2f48aa97ba9a588f1afecb47a`: `contract` Linux y `contract-windows` FAIL antes de los tests, durante `npm run compile`; `ATS gate` FAIL. Error exacto: `ERR_MODULE_NOT_FOUND: Cannot find package 'esbuild' imported from extensions/esbuild-extension-common.mts`.
+- **Causa raíz:** `npm ci` del root y de `extensions/armotusitio-ide` no instala la dependencia compartida de `extensions/package.json`, donde `esbuild@0.28.1` está fijado por `extensions/package-lock.json`. No es un error de TypeScript ni del proveedor Codex.
+- **Corrección implementada (pendiente de validar en nuevo CI):** `.github/workflows/ats-ide-extension.yml` instala `npm ci --prefix extensions --ignore-scripts --no-audit --no-fund` en ambos runners antes de compilar; mantiene `check`, `compile`, `check:native-package`, tests y `ATS gate` activos, sin cambios a permisos ni instalación de paquetes no fijados.
+- **Próxima acción:** verificar `compile`, `check:native-package`, contratos y gate para el SHA nuevo en Linux/Windows. No marcar PASS antes de la ejecución remota. El PR sigue Draft; no merge ni release.

@@ -53,6 +53,8 @@ jobs:
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Install pinned offline PDF parser (no native optional dependencies)
         run: npm ci --prefix extensions/armotusitio-ide --ignore-scripts --omit=optional --no-audit --no-fund
+      - name: Install shared extension bundler from pinned lockfile (no install scripts)
+        run: npm ci --prefix extensions --ignore-scripts --no-audit --no-fund
       - name: Syntax checks
         run: npm run check --prefix extensions/armotusitio-ide
       - name: Build candidate extension resources
@@ -80,6 +82,8 @@ jobs:
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Install pinned offline PDF parser on Windows
         run: npm ci --prefix extensions/armotusitio-ide --ignore-scripts --omit=optional --no-audit --no-fund
+      - name: Install pinned shared extension bundler on Windows (no install scripts)
+        run: npm ci --prefix extensions --ignore-scripts --no-audit --no-fund
       - name: Windows syntax and worker typechecks
         run: npm run check --prefix extensions/armotusitio-ide
       - name: Build candidate extension resources on Windows
