@@ -60,6 +60,7 @@ export function chatCommands(t: CommandTranslator): ChatCommand[] {
 		{ name: 'skill', usage: 'NOMBRE [pedido]', description: t('Aplica una skill nativa o del proyecto a tu pedido: su contenido llega a la IA como convenciones, nunca como permisos.'), session: true },
 		{ name: 'doctor', description: t('Revisa la m\u00e1quina y el proyecto (Node, gestor de paquetes, git, Docker, disco) y dice c\u00f3mo arreglar cada problema.'), session: true },
 		{ name: 'debug', usage: 'COMANDO | ERROR', description: t('Analiza un fallo reproducible y propone un plan de diagn\u00f3stico. Los cambios y las pruebas requieren aprobar el plan.'), session: true },
+		{ name: 'documento', usage: '[pedido]', description: t('Selecciona un PDF o notebook del proyecto para revisar y enviar solo su texto extraido, con consentimiento.'), session: true },
 		{ name: 'imagen', usage: '[pedido]', description: t('Eleg\u00ed una imagen del proyecto, revisala y confirm\u00e1 su env\u00edo al proveedor seleccionado.'), session: true },
 		{ name: 'sesiones', usage: '[b\u00fasqueda]', description: t('Busca las conversaciones guardadas de este proyecto.'), session: true },
 		{ name: 'sesion', usage: 'ID', description: t('Retoma una conversaci\u00f3n guardada del proyecto sin repetir operaciones interrumpidas.'), session: true },
@@ -152,6 +153,7 @@ export interface SessionCommandDeps {
 	/** Runs a project command in the visible IDE terminal and returns its result as text (`/motor`). */
 	motor?: (command: string, args: string[]) => Promise<string>;
 	image?: (request: string, root: string, session: HarnessChatSession) => Promise<string>;
+	document?: (request: string, root: string, session: HarnessChatSession) => Promise<string>;
 }
 
 const LEASE_TEXT: Record<EngineLeaseState, (t: CommandTranslator, until?: string) => string> = {
@@ -187,6 +189,7 @@ export async function runSessionCommand(deps: SessionCommandDeps, action: string
 	if (action === 'mcp' && deps.mcp) { return await runMcpCommand(deps.mcp, words); }
 	if (action === 'lease') { return await runLeaseCommand(deps, words); }
 	if (action === 'skills') { return await skillsListing(root, t, deps.nativeSkillsDirectory); }
+	if (action === 'documento') { return deps.document ? await deps.document(words.join(' '), root, session) : t('El lector de documentos no esta disponible.'); }
 	if (action === 'imagen') { return deps.image ? await deps.image(words.join(' '), root, session) : t('Las im\u00e1genes no est\u00e1n disponibles en este chat.'); }
 	if (action === 'sesiones') {
 		const found = await session.sessions(words.join(' '));
