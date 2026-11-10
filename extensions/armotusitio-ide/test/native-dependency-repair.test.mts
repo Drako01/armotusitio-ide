@@ -175,3 +175,9 @@ test('a damaged package.json is reported instead of being treated as "nothing de
 		assert.deepEqual([damaged.text, absent.text], ['DIAGNOSIS . (pnpm): unreadable: package.json.', 'DIAGNOSIS . (pnpm): every declared package is installed and readable.']);
 	});
 });
+
+test('the install command echoed by a job is never taken as the cause: a real EPERM stays a locked-files failure, a real outdated lockfile is still found', () => {
+	const echo = 'job-1 exited (exit 1) · 3 s\n$ pnpm install --frozen-lockfile --ignore-scripts\n';
+	const kinds = [echo + 'EPERM: operation not permitted, symlink', echo + 'ERR_PNPM_OUTDATED_LOCKFILE Cannot install with "frozen-lockfile"', echo + 'ERR_PNPM_LOCKFILE_CONFIG_MISMATCH', echo + 'something odd'].map(text => classifyFailure(text).kind);
+	assert.deepEqual(kinds, ['locked-files', 'lockfile-out-of-date', 'lockfile-out-of-date', 'unknown']);
+});
