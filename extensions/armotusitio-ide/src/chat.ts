@@ -508,7 +508,33 @@ function registerChat(context: any, controller: any, projects: any, mcp: any, vs
 					return;
 				}
 				ranWith[selected] = accounts[selected].selected;
-				const mentions = await resolveMentions(folder.uri.fsPath, text, IGNORED, { terminal: () => terminalCapture.latest() });
+				const editor = vscode.window.activeTextEditor;
+				const editorPath = editor?.document.uri.scheme === 'file' ? path.relative(folder.uri.fsPath, editor.document.uri.fsPath) : undefined;
+				const mentions = await resolveMentions(folder.uri.fsPath, text, IGNORED, {
+					terminal: () => terminalCapture.latest(),
+					selection: () => editorPath && !editor.selection.isEmpty ? { path: editorPath, text: () => editor.document.getText(editor.selection) } : undefined,
+					diagnostics: () => !editorPath ? undefined : {
+						path: editorPath, text: () => {
+							const diagnostics = vscode.languages.getDiagnostics(editor.document.uri).slice(0, 50);
+							return diagnostics.length ? diagnostics.map((item: { range: { start: { line: number } }; message: string }) => (item.range.start.line + 1) + ': ' + item.message.slice(0, 1000)).join('\n') : undefined;
+						}
+					},
+					symbol: async () => !editorPath ? undefined : {
+						path: editorPath, text: async () => {
+							const version = editor.document.version;
+							type ContextSymbol = { range?: { contains(position: { line: number; character: number }): boolean }; children?: ContextSymbol[] };
+							const symbols: ContextSymbol[] | undefined = await vscode.commands.executeCommand('vscode.executeDocumentSymbolProvider', editor.document.uri);
+							const enclosing = (items: ContextSymbol[]): ContextSymbol | undefined => {
+								for (const item of items) {
+									if (item.range?.contains(editor.selection.active)) { return enclosing(item.children ?? []) ?? item; }
+								}
+								return undefined;
+							};
+							const symbol = enclosing(symbols ?? []);
+							return symbol?.range && editor.document.version === version ? editor.document.getText(symbol.range) : undefined;
+						}
+					}
+				});
 				await session.send(text, chatMode(), { context: mentions.context, notice: mentionNotice(mentions, t) });
 			}
 			if (action === 'approve' && typeof message.digest === 'string' && /^[a-f0-9]{64}$/.test(message.digest)) { await session.approve(message.digest); }

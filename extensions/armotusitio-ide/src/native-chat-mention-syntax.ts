@@ -9,7 +9,7 @@
  */
 export const MAX_MENTION_PATH_LENGTH = 300;
 const WORD_START = '(?<![^\\s(])';
-const MENTION = new RegExp(WORD_START + '@(?:"(?<quoted>[^"\\r\\n]{1,' + MAX_MENTION_PATH_LENGTH + '})"|(?<bare>[^\\s"\'`,;:!?)\\]}]{1,' + MAX_MENTION_PATH_LENGTH + '}))', 'g');
+const MENTION = new RegExp(WORD_START + '@(?:"(?<quoted>[^"\\r\\n]{1,' + MAX_MENTION_PATH_LENGTH + '})"|(?<bare>[^\\s"\'`,;:!?)\\]}]{1,' + MAX_MENTION_PATH_LENGTH + '}))(?<suffix>:[^\\s,;!?)\\]}]*)?', 'g');
 const ACTIVE_MENTION = new RegExp(WORD_START + '@(?<token>"[^"\\r\\n]*|[^\\s"]*)$');
 
 /** Distinct mentioned paths in order of appearance, exactly as typed (not yet validated against the project). */
@@ -17,7 +17,7 @@ export function parseMentions(text: string): string[] {
 	const found = new Set<string>();
 	for (const match of text.matchAll(MENTION)) {
 		// A sentence-ending dot after a bare mention is punctuation, not part of the file name.
-		const mentioned = match.groups!.quoted ?? match.groups!.bare.replace(/\.+$/, '');
+		const mentioned = (match.groups!.quoted ?? match.groups!.bare.replace(/\.+$/, '')) + (match.groups!.suffix ?? '').replace(/\.+$/, '');
 		if (mentioned) { found.add(mentioned); }
 	}
 	return [...found];

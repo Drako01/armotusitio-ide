@@ -29,7 +29,13 @@ export interface MentionResolution {
 	context: string;
 }
 /** Where a mention that is not a file gets its content; absent where the host has no such source. */
-export interface MentionSources { terminal?: () => string | undefined }
+export interface EditorMention { path: string; text: string | (() => string | undefined | Promise<string | undefined>) }
+export interface MentionSources {
+	terminal?: () => string | undefined;
+	selection?: () => EditorMention | undefined;
+	diagnostics?: () => EditorMention | undefined;
+	symbol?: () => Promise<EditorMention | undefined>;
+}
 export type MentionTranslator = (text: string, ...args: string[]) => string;
 
 const ABSOLUTE = /^(?:[a-zA-Z]:|[\\/])/;
@@ -39,7 +45,7 @@ const isSensitiveName = (name: string): boolean => name.startsWith('.env') || SE
 
 /** Project-relative segments of a typed mention, or the reason it cannot be one. */
 function mentionSegments(mention: string, ignored: ReadonlySet<string>): string[] | MentionRejection {
-	if (!mention || CONTROL.test(mention)) { return 'invalid'; }
+	if (!mention || CONTROL.test(mention) || /[:<>|?*]/.test(mention.replace(/^[a-zA-Z]:/, ''))) { return 'invalid'; }
 	if (ABSOLUTE.test(mention)) { return 'outside'; }
 	const segments = mention.replace(/\\/g, '/').split('/').filter(segment => segment && segment !== '.');
 	if (!segments.length) { return 'invalid'; }
@@ -48,23 +54,32 @@ function mentionSegments(mention: string, ignored: ReadonlySet<string>): string[
 }
 
 /** Reads at most `MAX_MENTION_BYTES` of a regular file already resolved inside the project. */
-async function readBounded(file: string): Promise<{ text: string; bytes: number; truncated: boolean } | 'not-file' | 'binary'> {
+async function readBounded(file: string, range?: { start: number; end: number }): Promise<{ text: string; bytes: number; truncated: boolean } | 'not-file' | 'binary' | 'limit' | 'invalid'> {
 	// O_NONBLOCK so a FIFO swapped in after the `lstat` check cannot hang the read; it is 0 where the platform lacks it.
 	const handle = await fs.open(file, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
 	try {
 		const stat = await handle.stat();
 		if (!stat.isFile()) { return 'not-file'; }
-		const buffer = Buffer.alloc(Math.min(stat.size, MAX_MENTION_BYTES));
+		const scanLimit = range ? 2 * 1024 * 1024 : MAX_MENTION_BYTES;
+		const buffer = Buffer.alloc(Math.min(stat.size, scanLimit));
 		const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
 		const sample = buffer.subarray(0, bytesRead);
 		if (sample.includes(0)) { return 'binary'; }
-		return { text: sample.toString('utf8'), bytes: stat.size, truncated: stat.size > MAX_MENTION_BYTES };
+		if (!range) { return { text: sample.toString('utf8'), bytes: stat.size, truncated: stat.size > MAX_MENTION_BYTES }; }
+		const lines = sample.toString('utf8').split('\n');
+		if (stat.size > bytesRead && range.end >= lines.length) { return 'limit'; }
+		if (range.start > lines.length) { return 'invalid'; }
+		const selected = Buffer.from(lines.slice(range.start - 1, range.end).join('\n'));
+		return { text: selected.subarray(0, MAX_MENTION_BYTES).toString('utf8'), bytes: selected.length, truncated: selected.length > MAX_MENTION_BYTES };
 	} finally { await handle.close(); }
 }
 
 /** One mention to a file entry; the project root is canonical so a symlink inside it cannot lead outside. */
 async function resolveOne(rootReal: string, mention: string, ignored: ReadonlySet<string>): Promise<{ file: MentionedFile; text: string } | MentionRejection> {
-	const segments = mentionSegments(mention, ignored);
+	const match = /^(?<file>.+):(?<start>[0-9]+)-(?<end>[0-9]+)$/.exec(mention);
+	const range = match ? { start: Number(match.groups!.start), end: Number(match.groups!.end) } : undefined;
+	if (range && (!Number.isSafeInteger(range.end) || range.start < 1 || range.end < range.start || range.end > 1000000)) { return 'invalid'; }
+	const segments = mentionSegments(match?.groups!.file ?? mention, ignored);
 	if (typeof segments === 'string') { return segments; }
 	let real: string;
 	try { real = await fs.realpath(path.join(rootReal, ...segments)); } catch { return 'missing'; }
@@ -76,9 +91,9 @@ async function resolveOne(rootReal: string, mention: string, ignored: ReadonlySe
 	// Only a regular file is opened: opening a FIFO or device could block or stream forever.
 	if (!(await fs.lstat(real).catch(() => undefined))?.isFile()) { return 'not-file'; }
 	let content: Awaited<ReturnType<typeof readBounded>>;
-	try { content = await readBounded(real); } catch { return 'missing'; }
+	try { content = await readBounded(real, range); } catch { return 'missing'; }
 	if (typeof content === 'string') { return content; }
-	return { file: { path: target.join('/'), bytes: content.bytes, truncated: content.truncated }, text: redactSecrets(content.text) };
+	return { file: { path: target.join('/') + (range ? ':' + range.start + '-' + range.end : ''), bytes: content.bytes, truncated: content.truncated }, text: redactSecrets(content.text) };
 }
 
 /**
@@ -105,6 +120,20 @@ export async function resolveMentions(root: string, text: string, ignored: Reado
 			blocks.push('<mention path="terminal"' + (truncated ? ' truncated="true" total_bytes="' + captured.length + '"' : '') + '>\n' + kept.replace(/<\/mention/gi, '<\\/mention') + '\n</mention>');
 			continue;
 		}
+		if (mention === 'selection' || mention === 'diagnostics' || mention === 'symbol') {
+			const source = await sources[mention]?.();
+			if (!source) { result.rejected.push({ mention, reason: 'no-output' }); continue; }
+			// Editor data is subject to the same canonical path, sensitive-name and regular-file checks as @file.
+			const checked = await resolveOne(rootReal, source.path, ignored);
+			if (typeof checked === 'string') { result.rejected.push({ mention, reason: checked }); continue; }
+			const content = typeof source.text === 'function' ? await source.text() : source.text;
+			if (!content) { result.rejected.push({ mention, reason: 'no-output' }); continue; }
+			const clean = Buffer.from(redactSecrets(content));
+			const kept = clean.subarray(0, MAX_MENTION_BYTES).toString('utf8');
+			result.included.push({ path: mention + ':' + checked.file.path, bytes: clean.length, truncated: clean.length > MAX_MENTION_BYTES });
+			blocks.push('<mention path="' + (mention + ':' + checked.file.path).replace(/["<>&]/g, char => '&#' + char.charCodeAt(0) + ';') + '">\n' + kept.replace(/<\/mention/gi, '<\\/mention') + '\n</mention>');
+			continue;
+		}
 		const resolved = await resolveOne(rootReal, mention, ignored);
 		if (typeof resolved === 'string') { result.rejected.push({ mention, reason: resolved }); continue; }
 		// Two spellings of one file (`a.ts`, `./a.ts`) are attached once.
@@ -125,7 +154,7 @@ export function mentionNotice(resolution: MentionResolution, t: MentionTranslato
 	const reasons: Record<MentionRejection, string> = {
 		invalid: t('ruta inv\u00e1lida'), outside: t('est\u00e1 fuera del proyecto'), sensitive: t('es un archivo sensible o ignorado'), missing: t('no existe'),
 		'not-file': t('no es un archivo'), binary: t('es un archivo binario'), limit: t('m\u00e1ximo {0} archivos por mensaje', String(MAX_MENTION_FILES)),
-		'no-output': t('todav\u00eda no hay salida de terminal para adjuntar')
+		'no-output': t('todav\u00eda no hay contexto disponible para adjuntar')
 	};
 	const lines: string[] = [];
 	if (resolution.included.length) {

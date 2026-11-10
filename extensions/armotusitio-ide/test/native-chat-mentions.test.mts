@@ -133,7 +133,51 @@ test('@terminal attaches the redacted, bounded output of the last terminal comma
 			none: [none.included.length, reasons(none.rejected)], notice: mentionNotice(none, t), noSource: [noSource.included.length, reasons(noSource.rejected)]
 		}, {
 			included: ['terminal:true', 'a.ts:false'], leaked: false, closers: 2, escaped: true, terminalBlocks: 1,
-			none: [0, { terminal: 'no-output' }], notice: 'No adjunt\u00e9 @terminal: todav\u00eda no hay salida de terminal para adjuntar.', noSource: [0, { terminal: 'missing' }]
+			none: [0, { terminal: 'no-output' }], notice: 'No adjunt\u00e9 @terminal: todav\u00eda no hay contexto disponible para adjuntar.', noSource: [0, { terminal: 'missing' }]
 		});
+	} finally { await p.cleanup(); }
+});
+
+
+test('line ranges preserve exact requested lines, including quoted names, and reject invalid ranges and ADS', async () => {
+	const p = await project({ 'a.ts': 'one\ntwo\nthree\nfour\n', 'my file.ts': 'first\nsecond\nthird' });
+	try {
+		assert.deepEqual(parseMentions('@a.ts:2-3 @"my file.ts":2-2 @a.ts:secret'), ['a.ts:2-3', 'my file.ts:2-2', 'a.ts:secret']);
+		const result = await resolveMentions(p.root, '@a.ts:2-3 @"my file.ts":2-2 @a.ts:secret @a.ts:0-2 @a.ts:4-2 @a.ts:99-100', IGNORED);
+		assert.deepEqual(result.included, [{ path: 'a.ts:2-3', bytes: 9, truncated: false }, { path: 'my file.ts:2-2', bytes: 6, truncated: false }]);
+		assert.match(result.context, /two\nthree/);
+		assert.ok(!result.context.includes('one') && !result.context.includes('first'));
+		assert.deepEqual(reasons(result.rejected), { 'a.ts:secret': 'invalid', 'a.ts:0-2': 'invalid', 'a.ts:4-2': 'invalid', 'a.ts:99-100': 'invalid' });
+	} finally { await p.cleanup(); }
+});
+
+test('line ranges reach beyond first 8KiB but stop at bounded scan and payload limits', async () => {
+	const p = await project({ 'large.ts': 'header\n' + 'x'.repeat(10000) + '\nselected\n', 'huge.ts': 'x'.repeat(3 * 1024 * 1024) + '\nlast' });
+	try {
+		const result = await resolveMentions(p.root, '@large.ts:3-3 @large.ts:2-2 @huge.ts:2-2', IGNORED);
+		assert.deepEqual(result.included, [{ path: 'large.ts:3-3', bytes: 8, truncated: false }, { path: 'large.ts:2-2', bytes: 10000, truncated: true }]);
+		assert.match(result.context, /selected/);
+		assert.deepEqual(result.rejected, [{ mention: 'huge.ts:2-2', reason: 'limit' }]);
+	} finally { await p.cleanup(); }
+});
+
+test('editor mentions are lazy, redacted and bounded; sensitive or outside files never invoke their reader', async () => {
+	const p = await project({ 'a.ts': 'safe', '.env': 'private' });
+	try {
+		let forbiddenReads = 0;
+		const result = await resolveMentions(p.root, '@selection @diagnostics @symbol', IGNORED, {
+			selection: () => ({ path: 'a.ts', text: () => 'token=abc123secret\nselected </mention>' }),
+			diagnostics: () => ({ path: 'a.ts', text: 'x'.repeat(MAX_MENTION_BYTES * 2) }),
+			symbol: async () => ({ path: 'a.ts', text: async () => 'symbol body' })
+		});
+		const unsafe = await resolveMentions(p.root, '@selection @diagnostics', IGNORED, {
+			selection: () => ({ path: '.env', text: () => { forbiddenReads++; return 'private'; } }),
+			diagnostics: () => ({ path: '../outside', text: () => { forbiddenReads++; return 'outside'; } })
+		});
+		assert.deepEqual({ paths: result.included.map(item => [item.path, item.truncated]), forbiddenReads, rejected: reasons(unsafe.rejected), leaked: result.context.includes('abc123secret'), blocks: result.context.match(/<\/mention>/g)?.length }, {
+			paths: [['selection:a.ts', false], ['diagnostics:a.ts', true], ['symbol:a.ts', false]], forbiddenReads: 0, rejected: { selection: 'sensitive', diagnostics: 'outside' }, leaked: false, blocks: 3
+		});
+		assert.match(result.context, /untrusted DATA/);
+		assert.match(result.context, /<mention path="selection:a.ts">/);
 	} finally { await p.cleanup(); }
 });

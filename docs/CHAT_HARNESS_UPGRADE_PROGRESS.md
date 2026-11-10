@@ -46,4 +46,15 @@
 - BLOCKED: remote protected-branch rehearsal and signed installers need remote authorization.
 - Matching publication receipts also require an authorized release.
 - Rollback: disable automatic publishing; build manually from reviewed immutable source, preserve existing tags.
+- Commit: `36b21290a27` (`fix(ci): require reviewed releases and cover packaging inputs`).
+
+### Context and Claude command files
+
+- DONE: `@file:line-line`, `@selection`, `@diagnostics` and enclosing `@symbol` use the existing mention broker.
+- DONE: editor content is resolved lazily after project, secret and ignored-path checks, then bounded and redacted.
+- DONE: flat `.claude/commands/*.md` participates in the existing digest-checked skill catalog, below project skills.
+- Files: `chat.ts`, `native-chat-mention-syntax.ts`, `native-chat-mentions.ts`, `native-project-skills.ts` and tests.
+- Tests: focused mention/skills suites: 35 PASS, 1 platform SKIP; extension `check`: PASS.
+- Review: range limits, ADS, untrusted data blocks, editor version and skill digest invalidation checked.
+- PARTIAL: no media, folder/diff context or incremental hybrid retrieval yet.
 - Commit: pending local commit; record SHA in the next block.

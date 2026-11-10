@@ -131,3 +131,22 @@ test('Codex skills directory symlink is never traversed', async (t) => {
 		await fs.rm(outside, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 	}
 });
+
+
+test('Claude command files reuse the bounded skill reader, yield to skills and invalidate changed content', async () => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-claude-commands-'));
+	try {
+		const canonical = await fs.realpath(root);
+		const commands = path.join(root, '.claude', 'commands');
+		await fs.mkdir(commands, { recursive: true });
+		await fs.writeFile(path.join(commands, 'review.md'), 'Review $ARGUMENTS; !`unsafe shell` stays data.');
+		await fs.writeFile(path.join(commands, 'testing.md'), 'shadowed command');
+		await fs.mkdir(path.join(root, '.agents', 'skills', 'testing'), { recursive: true });
+		await fs.writeFile(path.join(root, '.agents', 'skills', 'testing', 'SKILL.md'), 'shared testing');
+		const skills = await listProjectSkills(canonical);
+		assert.deepEqual(skills.map(skill => [skill.name, skill.source]), [['review', '.claude/commands'], ['testing', '.agents/skills']]);
+		assert.equal(await readProjectSkill(canonical, skills[0]), 'Review $ARGUMENTS; !`unsafe shell` stays data.');
+		await fs.writeFile(path.join(commands, 'review.md'), 'changed');
+		await assert.rejects(readProjectSkill(canonical, skills[0]), /HARNESS_PROJECT_SKILL_CHANGED/);
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
+});
