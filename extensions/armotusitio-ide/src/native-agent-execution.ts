@@ -108,6 +108,7 @@ export function buildAgentInvocation(draft: AgentDraft, writableRoots: readonly 
 		const nativeSubagents = draft.nativeSubagents ? [
 			'--config', 'agents.enabled=true',
 			'--config', 'agents.max_concurrent_threads_per_session=2',
+			'--config', 'agents.max_depth=1',
 			'--config', 'agents.interrupt_message=true'
 		] : [];
 		const sandbox = draft.readOnly ? 'read-only' : codexSandbox();

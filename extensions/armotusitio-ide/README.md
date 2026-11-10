@@ -452,3 +452,20 @@ npm run check:conformance --prefix extensions/armotusitio-ide
 ```
 
 `check:conformance` reproduce, sobre el proceso real `ats-runner`, los flujos que trabaron trabajo real (S1 subcarpetas con Harness delegado y prueba en vivo de solo lectura contra RedEvent si está en la máquina, S2 rama + commit + push con árbol sucio y archivo ignorado, S3 CLIs externos y credenciales, S4 dependencias, S5 proyecto sin Harness, S6 denegación y recuperación, S7 «siempre» tras reiniciar y su revocación, S8 Node ausente, varios workspaces, recuperación y el piloto nativo), junto con las suites de las que dependen. Corre en cualquier rama sin tocar git, y `./release.sh --dry-run` también lo ejecuta: sin conformidad en verde no se publica.
+
+
+### Subagentes nativos Codex (opt-in experimental)
+
+En **Ejecutar agente IA con autorización**, los roles `planner` y `reviewer` de Codex
+pueden elegir **hasta dos subagentes nativos**. El valor por defecto es **no delegar**.
+Se revisan los argumentos del CLI antes de autorizar la ejecución, y no se
+habilita para implementadores ni para Claude. La ejecución usa sandbox read-only,
+profundidad de delegación 1, máximo de dos hilos hijos y sin acceso adicional a MCP.
+
+Con un límite diario de invocaciones, el Harness reserva preventivamente tres
+invocaciones (padre y dos posibles hijos). Con topes estrictos de tokens o USD,
+la delegación se **rechaza** hasta contar con medición consolidada y auditable de
+los hijos: `HARNESS_DELEGATION_BUDGET_UNVERIFIED`. Cada ejecución necesita la
+confirmación modal existente. Cancelar detiene el proceso supervisor del proveedor.
+La compatibilidad y cancelación de procesos descendientes requieren pruebas con la
+versión de Codex instalada; **no se declara validación autenticada ni paridad total**.

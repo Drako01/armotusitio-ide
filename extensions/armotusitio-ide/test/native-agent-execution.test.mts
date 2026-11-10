@@ -27,6 +27,19 @@ test('Codex uses a bounded sandbox instead of approval bypass', () => {
 	assert.deepEqual(call.args.slice(0, 3), ['--ask-for-approval', 'never', 'exec']);
 });
 
+test('native Codex children are opt-in, bounded to two read-only children and never granted a writer role', () => {
+	const normal = buildAgentInvocation(base);
+	const native = buildAgentInvocation({ ...base, nativeSubagents: true });
+	assert.equal(normal.args.some(arg => arg.includes('agents.enabled=true')), false);
+	assert.ok(native.args.includes('agents.enabled=true'));
+	assert.ok(native.args.includes('agents.max_concurrent_threads_per_session=2'));
+	assert.ok(native.args.includes('agents.max_depth=1'));
+	assert.ok(native.args.includes('read-only'));
+	assert.ok(!native.args.includes('danger-full-access'));
+	assert.throws(() => buildAgentInvocation({ ...base, role: 'implementer', readOnly: false, nativeSubagents: true }), /HARNESS_AGENT_DRAFT_SCHEMA/);
+	assert.throws(() => buildAgentInvocation({ ...base, provider: 'claude', nativeSubagents: true }), /HARNESS_AGENT_DRAFT_SCHEMA/);
+});
+
 test('implementer is restricted to workspace-write, never danger-full-access', () => {
 	const call = buildAgentInvocation({ ...base, role: 'implementer', readOnly: false });
 	assert.equal(call.args[4], 'workspace-write');

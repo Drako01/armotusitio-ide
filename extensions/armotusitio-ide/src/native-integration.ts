@@ -596,7 +596,13 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			if (hooks.signal?.aborted) { throw Error('HARNESS_CANCELLED_BEFORE_START'); }
 			const cap = providerCallsPer24h(folder);
 			await assertProviderBudget(metricsDirectory(root), draft.provider, providerBudget(folder), fence);
-			if (cap > 0) { await reserveProviderInvocation(metricsDirectory(root), draft.provider, fence, cap); }
+			// Codex CLI does not yet give this bridge auditable per-child cost receipts.
+			// Refuse delegation under a strict token/USD ceiling instead of undercounting.
+			if (draft.nativeSubagents && budgetEnabled(providerBudget(folder))) { throw Error('HARNESS_DELEGATION_BUDGET_UNVERIFIED'); }
+			// Reserve a pessimistic upper bound (parent + two children) before launch.
+			if (cap > 0) { for (let i = 0; i < (draft.nativeSubagents ? 3 : 1); i++) {
+				await reserveProviderInvocation(metricsDirectory(root), draft.provider, fence, cap);
+			} }
 			if (!authorized(folder)) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
 			await hooks.beforeLaunch?.();
 			await fence.assertCurrent();
@@ -1092,7 +1098,18 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 				}
 			}
 			const instruction = requestedInstruction + projectReferences(guides, selectedProjectSkills);
-			const draft = draftOf(root, provider, role, instruction);
+			// Native Codex children are never implicit: they cost extra provider calls and
+			// are available only to read-only roles in an explicitly reviewed run.
+			let nativeSubagents = false;
+			if (provider === 'codex' && role !== 'implementer' && !webSearchOn(root)) {
+				const delegation = await vscode.window.showQuickPick([
+					{ label: 'Sin subagentes (predeterminado)', value: false },
+					{ label: 'Hasta dos subagentes nativos Codex (consumo adicional de cuota)', value: true }
+				], { title: 'Delegación opt-in de solo lectura' });
+				if (!delegation) { return; }
+				nativeSubagents = delegation.value;
+			}
+			const draft: AgentDraft = { ...draftOf(root, provider, role, instruction), ...(nativeSubagents ? { nativeSubagents: true } : {}) };
 			const invocation = buildAgentInvocation(draft);
 			const preview = JSON.stringify({
 				project: root, role, provider, permissionMode: draft.readOnly ? 'read-only' : 'workspace-write (Codex) / dontAsk (Claude)',
