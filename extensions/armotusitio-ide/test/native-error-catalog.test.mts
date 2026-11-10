@@ -23,3 +23,20 @@ test('every HARNESS_* code in the sources has its own recovery hint, never the g
 	assert.match(recoveryHint(t, 'HARNESS_PROVIDER_QUOTA_EXCEEDED'), /cupo local/);
 	assert.match(recoveryHint(t, 'HARNESS_NOT_A_REAL_CODE'), /podés reintentar/);
 });
+
+
+test('HTTP MCP errors have actionable, distinct recovery hints without leaking credentials', () => {
+	const t = (message: string, ...args: string[]) => message.replace(/\\{(\\d+)\\}/g, (_, index) => args[Number(index)]);
+	const expectations: Array<[string, RegExp]> = [
+		['HARNESS_MCP_HTTP_URL', /HTTPS|HTTP local/],
+		['HARNESS_MCP_HTTP_HEADERS', /Authorization/],
+		['HARNESS_MCP_HTTP_STATUS', /respuesta de error/]
+	];
+	for (const [code, expected] of expectations) {
+		assert.equal(hasRecoveryHint(code), true, `Missing hint for ${code}`);
+		const hint = recoveryHint(t, code);
+		assert.match(hint, expected);
+		assert.doesNotMatch(hint, /podés reintentar/);
+	}
+	assert.equal(new Set(expectations.map(([code]) => recoveryHint(t, code))).size, expectations.length);
+});
