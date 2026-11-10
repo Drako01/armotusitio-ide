@@ -5,8 +5,8 @@
 ### Estado general
 
 - Rama: `feat/native-engineering-skills-pack`.
-- Base: `ef4570db8d473596ecd8a955dde893bd7705cd92`; último checkpoint local: `b0f349e01e8`.
-- Fase actual: 6, entrega en Draft PR solicitada por el usuario.
+- Base: `ef4570db8d473596ecd8a955dde893bd7705cd92`; último commit de implementación: `269b54f384ecb545bda306c58815a51097dc634d`.
+- Fase actual: 6, entrega publicada como [Draft PR #85 contra main](https://github.com/Drako01/armotusitio-ide/pull/85).
 - Estado: implementación completada con condiciones de aceptación; el usuario autorizó después publicar y crear un único Draft PR contra main. Sin merge, tags ni release.
 - Fecha: 2026-11-10 (America/Buenos_Aires).
 - Registro canónico de esta tarea: este archivo, solicitado por `PROMPT_CODEX.md`; no se mantiene un segundo estado.
@@ -53,13 +53,13 @@
 - [x] Tests de catálogo, selección, precedencia y seguridad.
 - [x] Tests de comandos y sesiones de Claude/Codex.
 - [x] Gate integral disponible de la extensión, compilación y empaquetado ejecutados; resultados y límites registrados, sin convertir FAIL/SKIP en PASS.
-- [ ] Revisión de diff y ausencia de cambios ajenos al alcance.
+- [x] Revisión de diff y ausencia de cambios ajenos al alcance.
 
 ### Fase 6 — Documentación y entrega
 
 - [x] Documentación de uso, precedencia, seguridad y extensión del pack.
-- [ ] Checklist final y commits locales completos.
-- [ ] Estado final del árbol y rama comprobado.
+- [x] Checklist final y commits locales completos.
+- [x] Estado final del árbol y rama comprobado.
 
 ### Skills implementadas
 
@@ -144,7 +144,7 @@ Verificaciones adicionales del requerimiento18: build tests9/9 PASS; typecheck b
 
 ### Próxima acción concreta
 
-- Publicar la rama y crear Draft PR contra main, autorizado expresamente al final de la sesión. No ejecutar merge ni release. Veredicto: READY WITH CONDITIONS; revisar las condiciones de aceptación registradas.
+- Draft PR #85 publicado contra main con autorización explícita. Revisar las condiciones de aceptación registradas antes de promoverlo. Veredicto: READY WITH CONDITIONS. Sin merge ni release; no se habilitaron ni despacharon Actions manualmente.
 
 ### Historial de checkpoints
 
@@ -154,3 +154,7 @@ Verificaciones adicionales del requerimiento18: build tests9/9 PASS; typecheck b
 - Checkpoint de contenido: diez skills con validadores estáticos y muestra conductual independiente de ocho escenarios; no certifica decisiones futuras.
 
 - `b0f349e01e8`: pack de diez skills, integración, tests y documentación; gate precommit PASS tras usar escapes Unicode exigidos por higiene.
+
+- `269b54f384e`: seis extensiones preinstaladas, auto-update configurable y empaquetado desktop/REH; gate precommit PASS.
+- Artefactos locales ignorados: `.build/engineering-evidence/native-engineering-skills.vsix`, `.build/official-extensions-verification`, `.build/engineering-probe/activation-report.json` y `.build/engineering-probe-baseline/signature-comparison.json`.
+- Push y Draft PR autorizados posteriormente por el usuario y realizados; el archivo original `PROMPT_CODEX.md` permanece sin seguimiento, sin alteraciones.
