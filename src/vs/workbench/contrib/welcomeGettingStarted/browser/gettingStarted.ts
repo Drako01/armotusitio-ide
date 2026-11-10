@@ -81,6 +81,7 @@ import { ScrollbarVisibility } from '../../../../base/common/scrollable.js';
 
 const SLIDE_TRANSITION_TIME_MS = 250;
 const configurationKey = 'workbench.startupEditor';
+const ARMOTUSITIO_SITE = 'https://armotusitio.com.ar';
 
 export const allWalkthroughsHiddenContext = new RawContextKey<boolean>('allWalkthroughsHidden', false);
 export const inWelcomeContext = new RawContextKey<boolean>('inWelcome', false);
@@ -975,6 +976,17 @@ export class GettingStartedPage extends EditorPane {
 		footerChildren.push($('p.showOnStartup', {},
 			showOnStartupCheckbox.domNode,
 			showOnStartupLabel,
+		));
+
+		const creditLink = $('a.armotusitio-credit-link', { href: ARMOTUSITIO_SITE, role: 'link' }, 'ArmoTuSitio.com.ar');
+		this.categoriesSlideDisposables.add(addDisposableListener(creditLink, 'click', e => {
+			e.preventDefault();
+			this.openerService.open(ARMOTUSITIO_SITE);
+		}));
+		footerChildren.push($('p.armotusitio-credit', {},
+			localize('gettingStarted.developedBy', "Desarrollado por"),
+			' Alejandro Daniel Di Stefano · ',
+			creditLink,
 		));
 
 		const footer = $('.footer', {}, ...footerChildren);

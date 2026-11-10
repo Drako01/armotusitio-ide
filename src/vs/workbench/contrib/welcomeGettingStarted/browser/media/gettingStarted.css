@@ -1295,3 +1295,20 @@
 .monaco-workbench .part.editor > .content .gettingStartedContainer .gettingStartedSlide .getting-started-checkbox {
 	border-color: var(--vscode-checkbox-border) !important;
 }
+
+.monaco-workbench .part.editor > .content .gettingStartedContainer .gettingStartedSlideCategories .armotusitio-credit {
+	margin: 4px 0 12px;
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.monaco-workbench .part.editor > .content .gettingStartedContainer .gettingStartedSlideCategories .armotusitio-credit .armotusitio-credit-link {
+	color: var(--vscode-textLink-foreground);
+	cursor: pointer;
+}
+
+.monaco-workbench .part.editor > .content .gettingStartedContainer .gettingStartedSlideCategories .armotusitio-credit .armotusitio-credit-link:hover,
+.monaco-workbench .part.editor > .content .gettingStartedContainer .gettingStartedSlideCategories .armotusitio-credit .armotusitio-credit-link:focus-visible {
+	color: var(--vscode-textLink-activeForeground);
+	text-decoration: underline;
+}
