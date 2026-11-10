@@ -18,7 +18,8 @@
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
-html, body { height: 100%; }
+/* The view is exactly the editor area: only the message list scrolls, never the page behind the composer. */
+html, body { height: 100%; overflow: hidden; }
 body { margin: 0; padding: 0; color: var(--vscode-foreground); background: var(--vscode-editor-background); font-family: var(--vscode-font-family); font-size: var(--vscode-font-size, 13px); line-height: 1.55; }
 button { font: inherit; cursor: pointer; border-radius: var(--chat-radius); border: 1px solid transparent; padding: 5px 12px; color: var(--vscode-button-foreground); background: var(--vscode-button-background); }
 button:hover:not(:disabled) { background: var(--vscode-button-hoverBackground); }
@@ -27,7 +28,8 @@ button.secondary:hover:not(:disabled) { background: var(--vscode-button-secondar
 button:disabled { opacity: .5; cursor: default; }
 button:focus-visible, select:focus-visible, textarea:focus-visible, .log:focus-visible { outline: 1px solid var(--chat-accent); outline-offset: 1px; }
 .muted { color: var(--chat-muted); }
-.chat-app { display: flex; flex-direction: column; height: 100vh; min-width: 0; }
+/* Fixed to the view: nothing the page does (focus, scrollIntoView, a taller body) can move the composer or the header. */
+.chat-app { position: fixed; inset: 0; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
 
 /* Header: identity, provider and MCP are always visible. */
 .topbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--chat-gap); padding: 10px 16px; border-bottom: 1px solid var(--chat-border); background: var(--chat-surface); }
@@ -72,7 +74,7 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, .log:focus-v
 .banner { margin: 0; padding: 8px 16px; color: var(--vscode-foreground); background: var(--vscode-inputValidation-warningBackground, transparent); border-bottom: 1px solid var(--vscode-inputValidation-warningBorder, var(--chat-border)); }
 
 /* Conversation */
-.log { flex: 1; overflow-y: auto; padding: 16px; scroll-behavior: smooth; }
+.log { flex: 1; min-height: 0; overflow-y: auto; padding: 16px; scroll-behavior: smooth; }
 .conversation, .activity, .empty { max-width: 860px; margin: 0 auto; }
 .empty { padding: 48px 0 16px; text-align: center; }
 .empty h2 { margin: 0 0 8px; font-size: 1.5em; font-weight: 600; }
