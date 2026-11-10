@@ -101,7 +101,7 @@ test('disable or removal while an approval is pending invalidates the call befor
 	} finally { await f.cleanup(); }
 });
 
-test('HTTP entries remain explicitly unsupported and never initiate a connection', async () => {
+test('unreachable HTTP entries fail discovery without authorizing tools', async () => {
 	const f = await fixture();
 	try {
 		f.setEntries({ remote: { type: 'http', url: 'http://127.0.0.1:1', headers: { Authorization: 'Bearer never-send' } } });

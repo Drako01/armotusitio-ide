@@ -11,6 +11,7 @@ import { JsonRpcConnection } from './runtime/json-rpc.ts';
 import { resolveNativeCommand, stopProcess } from './native-runtime.ts';
 import { redactSecrets } from './native-redact.ts';
 import { secretVariants } from './native-dev-secrets.ts';
+import { withHttpMcp, type UserMcpRpc } from './native-user-mcp-http.ts';
 import type { McpLaunch } from './native-mcp-servers.ts';
 import type { WorkMcpTool } from './native-mcp-bridge.ts';
 
@@ -23,8 +24,11 @@ type StdioLaunch = Extract<McpLaunch, { type: 'stdio' }>;
 interface RemoteTool { server: string; tool: string; entry: string }
 
 /** Redact assigned credential values even when they do not resemble a known token format. */
-function safeValue(value: unknown, entry: StdioLaunch): unknown {
-	const secrets = Object.values(entry.env ?? {}).flatMap(value => [...secretVariants(value), ...(value ? [value] : [])]);
+function safeValue(value: unknown, entry: McpLaunch): unknown {
+	const secrets = Object.values(entry.type === 'stdio' ? entry.env ?? {} : entry.headers ?? {}).flatMap(value => {
+		const credential = entry.type === 'http' ? value.replace(/^Bearer\s+/i, '') : value;
+		return [...secretVariants(credential), ...(value ? [value] : []), ...(credential ? [credential] : [])];
+	});
 	const text = (value: string): string => secrets.reduce((result, secret) => result.split(secret).join('[REDACTED]'), redactSecrets(value));
 	const visit = (item: unknown): unknown => typeof item === 'string' ? text(item) : Array.isArray(item) ? item.map(visit)
 		: item && typeof item === 'object' ? Object.fromEntries(Object.entries(item).map(([key, child]) => [text(key), visit(child)])) : item;
@@ -37,8 +41,9 @@ function serverEnvironment(source: NodeJS.ProcessEnv, entry: StdioLaunch): NodeJ
 }
 
 /** One short-lived MCP connection, sharing the existing bounded RPC machinery and process-tree supervisor. */
-async function withServer<T>(entry: StdioLaunch, options: { cwd: string; env: NodeJS.ProcessEnv; signal: AbortSignal; timeoutMs: number }, work: (rpc: JsonRpcConnection) => Promise<T>): Promise<T> {
+async function withServer<T>(entry: McpLaunch, options: { cwd: string; env: NodeJS.ProcessEnv; signal: AbortSignal; timeoutMs: number }, work: (rpc: UserMcpRpc) => Promise<T>): Promise<T> {
 	if (options.signal.aborted) { throw Error('HARNESS_MCP_CANCELLED'); }
+	if (entry.type === 'http') { return withHttpMcp(entry, options, work); }
 	const env = serverEnvironment(options.env, entry);
 	// Native absolute paths are allowed; Windows shell shims are never executed.
 	if (process.platform === 'win32' && /\.(?:cmd|bat|ps1)$/i.test(entry.command)) { throw Error('HARNESS_MCP_STDIO_UNSUPPORTED'); }
@@ -97,7 +102,7 @@ function validateTools(value: { tools?: WorkMcpTool[]; nextCursor?: string }): W
 	return value.tools;
 }
 
-/** Stdio-only first slice. HTTP/SSE is deliberately not connected until redirect/auth policy is implemented. */
+/** User MCP over stdio or bounded HTTP, with all tool calls mediated by the IDE. */
 export function createUserMcpBridge(options: {
 	entries(): Promise<Record<string, McpLaunch>>;
 	enabled(): boolean;
@@ -112,9 +117,9 @@ export function createUserMcpBridge(options: {
 	let discoveryFailures: Array<{ server: string; code: string }> = [];
 	let busy = false;
 	const enabled = (): boolean => !stopped.signal.aborted && options.enabled();
-	const current = async (server: string, fingerprint: string): Promise<StdioLaunch> => {
+	const current = async (server: string, fingerprint: string): Promise<McpLaunch> => {
 		const entry = (await options.entries())[server];
-		if (!enabled() || entry?.type !== 'stdio' || JSON.stringify(entry) !== fingerprint) { throw Error('HARNESS_MCP_SERVER_CHANGED'); }
+		if (!enabled() || !entry || JSON.stringify(entry) !== fingerprint) { throw Error('HARNESS_MCP_SERVER_CHANGED'); }
 		return entry;
 	};
 	return {
@@ -124,7 +129,7 @@ export function createUserMcpBridge(options: {
 			if (!enabled()) { return []; }
 			const tools: WorkMcpTool[] = [];
 			for (const [server, entry] of Object.entries(await options.entries())) {
-				if (!/^[a-z0-9][a-z0-9-]{0,30}$/.test(server) || entry.type !== 'stdio') { continue; }
+				if (!/^[a-z0-9][a-z0-9-]{0,30}$/.test(server)) { continue; }
 				try {
 					const catalog = await withServer(entry, { ...options, signal: stopped.signal, timeoutMs: options.timeoutMs ?? 5000 }, async rpc => validateTools(await rpc.request('tools/list', {}, options.timeoutMs ?? 5000)));
 					if (!enabled()) { return []; }

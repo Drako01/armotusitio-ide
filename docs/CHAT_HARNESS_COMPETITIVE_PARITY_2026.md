@@ -21,7 +21,7 @@ The status-bar Chat Harness, sidebar and native `@harness` share session, tools 
 | 09 Terminal/Git | IMPLEMENTED_VERIFIED | Command/jobs/terminal/Git fixture gates |
 | 10 Skills/commands | IMPLEMENTED_VERIFIED | Ten native skills and digest-checked Claude command files |
 | 11 Claude user MCP | IMPLEMENTED_VERIFIED | Existing broker/fixtures; live service not re-run |
-| 12 Codex user MCP | PARTIAL | Mediated stdio verified; HTTP unsupported |
+| 12 Codex user MCP | PARTIAL | Mediated stdio and HTTP JSON/SSE fixture contracts verified; authenticated remote smoke absent |
 | 13 Dynamic subagents | PARTIAL | Claude tool-free roles; Codex disabled without proven child isolation |
 | 14 Multimodal | PARTIAL | PNG/JPEG picker/preview/consent/protocol; no paste/PDF/notebook bridge |
 | 15 Editor context | IMPLEMENTED_VERIFIED | Selection/symbols/diagnostics/ranges/terminal/folder/tracked diff |
@@ -42,7 +42,7 @@ The competitor comparison remains the supplied dated baseline; no universal pari
 ## Acceptance boundaries
 
 - CH-01–07, CH-09–10, CH-14–18 and CH-21–24 have relevant local negative/regression fixtures.
-- CH-08 verifies Codex stdio discovery, mediated invocation and revocation; HTTP remains unsupported.
+- CH-08 verifies stdio and HTTP JSON/SSE discovery, mediated invocation, revocation and negative transport cases.
 - CH-11 verifies image bounds, consent cancellation, mutation, expiry and protocol bytes without local journal storage.
 - CH-12–13 retain collision checks and explicit discard confirmation; fine snapshot attribution remains partial.
 - CH-19–20 have responsive/native tests and six VSIX checks, without installed-app accessibility certification.
@@ -77,5 +77,14 @@ Official extensions remain independent; the native pane reads the same six IDs a
 - Provider-first-token and installed-UI latency were not measured. Rust checks BLOCKED because cargo is unavailable.
 - Dev-host screenshot: `output/playwright/chat-harness-dev/03-pre-reload.png`, predating final source reload.
 - Final installer, macOS/WSL, screen reader and authenticated acceptance remain NOT VERIFIED.
-- Original-plan residuals: Codex HTTP MCP/native children, paste/drag/PDF/notebooks and attributed per-tool checkpoints.
+- Original-plan residuals: Codex native children, paste/drag/PDF/notebooks and attributed per-tool checkpoints.
 - Optional browser/cloud remains separate. The Draft PR does not present these limits as completed work.
+
+
+## HTTP continuation boundary
+
+User HTTP MCP now shares the stdio broker and host-only credentials, with bounded JSON/SSE responses.
+Redirects, insecure remote HTTP, cookie/routing headers and server-initiated data messages fail closed.
+This supports Streamable HTTP request/response sessions, without legacy SSE endpoints or sampling/elicitation.
+Local fixtures cover discovery, call, consent denial, revocation, cancellation, redaction and malformed replies.
+Authenticated remote services remain unverified. All other original-plan residuals above still apply.

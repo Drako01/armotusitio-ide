@@ -118,3 +118,41 @@
 - Markdown checker PASS for new reports; README retains preexisting long-line debt to preserve repository prose style.
 - The parity report identifies checkpoint, unsupported transport/media and installed-acceptance limits.
 - Runtime/documentation commit: `2226364e371`; remaining untracked prompt/review inputs are intentionally excluded.
+
+
+### Continuation: mediated HTTP MCP
+
+- IMPLEMENTED_VERIFIED: user MCP HTTP JSON and bounded SSE responses now use the existing IDE broker.
+- Files: `native-user-mcp-http.ts`, `native-user-mcp.ts` and both user-MCP fixture suites.
+- Security: HTTPS or explicit loopback HTTP, no redirects/cookies, endpoint-only authorization headers.
+- Safety: 256 KiB response cap, request deadlines, cancellation, session cleanup, no tool retries.
+- Credentials stay in the host; returned authorization values and bare bearer tokens are redacted.
+- Live configuration is rechecked after approval; removed/disabled servers cannot dispatch tools.
+- Compatibility limit: server-initiated SSE data messages fail closed; no sampling/elicitation or legacy SSE endpoint.
+- Validation: extension typecheck/resources, focused ESLint, compile and native-package checks PASS.
+- Compile initially hit sandbox Access Denied on generated dist files; authorized escalation passed.
+- Focused final MCP suites: 21 PASS, exit 0; log `.harness/runtime/continuation-http-focused.log`.
+- Full integration attempt did not complete: four existing Git fixture suites stalled under the sandbox.
+- S1 live RedEvent failed in that attempt; no full-suite PASS is claimed.
+- Supervised cancellation verified npm/test ancestry before stopping that owned tree.
+- `taskkill` stopped npm, runner and all four test workers, but denied some fixture descendants.
+- Denied descendant PIDs at cancellation: 45652, 48768, 46928; do not kill later without rechecking ownership.
+- Evidence: `.harness/runtime/continuation-http-integration.log`; remaining full gate deferred to PR CI.
+- Review: final diff inspected for credential leaks, redirect bypass, revocation races and cleanup ownership.
+- No unresolved correctness finding in the HTTP block; full integration remains an explicit evidence gap.
+- Initial remote evidence: `d90f45f91097`, run `42887356224`, Linux/Windows contracts and ATS gate PASS.
+- PR #86 was open and non-Draft on arrival; restored to Draft as requested.
+- No real model calls, release dispatch, merge or tags.
+- Commit: this continuation commit (`feat(mcp): mediate user HTTP tools through IDE permissions`).
+
+### Next work after this bounded continuation
+
+- PARTIAL: native Codex children still disabled; prove isolation, inherited permissions, budget and cancellation.
+- PARTIAL: image picker works; paste/drag, PDF and notebook extraction remain to implement.
+- PARTIAL: guarded per-run restore exists; attributed per-tool/turn snapshots remain to implement.
+- PARTIAL: final installed Windows keyboard/a11y/recovery and six-extension acceptance remain unverified.
+- BLOCKED: authenticated provider E2E and provider timings require specific quota authorization.
+- BLOCKED: cargo is absent from PATH and the default user cargo location; Rust tests remain unexecuted.
+- Optional browser/cloud still require separate isolation/service authority; no new infrastructure provisioned.
+- Resume from this checklist and the same branch/PR; preserve untracked prompt and review inputs.
+- User reported only 10% session tokens remaining; prioritize coherent reviewed delivery over new broad work.
