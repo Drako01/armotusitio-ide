@@ -42,6 +42,7 @@ const EXACT: Record<string, Hint> = {
 	HARNESS_IMAGE_LIMIT: t => t('Adjunt\u00e1 una imagen de hasta 4 MiB por turno.'),
 	HARNESS_IMAGE_PATH_DENIED: t => t('Eleg\u00ed una imagen regular dentro del proyecto y fuera de carpetas sensibles.'),
 	HARNESS_IMAGE_TRANSPORT_UNAVAILABLE: t => t('La imagen requiere transporte nativo y un turno de consulta. Revis\u00e1 atsHarness.agentTransport.'),
+	HARNESS_MCP_TIMEOUT: t => t('El servidor MCP no respondi\u00f3 antes del plazo. Revis\u00e1 la conexi\u00f3n y verific\u00e1 cualquier cambio remoto antes de reintentar.'),
 	HARNESS_MCP_CANCELLED: t => t('La conexi\u00f3n MCP fue cancelada. Revis\u00e1 su estado antes de repetir una acci\u00f3n.'),
 	HARNESS_MCP_CATALOG_INVALID: t => t('El servidor MCP anunci\u00f3 herramientas inv\u00e1lidas. Correg\u00ed el servidor o deshabilitalo con /mcp disable.'),
 	HARNESS_MCP_CONNECTION_LOST: t => t('Se perdi\u00f3 la conexi\u00f3n MCP. Verific\u00e1 si la operaci\u00f3n se complet\u00f3 antes de repetirla.'),
