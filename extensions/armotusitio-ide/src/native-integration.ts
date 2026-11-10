@@ -49,6 +49,7 @@ import { harnessErrorCode, promptBudget, type GateSummary } from './native-chat.
 import { proposeProjectConfig, loadProjectConfig, writeProjectConfig, generatedConfigDigest, removeGeneratedProjectConfig } from './native-project.ts';
 import { reviewAgentDraft, inspectAgentWorkspace, modelOption, effortOption, validModel, validEffort, MAX_AGENT_TURNS, type NativeProvider, type NativeEffort, type AgentRole, type AgentDraft } from './native-providers.ts';
 import { captureWorkingTree, diffWorkingTree, discardRunChanges, fingerprintFiles, type RunDiffSummary, type WorkingTreeSnapshot } from './native-run-diff.ts';
+import { ChatToolCheckpointRecorder, listChatToolCheckpoints, restoreChatToolCheckpoint } from './native-chat-tool-checkpoints.ts';
 import { buildSupportReport, exportSupportReport } from './native-support.ts';
 import { inspectHarnessAuthority } from './native-authority.ts';
 import { fitEngineeringContext, engineeringContext, engineeringSkillContext, listEngineeringSkills, readEngineeringSkill } from './native-engineering-skills.ts';
@@ -804,6 +805,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 				const boundedSkills = fitEngineeringContext(skillText, promptBudget({ promptBudget: promptBudgetBytes() }) - Buffer.byteLength(basePrompt) - 2);
 				const prompt = resumeSession ? instruction : basePrompt + (boundedSkills ? '\n\n' + boundedSkills : '');
 				let before: WorkingTreeSnapshot | undefined;
+				const toolCheckpoints = new ChatToolCheckpointRecorder(root, path.join(metricsDirectory(root), 'chat-tool-checkpoints'));
 				let diff: RunDiffSummary = { available: false, files: [], count: 0 };
 				const agent = await runGuardedAgent(folder, draftOf(root, provider, 'implementer', prompt, { maxTurns, ...(resumeSession ? { resumeSession } : {}) }), {
 					...(server ? { toolServer: server.launch } : {}),
@@ -811,10 +813,12 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 					onStarted: execution => { hooks.started(() => execution.cancel()); hooks.stage('agent'); },
 					onProgress: hooks.progress,
 					onMessage: hooks.message,
-					onStep: hooks.step,
+					onStep: step => { toolCheckpoints.observe(step); hooks.step?.(step); },
 					signal,
-					beforeLaunch: async () => { before = await captureWorkingTree(root); },
+					beforeLaunch: async () => { before = await captureWorkingTree(root); await toolCheckpoints.begin(); },
 					afterOutcome: async (outcome, fence) => {
+						// Finalize tool-attributed records while the shared writer fence is held.
+						await toolCheckpoints.finish().catch(() => { void vscode.window.showWarningMessage('No se pudo persistir un checkpoint granular; la reversión por corrida sigue disponible.'); });
 						// Measured before verification, so build output of the gates is never attributed to the writer.
 						if (before) { diff = diffWorkingTree(before, await captureWorkingTree(root)); diff = { ...diff, after: await fingerprintFiles(root, diff.files) }; }
 						if (outcome.status !== 'passed' && verification) {
@@ -1317,6 +1321,39 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			if (!authorized(chosen.folder)) { return; }
 			await removeCleanAgentWorktree(selected.worktree);
 			vscode.window.showInformationMessage('Worktree limpio retirado.');
+		} catch (error) { showError(error); } finally { controller.refresh(); }
+	}));
+	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.nativeChatToolRestore', async (requested?: string) => {
+		try {
+			if (!ensureTrust()) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
+			const chosen = await choose(requested, true); if (!chosen) { return; }
+			const root = await fs.realpath(chosen.folder.uri.fsPath);
+			assertIdle(root, chosen.folder);
+			const storage = path.join(metricsDirectory(root), 'chat-tool-checkpoints');
+			const checkpoints = await listChatToolCheckpoints(root, storage);
+			if (!checkpoints.length) { vscode.window.showInformationMessage('No hay checkpoints granulares seguros disponibles.'); return; }
+			const selected = await vscode.window.showQuickPick(checkpoints.map(item => ({
+				label: item.stepId.slice(0, 64), description: item.kind + ' · ' + item.files.length + ' archivos · ' + item.at, checkpoint: item
+			})), { title: 'Restaurar una herramienta del Chat Harness' });
+			if (!selected) { return; }
+			const approval = await vscode.window.showWarningMessage(
+				'Restaurar únicamente archivos con huella idéntica a la salida de esa herramienta. Cualquier edición posterior bloqueará la restauración completa. No modifica commits ni la rama. ¿Confirmar?',
+				{ modal: true }, 'Restaurar checkpoint');
+			if (approval !== 'Restaurar checkpoint' || !authorized(chosen.folder)) { return; }
+			assertIdle(root, chosen.folder);
+			const fence = await acquireSharedExecutionFence(root, metricsDirectory(root), 'native-agent');
+			let lease: WriterLease | undefined;
+			try {
+				if ((await inspectHarnessAuthority(root)).engine === 'project') {
+					if (!coordinatedWriters()) { throw Error('HARNESS_HYBRID_WRITER_UNAVAILABLE'); }
+					lease = await acquireWriterLease(root, true, () => authorized(chosen.folder), fence);
+				}
+				const outcome = await restoreChatToolCheckpoint(root, storage, selected.checkpoint.id, async () => {
+					await fence.assertCurrent();
+					if (!authorized(chosen.folder)) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
+				});
+				void vscode.window.showInformationMessage('Checkpoint: ' + outcome.restored.length + ' restaurados; ' + outcome.skipped.length + ' preservados por conflicto.');
+			} finally { await lease?.release().catch(() => undefined); await fence.release(); }
 		} catch (error) { showError(error); } finally { controller.refresh(); }
 	}));
 	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.nativeWorktreeRollback', async (requested?: string) => {

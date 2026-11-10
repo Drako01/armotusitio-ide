@@ -571,6 +571,10 @@
 				"title": "ArmoTuSitio: Revertir worktree a checkpoint (confirmación requerida)"
 			},
 			{
+				"command": "atsHarness.nativeChatToolRestore",
+				"title": "ArmoTuSitio: Restaurar checkpoint de herramienta del Chat Harness"
+			},
+			{
 				"command": "atsHarness.nativeWorktreeIntegrate",
 				"title": "ArmoTuSitio: Integrar cambios del worktree en el checkout principal (confirmación requerida)"
 			},

@@ -469,3 +469,22 @@ los hijos: `HARNESS_DELEGATION_BUDGET_UNVERIFIED`. Cada ejecución necesita la
 confirmación modal existente. Cancelar detiene el proceso supervisor del proveedor.
 La compatibilidad y cancelación de procesos descendientes requieren pruebas con la
 versión de Codex instalada; **no se declara validación autenticada ni paridad total**.
+
+
+### Checkpoints por herramienta del chat (guardados localmente)
+
+Durante las implementaciones aprobadas del Chat Harness se toman snapshots acotados de
+herramientas secuenciales de edición y comando. Los registros se guardan en el
+almacenamiento privado del Harness (24 registros como máximo, 12 archivos por
+checkpoint, 128 KiB por archivo); nunca contienen salida del proveedor ni prompts.
+Si el IDE no puede atribuir una modificación con certeza, por ejemplo por
+herramientas simultáneas, **no inventa un checkpoint**. Las modificaciones
+preexistentes, rutas sensibles, enlaces y archivos demasiado grandes quedan fuera.
+
+Usá **ArmoTuSitio: Restaurar checkpoint de herramienta del Chat Harness** para
+seleccionar un registro y confirmar. Se verifica el lock/fence de escritura, la
+huella exacta de cada archivo y que no existan ediciones posteriores. Ante un
+conflicto, la restauración se cancela sin tocar archivos. Un error en mitad de
+la operación deja un marcador de recuperación, nunca un retry automático.
+El descarte por corrida anterior sigue disponible; los checkpoints no sustituyen
+los commits convencionales ni garantizan restauración de herramientas concurrentes.

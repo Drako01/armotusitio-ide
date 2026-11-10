@@ -218,7 +218,7 @@ export class ChatToolCheckpointRecorder {
 		// Keep at most 24 records across runs. Only our UUID-named JSON files are eligible.
 		const names = (await fs.readdir(this.storage)).filter(name => UUID.test(name.replace(/\.json$/, '')) && name.endsWith('.json')).sort();
 		for (const old of names.slice(0, Math.max(0, names.length - MAX_CHECKPOINTS))) {
-			if (!await fs.lstat(path.join(this.storage, old + '.restore.intent')).then(() => true, () => false)) {
+			if (!await fs.lstat(path.join(this.storage, old.slice(0, -5) + '.restore.intent')).then(() => true, () => false)) {
 				await fs.rm(path.join(this.storage, old), { force: true });
 			}
 		}
