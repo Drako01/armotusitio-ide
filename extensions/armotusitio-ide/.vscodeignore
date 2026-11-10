@@ -5,3 +5,5 @@
 !resources/*.png
 !resources/*.svg
 !themes/*.json
+!resources/engineering-skills/catalog.json
+!resources/engineering-skills/*/SKILL.md
