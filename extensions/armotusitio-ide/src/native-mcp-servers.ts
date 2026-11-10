@@ -43,7 +43,7 @@ interface ServersFile { schemaVersion: number; servers: McpServer[] }
 /** What the user supplies when adding a server; `token` and `env` go to secret storage. */
 export interface McpServerInput { name: string; url?: string; command?: string; args?: string[]; token?: string; env?: Record<string, string>; oauth?: OAuthTokens; transport?: 'sse' }
 /** The server entry Claude's `--mcp-config` reads. */
-export type McpLaunch = { type: 'stdio'; command: string; args: string[]; env?: Record<string, string> } | { type: 'http' | 'sse'; url: string; headers?: Record<string, string> };
+export type McpLaunch = { type: 'stdio'; command: string; args: string[]; env?: Record<string, string> } | { type: 'http'; url: string; headers?: Record<string, string> } | { type: 'sse'; url: string; headers?: Record<string, string> };
 
 const empty = (): ServersFile => ({ schemaVersion: MCP_SERVERS_SCHEMA_VERSION, servers: [] });
 
@@ -139,7 +139,8 @@ export class McpServerStore {
 				const token = server.oauth ? (await this.oauthTokens(server.name))?.access : server.hasToken ? await this.secrets.get(this.key(server.name, 'token')) : undefined;
 				// An OAuth server whose session cannot be renewed is left out until the user signs in again.
 				if (server.oauth && !token) { continue; }
-				entries[server.name] = { type: server.transport, url: server.url!, ...(token ? { headers: { Authorization: 'Bearer ' + token } } : {}) };
+				const connection = { url: server.url!, ...(token ? { headers: { Authorization: 'Bearer ' + token } } : {}) };
+				entries[server.name] = server.transport === 'sse' ? { type: 'sse', ...connection } : { type: 'http', ...connection };
 			} else {
 				const raw = server.envNames?.length ? await this.secrets.get(this.key(server.name, 'env')) : undefined;
 				entries[server.name] = { type: 'stdio', command: server.command!, args: server.args ?? [], ...(raw ? { env: JSON.parse(raw) as Record<string, string> } : {}) };
