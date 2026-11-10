@@ -273,3 +273,9 @@
 - Fix CI: instalar `extensions/package-lock.json` (con `esbuild@0.28.1`) mediante `npm ci --prefix extensions --ignore-scripts` en ambos SO antes de compilar, sin tocar protecciones.
 - Fix seguridad: el límite `max_concurrent_threads_per_session=2` es de simultaneidad, no de hijos totales; se rechazan subagentes Codex si hay cuota diaria o límites rígidos de tokens/USD sin contabilidad real por hijo. V1 activado con `features.collab=true` y V2 desactivado para que `agents.max_depth=1` sea aplicable.
 - Próxima evidencia: CI final del nuevo SHA con compilación, paquete, tests y ATS gate; no declarar PASS sin resultado.
+
+
+### Consolidación de instalación compartida de dependencias — 2026-11-10
+
+- Se observó un commit concurrente `c6143f7` que añadió el mismo `npm ci --prefix extensions` a Linux/Windows mientras se preparaba el fix `b5dd91f`. El workflow resultante contenía cada instalación dos veces; se deduplicó en la misma rama y se conservó una instalación fijada por lockfile en cada SO.
+- El nuevo CI debe validarse sobre el SHA de este commit. No se usa `--force`, no se reescribe historial ni se toca `main`.
