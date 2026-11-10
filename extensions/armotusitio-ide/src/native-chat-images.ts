@@ -77,6 +77,23 @@ export function validateChatImages(images: readonly ChatImage[], now = Date.now(
 	}
 }
 
+/** Pasted/dropped image bytes have no file path. Treat webview data as untrusted and validate fully on the host. */
+export function chatImageFromData(mime: unknown, base64: unknown, now = Date.now()): ChatImage {
+	if ((mime !== 'image/png' && mime !== 'image/jpeg') || typeof base64 !== 'string'
+		|| !base64.length || base64.length > Math.ceil(MAX_IMAGE_BYTES / 3) * 4
+		|| !/^[A-Za-z0-9+/]+={0,2}$/.test(base64)) { throw Error('HARNESS_IMAGE_INVALID'); }
+	const bytes = Buffer.from(base64, 'base64');
+	if (bytes.length > MAX_IMAGE_BYTES || bytes.toString('base64') !== base64 || imageType(bytes) !== mime) {
+		throw Error('HARNESS_IMAGE_INVALID');
+	}
+	const image: ChatImage = {
+		mime, data: base64, digest: createHash('sha256').update(bytes).digest('hex'),
+		expiresAt: now + IMAGE_TTL_MS
+	};
+	validateChatImages([image], now);
+	return image;
+}
+
 /** A selected regular workspace image, loaded once into memory before preview and explicit consent. */
 export async function readChatImage(root: string, file: string): Promise<ChatImage> {
 	const canonicalRoot = await fs.realpath(root), canonical = await fs.realpath(file);
