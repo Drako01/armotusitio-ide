@@ -15,6 +15,8 @@ let state: any = null;
 const rendered = new Map<string, HTMLElement>();
 let ticker: number | undefined;
 let suggest: ReturnType<typeof createSuggest> | undefined;
+/** Paste/drop stays memory-only: never persisted into chat drafts or provider history. */
+let stagedImage: { name: string; mime: 'image/png' | 'image/jpeg'; data: string } | undefined;
 
 function el(tag: string, className?: string, text?: string): HTMLElement {
 	const node = document.createElement(tag);
@@ -162,8 +164,39 @@ function shell(): void {
 	const send = el('button', 'send', L.send) as HTMLButtonElement; send.type = 'submit'; send.id = 'send';
 	const stop = el('button', 'secondary stop', L.cancel) as HTMLButtonElement; stop.type = 'button'; stop.id = 'stop'; stop.hidden = true;
 	stop.addEventListener('click', () => api.postMessage({ action: 'cancel' }));
+	const media = el('div', 'pending-media'); media.id = 'pending-media'; media.setAttribute('aria-live', 'polite'); media.hidden = true;
 	box.append(input, stop, send);
-	form.append(box, el('p', 'hint', L.keyboard));
+	form.append(media, box, el('p', 'hint', L.keyboard));
+	drawStagedImage();
+	const capture = (file: File | undefined): void => {
+		if (!file || !state?.trusted) { return; }
+		if (file.type !== 'image/png' && file.type !== 'image/jpeg') { return; }
+		if (!file.size || file.size > 4 * 1024 * 1024) { announceMediaError('PNG/JPEG: 4 MiB max'); return; }
+		const reader = new FileReader();
+		reader.addEventListener('load', () => {
+			if (typeof reader.result !== 'string' || !reader.result.startsWith('data:' + file.type + ';base64,')) { return; }
+			const data = reader.result.slice(reader.result.indexOf(',') + 1);
+			if (data.length > Math.ceil(4 * 1024 * 1024 / 3) * 4) { return; }
+			stagedImage = { name: file.name.slice(0, 100), mime: file.type as 'image/png' | 'image/jpeg', data };
+			drawStagedImage();
+		});
+		reader.readAsDataURL(file);
+	};
+	input.addEventListener('paste', event => {
+		const image = [...(event.clipboardData?.files ?? [])].find(file => file.type === 'image/png' || file.type === 'image/jpeg');
+		if (!image) { return; }
+		event.preventDefault();
+		capture(image);
+	});
+	form.addEventListener('dragover', event => {
+		if ([...(event.dataTransfer?.items ?? [])].some(item => item.type === 'image/png' || item.type === 'image/jpeg')) { event.preventDefault(); }
+	});
+	form.addEventListener('drop', event => {
+		const image = [...(event.dataTransfer?.files ?? [])].find(file => file.type === 'image/png' || file.type === 'image/jpeg');
+		if (!image) { return; }
+		event.preventDefault();
+		capture(image);
+	});
 	(form.lastElementChild as HTMLElement).id = 'composer-hint';
 	form.addEventListener('submit', event => { event.preventDefault(); submit(input.value); });
 	// An unsent message survives the view being hidden or reloaded. Text that looks like a credential is never kept.
@@ -191,6 +224,26 @@ document.addEventListener('click', event => {
 	const target = event.target as HTMLElement;
 	if (L && !target.closest('.popover') && !target.closest('#mcp-pill') && !target.closest('#menu-button')) { closePopovers(); }
 });
+function announceMediaError(text: string): void {
+	const announcer = document.getElementById('announcer');
+	if (announcer) { announcer.textContent = text; }
+}
+function drawStagedImage(): void {
+	const container = document.getElementById('pending-media');
+	if (!container) { return; }
+	container.textContent = '';
+	container.hidden = !stagedImage;
+	if (!stagedImage) { return; }
+	const image = el('img') as HTMLImageElement;
+	image.alt = 'Imagen para revisar antes del envio: ' + stagedImage.name;
+	image.src = 'data:' + stagedImage.mime + ';base64,' + stagedImage.data;
+	image.width = 72; image.height = 72;
+	const description = el('span', 'muted', stagedImage.name + ' - vista previa; requiere confirmacion del IDE');
+	const remove = el('button', 'secondary', 'Quitar') as HTMLButtonElement;
+	remove.type = 'button';
+	remove.addEventListener('click', () => { stagedImage = undefined; drawStagedImage(); document.getElementById('prompt')?.focus(); });
+	container.append(image, description, remove);
+}
 function autosize(): void { const input = document.getElementById('prompt') as HTMLTextAreaElement; input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 240) + 'px'; }
 function toggle(id: string, trigger: HTMLElement): void {
 	const panel = document.getElementById(id); const open = panel.hidden;
@@ -221,11 +274,12 @@ function retainDraft(value: string, notify = true): void {
 function busy(): boolean { return !!state?.chat?.activity; }
 function submit(value: string): void {
 	const text = value.trim();
-	if (!text || !state?.chat) { return; }
+	if ((!text && !stagedImage) || !state?.chat) { return; }
 	// An oversized message is answered with how many characters to remove; the text stays so it can be trimmed.
 	if (text.length > L.maxMessageChars) { api.postMessage({ action: 'send', text }); return; }
 	const input = document.getElementById('prompt') as HTMLTextAreaElement; input.value = ''; retainDraft(''); autosize(); suggest?.close();
-	api.postMessage({ action: 'send', text });
+	api.postMessage({ action: 'send', text: text || 'Describe esta imagen.', ...(stagedImage ? { image: stagedImage } : {}) });
+	stagedImage = undefined; drawStagedImage();
 }
 
 // ---------------------------------------------------------------- provider quota
@@ -767,6 +821,7 @@ window.addEventListener('message', event => {
 	if (data?.type === 'state') {
 		if (data.chat && data.chat.messages === undefined) { data.chat.messages = state?.chat?.messages ?? []; }
 		const changedProject = state?.project?.id !== data.project?.id;
+		if (changedProject) { stagedImage = undefined; drawStagedImage(); }
 		state = data;
 		if (L) {
 			if (changedProject) {
