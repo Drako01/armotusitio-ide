@@ -17,6 +17,7 @@ import { StringDecoder } from 'node:string_decoder';
 import { claudeToolArgs } from '../native-agent-execution.ts';
 import { ClaudeEventAccumulator, validSessionId } from '../native-provider-output.ts';
 import { resolveNativeCommand } from '../native-runtime.ts';
+import { validateChatImages } from '../native-chat-images.ts';
 import { RuntimeError, type AdapterHost, type AgentAdapter, type AgentConnection, type RuntimeCapabilities, type SessionOpenOptions, type ToolCall, type TurnInput, type TurnResult } from './contracts.ts';
 import { MAX_TEXT_CHARS } from './event-bridge.ts';
 import { ProviderRequestError } from './json-rpc.ts';
@@ -153,6 +154,7 @@ class ClaudeConnection implements AgentConnection {
 	}
 
 	async startTurn(input: TurnInput): Promise<TurnResult> {
+		if (input.images) { validateChatImages(input.images); }
 		if (this.closed) { throw new RuntimeError('RUNTIME_CONNECTION_CLOSED'); }
 		if (this.turn) { throw new RuntimeError('RUNTIME_TURN_ALREADY_RUNNING'); }
 		if (!this.process) { await this.start(); }
@@ -163,7 +165,7 @@ class ClaudeConnection implements AgentConnection {
 				accumulator: new ClaudeEventAccumulator(undefined, undefined, undefined)
 			};
 			this.host.emit({ turnId: input.clientTurnId, payload: { type: 'turn.started' } });
-			const line = JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: input.text }] }, parent_tool_use_id: null, session_id: this.nativeSessionId || undefined });
+			const line = JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: input.text }, ...(input.images ?? []).map(image => ({ type: 'image', source: { type: 'base64', media_type: image.mime, data: image.data } }))] }, parent_tool_use_id: null, session_id: this.nativeSessionId || undefined });
 			child.child.stdin.write(line + '\n');
 		});
 	}

@@ -30,6 +30,8 @@ export interface AgentDraft {
 	resumeSession?: string;
 	/** The provider's own web search for this project (decision D9); off when absent. Web fetching is never allowed. */
 	webSearch?: boolean;
+	/** Explicitly reviewed Codex native read-only child threads; never available to writers or Claude. */
+	nativeSubagents?: boolean;
 }
 export interface AgentReview {
 	draft: AgentDraft;
@@ -84,7 +86,8 @@ export function validateAgentDraft(input: unknown): AgentDraft {
 		|| (value.effort !== undefined && !validEffort(value.provider, value.effort))
 		|| (value.maxTurns !== undefined && (!Number.isSafeInteger(value.maxTurns) || value.maxTurns < 1 || value.maxTurns > MAX_AGENT_TURNS))
 		|| (value.resumeSession !== undefined && (!validSessionId(value.resumeSession) || value.provider !== 'claude' || value.role !== 'implementer'))
-		|| (value.webSearch !== undefined && typeof value.webSearch !== 'boolean')) {
+		|| (value.webSearch !== undefined && typeof value.webSearch !== 'boolean')
+		|| (value.nativeSubagents !== undefined && (typeof value.nativeSubagents !== 'boolean' || (value.nativeSubagents && (value.provider !== 'codex' || !value.readOnly || value.role === 'implementer' || value.webSearch === true || value.resumeSession !== undefined))))) {
 		throw Error('HARNESS_AGENT_DRAFT_SCHEMA');
 	}
 	return value;

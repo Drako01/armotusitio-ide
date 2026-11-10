@@ -8,8 +8,9 @@
  * restart is reported as lost and never replayed; the next turn resumes the native session by id. A native id that the
  * provider no longer knows starts a new session with an explicit handoff notice, never with invented history.
  */
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { NativeProvider } from '../native-providers.ts';
+import { validateChatImages, type ChatImage } from '../native-chat-images.ts';
 import {
 	RuntimeError, SESSION_TRANSITIONS, sessionKey, type AdapterHost, type AgentAdapter, type AgentConnection, type AgentEvent, type AgentQuestion,
 	type ApprovalVerdict, type QuestionAnswers, type RuntimeCapabilities, type SessionIdentity, type SessionOpenOptions, type SessionRole, type SessionState, type ToolCall, type TurnResult
@@ -75,7 +76,8 @@ export class ManagedSession {
 	}
 
 	/** Run one turn: journal, connect (resume / reopen for another role), stream, and record the end. Never replays input. */
-	async runTurn(text: string, role: SessionRole, signal?: AbortSignal, inputRef?: string, freshText?: string): Promise<TurnResult & { nativeSessionId: string }> {
+	async runTurn(text: string, role: SessionRole, signal?: AbortSignal, inputRef?: string, freshText?: string, images?: readonly ChatImage[]): Promise<TurnResult & { nativeSessionId: string }> {
+		if (images) { validateChatImages(images); }
 		if (this.running) { throw new RuntimeError('RUNTIME_TURN_ALREADY_RUNNING'); }
 		if (signal?.aborted) { throw new RuntimeError('RUNTIME_CANCELLED_BEFORE_START'); }
 		const clientTurnId = randomUUID();
@@ -104,7 +106,7 @@ export class ManagedSession {
 			await this.journal(clientTurnId, { status: 'running' });
 			this.transition('running');
 			// A follow-up written for an existing native session is replaced by the full input when the provider had to start over.
-			const promise = connection.startTurn({ text: freshText && !connection.resumed && !this.continued ? freshText : text, clientTurnId, role });
+			const promise = connection.startTurn({ text: freshText && !connection.resumed && !this.continued ? freshText : text, clientTurnId, role, ...(images?.length ? { images } : {}) });
 			this.continued = true;
 			this.running = { clientTurnId, promise };
 			const abort = () => { void connection.interrupt(); };
@@ -278,7 +280,7 @@ export class AgentSessionManager {
 	readonly retryDelayMs: number;
 	private readonly adapters: Map<NativeProvider, AgentAdapter>;
 	private readonly sessions = new Map<string, ManagedSession>();
-	private readonly capabilityCache = new Map<NativeProvider, Promise<RuntimeCapabilities>>();
+	private readonly capabilityCache = new Map<string, { expires: number; result: Promise<RuntimeCapabilities> }>();
 
 	constructor(store: AgentSessionStore, adapters: AgentAdapter[], services: SessionServices, options: ManagerOptions = {}) {
 		this.store = store;
@@ -293,15 +295,20 @@ export class AgentSessionManager {
 		return adapter;
 	}
 
-	/** Probed once per IDE session per provider (no tokens): versions and features of the installed CLI. */
+	/** Probe without model calls; isolate environments/accounts and refresh after CLI upgrades. */
 	capabilities(provider: NativeProvider, env: NodeJS.ProcessEnv): Promise<RuntimeCapabilities> {
-		let cached = this.capabilityCache.get(provider);
-		if (!cached) {
-			cached = this.adapter(provider).capabilities(env);
-			this.capabilityCache.set(provider, cached);
-			cached.catch(() => this.capabilityCache.delete(provider));
-		}
-		return cached;
+		const snapshot = { ...env };
+		// Environment values can contain credentials: retain only their digest in the cache key.
+		const key = provider + ':' + createHash('sha256').update(JSON.stringify(Object.entries(snapshot).sort(([a], [b]) => a.localeCompare(b)))).digest('hex');
+		const cached = this.capabilityCache.get(key);
+		if (cached && cached.expires > Date.now()) { return cached.result; }
+		const result = this.adapter(provider).capabilities(snapshot);
+		if (this.capabilityCache.size >= 32) { this.capabilityCache.delete(this.capabilityCache.keys().next().value!); }
+		this.capabilityCache.set(key, { expires: Date.now() + 60_000, result });
+		void result.catch(() => {
+			if (this.capabilityCache.get(key)?.result === result) { this.capabilityCache.delete(key); }
+		});
+		return result;
 	}
 
 	newRecord(identity: SessionIdentity): SessionRecord {

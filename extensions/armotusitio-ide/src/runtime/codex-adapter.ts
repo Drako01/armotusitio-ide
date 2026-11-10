@@ -11,6 +11,9 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { resolveNativeCommand } from '../native-runtime.ts';
+import { validateChatImages } from '../native-chat-images.ts';
+import { CodexChildGuard, codexChildActivity, readonlyCodexSubagentOverrides } from '../native-codex-subagents.ts';
+import { captureAgentScope } from '../native-agent-scope.ts';
 import {
 	CODEX_PROTOCOL_VERSION,
 	type AskForApproval, type CommandExecutionRequestApprovalParams, type CommandExecutionRequestApprovalResponse, type FileChangeRequestApprovalParams,
@@ -89,8 +92,19 @@ export class CodexAdapter implements AgentAdapter {
 		const mcp = server ? ['-c', 'mcp_servers.ats-runner.command=' + toml(server.command), '-c', 'mcp_servers.ats-runner.args=[' + server.args.map(toml).join(',') + ']',
 			'-c', 'mcp_servers.ats-runner.env={' + Object.entries(server.env).map(([key, value]) => key + '=' + toml(value)).join(',') + '}',
 			'-c', 'mcp_servers.ats-runner.default_tools_approval_mode="approve"', '-c', 'mcp_servers.ats-runner.tool_timeout_sec=1800'] : [];
+		if (options.nativeSubagents && (options.role !== 'conversation' || options.toolServer || options.webSearch || this.options.fullAccess?.())) {
+			throw new RuntimeError('RUNTIME_SUBAGENTS_UNSAFE');
+		}
+		if (options.nativeSubagents) {
+			// Do not start any provider subprocess if read-only scope cannot be
+			// attested locally. Native sandboxing remains the primary boundary.
+			const scope = await captureAgentScope(options.identity.root).catch(() => undefined);
+			if (scope?.source !== 'git' || scope.unscanned.length !== 0) {
+				throw new RuntimeError('HARNESS_DELEGATION_ISOLATION_UNSUPPORTED');
+			}
+		}
 		const search = options.webSearch ? ['-c', 'tools.web_search=true'] : [];
-		const child = await startProviderProcess('codex', ['app-server', ...mcp, ...search], options.identity.root, options.env);
+		const child = await startProviderProcess('codex', [...readonlyCodexSubagentOverrides(options.nativeSubagents === true), 'app-server', ...mcp, ...search], options.identity.root, options.env);
 		const connection = new CodexConnection(child, options, host, !!this.options.fullAccess?.());
 		try {
 			await connection.handshake(this.options.clientVersion ?? '0');
@@ -117,9 +131,11 @@ class CodexConnection implements AgentConnection {
 	/** Paths of file-change items, so their approval card can say which files. */
 	private readonly changePaths = new Map<string, string[]>();
 	private readonly messages = new Map<string, string>();
+	private readonly childGuard: CodexChildGuard;
 
 	constructor(child: ProviderProcess, options: SessionOpenOptions, host: AdapterHost, fullAccess: boolean) {
 		this.child = child; this.options = options; this.host = host; this.fullAccess = fullAccess;
+		this.childGuard = new CodexChildGuard(options.nativeSubagents === true);
 		this.rpc = new JsonRpcConnection(child.child.stdin, child.child.stdout, {
 			request: (method, params) => this.serverRequest(method, params),
 			notification: (method, params) => this.notification(method, params),
@@ -160,11 +176,13 @@ class CodexConnection implements AgentConnection {
 	}
 
 	startTurn(input: TurnInput): Promise<TurnResult> {
+		if (input.images) { validateChatImages(input.images); }
 		if (this.turn) { return Promise.reject(new RuntimeError('RUNTIME_TURN_ALREADY_RUNNING')); }
 		return new Promise<TurnResult>((resolve, reject) => {
+			this.childGuard.beginTurn();
 			this.turn = { clientTurnId: input.clientTurnId, output: '', resolve };
 			const params: TurnStartParams = {
-				threadId: this.nativeSessionId, input: textInput(input.text), clientUserMessageId: input.clientTurnId,
+				threadId: this.nativeSessionId, input: [...textInput(input.text), ...(input.images ?? []).map(image => ({ type: 'image' as const, url: 'data:' + image.mime + ';base64,' + image.data }))], clientUserMessageId: input.clientTurnId,
 				approvalPolicy: approvalPolicy(input.role), sandboxPolicy: sandboxPolicy(input.role, [this.options.identity.root, ...(this.options.writableRoots ?? [])], this.fullAccess)
 			};
 			this.rpc.request<TurnStartResponse>('turn/start', params).then(
@@ -188,6 +206,10 @@ class CodexConnection implements AgentConnection {
 	async interrupt(): Promise<void> {
 		const turn = this.turn;
 		if (!turn) { return; }
+		// The process owns every native child; stopping it prevents orphaned subagent work.
+		if (this.options.nativeSubagents) {
+			this.finishTurn({ status: 'interrupted' }); this.child.stop(); return;
+		}
 		if (!turn.id) { this.finishTurn({ status: 'interrupted' }); return; }
 		try { await this.rpc.request('turn/interrupt', { threadId: this.nativeSessionId, turnId: turn.id }, 10_000); }
 		catch {
@@ -213,6 +235,7 @@ class CodexConnection implements AgentConnection {
 	private notification(method: string, params: unknown): void {
 		const value = (params ?? {}) as Record<string, unknown>;
 		const turnId = typeof value.turnId === 'string' ? value.turnId : this.turn?.id;
+		if ((method === 'item/started' || method === 'item/completed') && this.childViolation(value)) { return; }
 		// Another thread's traffic (a shared server) is never mixed into this session.
 		if (typeof value.threadId === 'string' && this.nativeSessionId && value.threadId !== this.nativeSessionId) { return; }
 		switch (method) {
@@ -264,6 +287,22 @@ class CodexConnection implements AgentConnection {
 		}
 	}
 
+	/**
+	 * Checked before the thread filter, so a child thread that tries to delegate again is seen. A violation fails the
+	 * turn and stops the process that owns every child.
+	 */
+	private childViolation(value: Record<string, unknown>): boolean {
+		const activity = codexChildActivity(value.item as Record<string, unknown> | undefined);
+		if (!activity) { return false; }
+		const sender = activity.senderThreadId ?? (typeof value.threadId === 'string' ? value.threadId : undefined);
+		const violation = this.childGuard.observe({ ...activity, ...(sender ? { senderThreadId: sender } : {}) }, this.nativeSessionId || undefined);
+		if (!violation) { return false; }
+		this.host.emit({ payload: { type: 'diagnostic', source: 'codex', text: violation } });
+		this.finishTurn({ status: 'failed', error: violation });
+		this.child.stop();
+		return true;
+	}
+
 	private itemStarted({ item, turnId }: ItemStartedNotification): void {
 		const call = this.callOf(item as unknown as Record<string, unknown>);
 		if (call) { this.host.emit({ turnId, toolCallId: item.id, nativeKey: 'item/started:' + item.id, payload: { type: 'tool.started', call } }); }
@@ -297,6 +336,7 @@ class CodexConnection implements AgentConnection {
 			case 'mcpToolCall': return { kind: 'mcp', name: 'mcpToolCall', server: String(item.server ?? ''), tool: String(item.tool ?? '') };
 			case 'dynamicToolCall': return { kind: 'other', name: String(item.tool ?? 'dynamicToolCall') };
 			case 'webSearch': return { kind: 'web_search', name: 'webSearch', command: typeof item.query === 'string' ? item.query : undefined };
+			case 'collabAgentToolCall': return { kind: 'other', name: 'subagents.' + (typeof item.tool === 'string' ? item.tool : 'activity') };
 			default: return undefined;
 		}
 	}

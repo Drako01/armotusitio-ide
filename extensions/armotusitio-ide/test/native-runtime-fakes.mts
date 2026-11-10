@@ -7,7 +7,8 @@
  * protocols as the installed CLIs (Codex app-server JSON-RPC, Claude stream-json + MCP permission prompts), with fault
  * injection by keyword. They verify the IDE's side of the contracts; they are never counted as real-provider E2E.
  *
- * Turn keywords: RUN <cmd> (command needing approval), ASK (question), SLOW (3 s stream), FLOOD <n> (n deltas), CRASH (exit
+ * Turn keywords: RUN <cmd> (command needing approval), ASK (question), SLOW (3 s stream), FLOOD <n> (n deltas), CHILD <n>
+ * (n child agents spawned; with NESTED, by a child thread), CRASH (exit
  * mid-turn), GARBAGE (malformed line), APPROVE_WAIT (approval that waits forever). State lives in FAKE_STATE_DIR:
  * sessions.json (history per native id, so resume proves continuity) and executions.log (one line per executed command).
  */
@@ -34,6 +35,7 @@ const write = message => process.stdout.write(JSON.stringify(message) + '\n');
 let nextId = 1000; const waiting = new Map();
 const request = (method, params) => new Promise(resolve => { const id = nextId++; waiting.set(id, resolve); write({ id, method, params }); });
 let thread, turn, interrupted = false;
+fs.writeFileSync(path.join(state, 'argv.json'), JSON.stringify(process.argv.slice(2)));
 if (process.env.FAKE_HANDSHAKE === 'die-once' && once('died-once')) { process.exit(1); }
 const handlers = {
 	initialize: () => process.env.FAKE_HANDSHAKE === 'hang' ? new Promise(() => {}) : { userAgent: 'fake/0.166.0', codexHome: state, platformFamily: 'windows', platformOs: 'windows' },
@@ -50,11 +52,18 @@ async function runTurn(id, params) {
 	const previous = all[thread].messages.at(-1);
 	write({ method: 'turn/started', params: { threadId: thread, turn: { id } , turnId: id } });
 	let answer = 'Echo: ' + text + (previous ? ' | prev=' + previous : '') + (process.env.CODEX_HOME ? ' | cfg=' + process.env.CODEX_HOME : '');
+	if (text.includes('INSPECT_IMAGE')) { answer += ' | images=' + params.input.filter(item => item.type === 'image' && item.url.startsWith('data:image/png;base64,')).length; }
 	const delta = piece => write({ method: 'item/agentMessage/delta', params: { threadId: thread, turnId: id, itemId: 'msg-' + id, delta: piece } });
 	if (text.includes('GARBAGE')) { process.stdout.write('this is not json\n'); }
 	const flood = /FLOOD (\d+)/.exec(text);
 	if (flood) { for (let i = 0; i < Number(flood[1]); i++) { delta('d' + i + ' '); } }
 	if (text.includes('SLOW')) { for (let i = 0; i < 30 && !interrupted; i++) { delta('.'); await sleep(100); } }
+	const children = /CHILD (\d+)/.exec(text);
+	if (children) {
+		const sender = text.includes('NESTED') ? 'child-thread' : thread;
+		for (let i = 0; i < Number(children[1]); i++) { write({ method: 'item/started', params: { threadId: sender, turnId: id, item: { type: 'collabAgentToolCall', id: 'child-' + i, tool: 'spawnAgent', status: 'inProgress', senderThreadId: sender, receiverThreadIds: [], prompt: null, model: null, reasoningEffort: null, agentsStates: {} } } }); }
+		await sleep(100);
+	}
 	if (text.includes('CRASH')) { delta('partial'); await sleep(50); process.exit(3); }
 	const run = /RUN (.+)$/m.exec(text);
 	if (run || text.includes('APPROVE_WAIT')) {
@@ -130,6 +139,7 @@ async function turn(message) {
 	write({ type: 'stream_event', event: { type: 'message_start' }, session_id: session });
 	const delta = piece => write({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: piece } }, session_id: session });
 	let answer = 'Echo: ' + text + (previous ? ' | prev=' + previous : '') + ' | mode=' + sessions[session].mode + (process.env.CLAUDE_CONFIG_DIR ? ' | cfg=' + process.env.CLAUDE_CONFIG_DIR : '');
+	if (text.includes('INSPECT_IMAGE')) { answer += ' | images=' + message.message.content.filter(item => item.type === 'image' && item.source?.type === 'base64' && item.source.media_type === 'image/png').length; }
 	if (text.includes('GARBAGE')) { process.stdout.write('this is not json\n'); }
 	const flood = /FLOOD (\d+)/.exec(text);
 	if (flood) { for (let i = 0; i < Number(flood[1]); i++) { delta('d' + i + ' '); } }

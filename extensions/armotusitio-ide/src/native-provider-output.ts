@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 /** Provider-specific accounting from structured output; no estimated tokens fabricated from text. */
 import { asObject as object } from './native-json.ts';
+import { codexChildActivity, type CodexChildActivity } from './native-codex-subagents.ts';
 import type { NativeProvider } from './native-providers.ts';
 import { RunStepExtractor, type ChatStep } from './native-run-steps.ts';
 import { mergeQuota, parseQuotaEvent, type ProviderQuota } from './native-quota.ts';
@@ -200,7 +201,13 @@ abstract class ProviderEventAccumulator {
 /** `codex exec --json`: completed agent messages, turn usage and error events. */
 export class CodexEventAccumulator extends ProviderEventAccumulator {
 	protected readonly provider = 'codex';
+	/** Every collaboration (child agent) tool call, as soon as the stream reports it. */
+	onChildActivity?: (activity: CodexChildActivity) => void;
 	protected accept(event: Record<string, unknown>): void {
+		if (event.type === 'item.started' || event.type === 'item.completed') {
+			const activity = codexChildActivity(object(event.item));
+			if (activity) { this.onChildActivity?.(activity); }
+		}
 		if (event.type === 'error' || event.type === 'turn.failed') { this.fail(event); }
 		if (event.type === 'item.completed') {
 			const item = object(event.item);

@@ -28,7 +28,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
-      contents: write
+      contents: read
     outputs:
       tag: ${{ steps.prepare.outputs.tag }}
       commit: ${{ steps.prepare.outputs.commit }}
@@ -45,7 +45,7 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version-file: .nvmrc
-      - name: Select the next revision and commit it to main when needed
+      - name: Validate the reviewed release revision without changing main
         id: prepare
         env:
           GH_TOKEN: ${{ github.token }}

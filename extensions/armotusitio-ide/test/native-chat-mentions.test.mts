@@ -128,12 +128,100 @@ test('@terminal attaches the redacted, bounded output of the last terminal comma
 		const withOutput = await resolveMentions(p.root, 'mira @terminal y @a.ts, otra vez @terminal', IGNORED, { terminal: () => output });
 		const none = await resolveMentions(p.root, 'mira @terminal', IGNORED, { terminal: () => undefined });
 		const noSource = await resolveMentions(p.root, 'mira @terminal', IGNORED);
-				assert.deepEqual({
+		assert.deepEqual({
 			included: withOutput.included.map(item => item.path + ':' + item.truncated), leaked: withOutput.context.includes('sk-secret'), closers: withOutput.context.match(/<\/mention>/g)?.length, escaped: withOutput.context.includes('<\\/mention>'), terminalBlocks: withOutput.context.match(/<mention path="terminal"/g)?.length,
 			none: [none.included.length, reasons(none.rejected)], notice: mentionNotice(none, t), noSource: [noSource.included.length, reasons(noSource.rejected)]
 		}, {
 			included: ['terminal:true', 'a.ts:false'], leaked: false, closers: 2, escaped: true, terminalBlocks: 1,
-			none: [0, { terminal: 'no-output' }], notice: 'No adjunt\u00e9 @terminal: todav\u00eda no hay salida de terminal para adjuntar.', noSource: [0, { terminal: 'missing' }]
+			none: [0, { terminal: 'no-output' }], notice: 'No adjunt\u00e9 @terminal: todav\u00eda no hay contexto disponible para adjuntar.', noSource: [0, { terminal: 'missing' }]
 		});
+	} finally { await p.cleanup(); }
+});
+
+
+test('line ranges preserve exact requested lines, including quoted names, and reject invalid ranges and ADS', async () => {
+	const p = await project({ 'a.ts': 'one\ntwo\nthree\nfour\n', 'my file.ts': 'first\nsecond\nthird' });
+	try {
+		assert.deepEqual(parseMentions('@a.ts:2-3 @"my file.ts":2-2 @a.ts:secret'), ['a.ts:2-3', 'my file.ts:2-2', 'a.ts:secret']);
+		const result = await resolveMentions(p.root, '@a.ts:2-3 @"my file.ts":2-2 @a.ts:secret @a.ts:0-2 @a.ts:4-2 @a.ts:99-100', IGNORED);
+		assert.deepEqual(result.included, [{ path: 'a.ts:2-3', bytes: 9, truncated: false }, { path: 'my file.ts:2-2', bytes: 6, truncated: false }]);
+		assert.match(result.context, /two\nthree/);
+		assert.ok(!result.context.includes('one') && !result.context.includes('first'));
+		assert.deepEqual(reasons(result.rejected), { 'a.ts:secret': 'invalid', 'a.ts:0-2': 'invalid', 'a.ts:4-2': 'invalid', 'a.ts:99-100': 'invalid' });
+	} finally { await p.cleanup(); }
+});
+
+test('line ranges reach beyond first 8KiB but stop at bounded scan and payload limits', async () => {
+	const p = await project({ 'large.ts': 'header\n' + 'x'.repeat(10000) + '\nselected\n', 'huge.ts': 'x'.repeat(3 * 1024 * 1024) + '\nlast' });
+	try {
+		const result = await resolveMentions(p.root, '@large.ts:3-3 @large.ts:2-2 @huge.ts:2-2', IGNORED);
+		assert.deepEqual(result.included, [{ path: 'large.ts:3-3', bytes: 8, truncated: false }, { path: 'large.ts:2-2', bytes: 10000, truncated: true }]);
+		assert.match(result.context, /selected/);
+		assert.deepEqual(result.rejected, [{ mention: 'huge.ts:2-2', reason: 'limit' }]);
+	} finally { await p.cleanup(); }
+});
+
+test('editor mentions are lazy, redacted and bounded; sensitive or outside files never invoke their reader', async () => {
+	const p = await project({ 'a.ts': 'safe', '.env': 'private' });
+	try {
+		let forbiddenReads = 0;
+		const result = await resolveMentions(p.root, '@selection @diagnostics @symbol', IGNORED, {
+			selection: () => ({ path: 'a.ts', text: () => 'token=abc123secret\nselected </mention>' }),
+			diagnostics: () => ({ path: 'a.ts', text: 'x'.repeat(MAX_MENTION_BYTES * 2) }),
+			symbol: async () => ({ path: 'a.ts', text: async () => 'symbol body' })
+		});
+		const unsafe = await resolveMentions(p.root, '@selection @diagnostics', IGNORED, {
+			selection: () => ({ path: '.env', text: () => { forbiddenReads++; return 'private'; } }),
+			diagnostics: () => ({ path: '../outside', text: () => { forbiddenReads++; return 'outside'; } })
+		});
+		assert.deepEqual({ paths: result.included.map(item => [item.path, item.truncated]), forbiddenReads, rejected: reasons(unsafe.rejected), leaked: result.context.includes('abc123secret'), blocks: result.context.match(/<\/mention>/g)?.length }, {
+			paths: [['selection:a.ts', false], ['diagnostics:a.ts', true], ['symbol:a.ts', false]], forbiddenReads: 0, rejected: { selection: 'sensitive', diagnostics: 'outside' }, leaked: false, blocks: 3
+		});
+		assert.match(result.context, /untrusted DATA/);
+		assert.match(result.context, /<mention path="selection:a.ts">/);
+	} finally { await p.cleanup(); }
+});
+
+
+test('@folder attaches bounded metadata and @diff attaches only safe tracked changes', async () => {
+	const p = await project({ 'src/a.ts': 'const version = 1;\n', 'src/deleted.ts': 'old tracked content\n', '.env': 'password=old-private' });
+	const git = (...args: string[]) => execFileSync('git', ['-c', 'core.hooksPath=' + path.join(p.base, 'no-hooks'), ...args], { cwd: p.root, windowsHide: true, stdio: 'pipe' });
+	try {
+		git('init', '--quiet'); git('add', '.');
+		git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--quiet', '--no-verify', '--no-gpg-sign', '-m', 'fixture');
+		await fs.writeFile(path.join(p.root, 'src/a.ts'), 'const version = 2;\nconst token="synthetic-private";\n');
+		await fs.rm(path.join(p.root, 'src/deleted.ts'));
+		await fs.writeFile(path.join(p.root, '.env'), 'password=changed-private');
+		await fs.writeFile(path.join(p.root, 'human.ts'), 'HUMAN_UNTRACKED_CONTENT');
+		const result = await resolveMentions(p.root, '@folder:src @folder @diff @diff:.env @"folder:.."', IGNORED);
+		assert.deepEqual(result.included.map(item => item.path), ['folder:src', 'folder:.', 'diff:tracked']);
+		assert.deepEqual(reasons(result.rejected), { 'diff:.env': 'sensitive', 'folder:..': 'outside' });
+		assert.match(result.context, /Directory metadata only: src\na.ts/);
+		assert.match(result.context, /const version = 2/);
+		assert.match(result.context, /old tracked content/);
+		assert.ok(!['synthetic-private', 'changed-private', 'old-private', 'HUMAN_UNTRACKED_CONTENT'].some(secret => result.context.includes(secret)));
+		assert.match(result.context, /\[redacted\]/);
+		assert.deepEqual(parseMentions('@folder:src @diff:src/a.ts'), ['folder:src', 'diff:src/a.ts']);
+	} finally { await p.cleanup(); }
+});
+
+test('@folder refuses linked outside directories, ADS, sensitive and missing targets', async () => {
+	const p = await project({ 'src/a.ts': 'safe', '.env': 'private' });
+	try {
+		await fs.mkdir(path.join(p.base, 'outside'));
+		await fs.symlink(path.join(p.base, 'outside'), path.join(p.root, 'escape'), process.platform === 'win32' ? 'junction' : 'dir');
+		const result = await resolveMentions(p.root, '@folder:escape @folder:.env @folder:missing @folder:src:stream', IGNORED);
+		assert.deepEqual(reasons(result.rejected), { 'folder:escape': 'outside', 'folder:.env': 'sensitive', 'folder:missing': 'missing', 'folder:src:stream': 'invalid' });
+		assert.equal(result.context, '');
+	} finally { await p.cleanup(); }
+});
+
+
+test('@folder caps names and bytes without loading any directory file contents', async () => {
+	const files = Object.fromEntries(Array.from({ length: 120 }, (_, index) => ['src/' + String(index).padStart(3, '0') + '-'.repeat(100) + '.ts', 'DO_NOT_ATTACH_BODY']));
+	const p = await project(files);
+	try {
+		const result = await resolveMentions(p.root, '@folder:src', IGNORED);
+		assert.deepEqual({ count: result.included.length, path: result.included[0].path, truncated: result.included[0].truncated, bodyLeaked: result.context.includes('DO_NOT_ATTACH_BODY'), bounded: Buffer.byteLength(result.context) < MAX_MENTION_BYTES + 1024 }, { count: 1, path: 'folder:src', truncated: true, bodyLeaked: false, bounded: true });
 	} finally { await p.cleanup(); }
 });

@@ -10,6 +10,7 @@ import { officialExtensions, withOfficialExtensions } from './armotusitioOfficia
 export const armotusitioProduct = {
 	...base, ...overrides, release: String(overrides.armotusitioUpdate.revision),
 	builtInExtensions: withOfficialExtensions(base.builtInExtensions),
+	armotusitioOfficialExtensions: officialExtensions.map(extension => extension.name),
 	autoUpdateBuiltinExtensionsByDefault: officialExtensions.map(extension => extension.name),
 	builtInExtensionsEnabledWithAutoUpdates: [...new Set([...base.builtInExtensionsEnabledWithAutoUpdates, ...officialExtensions.map(extension => extension.name)])]
 };

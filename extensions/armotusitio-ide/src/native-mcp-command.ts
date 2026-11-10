@@ -29,7 +29,7 @@ export interface McpCommandDeps {
 }
 
 function describe(t: Translate, server: McpServer): string {
-	const target = server.transport === 'http' ? server.url! : [server.command, ...(server.args ?? [])].join(' ');
+	const target = server.transport !== 'stdio' ? server.url! : [server.command, ...(server.args ?? [])].join(' ');
 	const secrets = server.oauth ? ['oauth'] : server.hasToken ? [t('token')] : (server.envNames ?? []);
 	return '  ' + server.name + '  ' + (server.enabled ? t('activo') : t('desactivado')) + '  ' + server.transport + '  ' + target.slice(0, 120) + (secrets.length ? '  (' + t('credenciales') + ': ' + secrets.join(', ') + ')' : '');
 }
@@ -51,7 +51,7 @@ function splitFlags(words: readonly string[]): { rest: string[]; token: boolean;
 
 async function add(deps: McpCommandDeps, name: string | undefined, words: readonly string[]): Promise<string> {
 	const { t } = deps;
-	const usage = t('Uso: /mcp add NOMBRE URL|COMANDO [ARGUMENTOS] [--token] [--env VARIABLE ...]. Ejemplo: /mcp add docs https://mcp.example.com/sse --token');
+	const usage = t('Uso: /mcp add NOMBRE URL|COMANDO [ARGUMENTOS] [--token] [--env VARIABLE ...]. Para legacy SSE: /mcp add NOMBRE --legacy-sse URL [--token].');
 	const flags = name ? splitFlags(words) : undefined;
 	const input: McpServerInput | undefined = flags && name ? parseServerWords(name.toLowerCase(), flags.rest) : undefined;
 	if (!flags || !input) { return usage; }
@@ -91,7 +91,7 @@ export async function runMcpCommand(deps: McpCommandDeps, words: readonly string
 			const signedOut = await deps.store.needsSignIn();
 			const work = await deps.workManagement?.();
 			return [servers.length ? t('Servidores MCP conectados:') + '\n' + servers.map(server => describe(t, server) + (signedOut.includes(server.name) ? '  [' + t('requiere iniciar sesi\u00f3n: /mcp remove y /mcp add --oauth') + ']' : '')).join('\n') : t('No hay servidores MCP conectados.'),
-			t('Hoy los usa Claude Code; Codex todav\u00eda no.'), t('Agregar: /mcp add NOMBRE URL|COMANDO [--token] [--env VARIABLE]. Quitar: /mcp remove NOMBRE. Activar o desactivar: /mcp enable|disable NOMBRE.'), ...(work ? ['', work] : [])].join('\n');
+			t('El broker del IDE admite MCP stdio, HTTP y legacy SSE con autorizaci\u00f3n por herramienta. Las solicitudes del servidor que requieran autoridad se rechazan.'), t('Agregar: /mcp add NOMBRE URL|COMANDO [--token] [--env VARIABLE] o /mcp add NOMBRE --legacy-sse URL. Quitar: /mcp remove NOMBRE. Activar o desactivar: /mcp enable|disable NOMBRE.'), ...(work ? ['', work] : [])].join('\n');
 		}
 		case 'add': return await add(deps, name || undefined, rest);
 		case 'remove': return name && await deps.store.remove(name.toLowerCase()) ? t('Quit\u00e9 el servidor {0} y sus credenciales.', name) : t('No encontr\u00e9 el servidor {0}.', name);

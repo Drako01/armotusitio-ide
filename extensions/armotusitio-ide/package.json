@@ -4,6 +4,11 @@
 	"description": "Project-aware harness control for RedEvent and ArmoTuSitio 2.0",
 	"version": "0.6.0",
 	"publisher": "armotusitio",
+	"author": {
+		"name": "Alejandro Daniel Di Stefano",
+		"url": "https://ArmoTuSitio.com.ar"
+	},
+	"homepage": "https://ArmoTuSitio.com.ar",
 	"license": "MIT",
 	"engines": {
 		"vscode": "^1.144.0"
@@ -11,6 +16,7 @@
 	"main": "./dist/extension.js",
 	"activationEvents": [
 		"onView:atsHarness.tasks",
+		"onView:atsHarness.chat",
 		"onCommand:atsHarness.execute",
 		"onCommand:atsHarness.accounts.open",
 		"onCommand:atsHarness.accounts.add",
@@ -38,8 +44,60 @@
 				"id": "atsIde.harness",
 				"name": "harness",
 				"fullName": "ArmotuSitio Harness",
-				"description": "Harness local y Work Management de ArmotuSitio, sin llamadas a modelos de IA.",
+				"description": "Chat Harness con el mismo agente, herramientas y permisos del panel, más consultas locales de Work Management.",
 				"commands": [
+					{
+						"name": "permisos",
+						"description": "Consultar y revocar los permisos del Harness"
+					},
+					{
+						"name": "modo",
+						"description": "Consultar o cambiar el modo del agente"
+					},
+					{
+						"name": "skills",
+						"description": "Listar las skills disponibles"
+					},
+					{
+						"name": "skill",
+						"description": "Aplicar una skill al pedido"
+					},
+					{
+						"name": "bifurcar",
+						"description": "Bifurcar la conversación del proveedor"
+					},
+					{
+						"name": "deshacer",
+						"description": "Revisar y revertir cambios del agente"
+					},
+					{
+						"name": "lease",
+						"description": "Consultar el lease de escritura del proyecto"
+					},
+					{
+						"name": "motor",
+						"description": "Ejecutar un comando del Harness del proyecto"
+					},
+					{
+						"name": "doctor",
+						"description": "Diagnosticar la máquina y el proyecto"
+					},
+					{
+						"name": "debug",
+						"description": "Preparar un diagnóstico basado en evidencia"
+					},
+					{
+						"name": "imagen",
+						"description": "Elegir y confirmar una imagen para el proveedor"
+					},
+					{
+						"name": "auditoria",
+						"description": "Consultar las acciones de herramientas"
+					},
+					{
+						"name": "costo",
+						"description": "Consultar el consumo informado por el proveedor"
+					},
 					{
 						"name": "estado",
 						"description": "Consultar el progreso y el historial del Harness"
@@ -122,6 +180,11 @@
 					"default": "",
 					"pattern": "^$|^[A-Za-z0-9][A-Za-z0-9._:\\[\\]-]{0,63}$",
 					"description": "Modelo o alias de Claude Code (opus, sonnet, haiku) para el Chat Harness y los agentes nativos. Vacio usa el predeterminado de Claude Code."
+				},
+				"atsHarness.imageInput": {
+					"type": "boolean",
+					"default": false,
+					"description": "Habilita /imagen en el Chat Harness. Requiere transporte nativo y modelo con visión. Cada envío exige vista previa y confirmación; los bytes pueden quedar en la sesión del proveedor."
 				},
 				"atsHarness.chatMode": {
 					"type": "string",
@@ -376,6 +439,17 @@
 					"default": [],
 					"scope": "application",
 					"description": "Patrones adicionales de ramas a las que git_push no puede publicar (por ejemplo release/* o prod*). Se suman a las ramas protegidas del IDE; git_commit puede crear commits en la rama actual."
+				},
+				"atsHarness.codexReadOnlySubagents": {
+					"type": "boolean",
+					"default": false,
+					"scope": "application",
+					"description": "Opt-in EXCLUSIVO de usuario: hasta dos subagentes nativos de solo lectura para Codex, sin IDE MCP y sin web. Consume cuota adicional; presupuesto rigido de tokens/USD bloquea la delegacion. Cambiar el valor cierra sesiones anteriores."
+				},
+				"atsHarness.documentInput": {
+					"type": "boolean",
+					"default": false,
+					"description": "Habilita /documento para extraer texto local de PDF y notebooks bajo limites de bytes, memoria, paginas, tiempo y celdas. Cada archivo exige vista previa y confirmacion; el texto se envia al proveedor en el turno de consulta."
 				}
 			}
 		},
@@ -393,10 +467,19 @@
 				{
 					"id": "atsHarness.tasks",
 					"name": "Harness & Agents"
+				},
+				{
+					"type": "webview",
+					"id": "atsHarness.chat",
+					"name": "Chat Harness"
 				}
 			]
 		},
 		"commands": [
+			{
+				"command": "atsIde.chatSidebar",
+				"title": "ArmoTuSitio: Abrir Chat Lateral"
+			},
 			{
 				"command": "atsHarness.nativeRemoveConfiguration",
 				"title": "ArmoTuSitio: Retirar Configuración Generada del Harness"
@@ -492,6 +575,10 @@
 			{
 				"command": "atsHarness.nativeWorktreeRollback",
 				"title": "ArmoTuSitio: Revertir worktree a checkpoint (confirmación requerida)"
+			},
+			{
+				"command": "atsHarness.nativeChatToolRestore",
+				"title": "ArmoTuSitio: Restaurar checkpoint de herramienta del Chat Harness"
 			},
 			{
 				"command": "atsHarness.nativeWorktreeIntegrate",
@@ -732,7 +819,7 @@
 	"scripts": {
 		"compile": "node esbuild.mts",
 		"test": "node --test test/*.test.cts test/native-*.test.mts",
-		"check": "node ../../node_modules/@typescript/native/bin/tsc --project tsconfig.json && node check-resources.mts && node sync-engineering-skills.mts",
+		"check": "node ../../node_modules/@typescript/native/bin/tsc --project tsconfig.json && node ../../node_modules/@typescript/native/bin/tsc --project tsconfig.worker.json && node check-resources.mts && node sync-engineering-skills.mts",
 		"vscode:prepublish": "npm run compile",
 		"check:native-package": "node check-native-package.mts",
 		"check:conformance": "node check-conformance.mts"
@@ -743,5 +830,8 @@
 			"supported": "limited",
 			"description": "La ejecución de comandos requiere un workspace confiable."
 		}
+	},
+	"dependencies": {
+		"pdfjs-dist": "4.7.76"
 	}
 }

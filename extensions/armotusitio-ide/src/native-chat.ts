@@ -408,6 +408,45 @@ export class ChatStore {
 	private readonly file: string;
 	private synced = { digest: '', ids: new Set<string>() };
 	constructor(directory: string) { this.directory = directory; this.file = path.join(directory, 'conversation.json'); }
+	/** Search archived conversations using bounded validated records, without loading their content into a prompt. */
+	async sessions(query = ''): Promise<Array<{ id: string; title: string; at: string; provider: NativeProvider }>> {
+		const directory = path.join(this.directory, 'sessions');
+		await safeStorage(directory);
+		const entries = await fs.readdir(directory, { withFileTypes: true });
+		if (entries.length > 32) { throw Error('HARNESS_CHAT_SESSION_LIMIT'); }
+		const result: Array<{ id: string; title: string; at: string; provider: NativeProvider }> = [];
+		for (const entry of entries) {
+			if (!entry.isDirectory() || entry.isSymbolicLink() || !/^[a-f0-9-]{8,64}$/.test(entry.name)) { continue; }
+			const stored = await new ChatStore(path.join(directory, entry.name)).read();
+			if (!stored) { continue; }
+			const title = stored.value.messages.find(message => message.role === 'user')?.text.slice(0, 100) ?? entry.name;
+			if (query && !stored.value.messages.some(message => message.text.toLowerCase().includes(query.slice(0, 200).toLowerCase()))) { continue; }
+			result.push({ id: entry.name, title, at: stored.value.messages.at(-1)?.at ?? '', provider: stored.value.provider });
+		}
+		return result.sort((a, b) => b.at.localeCompare(a.at));
+	}
+	/** Restore a selected project conversation; active operations are never replayed. */
+	async restore(id: string): Promise<ChatConversation> {
+		if (!/^[a-f0-9-]{8,64}$/.test(id)) { throw Error('HARNESS_CHAT_SESSION_INVALID'); }
+		await safeStorage(path.join(this.directory, 'sessions'));
+		await safeStorage(path.join(this.directory, 'sessions', id));
+		const stored = await new ChatStore(path.join(this.directory, 'sessions', id)).read();
+		if (!stored) { throw Error('HARNESS_CHAT_SESSION_MISSING'); }
+		const conversation = { ...stored.value, pending: undefined };
+		await this.save(conversation, { replace: true });
+		return conversation;
+	}
+	private async archive(conversation: ChatConversation): Promise<void> {
+		if (!conversation.conversationId || !conversation.messages.length) { return; }
+		if (!/^[a-f0-9-]{8,64}$/.test(conversation.conversationId)) { throw Error('HARNESS_CHAT_SESSION_INVALID'); }
+		const directory = path.join(this.directory, 'sessions');
+		await safeStorage(directory);
+		const entries = await fs.readdir(directory);
+		if (entries.length >= 32 && !entries.includes(conversation.conversationId)) { throw Error('HARNESS_CHAT_SESSION_LIMIT'); }
+		const target = path.join(directory, conversation.conversationId);
+		await safeStorage(target);
+		await writeDurable(path.join(target, 'conversation.json'), { ...conversation, pending: undefined }, false, MAX_STATE_BYTES);
+	}
 	async load(fallbackProvider: NativeProvider): Promise<{ conversation: ChatConversation; recovered: boolean }> {
 		const empty: ChatConversation = { schemaVersion: 1, provider: fallbackProvider, messages: [] };
 		try {
@@ -429,7 +468,12 @@ export class ChatStore {
 	private async merge(conversation: ChatConversation, options: { replace?: boolean }): Promise<ChatMessage[]> {
 		let messages = conversation.messages.slice(-MAX_MESSAGES);
 		const stored = await this.read();
+		if (options.replace && stored) {
+			if (stored.value.pending?.some(entry => pendingAlive(entry))) { throw Error('HARNESS_CHAT_STATE_BUSY'); }
+			await this.archive(stored.value);
+		}
 		if (stored && !options.replace && digestOf(stored.raw) !== this.synced.digest) {
+			if (this.synced.digest && conversation.conversationId && stored.value.conversationId !== conversation.conversationId) { throw Error('HARNESS_CHAT_CONVERSATION_CHANGED'); }
 			const theirs = new Set(stored.value.messages.map(message => message.id));
 			const mine = messages.filter(message => !theirs.has(message.id) && !this.synced.ids.has(message.id));
 			messages = [...stored.value.messages, ...mine].slice(-MAX_MESSAGES);
@@ -438,10 +482,10 @@ export class ChatStore {
 		const foreign = (stored?.value.pending ?? []).filter(entry => entry.pid !== process.pid && pendingAlive(entry));
 		const pending = [...foreign, ...(conversation.pending ?? [])];
 		// Another window may have compacted further: the memory that covers more history wins. A new conversation has none.
-		const memory = [stored?.value.memory, conversation.memory].filter((item): item is ChatMemory => !!item).sort((left, right) => right.compacted - left.compacted)[0];
+		const memory = options.replace ? conversation.memory : [stored?.value.memory, conversation.memory].filter((item): item is ChatMemory => !!item).sort((left, right) => right.compacted - left.compacted)[0];
 		// The conversation id that was stored first wins, so two windows never split one conversation into two native sessions.
 		const conversationId = options.replace ? conversation.conversationId : stored?.value.conversationId ?? conversation.conversationId;
-		const value = { schemaVersion: 1, provider: conversation.provider, messages, ...(memory && !options.replace ? { memory } : {}), ...(pending.length ? { pending } : {}), ...(conversationId ? { conversationId } : {}) };
+		const value = { schemaVersion: 1, provider: conversation.provider, messages, ...(memory ? { memory } : {}), ...(pending.length ? { pending } : {}), ...(conversationId ? { conversationId } : {}) };
 		await writeDurable(this.file, value, false, MAX_STATE_BYTES);
 		this.remember(JSON.stringify(value), messages);
 		return messages;

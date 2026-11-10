@@ -3,9 +3,9 @@
 	"extensions": [
 		{
 			"name": "armotusitio.orquestivo",
-			"version": "0.1.1",
-			"sha256": "60310406a2a852704c2554c45900986e9f51670e834db7f63b52c94cd6e6175f",
-			"downloadUrl": "https://open-vsx.org/api/armotusitio/orquestivo/0.1.1/file/armotusitio.orquestivo-0.1.1.vsix",
+			"version": "0.2.0",
+			"sha256": "e5b7bf20304a9c37c2c6b4083dff768a9465c907c9f680521a927c500f45e7ca",
+			"downloadUrl": "https://open-vsx.org/api/armotusitio/orquestivo/0.2.0/file/armotusitio.orquestivo-0.2.0.vsix",
 			"repo": "https://github.com/Drako01/orquestivo.git",
 			"license": "MIT"
 		},
@@ -27,9 +27,9 @@
 		},
 		{
 			"name": "armotusitio.saturivo",
-			"version": "0.2.2",
-			"sha256": "0e963acf6701aee4448f403728c7620fb46405128fdceaaf47775d984e77f84f",
-			"downloadUrl": "https://open-vsx.org/api/armotusitio/saturivo/0.2.2/file/armotusitio.saturivo-0.2.2.vsix",
+			"version": "0.3.1",
+			"sha256": "b7fece92985eec11e7858b28f19ac10e121a07d87e9267db51a34a33845fd3f0",
+			"downloadUrl": "https://open-vsx.org/api/armotusitio/saturivo/0.3.1/file/armotusitio.saturivo-0.3.1.vsix",
 			"repo": "https://github.com/Drako01/saturivo.git",
 			"license": "MIT"
 		},
@@ -43,9 +43,9 @@
 		},
 		{
 			"name": "armotusitio.vestigivo",
-			"version": "0.1.2",
-			"sha256": "0e1997a5efc844406432ae4993f6233814783c0f25675b93552b69656b018519",
-			"downloadUrl": "https://open-vsx.org/api/armotusitio/vestigivo/0.1.2/file/armotusitio.vestigivo-0.1.2.vsix",
+			"version": "0.2.0",
+			"sha256": "8b01dcfc63fb4c220b7e95aa553d7897bff6b6724237582d72eb3e15f83efc15",
+			"downloadUrl": "https://open-vsx.org/api/armotusitio/vestigivo/0.2.0/file/armotusitio.vestigivo-0.2.0.vsix",
 			"repo": "https://github.com/Drako01/vestigivo.git",
 			"license": "MIT"
 		}

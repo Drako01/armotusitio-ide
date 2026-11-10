@@ -183,14 +183,14 @@ suite('ToggleAutoUpdateForExtensionAction', () => {
 		const action = disposables.add(instantiationService.createInstance(ExtensionsActions.ToggleAutoUpdateForExtensionAction));
 		disposables.add(instantiationService.createInstance(ExtensionContainers, [action]));
 		action.extension = workbenchService.local[0];
-		assert.deepStrictEqual({ enabled: action.enabled, checked: action.checked, visible: !action.class.includes('hide') }, { enabled: true, checked: true, visible: true });
+		assert.deepStrictEqual({ enabled: action.enabled, checked: action.checked, visible: !action.class?.includes('hide') }, { enabled: true, checked: true, visible: true });
 
 		await action.run();
 		action.update();
-		assert.deepStrictEqual({ checked: action.checked, enabled: workbenchService.isAutoUpdateEnabledFor(action.extension), disabled: workbenchService.getDisabledAutoUpdateExtensions() }, { checked: false, enabled: false, disabled: ['pub.a'] });
+		assert.deepStrictEqual({ checked: action.checked, enabled: workbenchService.isAutoUpdateEnabledFor(action.extension) }, { checked: false, enabled: false });
 		await action.run();
 		action.update();
-		assert.deepStrictEqual({ checked: action.checked, disabled: workbenchService.getDisabledAutoUpdateExtensions() }, { checked: true, disabled: [] });
+		assert.deepStrictEqual({ checked: action.checked, enabled: workbenchService.isAutoUpdateEnabledFor(action.extension) }, { checked: true, enabled: true });
 	});
 
 	test('unrelated built-in extension retains its hidden auto-update checkbox', async () => {
@@ -200,7 +200,7 @@ suite('ToggleAutoUpdateForExtensionAction', () => {
 		await workbenchService.queryLocal();
 		const action = disposables.add(instantiationService.createInstance(ExtensionsActions.ToggleAutoUpdateForExtensionAction));
 		action.extension = workbenchService.local[0];
-		assert.deepStrictEqual({ enabled: action.enabled, hidden: action.class.includes('hide') }, { enabled: false, hidden: true });
+		assert.deepStrictEqual({ enabled: action.enabled, hidden: action.class?.includes('hide') ?? false }, { enabled: false, hidden: true });
 	});
 
 	test('configurable shipped extension checkbox respects a saved global off preference', async () => {

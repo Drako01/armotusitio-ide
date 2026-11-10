@@ -61,3 +61,19 @@ test('a damaged servers file is reported and never overwritten', async () => {
 		assert.deepEqual({ refused, bytes: await fs.readFile(path.join(directory, 'servers.json'), 'utf8') }, { refused: 'HARNESS_MCP_SERVERS_UNSAFE', bytes: '{broken' });
 	});
 });
+
+
+test('legacy SSE remains opt-in and its token stays in secret storage', async () => {
+	assert.deepEqual(parseServerWords('old', ['--legacy-sse', 'http://localhost:9911/sse']),
+		{ name: 'old', url: 'http://localhost:9911/sse', transport: 'sse' });
+	assert.equal(parseServerWords('old', ['--legacy-sse', 'http://localhost/sse', 'extra']), undefined);
+	await withStore(async (store, secrets, directory) => {
+		await store.add({ name: 'old', url: 'http://localhost:9911/sse', transport: 'sse', token: 'canary-legacy-private' });
+		const stored = await fs.readFile(path.join(directory, 'servers.json'), 'utf8');
+		assert.equal(stored.includes('canary-legacy-private'), false);
+		assert.equal(secrets.map.size, 1);
+		assert.deepEqual(await store.launchEntries(), {
+			old: { type: 'sse', url: 'http://localhost:9911/sse', headers: { Authorization: 'Bearer canary-legacy-private' } }
+		});
+	});
+});

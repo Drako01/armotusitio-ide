@@ -20,14 +20,15 @@ import type File from 'vinyl';
 
 test('six exact official release pins compose additively with upstream builtins and stable auto updates', () => {
 	assert.deepEqual(officialExtensions.map(extension => [extension.name, extension.version]), [
-		['armotusitio.orquestivo', '0.1.1'], ['armotusitio.probato-pr', '1.0.1'], ['armotusitio.indizivo', '0.3.0'],
-		['armotusitio.saturivo', '0.2.2'], ['armotusitio.noditrivo', '0.1.1'], ['armotusitio.vestigivo', '0.1.2']
+		['armotusitio.orquestivo', '0.2.0'], ['armotusitio.probato-pr', '1.0.1'], ['armotusitio.indizivo', '0.3.0'],
+		['armotusitio.saturivo', '0.3.1'], ['armotusitio.noditrivo', '0.1.1'], ['armotusitio.vestigivo', '0.2.0']
 	]);
 	assert.deepEqual(armotusitioProduct.builtInExtensions, [...base.builtInExtensions, ...officialExtensions]);
 	assert.deepEqual(armotusitioProduct.builtInExtensions.slice(0, base.builtInExtensions.length), base.builtInExtensions);
 	assert.equal(armotusitioProduct.quality, 'stable');
 	assert.ok(officialExtensions.every(extension => armotusitioProduct.builtInExtensionsEnabledWithAutoUpdates.includes(extension.name)));
 	assert.deepEqual(armotusitioProduct.autoUpdateBuiltinExtensionsByDefault, officialExtensions.map(extension => extension.name));
+	assert.deepEqual(armotusitioProduct.armotusitioOfficialExtensions, officialExtensions.map(extension => extension.name));
 	assert.ok(base.builtInExtensionsEnabledWithAutoUpdates.every(id => armotusitioProduct.builtInExtensionsEnabledWithAutoUpdates.includes(id)));
 	assert.ok(officialExtensions.every(extension => !extension.metadata.id && !extension.metadata.publisherId));
 });

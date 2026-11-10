@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { generateUuid } from '../../../../../base/common/uuid.js';
-import { ExtensionsListView } from '../../browser/extensionsViews.js';
+import { ArmotusitioExtensionsView, ExtensionsListView } from '../../browser/extensionsViews.js';
 import { TestInstantiationService } from '../../../../../platform/instantiation/test/common/instantiationServiceMock.js';
 import { IExtensionsWorkbenchService } from '../../common/extensions.js';
 import { ExtensionsWorkbenchService } from '../../browser/extensionsWorkbenchService.js';
@@ -240,9 +240,25 @@ suite('ExtensionsViews Tests', () => {
 		]);
 	});
 
+	test('official extension pane includes exactly configured IDs and bundled builtins without Marketplace', async () => {
+		const configured = [localEnabledTheme, localEnabledLanguage, localDisabledTheme, localDisabledLanguage, builtInTheme, builtInBasic];
+		instantiationService.stub(IProductService, { armotusitioOfficialExtensions: configured.map(extension => extension.identifier.id.toUpperCase()) });
+		const officialView = disposableStore.add(instantiationService.createInstance(ArmotusitioExtensionsView, {}, { id: 'official', title: 'ArmoTuSitio' }));
+		const result = await officialView.show();
+		assert.deepStrictEqual(Array.from({ length: result.length }, (_, index) => result.get(index).identifier.id).sort(), configured.map(extension => extension.identifier.id).sort());
+	});
+
+	test('official extension query does not infer ownership from publisher or query Marketplace for missing IDs', async () => {
+		instantiationService.stub(IProductService, { armotusitioOfficialExtensions: ['armotusitio.missing'] });
+		const officialView = disposableStore.add(instantiationService.createInstance(ArmotusitioExtensionsView, {}, { id: 'missing-official', title: 'ArmoTuSitio' }));
+		assert.strictEqual((await officialView.show()).length, 0);
+	});
+
 	test('Test query types', () => {
 		assert.strictEqual(ExtensionsListView.isBuiltInExtensionsQuery('@builtin'), true);
 		assert.strictEqual(ExtensionsListView.isLocalExtensionsQuery('@installed'), true);
+		assert.strictEqual(ExtensionsListView.isLocalExtensionsQuery('@armotusitio'), true);
+		assert.strictEqual(ExtensionsListView.isLocalExtensionsQuery('@armotusitio theme'), true);
 		assert.strictEqual(ExtensionsListView.isLocalExtensionsQuery('@enabled'), true);
 		assert.strictEqual(ExtensionsListView.isLocalExtensionsQuery('@disabled'), true);
 		assert.strictEqual(ExtensionsListView.isLocalExtensionsQuery('@outdated'), true);

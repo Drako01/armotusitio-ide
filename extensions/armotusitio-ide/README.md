@@ -373,13 +373,27 @@ Al escribir `@` el compositor sugiere archivos del proyecto (hasta 50, los que c
 - se rechazan, con un aviso en el chat, las rutas con `..` o absolutas, los enlaces simbólicos que salen del proyecto, los archivos sensibles (`.env*`, claves, `id_rsa`, `.npmrc`…), las carpetas ignoradas (`node_modules`, `dist`, `.git`…), los binarios, los directorios y los archivos inexistentes;
 - el historial guarda el texto con `@ruta`, no el contenido del archivo: en un turno posterior hay que volver a mencionarlo.
 
-**Imágenes**: pegar una imagen en el compositor no está soportado. Hacerlo sin riesgo exige guardarla fuera del proyecto y que el proveedor pueda leer esa ruta, y eso depende de los permisos de lectura del CLI de cada proveedor, que no se pueden comprobar sin una corrida real. Hasta verificarlo, guardá la imagen dentro del proyecto y pedile a la IA que la lea por su ruta.
+**Imágenes**: activá `atsHarness.imageInput` y usá `/imagen [pedido]` para elegir un PNG o JPEG del proyecto.
+El IDE valida formato, tamaño y dimensiones, abre una vista previa y pide confirmación antes de enviar los bytes.
+Requiere transporte nativo y modelo con visión. No guarda archivos temporales ni imágenes en el journal local.
+El proveedor puede conservar la imagen en su propia sesión.
+También podés **pegar o arrastrar** un PNG/JPEG al chat: el IDE valida los bytes por contenido (no confía en el tipo que declara la vista), muestra la vista previa y pide una confirmación modal nueva para cada imagen.
+
+**Documentos**: activá `atsHarness.documentInput` y usá `/documento` para elegir un PDF o un notebook `.ipynb` del proyecto (4 MiB como máximo).
+El texto se extrae en un worker aislado con 5 segundos y memoria acotada; se envían hasta 32 000 caracteres y 20 páginas.
+De un notebook solo se lee el código y el Markdown fuente: no se ejecuta nada ni se incluyen salidas, metadatos o adjuntos.
+
+**Diagnóstico y sesiones**: `/debug COMANDO | ERROR` propone un plan de reproducción, hipótesis, experimento y regresión.
+Los experimentos y cambios requieren aprobar el plan. `/sesiones [búsqueda]` busca conversaciones archivadas.
+Usá `/sesion ID` para retomarlas. Se conservan hasta 32 por proyecto; no se borran automáticamente.
 
 ## Chat @harness y Work Management
 
 También se registra `@harness` en el chat nativo cuando ese chat tiene un proveedor predeterminado disponible.
 La integración no reemplaza al agente predeterminado ni requiere activar APIs propuestas.
-En ese participante solo se aceptan comandos explícitos; el texto libre indica abrir Chat Harness.
+El texto libre de `@harness` usa el mismo motor, conversación, contexto y herramientas que el panel Chat Harness.
+Las aprobaciones y preguntas abren el panel compartido; no se conceden permisos por usar otra superficie.
+Los comandos de consulta de Work Management conservan su ruta local sin llamadas a modelos.
 Esta versión de la extensión requiere la base Code - OSS 1.144 del IDE.
 
 ```text
@@ -425,7 +439,8 @@ Las respuestas se muestran como texto sin interpretar HTML o instrucciones del s
 Cada consulta HTTP tiene límites de tiempo y tamaño.
 **Detener** interrumpe la espera; no revierte una modificación que ya aceptó el servidor.
 Si falla una modificación, consultá el estado actual antes de repetirla.
-No se transmite contexto del editor a un modelo de IA desde el participante `@harness`.
+El contexto solicitado mediante `@` se valida, limita y redacta antes de enviarse al modelo seleccionado.
+El uso de modelos y la cuota corresponde al perfil seleccionado en Chat Harness, también desde `@harness`.
 
 ## Bienvenida y actualización local
 
@@ -442,3 +457,74 @@ npm run check:conformance --prefix extensions/armotusitio-ide
 ```
 
 `check:conformance` reproduce, sobre el proceso real `ats-runner`, los flujos que trabaron trabajo real (S1 subcarpetas con Harness delegado y prueba en vivo de solo lectura contra RedEvent si está en la máquina, S2 rama + commit + push con árbol sucio y archivo ignorado, S3 CLIs externos y credenciales, S4 dependencias, S5 proyecto sin Harness, S6 denegación y recuperación, S7 «siempre» tras reiniciar y su revocación, S8 Node ausente, varios workspaces, recuperación y el piloto nativo), junto con las suites de las que dependen. Corre en cualquier rama sin tocar git, y `./release.sh --dry-run` también lo ejecuta: sin conformidad en verde no se publica.
+
+
+### Subagentes nativos Codex (opt-in experimental)
+
+En **Ejecutar agente IA con autorización**, los roles `planner` y `reviewer` de Codex
+pueden elegir **hasta dos subagentes nativos**. El valor por defecto es **no delegar**.
+Se revisan los argumentos del CLI antes de autorizar la ejecución, y no se
+habilita para implementadores ni para Claude. La ejecución usa sandbox read-only,
+profundidad de delegación 1, máximo de dos hilos hijos y sin acceso adicional a MCP.
+
+Con límite diario de invocaciones o topes estrictos de tokens/USD, la
+delegación se **rechaza** con `HARNESS_DELEGATION_BUDGET_UNVERIFIED`:
+Codex limita hijos **simultáneos**, no el número acumulado de invocaciones,
+y todavía no existe contabilidad auditable por hijo en este puente. Cada ejecución necesita la
+confirmación modal existente. Cancelar detiene el proceso supervisor del proveedor.
+
+Codex CLI trae `multi_agent` activado de fábrica, así que toda ejecución sin opt-in
+recibe `features.multi_agent=false` y `features.multi_agent_v2=false`. Con opt-in se
+usan `features.multi_agent=true`, `agents.max_threads=2`,
+`agents.max_concurrent_threads_per_session=2` y `agents.max_depth=1`, comprobadas
+contra Codex CLI 0.166.0 sin llamar al modelo. El IDE además corta el árbol de
+procesos del proveedor y marca la corrida como fallida ante:
+
+| Código | Motivo |
+|---|---|
+| `HARNESS_DELEGATION_CHILD_UNEXPECTED` | Apareció un subagente sin opt-in |
+| `HARNESS_DELEGATION_CHILD_DEPTH` | Un subagente intentó delegar a otro nivel |
+| `HARNESS_DELEGATION_CHILD_LIMIT` | Más de cuatro subagentes iniciados o reanudados en un turno |
+
+Dos es el límite **simultáneo** (lo aplica el CLI) y cuatro el **acumulado por turno**
+(lo aplica el IDE). **No se declara validación autenticada ni paridad total**: la
+herencia real del sandbox en los hijos requiere una corrida con cuota autorizada.
+
+
+### Checkpoints por herramienta del chat (guardados localmente)
+
+Durante las implementaciones aprobadas del Chat Harness se toman snapshots acotados de
+herramientas secuenciales de edición y comando. Los registros se guardan en el
+almacenamiento privado del Harness (24 registros como máximo, 12 archivos por
+checkpoint, 128 KiB por archivo); nunca contienen salida del proveedor ni prompts.
+Si el IDE no puede atribuir una modificación con certeza, por ejemplo por
+herramientas simultáneas, **no inventa un checkpoint**. Las modificaciones
+preexistentes, rutas sensibles, enlaces y archivos demasiado grandes quedan fuera.
+
+Usá **ArmoTuSitio: Restaurar checkpoint de herramienta del Chat Harness** para
+seleccionar un registro y confirmar. Se verifica el lock/fence de escritura, la
+huella exacta de cada archivo y que no existan ediciones posteriores. Ante un
+conflicto, la restauración se cancela sin tocar archivos. Cada registro guarda el
+turno y el número de orden de su herramienta; el selector los lista del más nuevo
+al más viejo y los más antiguos se descartan al superar los 24. Un error en mitad
+de la operación deja un marcador de recuperación, nunca un retry automático: al
+confirmar otra vez el mismo checkpoint, la restauración se reanuda, da por hechos
+los archivos que ya tienen el contenido anterior y se detiene sin escribir si
+alguno fue editado después. El contenido previo se toma con los filtros de Git
+(finales de línea), para devolver los mismos bytes que escribe un checkout.
+El descarte por corrida anterior sigue disponible; los checkpoints no sustituyen
+los commits convencionales ni garantizan restauración de herramientas concurrentes.
+
+
+### Subagentes en chat nativo persistente (opt-in de usuario)
+
+La preferencia **de aplicación** `atsHarness.codexReadOnlySubagents` se activa
+únicamente en el perfil de usuario (no en `.vscode/settings.json` ni desde el proyecto).
+Por defecto es `false`. Al habilitarla, solo las sesiones Codex de conversación
+read-only sin búsqueda web pueden usar hasta dos hijos, profundidad uno. El
+adaptador omite el servidor MCP del IDE en esa sesión y aplica aprobación
+`never` con sandbox `readOnly`; no concede permisos de escritura a los hijos.
+Cambiar la preferencia cierra procesos de sesiones anteriores para que un opt-out
+surta efecto sin dejar hijos activos. Con presupuestos de tokens o USD estrictos,
+se deniega la ejecución hasta disponer de contabilidad auditable por hijo.
+Se mantiene pendiente la aceptación con una CLI Codex autenticada y cuota autorizada.

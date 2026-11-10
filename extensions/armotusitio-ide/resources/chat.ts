@@ -8,13 +8,15 @@ const api = acquireVsCodeApi();
 const { parseMarkdown, parseInline } = require('./markdown.ts');
 const { createSuggest } = require('./composer-suggest.ts');
 
-const SECRET_LIKE = /(?:sk-|ghp_|github_pat_|xox[bap]-|AKIA)[A-Za-z0-9_-]{8,}|(?:password|passwd|secret|token|api[_-]?key)s*[:=]/i;
+const { safeChatDraft } = require('../src/native-chat-draft.ts');
 const app = document.getElementById('app');
 let L: any = null;
 let state: any = null;
 const rendered = new Map<string, HTMLElement>();
 let ticker: number | undefined;
 let suggest: ReturnType<typeof createSuggest> | undefined;
+/** Paste/drop stays memory-only: never persisted into chat drafts or provider history. */
+let stagedImage: { name: string; mime: 'image/png' | 'image/jpeg'; data: string } | undefined;
 
 function el(tag: string, className?: string, text?: string): HTMLElement {
 	const node = document.createElement(tag);
@@ -135,7 +137,7 @@ function shell(): void {
 
 	const details = el('section', 'popover mcp-details'); details.id = 'mcp-details'; details.hidden = true; details.setAttribute('aria-label', L.mcp);
 	const menu = el('div', 'popover menu'); menu.id = 'menu'; menu.hidden = true; menu.setAttribute('role', 'group'); menu.setAttribute('aria-label', L.menu);
-	for (const [action, label] of [['reset', L.newChat], ['commands', L.commands], ['providerCheck', L.refreshProviders], ['setupCheck', L.setupCheck], ['openTasks', L.openTasks]]) {
+	for (const [action, label] of [['expandChat', L.expandChat], ['sidebarChat', L.sidebarChat], ['sessions', L.sessions], ['reset', L.newChat], ['commands', L.commands], ['providerCheck', L.refreshProviders], ['setupCheck', L.setupCheck], ['openTasks', L.openTasks]]) {
 		const item = el('button', 'menu-item', label) as HTMLButtonElement; item.type = 'button';
 		item.addEventListener('click', () => {
 			closePopovers();
@@ -162,14 +164,43 @@ function shell(): void {
 	const send = el('button', 'send', L.send) as HTMLButtonElement; send.type = 'submit'; send.id = 'send';
 	const stop = el('button', 'secondary stop', L.cancel) as HTMLButtonElement; stop.type = 'button'; stop.id = 'stop'; stop.hidden = true;
 	stop.addEventListener('click', () => api.postMessage({ action: 'cancel' }));
+	const media = el('div', 'pending-media'); media.id = 'pending-media'; media.setAttribute('aria-live', 'polite'); media.hidden = true;
 	box.append(input, stop, send);
-	form.append(box, el('p', 'hint', L.keyboard));
+	form.append(media, box, el('p', 'hint', L.keyboard));
+	const capture = (file: File | undefined): void => {
+		if (!file || !state?.trusted) { return; }
+		if (file.type !== 'image/png' && file.type !== 'image/jpeg') { return; }
+		if (!file.size || file.size > 4 * 1024 * 1024) { announceMediaError('PNG/JPEG: 4 MiB max'); return; }
+		const reader = new FileReader();
+		reader.addEventListener('load', () => {
+			if (typeof reader.result !== 'string' || !reader.result.startsWith('data:' + file.type + ';base64,')) { return; }
+			const data = reader.result.slice(reader.result.indexOf(',') + 1);
+			if (data.length > Math.ceil(4 * 1024 * 1024 / 3) * 4) { return; }
+			stagedImage = { name: file.name.slice(0, 100), mime: file.type as 'image/png' | 'image/jpeg', data };
+			drawStagedImage();
+		});
+		reader.readAsDataURL(file);
+	};
+	input.addEventListener('paste', event => {
+		const image = [...(event.clipboardData?.files ?? [])].find(file => file.type === 'image/png' || file.type === 'image/jpeg');
+		if (!image) { return; }
+		event.preventDefault();
+		capture(image);
+	});
+	form.addEventListener('dragover', event => {
+		if ([...(event.dataTransfer?.items ?? [])].some(item => item.type === 'image/png' || item.type === 'image/jpeg')) { event.preventDefault(); }
+	});
+	form.addEventListener('drop', event => {
+		const image = [...(event.dataTransfer?.files ?? [])].find(file => file.type === 'image/png' || file.type === 'image/jpeg');
+		if (!image) { return; }
+		event.preventDefault();
+		capture(image);
+	});
 	(form.lastElementChild as HTMLElement).id = 'composer-hint';
 	form.addEventListener('submit', event => { event.preventDefault(); submit(input.value); });
 	// An unsent message survives the view being hidden or reloaded. Text that looks like a credential is never kept.
-	const restored = (api.getState() as { draft?: unknown } | undefined)?.draft;
-	if (typeof restored === 'string' && restored && !input.value) { input.value = restored; requestAnimationFrame(autosize); }
-	input.addEventListener('input', () => api.setState({ draft: SECRET_LIKE.test(input.value) ? '' : input.value.slice(0, L.maxMessageChars) }));
+	if (state?.project?.id) { input.value = projectDraft(state.project.id); requestAnimationFrame(autosize); }
+	input.addEventListener('input', () => retainDraft(input.value));
 	suggest = createSuggest(input, form, message => api.postMessage(message), { commands: L.commandsLabel, files: L.filesLabel, commandList: L.commandList });
 	input.addEventListener('keydown', event => {
 		if (suggest.key(event)) { event.preventDefault(); return; }
@@ -179,6 +210,7 @@ function shell(): void {
 	input.addEventListener('input', () => suggest.update());
 	input.addEventListener('blur', () => suggest.close());
 	app.append(header, details, menu, banner, log, approvals, activity, announcer, form);
+	drawStagedImage();
 }
 // Registered once: `shell()` runs again whenever the host re-sends labels.
 document.addEventListener('keydown', event => {
@@ -192,6 +224,26 @@ document.addEventListener('click', event => {
 	const target = event.target as HTMLElement;
 	if (L && !target.closest('.popover') && !target.closest('#mcp-pill') && !target.closest('#menu-button')) { closePopovers(); }
 });
+function announceMediaError(text: string): void {
+	const announcer = document.getElementById('announcer');
+	if (announcer) { announcer.textContent = text; }
+}
+function drawStagedImage(): void {
+	const container = document.getElementById('pending-media');
+	if (!container) { return; }
+	container.textContent = '';
+	container.hidden = !stagedImage;
+	if (!stagedImage) { return; }
+	const image = el('img') as HTMLImageElement;
+	image.alt = 'Imagen para revisar antes del envio: ' + stagedImage.name;
+	image.src = 'data:' + stagedImage.mime + ';base64,' + stagedImage.data;
+	image.width = 72; image.height = 72;
+	const description = el('span', 'muted', stagedImage.name + ' - vista previa; requiere confirmacion del IDE');
+	const remove = el('button', 'secondary', 'Quitar') as HTMLButtonElement;
+	remove.type = 'button';
+	remove.addEventListener('click', () => { stagedImage = undefined; drawStagedImage(); document.getElementById('prompt')?.focus(); });
+	container.append(image, description, remove);
+}
 function autosize(): void { const input = document.getElementById('prompt') as HTMLTextAreaElement; input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 240) + 'px'; }
 function toggle(id: string, trigger: HTMLElement): void {
 	const panel = document.getElementById(id); const open = panel.hidden;
@@ -204,14 +256,30 @@ function closePopovers(): void {
 	document.getElementById('mcp-pill')?.setAttribute('aria-expanded', 'false');
 	document.getElementById('menu-button')?.setAttribute('aria-expanded', 'false');
 }
+/** Drafts are scoped by project and mirrored only after the shared credential filter. */
+function projectDraft(project: string): string {
+	const saved = api.getState() as { drafts?: Record<string, string> } | undefined;
+	const value = typeof state?.draft === 'string' ? state.draft : saved?.drafts?.[project];
+	return typeof value === 'string' ? safeChatDraft(value, L.maxMessageChars) : '';
+}
+function retainDraft(value: string, notify = true): void {
+	const project = state?.project?.id;
+	if (!project) { return; }
+	const text = safeChatDraft(value, L.maxMessageChars);
+	const saved = api.getState() as { drafts?: Record<string, string> } | undefined;
+	api.setState({ drafts: { ...saved?.drafts, [project]: text } });
+	state.draft = text;
+	if (notify) { api.postMessage({ action: 'draft', project, text }); }
+}
 function busy(): boolean { return !!state?.chat?.activity; }
 function submit(value: string): void {
 	const text = value.trim();
-	if (!text || !state?.chat) { return; }
-	api.postMessage({ action: 'send', text });
+	if ((!text && !stagedImage) || !state?.chat) { return; }
 	// An oversized message is answered with how many characters to remove; the text stays so it can be trimmed.
-	if (text.length > L.maxMessageChars) { return; }
-	const input = document.getElementById('prompt') as HTMLTextAreaElement; input.value = ''; api.setState({ draft: '' }); autosize(); suggest?.close();
+	if (text.length > L.maxMessageChars) { api.postMessage({ action: 'send', text }); return; }
+	const input = document.getElementById('prompt') as HTMLTextAreaElement; input.value = ''; retainDraft(''); autosize(); suggest?.close();
+	api.postMessage({ action: 'send', text: text || 'Describe esta imagen.', ...(stagedImage ? { image: stagedImage } : {}) });
+	stagedImage = undefined; drawStagedImage();
 }
 
 // ---------------------------------------------------------------- provider quota
@@ -745,11 +813,25 @@ function render(): void {
 window.addEventListener('message', event => {
 	const data = event.data;
 	if (data?.type === 'completions' && data.kind === 'mention') { suggest?.complete(data); return; }
+	if (data?.type === 'draft' && data.project === state?.project?.id && typeof data.text === 'string' && L) {
+		const input = document.getElementById('prompt') as HTMLTextAreaElement;
+		input.value = safeChatDraft(data.text, L.maxMessageChars); retainDraft(input.value, false); autosize(); return;
+	}
 	if (data?.type === 'init') { L = data.labels; shell(); if (state) { render(); } return; }
 	if (data?.type === 'state') {
 		if (data.chat && data.chat.messages === undefined) { data.chat.messages = state?.chat?.messages ?? []; }
+		const changedProject = state?.project?.id !== data.project?.id;
+		if (changedProject) { stagedImage = undefined; drawStagedImage(); }
 		state = data;
-		if (L) { render(); }
+		if (L) {
+			if (changedProject) {
+				const input = document.getElementById('prompt') as HTMLTextAreaElement;
+				input.value = data.project?.id ? projectDraft(data.project.id) : '';
+				if (input.value) { retainDraft(input.value); }
+				autosize();
+			}
+			render();
+		}
 	}
 });
 api.postMessage({ action: 'ready' });

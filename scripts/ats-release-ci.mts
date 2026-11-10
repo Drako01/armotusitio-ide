@@ -8,32 +8,35 @@ import { appendFile, readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { armotusitioRepository } from '../src/vs/platform/update/common/armotusitioUpdate.ts';
 import { repositoryRoot, run } from './ats-autoupdate.mts';
-import { assertReleaseMetadata, planReleaseRevision, releaseMetadataPath, writeReleaseRevision, type ReleasePlan } from './ats-release-revision.mts';
+import { assertReleaseMetadata, planReleaseRevision, releaseMetadataPath, type ReleasePlan } from './ats-release-revision.mts';
 
-/** What the release CI does with current main: publish it as is, or first commit the next revision. */
-export type ReleaseAction = 'publish' | 'prepare-metadata';
+/** CI publishes reviewed sources only; revision changes must land through a protected PR first. */
+export type ReleaseAction = 'publish';
 
 /** A draft for the selected tag can only be resumed from the commit it was created for. */
 export function releaseAction(plan: ReleasePlan, metadataRevision: number, head: string): ReleaseAction {
 	if (plan.draft && plan.draft.target_commitish !== head) {
 		throw new Error(`Draft ${plan.tag} targets another commit. Inspect and delete that draft before retrying; it was not changed.`);
 	}
-	return metadataRevision === plan.revision ? 'publish' : 'prepare-metadata';
+	if (metadataRevision !== plan.revision) {
+		throw new Error(`Release ${plan.tag} requires reviewed revision ${plan.revision} in ${releaseMetadataPath}. Prepare a metadata-only PR, pass ATS gate and merge it before retrying; CI does not change sources.`);
+	}
+	return 'publish';
 }
 
 const git = (...args: string[]) => run('git', args);
 const json = async (file: string) => JSON.parse(await readFile(path.join(repositoryRoot, file), 'utf8'));
 
 /**
- * Runs in the release workflow on a checkout of current main. Selects the next revision, commits only the
- * release metadata to main when it differs, and writes `tag` and `commit` to GITHUB_OUTPUT for the build jobs.
+ * Runs in the release workflow on a checkout of current main. Validates the reviewed revision and
+ * writes its immutable `tag` and `commit` to GITHUB_OUTPUT for the build jobs without changing sources.
  * A rehearsal builds the checked-out PR commit as is: it never commits, pushes or publishes.
  */
 async function prepare(rehearsal: boolean): Promise<void> {
 	if (process.env.GITHUB_ACTIONS !== 'true' || process.env.GITHUB_REPOSITORY !== armotusitioRepository || !process.env.GITHUB_OUTPUT) {
 		throw new Error('This step runs only in the ArmotuSitio Release workflow.');
 	}
-	let head = await git('rev-parse', 'HEAD');
+	const head = await git('rev-parse', 'HEAD');
 	if (await git('status', '--porcelain', '--untracked-files=no')
 		|| (!rehearsal && (await git('branch', '--show-current') !== 'main' || head !== await git('rev-parse', 'origin/main')))) {
 		throw new Error('Release preparation requires a clean checkout of current main.');
@@ -41,15 +44,8 @@ async function prepare(rehearsal: boolean): Promise<void> {
 	const [pkg, product, overrides] = await Promise.all([json('package.json'), json('product.json'), json(releaseMetadataPath)]);
 	assertReleaseMetadata(pkg, product, overrides, armotusitioRepository);
 	const plan = planReleaseRevision(JSON.parse(await run('gh', ['api', '--paginate', '--slurp', `repos/${armotusitioRepository}/releases?per_page=100`])), pkg.version);
-	if (!rehearsal && releaseAction(plan, overrides.armotusitioUpdate.revision, head) === 'prepare-metadata') {
-		await writeReleaseRevision(repositoryRoot, overrides, plan.revision);
-		if (await git('diff', '--name-only') !== releaseMetadataPath) { throw new Error('Unexpected source changes while preparing release metadata.'); }
-		await git('-c', 'user.name=github-actions[bot]', '-c', 'user.email=41898282+github-actions[bot]@users.noreply.github.com',
-			'commit', '-m', `chore(release): prepare ${plan.tag}`, '--only', '--', releaseMetadataPath);
-		// A plain push: if main moved meanwhile it is rejected, and the next merge recomputes the revision.
-		await git('push', 'origin', 'HEAD:main');
-		head = await git('rev-parse', 'HEAD');
-	}
+	// Rehearsals must also build the revision they announce, rather than labelling stale metadata as the next tag.
+	releaseAction(plan, overrides.armotusitioUpdate.revision, head);
 	await appendFile(process.env.GITHUB_OUTPUT, `tag=${plan.tag}\ncommit=${head}\n`);
 	console.log(`${rehearsal ? 'Rehearsal of' : 'Release'} ${plan.tag} from ${head}${plan.previous ? ` (previous ${plan.previous})` : ''}.`);
 }

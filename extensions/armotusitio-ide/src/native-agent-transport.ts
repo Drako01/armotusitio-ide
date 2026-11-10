@@ -17,6 +17,7 @@ import type { CommandPolicy } from './native-command-policy.ts';
 import type { PermissionSet } from './native-permissions.ts';
 import type { NativeProvider } from './native-providers.ts';
 import { redactSecrets } from './native-redact.ts';
+import type { ChatImage } from './native-chat-images.ts';
 import { MAX_STEP_DETAIL, MAX_STEP_LABEL, relativeStepPath, type ChatStep, type ChatStepKind } from './native-run-steps.ts';
 import { ClaudeAdapter } from './runtime/claude-adapter.ts';
 import { CodexAdapter } from './runtime/codex-adapter.ts';
@@ -47,7 +48,7 @@ export interface NativeTransportDeps {
 	/** The AI profile this project uses for the provider (workspace assignment, then default); `undefined` keeps the IDE's own login. */
 	profileFor?(root: string, provider: NativeProvider): Promise<string | undefined>;
 	/** The `ats-runner` tool server of a session; `approve`/`question`/`epoch` reach the current turn through these callbacks. */
-	toolServer(root: string, provider: NativeProvider, role: SessionRole, channel: { approve: ApprovalAsk; question: NonNullable<NativeTurnHooks['question']>; epoch(): number }): Promise<{ launch: ToolServerLaunch; dispose(): Promise<void> }>;
+	toolServer(root: string, provider: NativeProvider, role: SessionRole, channel: { approve: ApprovalAsk; question: NonNullable<NativeTurnHooks['question']>; epoch(): number; profileEnvironment?: NodeJS.ProcessEnv; step?(step: ChatStep): void }): Promise<{ launch: ToolServerLaunch; dispose(): Promise<void> }>;
 	/** Policy and permissions of the project, read fresh for each provider-initiated approval. */
 	policy(root: string): Promise<{ policy: CommandPolicy; permissions: PermissionSet }>;
 	/** Session-level contract and project guidance for this role. */
@@ -57,6 +58,8 @@ export interface NativeTransportDeps {
 	codexFullAccess(): boolean;
 	maxTurns(role: SessionRole): number;
 	webSearch(root: string): boolean;
+	/** User-level opt-in. Never controlled by project settings or skill documents. */
+	codexReadOnlySubagents?(root: string): boolean;
 	/** Extra redaction for project dev secrets. */
 	redact?(text: string): string;
 	clientVersion: string;
@@ -149,11 +152,16 @@ export class NativeChatTransport {
 
 	/** One chat turn over the persistent native session, as an `AgentExecution` for the guarded pipeline. */
 	/** `freshText`: the full input, used instead of a follow-up `text` when the provider had to start a new session. */
-	async execute(request: { root: string; provider: NativeProvider; conversationId: string; role: SessionRole; text: string; freshText?: string; inputRef?: string; durationMs: number }, hooks: NativeTurnHooks): Promise<AgentExecution> {
+	async execute(request: { root: string; provider: NativeProvider; conversationId: string; role: SessionRole; text: string; freshText?: string; inputRef?: string; images?: readonly ChatImage[]; durationMs: number }, hooks: NativeTurnHooks): Promise<AgentExecution> {
 		const { root, role } = request;
+		const nativeChildren = request.provider === 'codex' && role === 'conversation' && !this.deps.webSearch(root)
+			&& this.deps.codexReadOnlySubagents?.(root) === true;
 		const session = await this.session(root, request.provider, request.conversationId);
 		const redact = (text: string): string => this.deps.redact ? this.deps.redact(redactSecrets(text)) : redactSecrets(text);
 		const scope = role === 'conversation' ? await captureAgentScope(root) : undefined;
+		if (nativeChildren && (scope?.source !== 'git' || scope.unscanned.length !== 0)) {
+			throw Error('HARNESS_DELEGATION_ISOLATION_UNSUPPORTED');
+		}
 		const controller = new AbortController();
 		let timedOut = false;
 		const timer = setTimeout(() => { timedOut = true; controller.abort(); }, request.durationMs);
@@ -165,7 +173,7 @@ export class NativeChatTransport {
 		const started = Date.now();
 		const outcome = (async (): Promise<AgentOutcome> => {
 			try {
-				const result = await session.runTurn(request.text, role, controller.signal, request.inputRef, request.freshText);
+				const result = await session.runTurn(request.text, role, controller.signal, request.inputRef, request.freshText, request.images);
 				const outcome = outcomeOf(result, Date.now() - started, timedOut, redact);
 				if (scope) {
 					// A conversation is read-only: a changed tree fails the turn, exactly like the structured transport.
@@ -173,7 +181,9 @@ export class NativeChatTransport {
 						const after = await captureAgentScope(root);
 						const violation = scopeChanged(scope, after);
 						const unscanned = [...new Set([...scope.unscanned, ...after.unscanned])].sort();
-						return { ...outcome, ...(violation ? { status: 'failed' as const } : {}), scopeViolation: violation, scopeVerified: scope.source === 'git' && after.source === 'git', ...(unscanned.length ? { scopeUnscanned: unscanned } : {}) };
+						const verified = scope.source === 'git' && after.source === 'git';
+						const blocked = nativeChildren && (!verified || !!unscanned.length || !outcome.usage);
+						return { ...outcome, ...((violation || blocked) ? { status: 'failed' as const } : {}), scopeViolation: violation, scopeVerified: verified, ...(unscanned.length ? { scopeUnscanned: unscanned } : {}) };
 					} catch {
 						return { ...outcome, status: 'failed' };
 					}
@@ -273,7 +283,10 @@ export class NativeChatTransport {
 					// The handle exists before its process: the tool server reaches the current turn through it.
 					const session = await managerOf().session(identity);
 					const current = (): NativeTurnHooks | undefined => session && hooksOf(session);
-					const server = await deps.toolServer(identity.root, identity.provider, role, {
+					const nativeSubagents = identity.provider === 'codex' && role === 'conversation'
+						&& !deps.webSearch(identity.root) && deps.codexReadOnlySubagents?.(identity.root) === true;
+					// Child threads may not inherit IDE MCP tools, approval grants or mutable roots.
+					const server = nativeSubagents ? undefined : await deps.toolServer(identity.root, identity.provider, role, {
 						approve: async draft => {
 							const hooks = current();
 							if (!hooks?.approval || !session) { return 'deny'; }
@@ -284,14 +297,17 @@ export class NativeChatTransport {
 							if (!hooks?.question || !session) { return undefined; }
 							return session.awaitUser('question', () => hooks.question!(questions), answers => !!answers);
 						},
-						epoch: () => session?.turnNumber ?? 0
+						epoch: () => session?.turnNumber ?? 0,
+						profileEnvironment: { ...env },
+						step: step => current()?.onStep?.(step)
 					});
 					return {
 						options: {
-							instructions: await deps.instructions(identity.root, identity.provider, role), env, writableRoots, toolServer: server.launch,
+							instructions: await deps.instructions(identity.root, identity.provider, role), env, writableRoots,
+							...(server ? { toolServer: server.launch } : {}), ...(nativeSubagents ? { nativeSubagents: true } : {}),
 							model: deps.model(identity.provider), effort: deps.effort(identity.provider), maxTurns: deps.maxTurns(role), webSearch: deps.webSearch(identity.root)
 						},
-						dispose: () => server.dispose()
+						dispose: () => server ? server.dispose() : Promise.resolve()
 					};
 				},
 				async approve(session, call) {

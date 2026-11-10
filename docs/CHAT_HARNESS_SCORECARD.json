@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "status": "READY_WITH_CONDITIONS",
+  "baselineCommit": "45d7e833c3dadd552efd10d239d3db9faa6f5af5",
+  "candidateBranch": "feat/chat-harness-competitive-parity",
+  "score": null,
+  "maximum": 100,
+  "reason": "No numeric parity score without authenticated and final installed-product evidence.",
+  "criteria": [
+    { "area": "chat-sessions-accessibility", "weight": 18, "status": "PARTIAL", "evidence": "Host/browser/session fixtures; installed accessibility unverified" },
+    { "area": "agent-tools-recovery", "weight": 18, "status": "PARTIAL", "evidence": "Runtime/jobs/debug/cancellation fixtures; fine checkpoints partial" },
+    { "area": "providers-mcp-subagents", "weight": 16, "status": "PARTIAL", "evidence": "Codex mediated stdio and HTTP JSON/SSE fixtures; Claude tool-free roles; native children and authenticated smoke pending" },
+    { "area": "context-skills-media", "weight": 14, "status": "PARTIAL", "evidence": "Index/skills/image protocol tests; PDF/notebooks absent" },
+    { "area": "security-integrity", "weight": 16, "status": "IMPLEMENTED_VERIFIED", "evidence": "Permission races/private logs/gate/release fixtures" },
+    { "area": "testing-real-e2e", "weight": 10, "status": "BLOCKED", "evidence": "Local suites executed; providers/final installer/other OS unverified" },
+    { "area": "performance-usage", "weight": 8, "status": "PARTIAL", "evidence": "Source-hashed synthetic benchmark; provider/UI latency unmeasured" }
+  ],
+  "confidence": "medium for local contracts; low for final installed acceptance",
+  "historicalForkScore": { "score": 74, "status": "HISTORICAL_NOT_RECALCULATED" },
+  "realModelCalls": 0,
+  "release": { "version": "1.145.3", "revision": 1, "trigger": "merged PR", "publishedDuringDevelopment": false }
+}

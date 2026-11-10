@@ -131,11 +131,35 @@ const WINDOWS_NODE_SCRIPTS: Record<string, string[][]> = {
 const WINDOWS_NATIVE_TOOLS: Record<string, string[]> = { pnpm: ['node_modules', 'pnpm', 'pnpm.exe'], pnpx: ['node_modules', 'pnpm', 'pnpx.exe'] };
 
 /** Stop a process and its whole tree: `taskkill /T` on Windows, the process group elsewhere (spawned `detached`). */
-export function stopProcess(child: ChildProcess): void {
-	if (!child.pid) { return; }
+/** Report failure of the direct owned handle without throwing from a cancellation callback. */
+export function terminateOwnedProcess(child: Pick<ChildProcess, 'exitCode' | 'signalCode' | 'kill'> & { pid?: number }, diagnostic: (code: string) => void): void {
+	if (child.exitCode !== null || child.signalCode !== null) { return; }
+	let failed = false;
+	try { failed = !child.kill(); } catch { failed = true; }
+	if (failed && (!child.pid || processAlive(child.pid))) {
+		try { diagnostic('HARNESS_PROCESS_TERMINATION_FAILED'); }
+		catch { process.emitWarning('HARNESS_PROCESS_DIAGNOSTIC_FAILED', { code: 'HARNESS_PROCESS_DIAGNOSTIC_FAILED' }); }
+	}
+}
+
+export function stopProcess(child: ChildProcess, diagnostic: (code: string) => void = code => process.emitWarning(code, { code })): void {
+	if (!child.pid || child.exitCode !== null || child.signalCode !== null) { return; }
 	if (process.platform === 'win32') {
 		const killer = spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
-		killer.on('error', () => { /* Cannot terminate unavailable process. */ });
+		// Restricted hosts may deny taskkill. The owned process handle can still be terminated directly.
+		let reported = false;
+		const report = (): void => {
+			if (reported) { return; }
+			reported = true;
+			try { diagnostic('HARNESS_PROCESS_TERMINATION_FAILED'); }
+			catch { process.emitWarning('HARNESS_PROCESS_DIAGNOSTIC_FAILED', { code: 'HARNESS_PROCESS_DIAGNOSTIC_FAILED' }); }
+		};
+		const fallback = (): void => terminateOwnedProcess(child, report);
+		const timer = setTimeout(fallback, 500);
+		timer.unref();
+		child.once('close', () => clearTimeout(timer));
+		killer.once('error', fallback);
+		killer.once('close', code => { if (code !== 0) { fallback(); } });
 	} else {
 		try { process.kill(-child.pid, 'SIGTERM'); } catch { try { child.kill('SIGTERM'); } catch { /* exited */ } }
 		const timer = setTimeout(() => {

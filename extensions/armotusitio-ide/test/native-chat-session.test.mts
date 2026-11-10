@@ -49,6 +49,40 @@ async function session(replies: Array<string | AgentOutcome>, context: Partial<C
 	return { chat, ...fake, snapshots, store, cleanup: () => fs.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }) };
 }
 
+test('Debug records redacted evidence and stays read-only until its diagnostic plan is approved', async () => {
+	const s = await session([plan('Diagnose failing test', ['Reproduce', 'Hypothesis', 'Bounded experiment', 'Fix', 'Regression test'])]);
+	try {
+		await assert.rejects(s.chat.diagnose('', 'failure'), /HARNESS_DEBUG_EVIDENCE_INVALID/);
+		await s.chat.diagnose('npm test', 'exit 1 token=synthetic-secret-123');
+		assert.deepEqual(s.calls.map(call => call.kind), ['converse']);
+		assert.match(s.calls[0].instruction, /Diagnostic workflow: stay read-only/);
+		assert.match(s.calls[0].instruction, /falsifiable hypothesis/);
+		assert.ok(!JSON.stringify(s.chat.snapshot()).includes('synthetic-secret-123'));
+		assert.ok(!s.calls[0].instruction.includes('synthetic-secret-123'));
+		await s.chat.approve(s.chat.snapshot().plan!.digest);
+		assert.deepEqual(s.calls.map(call => call.kind), ['converse', 'implement']);
+		assert.match(s.calls[1].instruction, /Regression test/);
+	} finally { await s.cleanup(); }
+});
+
+test('New conversation archives searchable history and resumes it without replaying a provider call', async () => {
+	const s = await session(['first answer', 'second answer']);
+	try {
+		await s.chat.send('Remember the violet project');
+		await s.chat.reset();
+		const found = await s.chat.sessions('violet');
+		assert.equal(found.length, 1);
+		await s.chat.send('A separate conversation');
+		const calls = s.calls.length;
+		await s.chat.resume(found[0].id);
+		assert.equal(s.calls.length, calls);
+		assert.match(JSON.stringify(s.chat.snapshot().messages), /violet project/);
+		assert.ok(!JSON.stringify(s.chat.snapshot().messages).includes('A separate conversation'));
+		assert.equal((await s.chat.sessions('separate')).length, 1);
+		await assert.rejects(s.chat.resume('../outside'), /HARNESS_CHAT_SESSION_INVALID/);
+	} finally { await s.cleanup(); }
+});
+
 test('Send converses, revises the plan and never implements; Approve runs only the latest plan digest', async () => {
 	const s = await session([
 		'\u00bfQu\u00e9 campos necesita el cliente?',

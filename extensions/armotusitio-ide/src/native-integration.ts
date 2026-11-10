@@ -13,7 +13,7 @@ import { detectProjectCommands, detectedVerificationPlan } from './native-projec
 import { readProjectInstructions } from './native-project-instructions.ts';
 import { registerGoalIntegration } from './native-goal-integration.ts';
 import { createCommandPolicy, denialText, type CommandPolicyConfig } from './native-command-policy.ts';
-import { parseTerminalRequest, type RunnerConfig, type TerminalRequest } from './ats-runner.ts';
+import { handleApprove, parseTerminalRequest, type RunnerConfig, type TerminalRequest } from './ats-runner.ts';
 import type { ActivityFeed } from './native-activity-feed.ts';
 import { createResultCache, type ResultCache } from './native-result-cache.ts';
 import { composeUpCommand, detectServiceNeeds, probeService } from './native-services.ts';
@@ -33,6 +33,8 @@ import { projectPermissionsDigest } from './native-run-integrity.ts';
 import type { PermissionPreset } from './native-permissions-types.ts';
 import { runEditorTool, type EditorBackend } from './native-editor-tools.ts';
 import { McpServerStore } from './native-mcp-servers.ts';
+import { createUserMcpBridge } from './native-user-mcp.ts';
+import { createDelegationBroker } from './native-agent-delegation.ts';
 import { KeychainDevSecrets } from './native-dev-secrets.ts';
 import { doctorReport, runDoctor, type DoctorCheck, type Exec } from './native-machine-doctor.ts';
 import { collectOrphans, validateTemplate, type EnvironmentTemplate } from './native-ephemeral-env.ts';
@@ -47,6 +49,7 @@ import { harnessErrorCode, promptBudget, type GateSummary } from './native-chat.
 import { proposeProjectConfig, loadProjectConfig, writeProjectConfig, generatedConfigDigest, removeGeneratedProjectConfig } from './native-project.ts';
 import { reviewAgentDraft, inspectAgentWorkspace, modelOption, effortOption, validModel, validEffort, MAX_AGENT_TURNS, type NativeProvider, type NativeEffort, type AgentRole, type AgentDraft } from './native-providers.ts';
 import { captureWorkingTree, diffWorkingTree, discardRunChanges, fingerprintFiles, type RunDiffSummary, type WorkingTreeSnapshot } from './native-run-diff.ts';
+import { ChatToolCheckpointRecorder, listChatToolCheckpoints, restoreChatToolCheckpoint } from './native-chat-tool-checkpoints.ts';
 import { buildSupportReport, exportSupportReport } from './native-support.ts';
 import { inspectHarnessAuthority } from './native-authority.ts';
 import { fitEngineeringContext, engineeringContext, engineeringSkillContext, listEngineeringSkills, readEngineeringSkill } from './native-engineering-skills.ts';
@@ -136,9 +139,12 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 	const pendingAgents = new Set<string>();
 	const runningWorkflows = new Map<string, WorkflowRun>();
 	const pendingWorkflows = new Set<string>();
+	const childExecutions = new Set<AgentExecution>();
+	let pendingChildren = 0;
+	const delegationParents = new Map<string, { draft: AgentDraft; folder: Host; fence: SharedExecutionFence; environment: NodeJS.ProcessEnv; children: Set<AgentExecution>; pending: Set<Promise<void>>; stopping: boolean }>();
 	// Local backpressure: an IDE window may run at most two provider-intensive operations.
 	const maxConcurrentProviders = 2;
-	const providerSlots = (): number => runningAgents.size + pendingAgents.size + runningWorkflows.size + pendingWorkflows.size;
+	const providerSlots = (): number => runningAgents.size + pendingAgents.size + runningWorkflows.size + pendingWorkflows.size + childExecutions.size + pendingChildren;
 	const assertProviderCapacity = (): void => { if (providerSlots() >= maxConcurrentProviders) { throw Error('HARNESS_PROVIDER_CAPACITY_REACHED'); } };
 	/** Authorized workspace folder whose authority is a project Harness. */
 	const chooseProjectHarness = async (requested?: string): Promise<Host | undefined> => {
@@ -299,7 +305,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 	 * `inScope` limits editor refactors to the run's scope (a goal's charter); a chat run may edit the whole project.
 	 */
 	const prepareToolServer = async (root: string, maxTurns: number, provider: NativeProvider, inScope: (file: string) => boolean = () => true, extraEnv: Record<string, string> = {}, approve?: ApprovalAsk,
-		session?: { role: SessionRole; question: NonNullable<NativeTurnHooks['question']>; epoch(): number }): Promise<{ launch: ToolServerLaunch; policy: string[]; ecosystems: string[]; dispose(): Promise<void> }> => {
+		session?: { role: SessionRole; question: NonNullable<NativeTurnHooks['question']>; epoch(): number; profileEnvironment?: NodeJS.ProcessEnv; step?(step: ChatStep): void }, onStep?: (step: ChatStep) => void): Promise<{ launch: ToolServerLaunch; policy: string[]; ecosystems: string[]; dispose(): Promise<void> }> => {
 		let nodeAvailable = false;
 		try { nodeAvailable = !(await resolveNodeRuntime()).embeddedNode; } catch { /* A stale user path can be repaired through the same picker. */ }
 		if (!nodeAvailable && approve) {
@@ -337,10 +343,14 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			}, finishedInTerminal());
 			return { ...result, output: devSecrets.redact(result.output) };
 		};
+		let userMcp: ReturnType<typeof createUserMcpBridge> | undefined;
+		let delegation: ReturnType<typeof createDelegationBroker> | undefined;
 		const channel = await openToolChannel(directory, async (method, params) => {
 			const input = (params ?? {}) as { name?: string; input?: Record<string, unknown>; command?: string; args?: string[]; cwd?: string };
 			if (method === 'editor' && typeof input.name === 'string') { return runEditorTool({ root, backend: editorBackend, inScope }, input.name, input.input ?? {}); }
 			if (method === 'work-mcp' && typeof input.name === 'string') { return mcp.call(input.name, input.input ?? {}); }
+			if (method === 'user-mcp' && userMcp && typeof input.name === 'string') { return userMcp.call(input.name, input.input ?? {}); }
+			if (method === 'delegate-readonly' && delegation) { return delegation.call(params); }
 			// Only a run that can ask the user (the chat) has an approver; any other run is denied.
 			if (method === 'approval') { const draft = parseApprovalDraft(params, root); return draft && approve ? approve(draft) : 'deny'; }
 			// Native sessions (r8): agent questions and the turn number that scopes refusals; validated, never trusted blindly.
@@ -364,6 +374,80 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			} : {}),
 			...(delegate ? { delegateEntry: path.join(root, authority.entry!) } : {})
 		};
+		// Only Claude currently exposes a locally probeable, empty-tool CLI surface for isolated children.
+		if (provider === 'claude' && writerTools && approve && (!session || session.profileEnvironment)) {
+			config.delegation = true;
+			delegation = createDelegationBroker({
+				enabled: () => ensureTrust() && delegationParents.has(root) && !delegationParents.get(root)!.stopping,
+				step: session?.step ?? onStep, redact: text => devSecrets.redact(redactSecrets(text)),
+				authorize: async request => {
+					const parent = delegationParents.get(root);
+					if (!parent || parent.stopping || !authorized(parent.folder) || parent.draft.provider !== provider) { return false; }
+					await parent.fence.assertCurrent();
+					const permissions = await loadPermissions(root, undefined, undefined, { preset: permissionsPreset() });
+					if (permissions.decide({ kind: 'mcp', server: 'ats-runner', tool: 'delegate_readonly' }).decision === 'deny') { return false; }
+					return await approve({
+						kind: 'mcp', title: vscode.l10n.t('Delegar a un agente de solo lectura'), rule: '', noRemember: 'inexact',
+						detail: [vscode.l10n.t('Esta acci\u00f3n consume una llamada adicional al modelo con la misma cuenta del agente principal.'),
+						'role: ' + request.role, devSecrets.redact(redactSecrets(request.instruction)).slice(0, 1000)]
+					}) === 'once';
+				},
+				launch: async request => {
+					const parent = delegationParents.get(root);
+					if (!parent || parent.stopping || !authorized(parent.folder) || parent.draft.provider !== provider) { throw Error('HARNESS_DELEGATION_PARENT_UNAVAILABLE'); }
+					assertProviderCapacity(); pendingChildren++;
+					let completeLaunch!: () => void;
+					const pending = new Promise<void>(resolve => { completeLaunch = resolve; });
+					parent.pending.add(pending);
+					try {
+						await parent.fence.assertCurrent();
+						if (!await projectPermissionsDigest(root).then(digest => digest === config.projectPermissionsBaseline)) { throw Error('HARNESS_DELEGATION_POLICY_CHANGED'); }
+						const permissions = await loadPermissions(root, undefined, undefined, { preset: permissionsPreset() });
+						if (permissions.decide({ kind: 'mcp', server: 'ats-runner', tool: 'delegate_readonly' }).decision === 'deny') { throw Error('HARNESS_DELEGATION_DENIED'); }
+						await assertProviderBudget(metricsDirectory(root), provider, providerBudget(parent.folder), parent.fence);
+						const cap = providerCallsPer24h(parent.folder);
+						if (cap > 0) { await reserveProviderInvocation(metricsDirectory(root), provider, parent.fence, cap); }
+						await parent.fence.assertCurrent();
+						if (!authorized(parent.folder) || parent.stopping) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
+						const child: AgentDraft = {
+							schemaVersion: 1, provider, role: request.role, projectRoot: root, instruction: request.instruction,
+							readOnly: true, maxTurns: 6, ...modelOption(parent.draft.model), ...effortOption(parent.draft.effort)
+						};
+						const pinned = { ...(session?.profileEnvironment ?? parent.environment) };
+						// No child tool server: there is no recursion, MCP, git or write tool grant to inherit.
+						const execution = await executeReviewedAgent(reviewAgentDraft(child), child, 5 * 60 * 1000, undefined, undefined, undefined,
+							text => devSecrets.redact(text) !== text, undefined, () => ({ ...pinned }), true);
+						if (parent.stopping) { execution.cancel(); }
+						const tracked: AgentExecution = {
+							cancel: () => execution.cancel(), outcome: execution.outcome.then(async outcome => {
+								await parent.fence.assertCurrent();
+								await recordSpend(parent.folder, root, provider, parent.fence, outcome);
+								await recordAgentMetric(metricsDirectory(root), provider, child.role, outcome);
+								return outcome;
+							}).finally(() => { childExecutions.delete(tracked); parent.children.delete(tracked); })
+						};
+						childExecutions.add(tracked); parent.children.add(tracked); return tracked;
+					} finally { pendingChildren--; parent.pending.delete(pending); completeLaunch(); }
+				}
+			});
+		}
+		// Codex cannot broker arbitrary user MCP requests itself in the supported app-server protocol.
+		// Expose only schemas through ats-runner; host credentials and execution remain behind the IDE broker.
+		if (provider === 'codex' && writerTools && approve) {
+			userMcp = createUserMcpBridge({
+				cwd: root, env,
+				entries: () => mcpServers.launchEntries(),
+				enabled: () => ensureTrust() && (vscode.workspace.workspaceFolders || []).some((folder: Host) =>
+					process.platform === 'win32' ? folder.uri.fsPath.toLowerCase() === root.toLowerCase() : folder.uri.fsPath === root),
+				authorize: async (server, tool, args) => {
+					const decision = await handleApprove({ ...config, mcpServers: [server] }, { tool_name: `mcp__${server}__${tool}`, input: args }, {
+						ask: async draft => { const validated = parseApprovalDraft(draft, root); return validated ? approve(validated) : 'deny'; }
+					});
+					return decision.behavior === 'allow';
+				}
+			});
+			mcpTools.push(...await userMcp.tools());
+		}
 		// User-added MCP servers only reach a native conversation that can ask the user: each of their tools goes through `approve`.
 		const userServers = native && approve ? await mcpServers.launchEntries() : {};
 		if (Object.keys(userServers).length) { config.mcpServers = Object.keys(userServers); }
@@ -375,12 +459,16 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			launch, policy: createCommandPolicy(approve ? { ...policy, permissions: await loadPermissions(root, undefined, vscode.l10n.t, { preset: permissionsPreset() }) } : policy).describe(), ecosystems: describeEcosystems(subprojects),
 			// The configuration goes; the command logs and audit stay with the run for the report.
 			// The token dies with the channel (EC-125).
-			dispose: async () => { await Promise.all([fs.rm(configFile, { force: true }), fs.rm(launch.mcpConfigFile, { force: true }), channel.close()]); }
+			dispose: async () => { userMcp?.dispose(); delegation?.dispose(); await Promise.all([fs.rm(configFile, { force: true }), fs.rm(launch.mcpConfigFile, { force: true }), channel.close()]); }
 		};
 	};
 	/** Every IDE agent draft: read-only unless implementing, with the model and effort chosen for its provider. */
-	const draftOf = (root: string, provider: NativeProvider, role: AgentRole, instruction: string, extra: Pick<AgentDraft, 'maxTurns' | 'resumeSession'> = {}): AgentDraft =>
-		({ schemaVersion: 1, provider, role, projectRoot: root, instruction, readOnly: role !== 'implementer', ...modelOption(modelFor(provider)), ...effortOption(effortFor(provider)), ...(webSearchOn(root) ? { webSearch: true } : {}), ...extra });
+	const codexReadonlyOptIn = (): boolean => vscode.workspace.getConfiguration('atsHarness').inspect?.('codexReadOnlySubagents')?.globalValue === true;
+	const draftOf = (root: string, provider: NativeProvider, role: AgentRole, instruction: string, extra: Pick<AgentDraft, 'maxTurns' | 'resumeSession' | 'nativeSubagents'> = {}): AgentDraft =>
+	({
+		schemaVersion: 1, provider, role, projectRoot: root, instruction, readOnly: role !== 'implementer', ...modelOption(modelFor(provider)), ...effortOption(effortFor(provider)), ...(webSearchOn(root) ? { webSearch: true } : {}),
+		...(provider === 'codex' && role !== 'implementer' && !webSearchOn(root) && codexReadonlyOptIn() ? { nativeSubagents: true } : {}), ...extra
+	});
 	/**
 	 * Native transport of the chat (r8): persistent provider sessions behind the same guarded pipeline. The setting decides
 	 * (structured | native | auto); an incompatible CLI keeps the structured transport and says why once per provider.
@@ -424,7 +512,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			if (profileId && !profile) { throw Error('HARNESS_PROFILE_NOT_FOUND'); }
 			return { env: await withHarnessProvider(profile ? profiles.environment(profile, toolchain.env) : toolchain.env, provider), writableRoots: toolchain.writableRoots };
 		},
-		toolServer: (root, provider, role, channel) => prepareToolServer(root, role === 'writer' ? implementerMaxTurns() : 50, provider, undefined, undefined, channel.approve, { role, question: channel.question, epoch: channel.epoch }),
+		toolServer: (root, provider, role, channel) => prepareToolServer(root, role === 'writer' ? implementerMaxTurns() : 50, provider, undefined, undefined, channel.approve, { role, question: channel.question, epoch: channel.epoch, profileEnvironment: channel.profileEnvironment, step: channel.step }),
 		policy: async root => {
 			const permissions = await loadPermissions(root, undefined, vscode.l10n.t, { preset: permissionsPreset() });
 			return { permissions, policy: createCommandPolicy({ ...(await policyConfigOf(root)).policy, permissions }) };
@@ -436,16 +524,23 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 		model: provider => modelFor(provider),
 		effort: provider => effortFor(provider),
 		codexFullAccess: () => codexSandbox() === 'danger-full-access',
+		codexReadOnlySubagents: root => codexReadonlyOptIn() && !webSearchOn(root),
 		maxTurns: role => role === 'writer' ? implementerMaxTurns() : 12,
 		webSearch: root => webSearchOn(root),
 		redact: text => devSecrets.redact(text),
 		clientVersion: String(context.extension?.packageJSON?.version ?? '0')
 	});
 	context.subscriptions.push({ dispose: () => { void nativeChat.dispose(); } });
+	// Turning off the user-level switch closes already-open sessions and their children.
+	if (vscode.workspace.onDidChangeConfiguration) {
+		context.subscriptions.push(vscode.workspace.onDidChangeConfiguration((event: any) => {
+			if (event.affectsConfiguration('atsHarness.codexReadOnlySubagents')) { void nativeChat.dispose(); }
+		}));
+	}
 	const transportWarned = new Set<NativeProvider>();
 	/** Native execution of one chat turn, for `runGuardedAgent`. */
 	const nativeTurn = (root: string, provider: NativeProvider, role: SessionRole, text: string, transport: TurnTransport, hooks: { message?: (text: string) => void; step?: ChatRunHooks['step']; approval?: ApprovalAsk; question?: ChatRunHooks['question']; notice?: ChatRunHooks['notice'] }) =>
-		() => nativeChat.execute({ root, provider, conversationId: transport.conversationId, role, text, ...(transport.fresh ? { freshText: transport.fresh } : {}), ...(transport.inputRef ? { inputRef: transport.inputRef } : {}), durationMs: RUN_MINUTES * 60 * 1000 },
+		() => nativeChat.execute({ root, provider, conversationId: transport.conversationId, role, text, ...(transport.fresh ? { freshText: transport.fresh } : {}), ...(transport.inputRef ? { inputRef: transport.inputRef } : {}), ...(transport.images ? { images: transport.images } : {}), durationMs: RUN_MINUTES * 60 * 1000 },
 			{ onMessage: hooks.message, onStep: hooks.step, approval: hooks.approval, question: hooks.question, notice: hooks.notice });
 	/** Reported spend must be durable when a budget is enforced; otherwise it is best-effort telemetry. */
 	const recordSpend = async (folder: Host, root: string, provider: NativeProvider, fence: SharedExecutionFence, outcome: AgentOutcome): Promise<void> => {
@@ -513,13 +608,23 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			if (hooks.signal?.aborted) { throw Error('HARNESS_CANCELLED_BEFORE_START'); }
 			const cap = providerCallsPer24h(folder);
 			await assertProviderBudget(metricsDirectory(root), draft.provider, providerBudget(folder), fence);
+			// Concurrent child limits are not cumulative invocation limits.
+			// Strict cost or daily-call budgets must fail closed without per-child receipts.
+			if (draft.nativeSubagents && (budgetEnabled(providerBudget(folder)) || cap > 0)) { throw Error('HARNESS_DELEGATION_BUDGET_UNVERIFIED'); }
 			if (cap > 0) { await reserveProviderInvocation(metricsDirectory(root), draft.provider, fence, cap); }
 			if (!authorized(folder)) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
 			await hooks.beforeLaunch?.();
 			await fence.assertCurrent();
-			execution = hooks.execute ? await hooks.execute()
-				: await executeReviewedAgent(reviewAgentDraft(draft), draft, undefined, hooks.onProgress && (progress => hooks.onProgress!(progress.observedBytes)), hooks.onMessage, hooks.toolServer, text => devSecrets.redact(text) !== text, hooks.onStep, await profileEnvironment(draft.projectRoot, draft.provider));
+			const toolchain = await currentToolchainEnvironment();
+			const profile = await profileEnvironment(root, draft.provider);
+			const pinnedEnvironment = profile ? profile(toolchain.env) : toolchain.env;
+			const parent = { draft: { ...draft }, folder, fence, environment: { ...pinnedEnvironment }, children: new Set<AgentExecution>(), pending: new Set<Promise<void>>(), stopping: false };
+			delegationParents.set(root, parent);
+			const parentExecution = hooks.execute ? await hooks.execute()
+				: await executeReviewedAgent(reviewAgentDraft(draft), draft, undefined, hooks.onProgress && (progress => hooks.onProgress!(progress.observedBytes)), hooks.onMessage, hooks.toolServer, text => devSecrets.redact(text) !== text, hooks.onStep, () => ({ ...pinnedEnvironment }));
+			execution = { outcome: parentExecution.outcome, cancel: () => { parent.stopping = true; for (const child of parent.children) { child.cancel(); } parentExecution.cancel(); } };
 		} catch (error) {
+			delegationParents.delete(root);
 			await lease?.release().catch(() => undefined);
 			if (fence) { await fence.release(); }
 			throw error;
@@ -539,7 +644,16 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			if (leaseLost) { void vscode.window.showWarningMessage('El lease de escritura del Harness del proyecto venci\u00f3 durante la ejecuci\u00f3n. Los cambios se conservaron; revis\u00e1 que el motor no haya corrido nada mientras tanto.'); }
 			await hooks.afterOutcome?.(result, fence);
 			return result;
-		} finally { await lease?.release().catch(() => undefined); runningAgents.delete(root); await fence.release(); controller.refresh(); }
+		} finally {
+			const parent = delegationParents.get(root);
+			if (parent) { parent.stopping = true; }
+			for (const child of parent?.children ?? []) { child.cancel(); }
+			await Promise.allSettled([...(parent?.pending ?? [])]);
+			for (const child of parent?.children ?? []) { child.cancel(); }
+			await Promise.allSettled([...(parent?.children ?? [])].map(child => child.outcome));
+			delegationParents.delete(root);
+			await lease?.release().catch(() => undefined); runningAgents.delete(root); await fence.release(); controller.refresh();
+		}
 	};
 	/** Guidance and skill references appended to an agent instruction; contents are read by the agent, digests pin them. */
 	const projectReferences = (guides: ProjectGuide[], skills: ProjectSkill[]): string =>
@@ -690,7 +804,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 				const maxTurns = implementerMaxTurns();
 				if (!await servicePreflight(root)) { throw Error('HARNESS_CANCELLED_BEFORE_START'); }
 				// A native writer uses its session's own tool server; a structured run gets one for this run only.
-				const server = transport ? undefined : await prepareToolServer(root, maxTurns, provider, undefined, undefined, hooks.approval);
+				const server = transport ? undefined : await prepareToolServer(root, maxTurns, provider, undefined, undefined, hooks.approval, undefined, hooks.step);
 				const detected = server?.ecosystems ?? describeEcosystems((await policyConfigOf(root)).subprojects);
 				const ecosystems = detected.length ? '\n\nDetected subprojects and their usual commands:\n' + detected.join('\n') : '';
 				// A resumed session already holds the references; it only receives the continuation request.
@@ -699,6 +813,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 				const boundedSkills = fitEngineeringContext(skillText, promptBudget({ promptBudget: promptBudgetBytes() }) - Buffer.byteLength(basePrompt) - 2);
 				const prompt = resumeSession ? instruction : basePrompt + (boundedSkills ? '\n\n' + boundedSkills : '');
 				let before: WorkingTreeSnapshot | undefined;
+				const toolCheckpoints = new ChatToolCheckpointRecorder(root, path.join(metricsDirectory(root), 'chat-tool-checkpoints'));
 				let diff: RunDiffSummary = { available: false, files: [], count: 0 };
 				const agent = await runGuardedAgent(folder, draftOf(root, provider, 'implementer', prompt, { maxTurns, ...(resumeSession ? { resumeSession } : {}) }), {
 					...(server ? { toolServer: server.launch } : {}),
@@ -706,10 +821,12 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 					onStarted: execution => { hooks.started(() => execution.cancel()); hooks.stage('agent'); },
 					onProgress: hooks.progress,
 					onMessage: hooks.message,
-					onStep: hooks.step,
+					onStep: step => { toolCheckpoints.observe(step); hooks.step?.(step); },
 					signal,
-					beforeLaunch: async () => { before = await captureWorkingTree(root); },
+					beforeLaunch: async () => { before = await captureWorkingTree(root); await toolCheckpoints.begin(); },
 					afterOutcome: async (outcome, fence) => {
+						// Finalize tool-attributed records while the shared writer fence is held.
+						await toolCheckpoints.finish().catch(() => { void vscode.window.showWarningMessage('No se pudo persistir un checkpoint granular; la reversi\u00f3n por corrida sigue disponible.'); });
 						// Measured before verification, so build output of the gates is never attributed to the writer.
 						if (before) { diff = diffWorkingTree(before, await captureWorkingTree(root)); diff = { ...diff, after: await fingerprintFiles(root, diff.files) }; }
 						if (outcome.status !== 'passed' && verification) {
@@ -870,7 +987,8 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 				vscode.l10n.t('B\u00fasqueda web en {0}: {1}.', folder.name, webSearchOn(root) ? vscode.l10n.t('encendida') : vscode.l10n.t('apagada')),
 				{ modal: true, detail: vscode.l10n.t('Encendida, el agente puede buscar documentaci\u00f3n con el buscador de su proveedor. Las consultas llegan a ese buscador, quedan en el informe y una consulta con un secreto corta la corrida. Nunca puede abrir URLs, y los comandos siguen sin red. Aplica desde la pr\u00f3xima corrida.') },
 				on, off);
-			if (picked) { await context.globalState.update(webSearchKey(root), picked === on); }
+			// An open session keeps the tools it started with: close it so search and native children are never active together.
+			if (picked) { await context.globalState.update(webSearchKey(root), picked === on); await nativeChat.dispose(); }
 		} catch (error) { showError(error); }
 	}));
 	/** Manage development secrets (block V): add or rotate, remove, list with use audit; values are never shown. */
@@ -993,7 +1111,18 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 				}
 			}
 			const instruction = requestedInstruction + projectReferences(guides, selectedProjectSkills);
-			const draft = draftOf(root, provider, role, instruction);
+			// Native Codex children are never implicit: they cost extra provider calls and
+			// are available only to read-only roles in an explicitly reviewed run.
+			let nativeSubagents = false;
+			if (provider === 'codex' && role !== 'implementer' && !webSearchOn(root)) {
+				const delegation = await vscode.window.showQuickPick([
+					{ label: 'Sin subagentes (predeterminado)', value: false },
+					{ label: 'Hasta dos subagentes Codex simult\u00e1neos (cuota adicional)', value: true }
+				], { title: 'Delegaci\u00f3n opt-in de solo lectura' });
+				if (!delegation) { return; }
+				nativeSubagents = delegation.value;
+			}
+			const draft: AgentDraft = { ...draftOf(root, provider, role, instruction), nativeSubagents };
 			const invocation = buildAgentInvocation(draft);
 			const preview = JSON.stringify({
 				project: root, role, provider, permissionMode: draft.readOnly ? 'read-only' : 'workspace-write (Codex) / dontAsk (Claude)',
@@ -1201,6 +1330,39 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			if (!authorized(chosen.folder)) { return; }
 			await removeCleanAgentWorktree(selected.worktree);
 			vscode.window.showInformationMessage('Worktree limpio retirado.');
+		} catch (error) { showError(error); } finally { controller.refresh(); }
+	}));
+	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.nativeChatToolRestore', async (requested?: string) => {
+		try {
+			if (!ensureTrust()) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
+			const chosen = await choose(requested, true); if (!chosen) { return; }
+			const root = await fs.realpath(chosen.folder.uri.fsPath);
+			assertIdle(root, chosen.folder);
+			const storage = path.join(metricsDirectory(root), 'chat-tool-checkpoints');
+			const checkpoints = await listChatToolCheckpoints(root, storage);
+			if (!checkpoints.length) { vscode.window.showInformationMessage('No hay checkpoints granulares seguros disponibles.'); return; }
+			const selected = await vscode.window.showQuickPick(checkpoints.map(item => ({
+				label: item.stepId.slice(0, 64), description: item.kind + ' \u00b7 ' + item.files.length + ' archivos \u00b7 ' + item.at + (item.turnId ? ' \u00b7 turno ' + item.turnId.slice(0, 8) + ' #' + String(item.sequence ?? 1) : ''), checkpoint: item
+			})), { title: 'Restaurar una herramienta del Chat Harness' });
+			if (!selected) { return; }
+			const approval = await vscode.window.showWarningMessage(
+				'Restaurar \u00fanicamente archivos con huella id\u00e9ntica a la salida de esa herramienta. Cualquier edici\u00f3n posterior bloquear\u00e1 la restauraci\u00f3n completa. No modifica commits ni la rama. \u00bfConfirmar?',
+				{ modal: true }, 'Restaurar checkpoint');
+			if (approval !== 'Restaurar checkpoint' || !authorized(chosen.folder)) { return; }
+			assertIdle(root, chosen.folder);
+			const fence = await acquireSharedExecutionFence(root, metricsDirectory(root), 'native-agent');
+			let lease: WriterLease | undefined;
+			try {
+				if ((await inspectHarnessAuthority(root)).engine === 'project') {
+					if (!coordinatedWriters()) { throw Error('HARNESS_HYBRID_WRITER_UNAVAILABLE'); }
+					lease = await acquireWriterLease(root, true, () => authorized(chosen.folder), fence);
+				}
+				const outcome = await restoreChatToolCheckpoint(root, storage, selected.checkpoint.id, async () => {
+					await fence.assertCurrent();
+					if (!authorized(chosen.folder)) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
+				});
+				void vscode.window.showInformationMessage('Checkpoint: ' + outcome.restored.length + ' restaurados; ' + outcome.skipped.length + ' preservados por conflicto.');
+			} finally { await lease?.release().catch(() => undefined); await fence.release(); }
 		} catch (error) { showError(error); } finally { controller.refresh(); }
 	}));
 	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.nativeWorktreeRollback', async (requested?: string) => {

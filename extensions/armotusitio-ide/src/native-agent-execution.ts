@@ -5,7 +5,8 @@
 /** Explicitly approved, bounded agent CLI execution. No shell, no bypass-permissions modes. */
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
+import { promisify } from 'node:util';
 import { resolveNativeCommand, stopProcess } from './native-runtime.ts';
 import { captureAgentScope, scopeChanged } from './native-agent-scope.ts';
 import { parseProviderOutput, ClaudeEventAccumulator, CodexEventAccumulator, type ProviderUsage } from './native-provider-output.ts';
@@ -15,6 +16,7 @@ import { StringDecoder } from 'node:string_decoder';
 import { redactSecrets } from './native-redact.ts';
 import { currentToolchainEnvironment } from './native-toolchain-env.ts';
 import { codexSandbox } from './native-codex-sandbox.ts';
+import { CodexChildGuard, readonlyCodexSubagentOverrides, type CodexChildViolation } from './native-codex-subagents.ts';
 import { agentContract, RUN_MINUTES } from './native-agent-contract.ts';
 import { reviewAgentDraft, validateReviewedAgent, type AgentDraft, type AgentReview } from './native-providers.ts';
 import { APPROVAL_TIMEOUT_MS } from './native-approval.ts';
@@ -87,20 +89,24 @@ const toml = (value: string): string => JSON.stringify(value);
  * `writableRoots` are toolchain caches a Codex writer may also write to (block B); readers never get them.
  * `toolServer` gives a writer the `ats-runner` command tool; Claude's own shell stays disallowed.
  */
-export function buildAgentInvocation(draft: AgentDraft, writableRoots: readonly string[] = [], toolServer?: ToolServerLaunch): AgentInvocation {
+export function buildAgentInvocation(draft: AgentDraft, writableRoots: readonly string[] = [], toolServer?: ToolServerLaunch, isolatedReadOnly = false): AgentInvocation {
+	if (isolatedReadOnly && (draft.provider !== 'claude' || !draft.readOnly || draft.role === 'implementer' || draft.resumeSession || draft.webSearch || toolServer)) { throw Error('HARNESS_DELEGATION_ISOLATION_UNSUPPORTED'); }
 	reviewAgentDraft(draft);
 	if (draft.role !== 'implementer' && !draft.readOnly) { throw Error('HARNESS_READ_ONLY_ROLE_REQUIRED'); }
 	if (draft.role === 'implementer' && draft.readOnly) { throw Error('HARNESS_IMPLEMENTER_MODE_MISMATCH'); }
 	const runner = !draft.readOnly && !!toolServer;
 	// Native transport pilot: Claude keeps Bash, Edit and Write, and each permission prompt is answered by the IDE's `approve` tool.
 	const native = runner && draft.provider === 'claude' && !!toolServer?.approve;
-	const instruction = agentContract({ provider: draft.provider, role: draft.role, maxTurns: draft.maxTurns, runner, webSearch: draft.webSearch, git: runner && !!toolServer?.git, files: runner && !!toolServer?.files, nativeShell: native }) + '\n\n' + draft.instruction;
+	const instruction = (isolatedReadOnly ? 'This child has no tools. Analyze only the context supplied below; do not claim to inspect files, run tests or delegate.\n\n' : agentContract({ provider: draft.provider, role: draft.role, maxTurns: draft.maxTurns, runner, webSearch: draft.webSearch, git: runner && !!toolServer?.git, files: runner && !!toolServer?.files, nativeShell: native }) + '\n\n') + draft.instruction;
 	const model = draft.model ? ['--model', draft.model] : [];
 	// Keep effort as a reviewed, per-invocation override. Never modify CLI config files.
 	const effort = draft.effort ? draft.provider === 'codex'
 		? ['--config', 'model_reasoning_effort="' + draft.effort + '"']
 		: ['--effort', draft.effort] : [];
 	if (draft.provider === 'codex') {
+		// Native children inherit the parent's read-only sandbox and never receive independent grants.
+		// A single parent process owns their lifetime and usage. Without the opt-in they are switched off explicitly.
+		const nativeSubagents = readonlyCodexSubagentOverrides(draft.nativeSubagents === true);
 		const sandbox = draft.readOnly ? 'read-only' : codexSandbox();
 		const caches = sandbox === 'workspace-write' ? writableRoots.flatMap(root => ['--add-dir', root]) : [];
 		// Codex's native search tool; it is off unless the project enabled web search (D9).
@@ -112,7 +118,7 @@ export function buildAgentInvocation(draft: AgentDraft, writableRoots: readonly 
 		return {
 			executable: 'codex',
 			// The approval flag is global and must precede the exec subcommand on current Codex CLIs.
-			args: ['--ask-for-approval', 'never', ...effort, ...search, ...server, 'exec', ...model, '--sandbox', sandbox, ...caches, '--skip-git-repo-check', '--ephemeral', '--json', '-'],
+			args: ['--ask-for-approval', 'never', ...effort, ...search, ...nativeSubagents, ...server, 'exec', ...model, '--sandbox', sandbox, ...caches, '--skip-git-repo-check', '--ephemeral', '--json', '-'],
 			stdin: instruction
 		};
 	}
@@ -126,7 +132,9 @@ export function buildAgentInvocation(draft: AgentDraft, writableRoots: readonly 
 	const prompts = native ? ['--permission-prompts', 'host', '--permission-prompt-tool', RUNNER_TOOL + '__approve'] : [];
 	return {
 		executable: 'claude',
-		args: ['--print', ...resume, ...model, ...effort, ...server, ...prompts, ...claudeToolArgs({ readOnly: draft.readOnly, runner, native, webSearch: draft.webSearch }), '--max-turns', String(draft.maxTurns ?? READ_ONLY_MAX_TURNS), '--output-format', 'stream-json', '--verbose'],
+		args: ['--print', ...resume, ...model, ...effort, ...server, ...prompts, ...claudeToolArgs({ readOnly: draft.readOnly, runner, native, webSearch: draft.webSearch }),
+			...(isolatedReadOnly ? ['--tools', '', '--setting-sources', '', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}'] : []),
+			'--max-turns', String(draft.maxTurns ?? READ_ONLY_MAX_TURNS), '--output-format', 'stream-json', '--verbose'],
 		stdin: draft.resumeSession ? draft.instruction : instruction
 	};
 }
@@ -155,7 +163,7 @@ export function claudeToolArgs(options: { readOnly: boolean; runner: boolean; na
  * Caller MUST verify Workspace Trust, project authority and consent immediately before invoking.
  * `onMessage` receives redacted intermediate assistant messages as the provider streams them (Codex JSONL, Claude stream-json).
  */
-export async function executeReviewedAgent(review: AgentReview, current: AgentDraft, durationMs = MAX_DURATION_MS, onProgress?: (progress: Readonly<AgentProgress>) => void, onMessage?: (text: string) => void, toolServer?: ToolServerLaunch, sensitive?: (text: string) => boolean, onStep?: (step: ChatStep) => void, profileEnvironment?: (base: NodeJS.ProcessEnv) => NodeJS.ProcessEnv): Promise<AgentExecution> {
+export async function executeReviewedAgent(review: AgentReview, current: AgentDraft, durationMs = MAX_DURATION_MS, onProgress?: (progress: Readonly<AgentProgress>) => void, onMessage?: (text: string) => void, toolServer?: ToolServerLaunch, sensitive?: (text: string) => boolean, onStep?: (step: ChatStep) => void, profileEnvironment?: (base: NodeJS.ProcessEnv) => NodeJS.ProcessEnv, isolatedReadOnly = false): Promise<AgentExecution> {
 	validateReviewedAgent(review, current);
 	if (!Number.isSafeInteger(durationMs) || durationMs < 1000 || durationMs > MAX_DURATION_MS) { throw Error('HARNESS_AGENT_TIMEOUT_INVALID'); }
 	const canonical = await fs.realpath(current.projectRoot);
@@ -163,8 +171,18 @@ export async function executeReviewedAgent(review: AgentReview, current: AgentDr
 	const toolchain = await currentToolchainEnvironment();
 	// An AI profile replaces the provider credentials of the IDE environment with its own private directory.
 	const base = profileEnvironment ? profileEnvironment(toolchain.env) : toolchain.env;
-	const invocation = buildAgentInvocation(current, toolchain.writableRoots, toolServer);
+	const invocation = buildAgentInvocation(current, toolchain.writableRoots, toolServer, isolatedReadOnly);
+	if (isolatedReadOnly) {
+		const probe = await resolveNativeCommand(current.provider, ['--help'], base);
+		const { stdout } = await promisify(execFile)(probe.executable, probe.args, { env: { ...base, ...(probe.embeddedNode ? { ELECTRON_RUN_AS_NODE: '1' } : {}) }, windowsHide: true, timeout: 15000, maxBuffer: 1024 * 1024 });
+		if (!['--tools', '--setting-sources', '--strict-mcp-config', '--mcp-config'].every(flag => stdout.includes(flag))) { throw Error('HARNESS_DELEGATION_ISOLATION_UNSUPPORTED'); }
+	}
 	const initialScope = current.readOnly ? await captureAgentScope(canonical) : undefined;
+	// Native child sessions cannot claim read-only isolation if the Git baseline
+	// or the sensitive-file scan is incomplete. Deny before starting Codex.
+	if (current.nativeSubagents && (initialScope?.source !== 'git' || initialScope.unscanned.length !== 0)) {
+		throw Error('HARNESS_DELEGATION_ISOLATION_UNSUPPORTED');
+	}
 	const command = await resolveNativeCommand(invocation.executable, invocation.args, base);
 	const env: NodeJS.ProcessEnv = base;
 	if (command.embeddedNode) { env.ELECTRON_RUN_AS_NODE = '1'; }
@@ -181,6 +199,16 @@ export async function executeReviewedAgent(review: AgentReview, current: AgentDr
 	const onSearch = (query: string): void => { if (!searchLeak && leaks(query)) { searchLeak = true; cancel(); } };
 	const stepSink = onStep && { root: canonical, emit: onStep };
 	const events = current.provider === 'codex' ? new CodexEventAccumulator(observe, onSearch, stepSink) : new ClaudeEventAccumulator(observe, onSearch, stepSink);
+	// The CLI flags are the primary limit; the stream is checked independently and the process tree is stopped on a breach.
+	let childViolation: CodexChildViolation | undefined;
+	if (events instanceof CodexEventAccumulator) {
+		const childGuard = new CodexChildGuard(current.nativeSubagents === true);
+		events.onChildActivity = activity => {
+			if (childViolation) { return; }
+			childViolation = childGuard.observe(activity);
+			if (childViolation) { cancel(); }
+		};
+	}
 	const stdoutDecoder = new StringDecoder('utf8');
 	const child = spawn(command.executable, command.args, {
 		cwd: canonical, env, shell: false, windowsHide: true, detached: process.platform !== 'win32',
@@ -219,7 +247,7 @@ export async function executeReviewedAgent(review: AgentReview, current: AgentDr
 				const parsed = events.finish() || parseProviderOutput(current.provider, stdout);
 				if (stdoutOverflow && !parsed.structured) { truncated = true; }
 				// Claude exits non-zero when it runs out of turns; that is reported through `stopReason`, not as passed.
-				let status: AgentOutcome['status'] = searchLeak ? 'failed' : timedOut ? 'timeout' : cancelled ? 'cancelled' : exitCode === 0 && !parsed.providerError && !parsed.stopReason && !truncated ? 'passed' : 'failed';
+				let status: AgentOutcome['status'] = searchLeak || childViolation ? 'failed' : timedOut ? 'timeout' : cancelled ? 'cancelled' : exitCode === 0 && !parsed.providerError && !parsed.stopReason && !truncated ? 'passed' : 'failed';
 				let scopeViolation = false;
 				let scopeVerified = false;
 				let scopeUnscanned: string[] | undefined;
@@ -235,9 +263,15 @@ export async function executeReviewedAgent(review: AgentReview, current: AgentDr
 						status = 'failed';
 					}
 				}
+				// A parent with native child threads needs an auditable scope and
+				// provider usage to report success; parent usage alone is not a
+				// per-child cost receipt (strict budgets remain disabled).
+				if (current.nativeSubagents && (!scopeVerified || !!scopeUnscanned?.length || !parsed.structured || !parsed.usage)) {
+					status = 'failed';
+				}
 				resolve({
 					status, exitCode, durationMs: Date.now() - started, truncated,
-					output: redactSecrets(parsed.structured ? parsed.message : stdout + (stderr ? '\n' + stderr : '')),
+					output: childViolation ?? redactSecrets(parsed.structured ? parsed.message : stdout + (stderr ? '\n' + stderr : '')),
 					scopeViolation, scopeVerified, ...(scopeUnscanned?.length ? { scopeUnscanned } : {}), structuredOutput: parsed.structured, usage: parsed.usage,
 					...(parsed.rateLimited ? { rateLimited: true as const } : {}),
 					...(parsed.stopReason ? { stopReason: parsed.stopReason } : {}),

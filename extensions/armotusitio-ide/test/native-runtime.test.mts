@@ -270,8 +270,14 @@ test('codex steers a running turn with more input', async () => {
 	const h = await harness('codex');
 	try {
 		const session = await h.session();
+		const firstDelta = new Promise<void>((resolve, reject) => {
+			const timer = setTimeout(() => { unsubscribe(); reject(Error('fake provider did not stream')); }, 15_000);
+			const unsubscribe = session.bridge.subscribe(event => {
+				if (event.payload.type === 'message.delta') { clearTimeout(timer); unsubscribe(); resolve(); }
+			});
+		});
 		const turn = session.runTurn('SLOW then steer', 'conversation');
-		await new Promise(resolve => setTimeout(resolve, 300));
+		await firstDelta;
 		const steered = await session.steer('also check tests');
 		await turn;
 		const sessions = JSON.parse(await fs.readFile(path.join(h.state, 'sessions.json'), 'utf8')) as Record<string, { messages: string[] }>;

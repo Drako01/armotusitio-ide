@@ -9,11 +9,12 @@ import { resolveNativeCommand } from './native-runtime.ts';
 const MAX_CAPTURE = 12 * 1024 * 1024;
 const CAPTURE_TIMEOUT = 25_000;
 
-export async function gitOutput(root: string, args: string[]): Promise<Buffer> {
+export async function gitOutput(root: string, args: string[], signal?: AbortSignal): Promise<Buffer> {
+	signal?.throwIfAborted();
 	const command = await resolveNativeCommand('git', args);
 	return await new Promise<Buffer>((resolve, reject) => {
 		const child = spawn(command.executable, command.args, {
-			cwd: root, shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
+			cwd: root, shell: false, windowsHide: true, signal, stdio: ['ignore', 'pipe', 'pipe'],
 			env: { PATH: process.env.PATH, Path: process.env.Path, SystemRoot: process.env.SystemRoot, HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, GIT_OPTIONAL_LOCKS: '0' }
 		});
 		const chunks: Buffer[] = [];
@@ -26,7 +27,7 @@ export async function gitOutput(root: string, args: string[]): Promise<Buffer> {
 			chunks.push(chunk);
 		});
 		child.stderr?.resume();
-		child.once('error', () => { clearTimeout(timer); reject(Error('HARNESS_SCOPE_GIT_UNAVAILABLE')); });
+		child.once('error', () => { clearTimeout(timer); reject(signal?.aborted ? signal.reason : Error('HARNESS_SCOPE_GIT_UNAVAILABLE')); });
 		child.once('close', code => {
 			clearTimeout(timer);
 			if (failed || code !== 0) { reject(Error('HARNESS_SCOPE_GIT_FAILED')); }
