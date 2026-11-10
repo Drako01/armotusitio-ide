@@ -439,6 +439,11 @@
 					"default": [],
 					"scope": "application",
 					"description": "Patrones adicionales de ramas a las que git_push no puede publicar (por ejemplo release/* o prod*). Se suman a las ramas protegidas del IDE; git_commit puede crear commits en la rama actual."
+				},
+				"atsHarness.documentInput": {
+					"type": "boolean",
+					"default": false,
+					"description": "Habilita /documento para extraer texto local de PDF y notebooks bajo limites de bytes, memoria, paginas, tiempo y celdas. Cada archivo exige vista previa y confirmacion; el texto se envia al proveedor en el turno de consulta."
 				}
 			}
 		},
