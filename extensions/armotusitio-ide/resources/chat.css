@@ -183,6 +183,12 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, .log:focus-v
 .gate.passed .gate-icon::before { content: '\2713'; color: var(--chat-ok); }
 .gate.failed .gate-icon::before, .gate.cancelled .gate-icon::before { content: '\2715'; color: var(--chat-error); }
 
+/* Memory-only local preview. No upload until the host accepts the send. */
+.pending-media { display: flex; max-width: 860px; align-items: center; gap: 10px; margin: 0 auto 8px; padding: 6px 8px; border: 1px solid var(--chat-border); border-radius: 8px; min-height: 48px; }
+.pending-media[hidden] { display: none; }
+.pending-media img { width: 72px; height: 72px; object-fit: contain; border-radius: 6px; }
+.pending-media .muted { flex: 1; overflow-wrap: anywhere; font-size: 12px; }
+.pending-media button { flex-shrink: 0; }
 /* Composer */
 .composer { position: relative; padding: 10px 16px 12px; border-top: 1px solid var(--chat-border); background: var(--chat-surface); }
 .composer-box { display: flex; align-items: flex-end; gap: 8px; max-width: 860px; margin: 0 auto; padding: 6px 6px 6px 12px; border: 1px solid var(--vscode-input-border, var(--chat-border)); border-radius: var(--chat-radius-large); background: var(--vscode-input-background); }
