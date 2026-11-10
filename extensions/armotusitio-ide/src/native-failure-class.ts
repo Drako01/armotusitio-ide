@@ -16,7 +16,7 @@ const RULES: ReadonlyArray<readonly [RegExp, Failure]> = [
 		{ kind: 'policy', class: 'security-blocked', hint: 'A policy or the user refused it; do not retry or look for another way around it.' }],
 	[/ENOSPC|no space left on device|disk (is )?full/i,
 		{ kind: 'disk-full', class: 'unrecoverable', hint: 'The disk is full; free space before anything else.' }],
-	[/ERR_PNPM_OUTDATED_LOCKFILE|lockfile.*(out of date|not up to date|needs to be updated)|frozen-lockfile|EUSAGE.*package-lock|yarn.lock.*needs/i,
+	[/ERR_PNPM_OUTDATED_LOCKFILE|ERR_PNPM_LOCKFILE_CONFIG_MISMATCH|lockfile.*(out of date|not up to date|needs to be updated)|EUSAGE.*package-lock|yarn.lock.*needs/i,
 		{ kind: 'lockfile-out-of-date', class: 'needs-approval', hint: 'The lockfile does not match package.json; updating it changes tracked files, so ask the user.' }],
 	[/EBUSY|EPERM|EACCES|resource busy|unknown error, open|WinError (32|145)|ENOTEMPTY|being used by another process/i,
 		{ kind: 'locked-files', class: 'change-strategy', hint: 'Another process (antivirus, indexer, editor, dev server) holds files; stop it or exclude the folder from the antivirus, then repair again.' }],
@@ -29,6 +29,10 @@ const RULES: ReadonlyArray<readonly [RegExp, Failure]> = [
 ];
 const UNKNOWN: Failure = { kind: 'unknown', class: 'unrecoverable', hint: 'The cause is not recognised; report it with its output instead of retrying.' };
 
+/** The command line a job echoes (`$ pnpm install --frozen-lockfile ...`) is not evidence of why it failed: only the output is classified. */
+const withoutCommandEcho = (text: string): string => text.split('\n').filter(line => !line.startsWith('$ ')).join('\n');
+
 export function classifyFailure(text: string): Failure {
-	return RULES.find(([pattern]) => pattern.test(text))?.[1] ?? UNKNOWN;
+	const evidence = withoutCommandEcho(text);
+	return RULES.find(([pattern]) => pattern.test(evidence))?.[1] ?? UNKNOWN;
 }
