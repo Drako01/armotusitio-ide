@@ -156,3 +156,16 @@
 - Optional browser/cloud still require separate isolation/service authority; no new infrastructure provisioned.
 - Resume from this checklist and the same branch/PR; preserve untracked prompt and review inputs.
 - User reported only 10% session tokens remaining; prioritize coherent reviewed delivery over new broad work.
+
+
+### Run 42889638708 remediation — HTTP MCP recovery hints
+
+- Source run: https://github.com/Drako01/armotusitio-ide/actions/runs/42889638708, PR #86, `87afbebd41c72503e318134594ac69e3e526bdb0`.
+- OBSERVED: Linux `contract` and Windows `contract-windows` each ran 853 tests: 839 PASS, 1 FAIL, 13 SKIP. The `ATS gate` failed as designed because both contracts failed.
+- Root cause: `native-error-catalog.test.mts` detected new MCP HTTP codes without explicit recovery guidance: `HARNESS_MCP_HTTP_URL`, `HARNESS_MCP_HTTP_HEADERS`, `HARNESS_MCP_HTTP_STATUS`.
+- FIX: add separate actionable recovery hints for endpoint validation, authorization header validation, and HTTP error responses; avoid token disclosure and unsafe automatic repetition of potentially effective writes.
+- TEST: preserve the complete `HARNESS_*` source-code catalog check and add targeted assertions for three distinct MCP HTTP hints.
+- Commits: `ffb6b24694d` (runtime hints), `6c9f675aa32` (regression test).
+- CI status at authoring: PENDING/NOT VERIFIED for new head; previous run is FAIL, not reclassified as PASS.
+- No changes to workflow gates, provider credentials, feature flags, `main`, release or tags. No authenticated model calls.
+- Next: verify the CI for the exact candidate SHA on Linux and Windows, retain 13 platform SKIPs as SKIP, and only then reassess merge readiness.
