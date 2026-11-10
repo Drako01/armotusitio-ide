@@ -54,10 +54,11 @@ upstream permanecen separados del branding propio.
 
 Desde **Ejecutar agente IA con autorización**, elegí Codex con rol `planner`
 o `reviewer` y activá explícitamente la delegación. El valor predeterminado
-es no crear hijos. Se configuran como máximo dos hilos hijos, profundidad uno
-y ejecución de solo lectura. Con límite diario de llamadas se reservan hasta
-tres invocaciones (padre + hijos); con presupuesto rígido de tokens/USD
-la delegación se bloquea hasta disponer de contabilidad auditable por hijo.
+es no crear hijos. Se configuran como máximo dos hilos hijos **simultáneos**, profundidad uno
+y ejecución de solo lectura. Si existe un límite diario de invocaciones o un
+presupuesto rígido de tokens/USD, la delegación se **bloquea** hasta disponer
+de contabilidad auditable por hijo. El límite simultáneo no equivale a un
+límite acumulado de consumo.
 
 La ejecución con proveedor autenticado **consume cuota** y no se lanzó en
 esta auditoría. El comportamiento real depende también de la versión del CLI.

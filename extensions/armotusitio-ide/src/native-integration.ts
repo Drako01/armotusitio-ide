@@ -606,13 +606,10 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			if (hooks.signal?.aborted) { throw Error('HARNESS_CANCELLED_BEFORE_START'); }
 			const cap = providerCallsPer24h(folder);
 			await assertProviderBudget(metricsDirectory(root), draft.provider, providerBudget(folder), fence);
-			// Codex CLI does not yet give this bridge auditable per-child cost receipts.
-			// Refuse delegation under a strict token/USD ceiling instead of undercounting.
-			if (draft.nativeSubagents && budgetEnabled(providerBudget(folder))) { throw Error('HARNESS_DELEGATION_BUDGET_UNVERIFIED'); }
-			// Reserve a pessimistic upper bound (parent + two children) before launch.
-			if (cap > 0) { for (let i = 0; i < (draft.nativeSubagents ? 3 : 1); i++) {
-				await reserveProviderInvocation(metricsDirectory(root), draft.provider, fence, cap);
-			} }
+			// Concurrent child limits are not cumulative invocation limits.
+			// Strict cost or daily-call budgets must fail closed without per-child receipts.
+			if (draft.nativeSubagents && (budgetEnabled(providerBudget(folder)) || cap > 0)) { throw Error('HARNESS_DELEGATION_BUDGET_UNVERIFIED'); }
+			if (cap > 0) { await reserveProviderInvocation(metricsDirectory(root), draft.provider, fence, cap); }
 			if (!authorized(folder)) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
 			await hooks.beforeLaunch?.();
 			await fence.assertCurrent();
@@ -1117,7 +1114,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			if (provider === 'codex' && role !== 'implementer' && !webSearchOn(root)) {
 				const delegation = await vscode.window.showQuickPick([
 					{ label: 'Sin subagentes (predeterminado)', value: false },
-					{ label: 'Hasta dos subagentes nativos Codex (consumo adicional de cuota)', value: true }
+					{ label: 'Hasta dos subagentes Codex simult\\u00e1neos (cuota adicional)', value: true }
 				], { title: 'Delegaci\u00f3n opt-in de solo lectura' });
 				if (!delegation) { return; }
 				nativeSubagents = delegation.value;

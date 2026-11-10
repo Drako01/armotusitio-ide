@@ -253,7 +253,7 @@ test('a profile environment reaches the one-shot CLI with its own directory and 
 test('native Codex child threads are explicit, reviewed and read-only', () => {
 	const reviewed = { ...base, nativeSubagents: true };
 	const command = buildAgentInvocation(reviewed);
-	for (const value of ['features.multi_agent_v2=false', 'agents.enabled=true', 'agents.max_concurrent_threads_per_session=2',
+	for (const value of ['features.multi_agent_v2=false', 'features.collab=true', 'tools.web_search=false', 'agents.enabled=true', 'agents.max_concurrent_threads_per_session=2',
 		'agents.max_depth=1', 'agents.interrupt_message=true']) { assert.ok(command.args.includes(value)); }
 	assert.ok(command.args.includes('read-only'));
 	assert.ok(!command.args.includes('workspace-write'));
@@ -271,6 +271,8 @@ test('shared native Codex overrides are disabled by default and force V1 depth e
 	assert.deepEqual(readonlyCodexSubagentOverrides(false), []);
 	assert.deepEqual(readonlyCodexSubagentOverrides(true), [
 		'--config', 'features.multi_agent_v2=false',
+		'--config', 'features.collab=true',
+		'--config', 'tools.web_search=false',
 		'--config', 'agents.enabled=true',
 		'--config', 'agents.max_concurrent_threads_per_session=2',
 		'--config', 'agents.max_depth=1',

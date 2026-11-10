@@ -11,6 +11,8 @@
 export function readonlyCodexSubagentOverrides(enabled: boolean): string[] {
 	return enabled ? [
 		'--config', 'features.multi_agent_v2=false',
+		'--config', 'features.collab=true',
+		'--config', 'tools.web_search=false',
 		'--config', 'agents.enabled=true',
 		'--config', 'agents.max_concurrent_threads_per_session=2',
 		'--config', 'agents.max_depth=1',

@@ -462,10 +462,10 @@ Se revisan los argumentos del CLI antes de autorizar la ejecución, y no se
 habilita para implementadores ni para Claude. La ejecución usa sandbox read-only,
 profundidad de delegación 1, máximo de dos hilos hijos y sin acceso adicional a MCP.
 
-Con un límite diario de invocaciones, el Harness reserva preventivamente tres
-invocaciones (padre y dos posibles hijos). Con topes estrictos de tokens o USD,
-la delegación se **rechaza** hasta contar con medición consolidada y auditable de
-los hijos: `HARNESS_DELEGATION_BUDGET_UNVERIFIED`. Cada ejecución necesita la
+Con límite diario de invocaciones o topes estrictos de tokens/USD, la
+delegación se **rechaza** con `HARNESS_DELEGATION_BUDGET_UNVERIFIED`:
+Codex limita hijos **simultáneos**, no el número acumulado de invocaciones,
+y todavía no existe contabilidad auditable por hijo en este puente. Cada ejecución necesita la
 confirmación modal existente. Cancelar detiene el proceso supervisor del proveedor.
 La compatibilidad y cancelación de procesos descendientes requieren pruebas con la
 versión de Codex instalada; **no se declara validación autenticada ni paridad total**.

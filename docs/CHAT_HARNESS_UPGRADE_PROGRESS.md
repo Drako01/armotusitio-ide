@@ -265,3 +265,11 @@
 - **Causa raíz:** `npm ci` del root y de `extensions/armotusitio-ide` no instala la dependencia compartida de `extensions/package.json`, donde `esbuild@0.28.1` está fijado por `extensions/package-lock.json`. No es un error de TypeScript ni del proveedor Codex.
 - **Corrección implementada (pendiente de validar en nuevo CI):** `.github/workflows/ats-ide-extension.yml` instala `npm ci --prefix extensions --ignore-scripts --no-audit --no-fund` en ambos runners antes de compilar; mantiene `check`, `compile`, `check:native-package`, tests y `ATS gate` activos, sin cambios a permisos ni instalación de paquetes no fijados.
 - **Próxima acción:** verificar `compile`, `check:native-package`, contratos y gate para el SHA nuevo en Linux/Windows. No marcar PASS antes de la ejecución remota. El PR sigue Draft; no merge ni release.
+
+
+### Gate de paquete y límites de cuota — 2026-11-10
+
+- [Run 42913973674](https://github.com/Drako01/armotusitio-ide/actions/runs/42913973674) SHA `9637c1df3f3a37a2f48aa97ba9a588f1afecb47a`: Linux FAIL, Windows FAIL y ATS gate FAIL en compilación por `ERR_MODULE_NOT_FOUND: esbuild`. `npm run check` pasó, pero los contratos no se ejecutaron por el error de entorno.
+- Fix CI: instalar `extensions/package-lock.json` (con `esbuild@0.28.1`) mediante `npm ci --prefix extensions --ignore-scripts` en ambos SO antes de compilar, sin tocar protecciones.
+- Fix seguridad: el límite `max_concurrent_threads_per_session=2` es de simultaneidad, no de hijos totales; se rechazan subagentes Codex si hay cuota diaria o límites rígidos de tokens/USD sin contabilidad real por hijo. V1 activado con `features.collab=true` y V2 desactivado para que `agents.max_depth=1` sea aplicable.
+- Próxima evidencia: CI final del nuevo SHA con compilación, paquete, tests y ATS gate; no declarar PASS sin resultado.
