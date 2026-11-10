@@ -10,7 +10,7 @@ import * as ExtensionsActions from '../../browser/extensionsActions.js';
 import { ExtensionsWorkbenchService } from '../../browser/extensionsWorkbenchService.js';
 import {
 	IExtensionManagementService, IExtensionGalleryService, ILocalExtension, IGalleryExtension,
-	DidUninstallExtensionEvent, InstallExtensionEvent, IExtensionIdentifier, InstallOperation, IExtensionTipsService, InstallExtensionResult, getTargetPlatform, IExtensionsControlManifest, UninstallExtensionEvent, Metadata
+	DidUninstallExtensionEvent, InstallExtensionEvent, IExtensionIdentifier, InstallOperation, IExtensionTipsService, InstallExtensionResult, getTargetPlatform, IExtensionsControlManifest, UninstallExtensionEvent, Metadata, IAllowedExtensionsService
 } from '../../../../../platform/extensionManagement/common/extensionManagement.js';
 import { IWorkbenchExtensionEnablementService, EnablementState, IExtensionManagementServerService, IExtensionManagementServer, ExtensionInstallLocation, IProfileAwareExtensionManagementService, IWorkbenchExtensionManagementService } from '../../../../services/extensionManagement/common/extensionManagement.js';
 import { IExtensionRecommendationsService } from '../../../../services/extensionRecommendations/common/extensionRecommendations.js';
@@ -165,6 +165,56 @@ function setupTest(disposables: Pick<DisposableStore, 'add'>) {
 	instantiationService.stub(IWorkspaceTrustManagementService, disposables.add(new TestWorkspaceTrustManagementService()));
 }
 
+
+suite('ToggleAutoUpdateForExtensionAction', () => {
+
+	const disposables = ensureNoDisposablesAreLeakedInTestSuite();
+	setup(() => {
+		setupTest(disposables);
+		instantiationService.stub(IAllowedExtensionsService, { onDidChangeAllowedExtensionsConfigValue: Event.None, isAllowed: () => true });
+		instantiationService.stub(IProductService, 'autoUpdateBuiltinExtensionsByDefault', ['PUB.A']);
+	});
+
+	test('configurable shipped extension checkbox defaults checked and toggles off and on', async () => {
+		const local = aLocalExtension('a', {}, { type: ExtensionType.System, forceAutoUpdate: true });
+		instantiationService.stubPromise(IExtensionManagementService, 'getInstalled', [local]);
+		const workbenchService = instantiationService.get(IExtensionsWorkbenchService);
+		await workbenchService.queryLocal();
+		const action = disposables.add(instantiationService.createInstance(ExtensionsActions.ToggleAutoUpdateForExtensionAction));
+		disposables.add(instantiationService.createInstance(ExtensionContainers, [action]));
+		action.extension = workbenchService.local[0];
+		assert.deepStrictEqual({ enabled: action.enabled, checked: action.checked, visible: !action.class.includes('hide') }, { enabled: true, checked: true, visible: true });
+
+		await action.run();
+		action.update();
+		assert.deepStrictEqual({ checked: action.checked, enabled: workbenchService.isAutoUpdateEnabledFor(action.extension), disabled: workbenchService.getDisabledAutoUpdateExtensions() }, { checked: false, enabled: false, disabled: ['pub.a'] });
+		await action.run();
+		action.update();
+		assert.deepStrictEqual({ checked: action.checked, disabled: workbenchService.getDisabledAutoUpdateExtensions() }, { checked: true, disabled: [] });
+	});
+
+	test('unrelated built-in extension retains its hidden auto-update checkbox', async () => {
+		const local = aLocalExtension('b', {}, { type: ExtensionType.System, forceAutoUpdate: true });
+		instantiationService.stubPromise(IExtensionManagementService, 'getInstalled', [local]);
+		const workbenchService = instantiationService.get(IExtensionsWorkbenchService);
+		await workbenchService.queryLocal();
+		const action = disposables.add(instantiationService.createInstance(ExtensionsActions.ToggleAutoUpdateForExtensionAction));
+		action.extension = workbenchService.local[0];
+		assert.deepStrictEqual({ enabled: action.enabled, hidden: action.class.includes('hide') }, { enabled: false, hidden: true });
+	});
+
+	test('configurable shipped extension checkbox respects a saved global off preference', async () => {
+		const configuration = instantiationService.get(IConfigurationService) as TestConfigurationService;
+		await configuration.setUserConfiguration('extensions.autoUpdate', 'off');
+		const local = aLocalExtension('a', {}, { type: ExtensionType.System, forceAutoUpdate: true });
+		instantiationService.stubPromise(IExtensionManagementService, 'getInstalled', [local]);
+		const workbenchService = instantiationService.get(IExtensionsWorkbenchService);
+		await workbenchService.queryLocal();
+		const action = disposables.add(instantiationService.createInstance(ExtensionsActions.ToggleAutoUpdateForExtensionAction));
+		action.extension = workbenchService.local[0];
+		assert.deepStrictEqual({ enabled: action.enabled, checked: action.checked, global: configuration.getValue('extensions.autoUpdate') }, { enabled: true, checked: false, global: 'off' });
+	});
+});
 
 suite('ExtensionsActions', () => {
 

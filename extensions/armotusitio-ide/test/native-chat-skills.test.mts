@@ -38,7 +38,7 @@ test('the project skills are listed and /skill hands one to the model as untrust
 			defaultMessage: bare.message, unknown, usage: typeof usage === 'string' && usage.startsWith('Uso: /skill')
 		}, {
 			listing: [true, true], message: 'ship it now', notice: 'Apliqu\u00e9 la skill deploy (.claude/skills).', leaked: false, closers: 1, escaped: true, guidance: true,
-			defaultMessage: 'Aplic\u00e1 la skill review a lo que estamos haciendo.', unknown: 'No encontr\u00e9 la skill \u00abnope\u00bb. Mir\u00e1 las del proyecto con /skills.', usage: true
+			defaultMessage: 'Aplic\u00e1 la skill review a lo que estamos haciendo.', unknown: 'No encontr\u00e9 la skill \u00abnope\u00bb. Mir\u00e1 las disponibles con /skills.', usage: true
 		});
 	});
 });

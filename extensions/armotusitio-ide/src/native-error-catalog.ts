@@ -11,6 +11,8 @@ const DIAGNOSE = '\u00abArmoTuSitio: Diagn\u00f3stico del Harness nativo\u00bb';
 const RECONCILE_FENCE = '\u00abArmoTuSitio: Reconciliar lock compartido obsoleto\u00bb';
 
 const EXACT: Record<string, Hint> = {
+	HARNESS_NATIVE_SKILL_METADATA_INVALID: t => t('El cat\u00e1logo de skills incluido con el IDE no es v\u00e1lido. Reinstal\u00e1 o repar\u00e1 el IDE desde su distribuci\u00f3n oficial.'),
+	HARNESS_NATIVE_SKILL_INVALID: t => t('La skill nativa seleccionada no es v\u00e1lida. Consult\u00e1 /skills y volv\u00e9 a elegirla; si se repite, repar\u00e1 el IDE.'),
 	HARNESS_MCP_FAILED: t => t('No se pudo consultar ArmotuSitio. Revis\u00e1 la conexi\u00f3n MCP y la clave del agente en este workspace.'),
 	HARNESS_MCP_INPUT_INVALID: t => t('El pedido a ArmotuSitio tiene argumentos inv\u00e1lidos. Pedile al agente que revise los campos de la herramienta.'),
 	HARNESS_MCP_TOOL_DENIED: t => t('La herramienta de ArmotuSitio no est\u00e1 habilitada para esta ejecuci\u00f3n. Revis\u00e1 la conexi\u00f3n, el modo de permisos y el alcance del agente.'),

@@ -2281,7 +2281,7 @@ export class ExtensionsWorkbenchService extends Disposable implements IExtension
 				continue;
 			}
 			// New versions are auto updated only after the delay window has passed since they were published.
-			if (!extension.local?.forceAutoUpdate) {
+			if (!this.isAutoUpdateForced(extension)) {
 				const delayRemaining = this.getAutoUpdateDelayRemaining(extension);
 				if (delayRemaining > 0) {
 					this.logService.trace('Auto update delayed for extension', extension.identifier.id);
@@ -2334,13 +2334,18 @@ export class ExtensionsWorkbenchService extends Disposable implements IExtension
 		return undefined;
 	}
 
+	/** Product defaults for optional shipped extensions never override saved user preferences. */
+	private isAutoUpdateForced(extension: IExtension): boolean {
+		return !!extension.local?.forceAutoUpdate && !this.productService.autoUpdateBuiltinExtensionsByDefault?.some(id => id.toLowerCase() === extension.identifier.id.toLowerCase());
+	}
+
 	private shouldAutoUpdateExtension(extension: IExtension): boolean {
 		if (extension.deprecationInfo?.disallowInstall) {
 			return false;
 		}
 
-		if (extension.local?.forceAutoUpdate) {
-			// Extensions marked for auto-update are always auto-updated
+		if (this.isAutoUpdateForced(extension)) {
+			// Mandatory built-in updates retain their existing policy.
 			return true;
 		}
 

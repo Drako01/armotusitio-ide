@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 /* One conversation per project. Sending only converses; code changes require approving the latest plan. */
+import { fitEngineeringContext, type SkillSelectionInput, type SkillSelection } from './native-engineering-skills.ts';
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { AgentOutcome } from './native-agent-execution.ts';
 import { APPROVAL_ANSWERS, APPROVAL_TIMEOUT_MS, REMEMBERING_ANSWERS, type ApprovalDraft } from './native-approval.ts';
@@ -22,7 +23,7 @@ import type { ActivityActionId, ActivityItem } from './native-activity-feed.ts';
 import type { RunDiffSummary, RunFileChange } from './native-run-diff.ts';
 import { summarizeSteps, upsertStep, type ChatStep } from './native-run-steps.ts';
 import {
-	buildContinuationInstruction, buildConversationDelta, buildConversationInstruction, buildDirectInstruction, buildImplementationInstruction, chatMessage, DIRECT_PLAN_VERSION, directPlan, extractChatPlan, harnessErrorCode, harnessErrorDetail, latestPlanMessage, MAX_USER_MESSAGE_CHARS, pendingAlive, samePlanContent,
+	buildContinuationInstruction, buildConversationDelta, buildConversationInstruction, buildDirectInstruction, buildImplementationInstruction, chatMessage, DIRECT_PLAN_VERSION, directPlan, extractChatPlan, harnessErrorCode, harnessErrorDetail, latestPlanMessage, MAX_USER_MESSAGE_CHARS, pendingAlive, promptBudget, samePlanContent,
 	type ChatConversation, type ChatMessage, type ChatMode, type ChatPlan, type ChatProjectContext, type ChatRunSummary, type ChatStore, type GateSummary, type RunStatus
 } from './native-chat.ts';
 
@@ -70,6 +71,8 @@ export interface ChatImplementOutcome {
 }
 /** Engine boundary: the IDE provides the guarded implementation; tests provide a scripted one. */
 export interface ChatRuntime {
+	/** Selects bounded guidance without executing code or changing permissions. */
+	skills?(input: SkillSelectionInput): Promise<{ context: string; trace: SkillSelection['trace'] }>;
 	context(): Promise<ChatProjectContext>;
 	converse(provider: NativeProvider, instruction: string, hooks: ChatRunHooks, signal: AbortSignal, transport?: TurnTransport): Promise<AgentOutcome>;
 	/** `resumeSession` continues the provider session of an earlier partial run (Claude only, structured transport). */
@@ -104,6 +107,8 @@ export interface ChatActivity {
 	gates?: GateSummary[];
 }
 export interface ChatSnapshot {
+	/** Last automatic routing decision, names and reasons only; no source or secrets. */
+	skillSelection?: SkillSelection['trace'];
 	provider: NativeProvider;
 	/** Increments whenever `messages` changes, so hosts can skip resending an unchanged history. */
 	revision: number;
@@ -256,6 +261,8 @@ export class HarnessChatSession {
 
 	private readonly store: ChatStore;
 	private readonly runtime: ChatRuntime;
+	private readonly deliveredSkills = new Map<string, string>();
+	private skillSelection: SkillSelection['trace'] = [];
 	private readonly listener: (snapshot: ChatSnapshot) => void;
 	private readonly t: Translate;
 	private readonly defaultProvider: NativeProvider;
@@ -355,6 +362,7 @@ export class HarnessChatSession {
 		const quota = this.quotaStatus();
 		return {
 			provider: this.conversation.provider,
+			...(this.skillSelection.length ? { skillSelection: this.skillSelection.map(entry => ({ ...entry })) } : {}),
 			revision: this.revision,
 			messages: this.conversation.messages,
 			...(Object.keys(quota).length ? { quota } : {}),
@@ -423,6 +431,7 @@ export class HarnessChatSession {
 	async reset(): Promise<void> {
 		if (this.activity) { throw Error('HARNESS_ALREADY_RUNNING'); }
 		this.queue.length = 0;
+		this.deliveredSkills.clear(); this.skillSelection = [];
 		this.conversation.messages = [];
 		this.conversation.memory = undefined;
 		// A new conversation gets new native sessions; the old ones are never continued by mistake.
@@ -571,9 +580,21 @@ export class HarnessChatSession {
 		this.conversation.messages.push(chatMessage('user', redactSecrets(body)));
 		// Mentioned file content is for this turn only: the history keeps the `@path` text, not the file. The notice is recorded
 		// after the instruction exists because the instruction builders require the user message to be the last one.
-		const withAttachments = (instruction: string): string => {
+		let engineering = '';
+		let delivered = '';
+		this.skillSelection = [];
+		const attached = (instruction: string, selected: string): string => {
+			delivered = fitEngineeringContext(selected, promptBudget(this.context ?? {}) - Buffer.byteLength(instruction) - Buffer.byteLength(attachments.context ?? '') - 4);
+			for (const match of selected.matchAll(/<skill name=\"([^\"]+)\"/g)) {
+				if (!delivered.includes('<skill name=\"' + match[1] + '\"') && !this.skillSelection.some(entry => entry.name === match[1] && entry.reason === 'omitted: prompt budget')) {
+					this.skillSelection.push({ name: match[1], reason: 'omitted: prompt budget' });
+				}
+			}
+			return [instruction, delivered, attachments.context].filter(Boolean).join('\n\n');
+		};
+		const withAttachments = (instruction: string, selected = engineering): string => {
 			if (attachments.notice) { this.conversation.messages.push(chatMessage('notice', attachments.notice, { tone: 'info' })); }
-			return attachments.context ? instruction + '\n\n' + attachments.context : instruction;
+			return attached(instruction, selected);
 		};
 		this.activity = { kind: 'thinking', provider, startedAt: new Date().toISOString(), observedBytes: 0 };
 		this.conversation.pending = [{ kind: 'thinking', startedAt: this.activity.startedAt, pid: process.pid }];
@@ -584,6 +605,11 @@ export class HarnessChatSession {
 			await this.persist();
 			await this.refreshContext();
 			if (!this.context) { throw Error('HARNESS_CHAT_CONTEXT_UNAVAILABLE'); }
+			if (!attachments.context?.includes('<skill ')) {
+				const selection = await this.runtime.skills?.({ request: body, files: body.match(/(?:[\w.-]+[\/\\])+[\w.-]+/g) ?? [] });
+				engineering = selection?.context ?? '';
+				this.skillSelection = selection?.trace ?? [];
+			}
 			if (controller.signal.aborted) { throw Error('HARNESS_CANCELLED_BEFORE_START'); }
 			if (mode === 'act' && !this.writerBlockedReason(this.context.writer)) {
 				// The instruction is built first: it requires the user message to be the latest one, and the preflight adds a notice.
@@ -599,15 +625,20 @@ export class HarnessChatSession {
 			// A persistent native session already holds the rules and the history it received: send only what is newer.
 			const native = await this.transportState(provider);
 			const delta = native?.native && native.lastInputRef ? buildConversationDelta(this.conversation.messages, this.context, native.lastInputRef, current) : undefined;
-			const instruction = withAttachments(delta ?? full);
+			const skillKey = provider + ':' + this.conversation.conversationId;
+			const fitted = fitEngineeringContext(engineering, promptBudget(this.context) - Buffer.byteLength(delta ?? full) - Buffer.byteLength(attachments.context ?? '') - 4);
+			const freshInstruction = attached(full, engineering);
+			const reused = !!delta && this.deliveredSkills.get(skillKey) === fitted;
+			const instruction = withAttachments(delta ?? full, reused ? '' : fitted);
 			const transport: TurnTransport | undefined = native?.native
-				? { conversationId: this.conversation.conversationId!, inputRef: userMessageId, ...(delta ? { fresh: attachments.context ? full + '\n\n' + attachments.context : full } : {}) }
+				? { conversationId: this.conversation.conversationId!, inputRef: userMessageId, ...(delta ? { fresh: freshInstruction } : {}) }
 				: undefined;
 			if (controller.signal.aborted) { throw Error('HARNESS_CANCELLED_BEFORE_START'); }
 			const outcome = await this.runtime.converse(provider, instruction, hooks, controller.signal, transport);
 			this.noteUsage(provider, outcome.usage);
 			await this.noteQuota(provider, outcome.quota);
 			this.turnOk = outcome.status === 'passed' && !!outcome.output.trim();
+			if (this.turnOk && native?.native) { this.deliveredSkills.set(skillKey, reused ? fitted : delivered); }
 			if (outcome.status !== 'passed' || !outcome.output.trim()) {
 				this.conversation.messages.push(chatMessage('notice', failureNotice(this.t, outcome), { tone: outcome.status === 'cancelled' ? 'info' : 'error', provider }));
 				return;

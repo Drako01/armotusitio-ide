@@ -43,12 +43,13 @@ import type { ChatImplementOutcome, ChatRunHooks, ChatRuntime, TurnTransport } f
 import { agentContract, RUN_MINUTES } from './native-agent-contract.ts';
 import { codexSandbox } from './native-codex-sandbox.ts';
 import type { ChatStep } from './native-run-steps.ts';
-import { harnessErrorCode, type GateSummary } from './native-chat.ts';
+import { harnessErrorCode, promptBudget, type GateSummary } from './native-chat.ts';
 import { proposeProjectConfig, loadProjectConfig, writeProjectConfig, generatedConfigDigest, removeGeneratedProjectConfig } from './native-project.ts';
 import { reviewAgentDraft, inspectAgentWorkspace, modelOption, effortOption, validModel, validEffort, MAX_AGENT_TURNS, type NativeProvider, type NativeEffort, type AgentRole, type AgentDraft } from './native-providers.ts';
 import { captureWorkingTree, diffWorkingTree, discardRunChanges, fingerprintFiles, type RunDiffSummary, type WorkingTreeSnapshot } from './native-run-diff.ts';
 import { buildSupportReport, exportSupportReport } from './native-support.ts';
 import { inspectHarnessAuthority } from './native-authority.ts';
+import { fitEngineeringContext, engineeringContext, engineeringSkillContext, listEngineeringSkills, readEngineeringSkill } from './native-engineering-skills.ts';
 import { listProjectSkills, readProjectSkill, type ProjectSkill } from './native-project-skills.ts';
 import { listProjectGuides, validateProjectGuides, type ProjectGuide } from './native-project-guidance.ts';
 import { readProjectGateCatalog, validateProjectGateCatalog, planProjectGateWaves } from './native-project-gates.ts';
@@ -583,6 +584,8 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 	};
 	/** Engine boundary for the conversational chat of one workspace folder. */
 	controller.nativeChatRuntime = (folder: Host): ChatRuntime => {
+		const nativeDirectory = context.extensionPath || context.extensionUri?.fsPath;
+		const skillDirectory = async (): Promise<string | undefined> => nativeDirectory ? path.join(await fs.realpath(nativeDirectory), 'resources', 'engineering-skills') : undefined;
 		const rootOf = (): Promise<string> => fs.realpath(folder.uri.fsPath);
 		/** Detected gates go through the same command policy the agent runs under, extras included; the project's own Harness is never replaced. */
 		const detectedVerification = async (root: string): Promise<Plan | undefined> => {
@@ -600,10 +603,14 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 				? readProjectInstructions(root, 12 * 1024, guides.map(guide => guide.path))
 				: { files: [], text: '' };
 		return {
+			async skills(input) {
+				const directory = await skillDirectory();
+				return directory ? engineeringContext(await rootOf(), directory, input) : { context: '', trace: [] };
+			},
 			async context() {
 				const root = await rootOf();
 				const authority = await inspectHarnessAuthority(root);
-				const [skills, guides, verification] = await Promise.all([listProjectSkills(root), listProjectGuides(root), verificationOf(root)]);
+				const [skills, guides, verification] = await Promise.all([listEngineeringSkills(root, await skillDirectory()), listProjectGuides(root), verificationOf(root)]);
 				const extraGuides = (await detectedInstructions(root, guides)).files.filter(file => !guides.some(guide => guide.path === file));
 				// A project Harness can host IDE writers only when the user opted in and its manifest declares the lease; the engine's acknowledgement is verified at approval.
 				// The setting is read live, so enabling it applies on the next refresh without reloading the window.
@@ -666,10 +673,14 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			async implement({ provider, instruction, plan, verificationRevision, resumeSession, transport }, hooks, signal) {
 				const root = await rootOf();
 				if (signal.aborted) { throw Error('HARNESS_CANCELLED_BEFORE_START'); }
-				const available = await listProjectSkills(root);
-				const skills = plan.skills.map(name => available.find(skill => skill.name === name));
+				const directory = await skillDirectory();
+				const available = await listEngineeringSkills(root, directory);
+				const skills = plan.skills.map(name => available.find(skill => skill.name.toLowerCase() === name.toLowerCase()));
 				if (skills.some(skill => !skill)) { throw Error('HARNESS_PROJECT_SKILL_SELECTION_INVALID'); }
-				for (const skill of skills) { await readProjectSkill(root, skill!); }
+				const selectedBodies: string[] = [];
+				for (const skill of skills) { selectedBodies.push(engineeringSkillContext(skill!, await readEngineeringSkill(root, skill!, directory))); }
+				const skillText = instruction.includes('<skill ') ? '' : selectedBodies.length ? selectedBodies.join('\n\n') : directory ? (await engineeringContext(root, directory, { request: plan.title + ' ' + plan.summary, files: plan.files })).context : '';
+				if (Buffer.byteLength(skillText) > 64 * 1024) { throw Error('HARNESS_PROJECT_SKILLS_TOO_LARGE'); }
 				const guides = await listProjectGuides(root);
 				const verification = await verificationOf(root);
 				if ((verification ? nativePlanRevision(verification) : undefined) !== verificationRevision) { throw Error('HARNESS_CHAT_VERIFICATION_CHANGED'); }
@@ -684,7 +695,9 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 				const ecosystems = detected.length ? '\n\nDetected subprojects and their usual commands:\n' + detected.join('\n') : '';
 				// A resumed session already holds the references; it only receives the continuation request.
 				const instructions = resumeSession ? '' : (await detectedInstructions(root, guides)).text;
-				const prompt = resumeSession ? instruction : instruction + projectReferences(guides, skills as ProjectSkill[]) + ecosystems + (instructions ? '\n\n' + instructions : '');
+				const basePrompt = instruction + projectReferences(guides, []) + ecosystems + (instructions ? '\n\n' + instructions : '');
+				const boundedSkills = fitEngineeringContext(skillText, promptBudget({ promptBudget: promptBudgetBytes() }) - Buffer.byteLength(basePrompt) - 2);
+				const prompt = resumeSession ? instruction : basePrompt + (boundedSkills ? '\n\n' + boundedSkills : '');
 				let before: WorkingTreeSnapshot | undefined;
 				let diff: RunDiffSummary = { available: false, files: [], count: 0 };
 				const agent = await runGuardedAgent(folder, draftOf(root, provider, 'implementer', prompt, { maxTurns, ...(resumeSession ? { resumeSession } : {}) }), {

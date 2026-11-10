@@ -411,6 +411,7 @@ function registerChat(context: any, controller: any, projects: any, mcp: any, vs
 		return await vscode.window.showWarningMessage(t('\u00bfDescartar los archivos que cambi\u00f3 esta ejecuci\u00f3n? Los que ten\u00edan cambios tuyos no se tocan.'), { modal: true }, confirm) === confirm;
 	};
 	const sessionCommands = {
+		nativeSkillsDirectory: vscode.Uri.joinPath(context.extensionUri, 'resources', 'engineering-skills').fsPath,
 		t, chatMode, setChatMode, confirmDiscard,
 		permissionsPreset: () => configuredPreset(vscode.workspace.getConfiguration('atsHarness').get('permissionsPreset')),
 		openFile: (file: any) => vscode.commands.executeCommand('vscode.open', vscode.Uri.file(file)),
@@ -490,7 +491,7 @@ function registerChat(context: any, controller: any, projects: any, mcp: any, vs
 						const [name = '', ...words] = text.slice(1).trim().split(/\s+/);
 						if (name.toLowerCase() === 'skill') {
 							// A skill is not a report: it becomes the request of a turn, with the skill as data.
-							const invocation = await resolveSkillInvocation(folder.uri.fsPath, words.join(' '), t);
+							const invocation = await resolveSkillInvocation(folder.uri.fsPath, words.join(' '), t, sessionCommands.nativeSkillsDirectory);
 							if (typeof invocation === 'string') { await session.note(invocation); } else { await session.send(invocation.message, chatMode(), { context: invocation.context, notice: invocation.notice }); }
 							return;
 						}

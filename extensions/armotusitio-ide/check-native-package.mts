@@ -6,6 +6,7 @@ import * as path from 'node:path';
 import { readFile, stat } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
+await import('./sync-engineering-skills.mts');
 const root = path.dirname(fileURLToPath(import.meta.url));
 const manifest = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8')) as {
 	main: string;
@@ -17,13 +18,16 @@ for (const command of required) {
 		throw Error(`HARNESS_PACKAGE_COMMAND_MISSING: ${command}`);
 	}
 }
-const artifacts = [manifest.main, 'dist/home.js', 'dist/chat.js'];
+const catalog = JSON.parse(await readFile(path.join(root, 'resources/engineering-skills/catalog.json'), 'utf8')) as { skills: Array<{ name: string }> };
+const artifacts = [manifest.main, 'dist/home.js', 'dist/chat.js', 'resources/engineering-skills/catalog.json', ...catalog.skills.map(skill => 'resources/engineering-skills/' + skill.name + '/SKILL.md')];
 for (const artifact of artifacts) {
 	const absolute = path.resolve(root, artifact);
 	if (!absolute.startsWith(root + path.sep)) { throw Error('HARNESS_PACKAGE_ESCAPE'); }
 	const file = await stat(absolute);
 	if (!file.isFile() || file.size === 0) { throw Error(`HARNESS_PACKAGE_RESOURCE_INVALID: ${artifact}`); }
 }
+const ignore = await readFile(path.join(root, '.vscodeignore'), 'utf8');
+if (!ignore.includes('!resources/engineering-skills/catalog.json') || !ignore.includes('!resources/engineering-skills/*/SKILL.md')) { throw Error('HARNESS_NATIVE_SKILLS_NOT_PACKAGED'); }
 const code = await readFile(path.resolve(root, manifest.main), 'utf8');
 if (!required.every(command => code.includes(command))) {
 	throw Error('HARNESS_PACKAGE_COMMAND_NOT_BUNDLED');

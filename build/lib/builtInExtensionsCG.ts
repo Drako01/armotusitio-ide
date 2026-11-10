@@ -7,11 +7,12 @@ import fs from 'fs';
 import path from 'path';
 import ansiColors from 'ansi-colors';
 import type { IExtensionDefinition } from './builtInExtensions.ts';
+import { withOfficialExtensions } from './armotusitioOfficialExtensions.ts';
 
 const root = path.dirname(path.dirname(import.meta.dirname));
 const rootCG = path.join(root, 'extensionsCG');
 const productjson = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, '../../product.json'), 'utf8'));
-const builtInExtensions = productjson.builtInExtensions as IExtensionDefinition[] || [];
+const builtInExtensions = withOfficialExtensions(productjson.builtInExtensions as IExtensionDefinition[] || []);
 const webBuiltInExtensions = productjson.webBuiltInExtensions as IExtensionDefinition[] || [];
 
 const contentBasePath = 'raw.githubusercontent.com';

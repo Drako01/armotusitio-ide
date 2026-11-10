@@ -267,6 +267,8 @@ export interface IProductConfiguration {
 	}>;
 	readonly extensionsForceVersionByQuality?: readonly string[];
 	readonly builtInExtensionsEnabledWithAutoUpdates: readonly string[];
+	/** Shipped extensions whose auto-update default remains configurable by the user. */
+	readonly autoUpdateBuiltinExtensionsByDefault?: readonly string[];
 	readonly sessionsWindowAllowedExtensions?: readonly string[];
 
 	readonly msftInternalDomains?: string[];

@@ -1,0 +1,65 @@
+{
+	"version": 1,
+	"skills": [
+		{
+			"name": "engineering-principles",
+			"source": "native",
+			"description": "Evaluate engineering tradeoffs, cohesion and complexity when deciding how to implement or simplify a change.",
+			"digest": "6d544da3d320a5d8116191bee9bd7bec0033ced05236553270fa0874a82ed23a"
+		},
+		{
+			"name": "abstraction-auditor",
+			"source": "native",
+			"description": "Audit interfaces, indirection and coupling to decide which abstractions to retain, simplify or avoid.",
+			"digest": "73d47d5fa5c7e3be3c4246e32de4c210b7790a1f67def135abee63dcc4e7bb77"
+		},
+		{
+			"name": "architecture-guardian",
+			"source": "native",
+			"description": "Check existing module ownership and dependency direction when a change crosses architectural boundaries.",
+			"digest": "1cb3c95b7598756962eac234db35124d7112903f2dc77c74ed862e3d90fc9ae9"
+		},
+		{
+			"name": "safe-refactoring",
+			"source": "native",
+			"description": "Refactor an existing implementation with explicit before-and-after evidence that observable contracts remain intact.",
+			"digest": "1bd41db66e9667b587db5def6620c5ad468f067858ca9ec198b4ea6e9625acd1"
+		},
+		{
+			"name": "evidence-code-review",
+			"source": "native",
+			"description": "Review a diff or pull request for concrete defects with triggering paths, impact and targeted verification.",
+			"digest": "7b1663ba780ded19abdaa9d2d1d921e895e1294b1411a2b0557bc66df2173411"
+		},
+		{
+			"name": "design-patterns",
+			"source": "native",
+			"description": "Choose patterns for proven variation and lifecycle needs; avoid pattern-driven layers.",
+			"digest": "ecf60af5ac6619810971d33be5fa72000834d232527337f6b22fa3da14a66ab1"
+		},
+		{
+			"name": "testing-strategy",
+			"source": "native",
+			"description": "Select deterministic tests by changed contracts, failure modes, and regression risk.",
+			"digest": "ca2a470b114a69194d481c0792df5d0d8dd8f3129e4a679c90fa27342eac1f98"
+		},
+		{
+			"name": "api-contract-integrity",
+			"source": "native",
+			"description": "Detect drift across HTTP handlers, OpenAPI, DTOs, clients, and authorization.",
+			"digest": "9aee5b55980df9a18bdd5c3186a42c93ac8bd591e10e5e2c6cbf75f91bbf543f"
+		},
+		{
+			"name": "security-by-design",
+			"source": "native",
+			"description": "Evaluate trust boundaries, authorization, input safety, secrets, and least privilege.",
+			"digest": "f593fb815a931f81b857e3f0c526a7c275da3d0a64f6481bbff223af5002c5ea"
+		},
+		{
+			"name": "performance-engineering",
+			"source": "native",
+			"description": "Investigate measured latency, throughput, memory, CPU, and database bottlenecks.",
+			"digest": "fb6ac05b00cd550e531b55ee71eaa48937338a8fb69674e70e537ced80e4726a"
+		}
+	]
+}

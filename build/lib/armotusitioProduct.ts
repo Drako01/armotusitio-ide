@@ -4,8 +4,12 @@
  *--------------------------------------------------------------------------------------------*/
 import base from '../../product.json' with { type: 'json' };
 import overrides from '../armotusitio/product-overrides.json' with { type: 'json' };
+import { officialExtensions, withOfficialExtensions } from './armotusitioOfficialExtensions.ts';
 
 /** Client, native packagers and REH must use one product identity and release revision. */
 export const armotusitioProduct = {
-	...base, ...overrides, release: String(overrides.armotusitioUpdate.revision)
+	...base, ...overrides, release: String(overrides.armotusitioUpdate.revision),
+	builtInExtensions: withOfficialExtensions(base.builtInExtensions),
+	autoUpdateBuiltinExtensionsByDefault: officialExtensions.map(extension => extension.name),
+	builtInExtensionsEnabledWithAutoUpdates: [...new Set([...base.builtInExtensionsEnabledWithAutoUpdates, ...officialExtensions.map(extension => extension.name)])]
 };

@@ -18,6 +18,39 @@ const SAFE_NAME = /^[a-z0-9][a-z0-9_-]{0,63}$/i;
 const MAX_SKILLS = 64;
 const MAX_SKILL_BYTES = 64 * 1024;
 
+/** Shared bounded reader for project and shipped skills. Never follows a linked parent or leaf. */
+export async function readSkillFile(root: string, file: string, digest?: string): Promise<Buffer> {
+	if (await fs.realpath(root) !== root || !file.startsWith(root + path.sep)) { throw Error('HARNESS_PROJECT_SKILL_UNSAFE'); }
+	const validate = async () => {
+		let directory = path.dirname(file);
+		while (directory !== root) {
+			if (!await canonicalDirectory(root, directory)) { throw Error('HARNESS_PROJECT_SKILL_UNSAFE'); }
+			directory = path.dirname(directory);
+		}
+		const stat = await fs.lstat(file);
+		if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_SKILL_BYTES || await fs.realpath(file) !== file) { throw Error('HARNESS_PROJECT_SKILL_UNSAFE'); }
+	};
+	await validate();
+	const handle = await fs.open(file, 'r');
+	try {
+		const stat = await handle.stat();
+		if (!stat.isFile() || stat.size > MAX_SKILL_BYTES) { throw Error('HARNESS_PROJECT_SKILL_UNSAFE'); }
+		// A bounded read also covers files growing after stat, without allocating their entire contents.
+		const buffer = Buffer.alloc(MAX_SKILL_BYTES + 1);
+		let size = 0;
+		while (size < buffer.length) {
+			const read = await handle.read(buffer, size, buffer.length - size, size);
+			if (!read.bytesRead) { break; }
+			size += read.bytesRead;
+		}
+		if (size > MAX_SKILL_BYTES) { throw Error('HARNESS_PROJECT_SKILL_UNSAFE'); }
+		await validate();
+		const data = buffer.subarray(0, size);
+		if (digest && createHash('sha256').update(data).digest('hex') !== digest) { throw Error('HARNESS_PROJECT_SKILL_CHANGED'); }
+		return data;
+	} finally { await handle.close(); }
+}
+
 async function canonicalDirectory(root: string, location: string): Promise<boolean> {
 	let stat;
 	try { stat = await fs.lstat(location); }
@@ -73,7 +106,7 @@ export async function listProjectSkills(root: string): Promise<ProjectSkill[]> {
 			}
 			if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_SKILL_BYTES ||
 				await fs.realpath(file) !== file) { throw Error('HARNESS_PROJECT_SKILL_UNSAFE'); }
-			const bytes = await fs.readFile(file);
+			const bytes = await readSkillFile(canonical, file);
 			if (bytes.length > MAX_SKILL_BYTES) { throw Error('HARNESS_PROJECT_SKILL_UNSAFE'); }
 			result.push({ name: entry.name, source, digest: createHash('sha256').update(bytes).digest('hex') });
 			seen.add(entry.name.toLowerCase());
@@ -97,7 +130,7 @@ export async function readProjectSkill(root: string, skill: ProjectSkill): Promi
 	const stat = await fs.lstat(file);
 	if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_SKILL_BYTES ||
 		await fs.realpath(file) !== file) { throw Error('HARNESS_PROJECT_SKILL_UNSAFE'); }
-	const data = await fs.readFile(file);
+	const data = await readSkillFile(canonical, file, skill.digest);
 	if (createHash('sha256').update(data).digest('hex') !== skill.digest) { throw Error('HARNESS_PROJECT_SKILL_CHANGED'); }
 	return data.toString('utf8');
 }

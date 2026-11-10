@@ -5,6 +5,7 @@
 import * as path from 'node:path';
 import { run } from '../esbuild-extension-common.mts';
 
+await import('./sync-engineering-skills.mts');
 const root = import.meta.dirname;
 await Promise.all([
 	run({ platform: 'node', entryPoints: { extension: path.join(root, 'extension.ts'), 'ats-runner': path.join(root, 'src/ats-runner.ts') }, srcDir: root, outdir: path.join(root, 'dist') }, process.argv),

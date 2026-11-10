@@ -56,8 +56,8 @@ export function chatCommands(t: CommandTranslator): ChatCommand[] {
 		{ name: 'deshacer', description: t('Descarta los cambios de la \u00faltima ejecuci\u00f3n.'), session: true },
 		{ name: 'lease', usage: '[liberar]', description: t('Estado del lease de escritura del Harness propio del proyecto; "liberar" lo retira cuando el IDE muri\u00f3 con \u00e9l.'), session: true },
 		{ name: 'motor', usage: 'COMANDO [ARGUMENTOS]', description: t('Corre un comando del Harness propio del proyecto (por ejemplo pnpm harness:preflight) en la terminal del IDE, donde pod\u00e9s contestar sus preguntas; el resultado queda en la conversaci\u00f3n.'), session: true },
-		{ name: 'skills', description: t('Lista las skills del proyecto (carpetas .agents, .codex o .claude).'), session: true },
-		{ name: 'skill', usage: 'NOMBRE [pedido]', description: t('Aplica una skill del proyecto a tu pedido: su contenido llega a la IA como convenciones, nunca como permisos.'), session: true },
+		{ name: 'skills', description: t('Lista las skills nativas y del proyecto (carpetas .agents, .codex o .claude).'), session: true },
+		{ name: 'skill', usage: 'NOMBRE [pedido]', description: t('Aplica una skill nativa o del proyecto a tu pedido: su contenido llega a la IA como convenciones, nunca como permisos.'), session: true },
 		{ name: 'doctor', description: t('Revisa la m\u00e1quina y el proyecto (Node, gestor de paquetes, git, Docker, disco) y dice c\u00f3mo arreglar cada problema.'), session: true },
 		{ name: 'auditoria', description: t('\u00daltimas acciones de las herramientas del agente en este proyecto (comandos, git, archivos) y su resultado.'), session: true },
 		{ name: 'costo', description: t('Muestra los tokens que inform\u00f3 el proveedor en el \u00faltimo turno.'), session: true },
@@ -127,6 +127,7 @@ export async function auditLines(runsDirectory: string, limit = 30): Promise<str
 const exists = (file: string): Promise<boolean> => fs.lstat(file).then(() => true, () => false);
 
 export interface SessionCommandDeps {
+	nativeSkillsDirectory?: string;
 	t: CommandTranslator;
 	chatMode(): ChatMode;
 	setChatMode(mode: ChatMode): Promise<void>;
@@ -180,7 +181,7 @@ export async function runSessionCommand(deps: SessionCommandDeps, action: string
 	const home = deps.home ?? os.homedir();
 	if (action === 'mcp' && deps.mcp) { return await runMcpCommand(deps.mcp, words); }
 	if (action === 'lease') { return await runLeaseCommand(deps, words); }
-	if (action === 'skills') { return await skillsListing(root, t); }
+	if (action === 'skills') { return await skillsListing(root, t, deps.nativeSkillsDirectory); }
 	if (action === 'motor') {
 		if (!deps.motor) { return t('Este chat no puede abrir la terminal del IDE.'); }
 		if (!words.length) { return t('Uso: /motor COMANDO [ARGUMENTOS] (por ejemplo /motor pnpm harness:preflight).'); }
