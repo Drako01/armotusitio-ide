@@ -63,7 +63,8 @@ async function withServer<T>(entry: McpLaunch, options: { cwd: string; env: Node
 		}
 	});
 	const rpc = new JsonRpcConnection(input, child.stdout, {
-		request: async () => { throw Error('HARNESS_MCP_SERVER_REQUEST_DENIED'); },
+		// Only protocol ping is inert. Roots, sampling, elicitation and tool requests never inherit agent authority.
+		request: async (method: string) => { if (method === 'ping') { return {}; } throw Error('HARNESS_MCP_SERVER_REQUEST_DENIED'); },
 		notification: () => undefined,
 		malformed: () => { rpc.close(Error('HARNESS_MCP_PROTOCOL')); stopProcess(child); }
 	});
