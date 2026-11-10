@@ -216,3 +216,19 @@
 - **Abierto — aceptación:** nuevo CI Linux/Windows + ATS gate en verde sobre SHA final, TypeScript/compile/VSIX/Husky, pruebas instaladas Windows/a11y/seis extensiones, Rust donde haya cargo. Tests reales Codex/Claude y benchmarks autenticados continúan BLOQUEADOS sin autorización explícita de cuota; no se hicieron llamadas pagas.
 - **Políticas respetadas:** PR #86 permanece Draft; no merge, release, tag, modificación a `main` ni bypass de Husky. Autoría Alejandro Daniel Di Stefano / ArmoTuSitio.com.ar y avisos upstream preservados.
 - **Próxima acción inmediata:** observar CI, corregir los nuevos fallos (incluyendo lockfile si aparece), luego continuar las fases funcionales. Reconciliar este apartado con el checklist histórico sin marcar PARTIAL como DONE.
+
+
+### PR86 — implementación posterior al primer handoff (2026-11-10)
+
+- Base al comenzar esta continuación: `6b5843e3a48c206da8b5c0e01c1a52466f11e075`; primer run rojo observado: [42902553247](https://github.com/Drako01/armotusitio-ide/actions/runs/42902553247).
+- `12988b4` FIX: esperar respuestas de denegación a solicitudes MCP iniciadas por servidor antes del cierre de SSE; fijar PDF.js a versión 4.7.76, compatible con extracción de texto sin canvas nativo. Aún debe pasar CI real.
+- `dc92d47` DOCS: actualización inicial del checklist con evidencia y bloqueos.
+- `3ff6e67` FEAT: selector explícito de subagentes Codex (planner/reviewer; máximo dos, profundidad uno), reserva preventiva de llamadas; denegación bajo presupuesto rígido de tokens/USD sin medición por hijo; lockfile PDF con SHA-512 comprobado.
+- `79a7ea4` FIX: deshacer por corrida falla cerrado con hashes ausentes, rutas inseguras, links, archivos grandes y modificaciones humanas posteriores; tests adversariales agregados.
+- `290f6de` FEAT: almacenamiento privado acotado de snapshots por herramienta con confirmación y restauración conservadora.
+- `a0334ad` FEAT: integración del journal por herramienta en implementaciones del chat, comando `atsHarness.nativeChatToolRestore`, tests y README de la extensión.
+- `025b90b` FIX: no seguir enlaces simbólicos al leer snapshots y no atribuir cambios si se inicia otra herramienta antes de capturarlos.
+- **Estado real:** esos commits se publicaron, pero todavía no hay evidencia de suite final completa verde. Los runs intermedios fueron cancelados automáticamente por commits nuevos (`cancel-in-progress`); no reinterpretarlos como regresiones o PASS.
+- **Pendientes funcionales/aceptación:** consolidar E2E instalado multimodal/MCP/PDF, probar CLI real Codex/Claude con aprobación de cuota, verificar subprocesos hijos y contabilidad, README + capturas auténticas, Rust donde exista cargo, package VSIX y precommit/Husky; CI exacto Linux/Windows/ATS gate.
+- **Nuevo hallazgo de alcance:** snapshots por herramienta solo se crean cuando el orden es verificablemente secuencial; simultaneidad o ediciones preexistentes se rechazan y se mantiene el descarte por corrida. No afirmar reversión granular universal.
+- **Autoría, protecciones y límites:** Alejandro Daniel Di Stefano / ArmoTuSitio.com.ar; PR Draft, sin tocar `main`, sin merge, tags, release ni consumo autenticado.

@@ -52,3 +52,24 @@
 6. Ejecutar criterios externos donde haya entorno y autorización; documentar bloqueos verificables, no transformarlos en checks verdes.
 
 **Criterio de salida:** NO afirmar «100% terminado» ni «listo para mergear» hasta que los criterios implementables y verificables pasen, el CI sobre SHA final sea verde y el checklist refleje la evidencia. Mantener el PR Draft mientras tanto.
+
+
+## Continuación registrada después del handoff original — 2026-11-10
+
+Se continuó sobre la misma rama, preservando el stash local y el histórico.
+La fuente de progreso detallado es `docs/CHAT_HARNESS_UPGRADE_PROGRESS.md`;
+la lista de commits es `12988b4`, `dc92d47`, `3ff6e67`,
+`79a7ea4`, `290f6de`, `a0334ad` y `025b90b`.
+
+Se incorporaron correcciones PDF/MCP, un selector opt-in de subagentes
+Codex de solo lectura con límites y fail-closed de presupuesto,
+hardening de descartes por corrida y un journal granular acotado
+de herramientas secuenciales. Los tests nuevos **no constituyen PASS**
+hasta verificarse en CI Linux/Windows y un candidato instalado.
+El README principal se actualizó; las capturas reales de instalación,
+accesibilidad y seis extensiones continúan abiertas conforme a
+`docs/PR86_SCREENSHOT_CAPTURE.md`.
+
+El PR **sigue Draft**. No declarar listo para merge ni publicar release
+antes de cerrar fallos, pruebas de instalación, las validaciones de
+permisos/cancelación y las evidencias que requieran entorno o cuota.
