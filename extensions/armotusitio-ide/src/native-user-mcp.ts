@@ -12,6 +12,7 @@ import { resolveNativeCommand, stopProcess } from './native-runtime.ts';
 import { redactSecrets } from './native-redact.ts';
 import { secretVariants } from './native-dev-secrets.ts';
 import { withHttpMcp, type UserMcpRpc } from './native-user-mcp-http.ts';
+import { withLegacySseMcp } from './native-user-mcp-legacy-sse.ts';
 import type { McpLaunch } from './native-mcp-servers.ts';
 import type { WorkMcpTool } from './native-mcp-bridge.ts';
 
@@ -26,7 +27,7 @@ interface RemoteTool { server: string; tool: string; entry: string }
 /** Redact assigned credential values even when they do not resemble a known token format. */
 function safeValue(value: unknown, entry: McpLaunch): unknown {
 	const secrets = Object.values(entry.type === 'stdio' ? entry.env ?? {} : entry.headers ?? {}).flatMap(value => {
-		const credential = entry.type === 'http' ? value.replace(/^Bearer\s+/i, '') : value;
+		const credential = entry.type === 'stdio' ? value : value.replace(/^Bearer\s+/i, '');
 		return [...secretVariants(credential), ...(value ? [value] : []), ...(credential ? [credential] : [])];
 	});
 	const text = (value: string): string => secrets.reduce((result, secret) => result.split(secret).join('[REDACTED]'), redactSecrets(value));
@@ -44,6 +45,7 @@ function serverEnvironment(source: NodeJS.ProcessEnv, entry: StdioLaunch): NodeJ
 async function withServer<T>(entry: McpLaunch, options: { cwd: string; env: NodeJS.ProcessEnv; signal: AbortSignal; timeoutMs: number }, work: (rpc: UserMcpRpc) => Promise<T>): Promise<T> {
 	if (options.signal.aborted) { throw Error('HARNESS_MCP_CANCELLED'); }
 	if (entry.type === 'http') { return withHttpMcp(entry, options, work); }
+	if (entry.type === 'sse') { return withLegacySseMcp(entry, options, work); }
 	const env = serverEnvironment(options.env, entry);
 	// Native absolute paths are allowed; Windows shell shims are never executed.
 	if (process.platform === 'win32' && /\.(?:cmd|bat|ps1)$/i.test(entry.command)) { throw Error('HARNESS_MCP_STDIO_UNSUPPORTED'); }
@@ -102,7 +104,7 @@ function validateTools(value: { tools?: WorkMcpTool[]; nextCursor?: string }): W
 	return value.tools;
 }
 
-/** User MCP over stdio or bounded HTTP, with all tool calls mediated by the IDE. */
+/** User MCP over stdio, Streamable HTTP or legacy SSE, with per-tool IDE consent. */
 export function createUserMcpBridge(options: {
 	entries(): Promise<Record<string, McpLaunch>>;
 	enabled(): boolean;
