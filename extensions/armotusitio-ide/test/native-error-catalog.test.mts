@@ -40,3 +40,23 @@ test('HTTP MCP errors have actionable, distinct recovery hints without leaking c
 	}
 	assert.equal(new Set(expectations.map(([code]) => recoveryHint(t, code))).size, expectations.length);
 });
+
+
+test('document attachment errors have specific recovery guidance', () => {
+	const t = (message: string, ...args: string[]) => message.replace(/\{(\d+)\}/g, (_, index) => args[Number(index)]);
+	const codes = [
+		'HARNESS_ATTACHMENT_BUSY', 'HARNESS_ATTACHMENT_FORMAT', 'HARNESS_ATTACHMENT_INVALID',
+		'HARNESS_ATTACHMENT_LIMIT', 'HARNESS_DOCUMENT_CANCELLED', 'HARNESS_DOCUMENT_INVALID',
+		'HARNESS_DOCUMENT_NO_TEXT', 'HARNESS_DOCUMENT_TEXT_LIMIT', 'HARNESS_DOCUMENT_TIMEOUT',
+		'HARNESS_DOCUMENT_WORKER_EXIT', 'HARNESS_DOCUMENT_WORKER_FAILED',
+		'HARNESS_NOTEBOOK_INVALID', 'HARNESS_PDF_INVALID', 'HARNESS_PDF_PAGE_LIMIT'
+	];
+	for (const code of codes) {
+		assert.equal(hasRecoveryHint(code), true, code);
+		const hint = recoveryHint(t, code);
+		assert.ok(hint.length > 20, code);
+		assert.doesNotMatch(hint, /La conversaci\u00f3n se conserva/, code);
+	}
+	assert.notEqual(recoveryHint(t, 'HARNESS_DOCUMENT_TIMEOUT'), recoveryHint(t, 'HARNESS_DOCUMENT_WORKER_FAILED'));
+	assert.notEqual(recoveryHint(t, 'HARNESS_ATTACHMENT_FORMAT'), recoveryHint(t, 'HARNESS_ATTACHMENT_LIMIT'));
+});
