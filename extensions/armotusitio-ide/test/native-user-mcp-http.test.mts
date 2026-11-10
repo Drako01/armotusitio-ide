@@ -10,12 +10,14 @@ import { createUserMcpBridge } from '../src/native-user-mcp.ts';
 import type { McpLaunch } from '../src/native-mcp-servers.ts';
 
 async function fixture(mode = 'json') {
-	let calls = 0; let deleted = 0; let allowed = true; let enabled = true; let approvals = 0;
+	let calls = 0; let deleted = 0; let allowed = true; let enabled = true; let approvals = 0; let denials = 0;
 	const requests: Array<{ method: string; auth?: string; session?: string; protocol?: string }> = [];
 	const server = createServer(async (request, response) => {
 		if (request.method === 'DELETE') { deleted++; response.writeHead(204).end(); return; }
 		let body = ''; for await (const chunk of request) { body += chunk; }
 		const rpc = JSON.parse(body);
+		if (rpc.error?.code === -32601) { denials++; response.writeHead(202).end(); return; }
+		if (rpc.id === 777 && Object.hasOwn(rpc, 'result')) { denials++; response.writeHead(202).end(); return; }
 		requests.push({ method: rpc.method, auth: request.headers.authorization, session: request.headers['mcp-session-id'] as string, protocol: request.headers['mcp-protocol-version'] as string });
 		if (mode === 'redirect') { response.writeHead(307, { location: '/stolen' }).end(); return; }
 		if (mode === 'hang') { return; }
@@ -25,8 +27,11 @@ async function fixture(mode = 'json') {
 			: rpc.method === 'tools/list' ? { tools: [{ name: 'echo', inputSchema: { type: 'object' } }] }
 				: (calls++, { content: [{ type: 'text', text: request.headers.authorization?.replace(/^Bearer /, '') }] });
 		const payload = JSON.stringify({ jsonrpc: '2.0', id: mode === 'wrong-id' ? -1 : rpc.id, result });
-		response.setHeader('Content-Type', mode === 'sse' ? 'text/event-stream' : 'application/json');
-		if (mode === 'sse') {
+		response.setHeader('Content-Type', mode === 'sse' || mode === 'server-requests' ? 'text/event-stream' : 'application/json');
+		if (mode === 'server-requests') {
+			const requestFromServer = JSON.stringify({ jsonrpc: '2.0', id: 777, method: 'sampling/createMessage', params: {} });
+			response.end('data: ' + requestFromServer + '\r\n\r\ndata: ' + payload + '\r\n\r\n');
+		} else if (mode === 'sse') {
 			// Leave the stream open: the client must complete at the matching message, not at EOF.
 			response.write(': keepalive\r\n\r\ndata: ' + payload + '\r\n\r\n');
 		} else { response.end(mode === 'large' ? 'x'.repeat(270 * 1024) : payload); }
@@ -37,7 +42,7 @@ async function fixture(mode = 'json') {
 	let onApproval = (): void => undefined;
 	const bridge = createUserMcpBridge({ cwd: process.cwd(), env: {}, entries: async () => entries, enabled: () => enabled,
 		authorize: async () => { approvals++; onApproval(); return allowed; }, timeoutMs: mode === 'hang' ? 50 : 2000 });
-	return { bridge, requests, calls: () => calls, deleted: () => deleted, approvals: () => approvals,
+	return { bridge, requests, calls: () => calls, deleted: () => deleted, approvals: () => approvals, denials: () => denials,
 		deny: () => { allowed = false; }, disable: () => { enabled = false; },
 		change: (value: Record<string, McpLaunch>) => { entries = value; }, onApproval: (action: () => void) => { onApproval = action; },
 		async close() { bridge.dispose(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); } };
@@ -99,5 +104,20 @@ test('HTTP rejects insecure destinations and routing headers before connecting',
 			f.change({ demo: entry }); assert.deepEqual(await f.bridge.tools(), []);
 		}
 		assert.equal(f.requests.length, 0);
+	} finally { await f.close(); }
+});
+
+
+test('HTTP SSE answers server-initiated sampling with a denial and preserves the real RPC result', async () => {
+	const f = await fixture('server-requests');
+	try {
+		const [tool] = await f.bridge.tools();
+		assert.ok(tool);
+		assert.ok(f.denials() >= 1);
+		const result = await f.bridge.call(tool.name, {});
+		assert.equal(JSON.stringify(result).includes('synthetic-http-canary'), false);
+		assert.equal(f.approvals(), 1);
+		assert.equal(f.calls(), 1);
+		assert.ok(f.denials() >= 2);
 	} finally { await f.close(); }
 });
