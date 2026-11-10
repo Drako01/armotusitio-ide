@@ -26,7 +26,7 @@ test('every HARNESS_* code in the sources has its own recovery hint, never the g
 
 
 test('HTTP MCP errors have actionable, distinct recovery hints without leaking credentials', () => {
-	const t = (message: string, ...args: string[]) => message.replace(/\\{(\\d+)\\}/g, (_, index) => args[Number(index)]);
+	const t = (message: string, ...args: string[]) => message.replace(/\{(\d+)\}/g, (_, index) => args[Number(index)]);
 	const expectations: Array<[string, RegExp]> = [
 		['HARNESS_MCP_HTTP_URL', /HTTPS|HTTP local/],
 		['HARNESS_MCP_HTTP_HEADERS', /Authorization/],
