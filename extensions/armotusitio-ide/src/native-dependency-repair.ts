@@ -46,6 +46,9 @@ const describe = (diagnosis: Diagnosis): string => !diagnosis.installed ? 'node_
 	healthy(diagnosis) ? 'every declared package is installed and readable' :
 		[diagnosis.missing.length ? 'missing: ' + diagnosis.missing.slice(0, 8).join(', ') : '', diagnosis.unreadable.length ? 'unreadable: ' + diagnosis.unreadable.slice(0, 8).join(', ') : ''].filter(Boolean).join('; ');
 
+/** Why a file could not be read: the system error code (EACCES, EPERM, ELOOP...), or that its content is not valid JSON. */
+const reason = (error: unknown): string => (error as NodeJS.ErrnoException).code ?? 'invalid-json';
+
 /** Declared dependencies whose `package.json` is absent or unreadable in `node_modules`: the cheapest reliable integrity signal. */
 async function diagnose(root: string, projectPath: string): Promise<Diagnosis> {
 	const folder = path.join(root, projectPath);
@@ -55,12 +58,12 @@ async function diagnose(root: string, projectPath: string): Promise<Diagnosis> {
 	let manifest: { dependencies?: Record<string, unknown>; devDependencies?: Record<string, unknown> } = {};
 	// No manifest declares nothing to verify; a manifest that exists but cannot be read or parsed is itself a damaged install input.
 	try { manifest = JSON.parse(await fs.readFile(path.join(folder, 'package.json'), 'utf8')); } catch (error) {
-		if ((error as NodeJS.ErrnoException).code !== 'ENOENT') { unreadable.push('package.json'); }
+		if ((error as NodeJS.ErrnoException).code !== 'ENOENT') { unreadable.push('package.json (' + reason(error) + ')'); }
 	}
 	const names = [...Object.keys(manifest.dependencies ?? {}), ...Object.keys(manifest.devDependencies ?? {})].slice(0, MAX_CHECKED_PACKAGES);
 	await Promise.all(names.map(async name => {
 		try { JSON.parse(await fs.readFile(path.join(modules, name, 'package.json'), 'utf8')); } catch (error) {
-			((error as NodeJS.ErrnoException).code === 'ENOENT' ? missing : unreadable).push(name);
+			if ((error as NodeJS.ErrnoException).code === 'ENOENT') { missing.push(name); } else { unreadable.push(name + ' (' + reason(error) + ')'); }
 		}
 	}));
 	return { installed: true, missing: missing.sort(), unreadable: unreadable.sort() };
@@ -144,5 +147,11 @@ export async function repairDependencies(deps: RepairDeps, input: RepairInput): 
 	if (removed.isError) { return failed(projectPath, attempts, removed); }
 	if (deps.signal?.aborted) { return cancelled(projectPath, attempts); }
 	const second = await runInstall('clean install');
-	return await verified('clean reinstall', second) ?? failed(projectPath, attempts, second);
+	const repairedClean = await verified('clean reinstall', second);
+	if (repairedClean) { return repairedClean; }
+	if (!second.isError) {
+		// The install itself succeeded: say what the check still sees instead of presenting a successful install log as the cause.
+		return { isError: true, text: 'FAILED ' + projectPath + ' [unverified, change-strategy]. Attempts: ' + attempts.join('; ') + '.\nCause: the install finished with exit code 0 but the tree is still not healthy: ' + describe(await diagnose(deps.root, projectPath)) + '.\nNext: the files exist but this process cannot read them; check permissions, links and antivirus on node_modules, or run the install from your own terminal.' };
+	}
+	return failed(projectPath, attempts, second);
 }

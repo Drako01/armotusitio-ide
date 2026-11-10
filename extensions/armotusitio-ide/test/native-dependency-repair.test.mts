@@ -172,7 +172,7 @@ test('a damaged package.json is reported instead of being treated as "nothing de
 		const damaged = await repairDependencies(h.deps, { mode: 'diagnose' });
 		await fs.rm(path.join(h.root, 'package.json'));
 		const absent = await repairDependencies(h.deps, { mode: 'diagnose' });
-		assert.deepEqual([damaged.text, absent.text], ['DIAGNOSIS . (pnpm): unreadable: package.json.', 'DIAGNOSIS . (pnpm): every declared package is installed and readable.']);
+		assert.deepEqual([damaged.text, absent.text], ['DIAGNOSIS . (pnpm): unreadable: package.json (invalid-json).', 'DIAGNOSIS . (pnpm): every declared package is installed and readable.']);
 	});
 });
 
@@ -180,4 +180,13 @@ test('the install command echoed by a job is never taken as the cause: a real EP
 	const echo = 'job-1 exited (exit 1) · 3 s\n$ pnpm install --frozen-lockfile --ignore-scripts\n';
 	const kinds = [echo + 'EPERM: operation not permitted, symlink', echo + 'ERR_PNPM_OUTDATED_LOCKFILE Cannot install with "frozen-lockfile"', echo + 'ERR_PNPM_LOCKFILE_CONFIG_MISMATCH', echo + 'something odd'].map(text => classifyFailure(text).kind);
 	assert.deepEqual(kinds, ['locked-files', 'lockfile-out-of-date', 'lockfile-out-of-date', 'unknown']);
+});
+
+test('a clean install that succeeds but leaves the tree unreadable is reported with what the check sees, not as an unknown failure', async () => {
+	await withProject({ run: async (_n, h) => { await h.corrupt(); return OK; } }, async h => {
+		await h.corrupt();
+		const result = await repairDependencies(h.deps, {});
+		assert.deepEqual({ outcome: result.text.split(' ')[0], error: result.isError, kind: /\[unverified, change-strategy\]/.test(result.text), cause: /exit code 0 but the tree is still not healthy: unreadable: left \(invalid-json\), right/.test(result.text) || /unreadable: left \(invalid-json\)/.test(result.text), calls: h.calls },
+			{ outcome: 'FAILED', error: true, kind: true, cause: true, calls: ['run pnpm install', 'remove node_modules', 'run pnpm install'] });
+	});
 });
