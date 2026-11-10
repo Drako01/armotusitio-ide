@@ -234,3 +234,23 @@ test('a profile environment reaches the one-shot CLI with its own directory and 
 		await fs.rm(folder, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 	}
 });
+
+
+test('native Codex child threads are explicit, reviewed and read-only', () => {
+	const reviewed = { ...base, nativeSubagents: true };
+	const command = buildAgentInvocation(reviewed);
+	assert.deepEqual(command.args.slice(0, 8), [
+		'--ask-for-approval', 'never', '--config', 'agents.enabled=true',
+		'--config', 'agents.max_concurrent_threads_per_session=2',
+		'--config', 'agents.interrupt_message=true'
+	]);
+	assert.ok(command.args.includes('read-only'));
+	assert.ok(!command.args.includes('workspace-write'));
+	assert.ok(!buildAgentInvocation(base).args.includes('agents.enabled=true'));
+	assert.throws(() => buildAgentInvocation({ ...base, provider: 'claude', nativeSubagents: true }), /HARNESS_AGENT_DRAFT_SCHEMA/);
+	assert.throws(() => buildAgentInvocation({ ...base, role: 'implementer', readOnly: false, nativeSubagents: true }), /HARNESS_AGENT_DRAFT_SCHEMA/);
+	assert.throws(() => buildAgentInvocation({ ...base, webSearch: true, nativeSubagents: true }), /HARNESS_AGENT_DRAFT_SCHEMA/);
+	const review = reviewAgentDraft(reviewed);
+	assert.throws(() => validateReviewedAgent(review, base), /HARNESS_AGENT_REVIEW_CHANGED/);
+	assert.throws(() => validateReviewedAgent(review, { ...reviewed, nativeSubagents: false }), /HARNESS_AGENT_REVIEW_CHANGED/);
+});
