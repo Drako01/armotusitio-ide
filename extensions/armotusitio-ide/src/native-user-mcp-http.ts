@@ -7,7 +7,7 @@ import type { McpLaunch } from './native-mcp-servers.ts';
 type HttpLaunch = Extract<McpLaunch, { type: 'http' }>;
 export interface UserMcpRpc { request<T>(method: string, params: object, timeoutMs?: number): Promise<T> }
 
-/** Short-lived Streamable HTTP session. No redirects, cookies, retries or server-initiated execution. */
+/** Short-lived Streamable HTTP session. Inert server notifications and ping are supported; privileged server requests are denied. */
 export async function withHttpMcp<T>(entry: HttpLaunch, options: { signal: AbortSignal; timeoutMs: number }, work: (rpc: UserMcpRpc) => Promise<T>): Promise<T> {
 	const url = new URL(entry.url);
 	if (url.username || url.password || url.hash || (url.protocol !== 'https:' && !(url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)))) { throw Error('HARNESS_MCP_HTTP_URL'); }
@@ -47,9 +47,31 @@ export async function withHttpMcp<T>(entry: HttpLaunch, options: { signal: Abort
 			let size = 0;
 			let text = '';
 			const decoder = new TextDecoder('utf-8', { fatal: true });
-			const decode = (raw: string): R => {
-				const value = JSON.parse(raw) as { jsonrpc?: string; id?: number; result?: R; error?: object };
-				if (!value || value.jsonrpc !== '2.0' || value.id !== id || value.error || !Object.hasOwn(value, 'result')) { throw Error('HARNESS_MCP_PROTOCOL'); }
+			let serverRequests = 0;
+			const decode = async (raw: string): Promise<R | undefined> => {
+				const value = JSON.parse(raw) as { jsonrpc?: string; id?: number | string; method?: unknown; result?: R; error?: object };
+				if (!value || value.jsonrpc !== '2.0') { throw Error('HARNESS_MCP_PROTOCOL'); }
+				if (typeof value.method === 'string') {
+					// Server notifications may be observed, but never grant new tools, model calls, roots or permissions.
+					if (value.id === undefined || value.id === null) { return undefined; }
+					if ((typeof value.id !== 'number' && typeof value.id !== 'string') || ++serverRequests > 8) {
+						throw Error('HARNESS_MCP_SERVER_REQUEST_DENIED');
+					}
+					const replyHeaders = new Headers(requestHeaders);
+					if (session) { replyHeaders.set('Mcp-Session-Id', session); }
+					const reply = value.method === 'ping'
+						? { jsonrpc: '2.0', id: value.id, result: {} }
+						: { jsonrpc: '2.0', id: value.id, error: { code: -32601, message: 'Method not found' } };
+					const result = await fetch(url, {
+						method: 'POST', headers: replyHeaders, redirect: 'error', credentials: 'omit',
+						signal: AbortSignal.any([options.signal, AbortSignal.timeout(options.timeoutMs)]),
+						body: JSON.stringify(reply)
+					});
+					try { if (!result.ok && result.status !== 202) { throw Error('HARNESS_MCP_HTTP_STATUS'); } }
+					finally { await result.body?.cancel().catch(() => undefined); }
+					return undefined;
+				}
+				if (value.id !== id || value.error || !Object.hasOwn(value, 'result')) { throw Error('HARNESS_MCP_PROTOCOL'); }
 				return value.result as R;
 			};
 			try {
@@ -65,11 +87,13 @@ export async function withHttpMcp<T>(entry: HttpLaunch, options: { signal: Abort
 					while ((end = text.indexOf('\n\n')) >= 0) {
 						const event = text.slice(0, end); text = text.slice(end + 2);
 						const data = event.split('\n').filter(line => line.startsWith('data:')).map(line => line.slice(5).replace(/^ /, '')).join('\n');
-						if (data) { return decode(data); }
+						if (data) { const received = await decode(data); if (received !== undefined) { return received; } }
 					}
 				}
 				if (contentType !== 'application/json') { throw Error('HARNESS_MCP_PROTOCOL'); }
-				return decode(decoder.decode(Buffer.concat(chunks)));
+				const decoded = await decode(decoder.decode(Buffer.concat(chunks)));
+				if (decoded === undefined) { throw Error('HARNESS_MCP_PROTOCOL'); }
+				return decoded;
 			} finally { await reader.cancel().catch(() => undefined); reader.releaseLock(); }
 		} finally { if (!response.body?.locked) { await response.body?.cancel().catch(() => undefined); } }
 	};
