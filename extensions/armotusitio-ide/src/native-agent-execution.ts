@@ -16,7 +16,7 @@ import { StringDecoder } from 'node:string_decoder';
 import { redactSecrets } from './native-redact.ts';
 import { currentToolchainEnvironment } from './native-toolchain-env.ts';
 import { codexSandbox } from './native-codex-sandbox.ts';
-import { readonlyCodexSubagentOverrides } from './native-codex-subagents.ts';
+import { CodexChildGuard, readonlyCodexSubagentOverrides, type CodexChildViolation } from './native-codex-subagents.ts';
 import { agentContract, RUN_MINUTES } from './native-agent-contract.ts';
 import { reviewAgentDraft, validateReviewedAgent, type AgentDraft, type AgentReview } from './native-providers.ts';
 import { APPROVAL_TIMEOUT_MS } from './native-approval.ts';
@@ -105,7 +105,7 @@ export function buildAgentInvocation(draft: AgentDraft, writableRoots: readonly 
 		: ['--effort', draft.effort] : [];
 	if (draft.provider === 'codex') {
 		// Native children inherit the parent's read-only sandbox and never receive independent grants.
-		// A single parent process owns their lifetime and usage; the limit is per approved review.
+		// A single parent process owns their lifetime and usage. Without the opt-in they are switched off explicitly.
 		const nativeSubagents = readonlyCodexSubagentOverrides(draft.nativeSubagents === true);
 		const sandbox = draft.readOnly ? 'read-only' : codexSandbox();
 		const caches = sandbox === 'workspace-write' ? writableRoots.flatMap(root => ['--add-dir', root]) : [];
@@ -199,6 +199,16 @@ export async function executeReviewedAgent(review: AgentReview, current: AgentDr
 	const onSearch = (query: string): void => { if (!searchLeak && leaks(query)) { searchLeak = true; cancel(); } };
 	const stepSink = onStep && { root: canonical, emit: onStep };
 	const events = current.provider === 'codex' ? new CodexEventAccumulator(observe, onSearch, stepSink) : new ClaudeEventAccumulator(observe, onSearch, stepSink);
+	// The CLI flags are the primary limit; the stream is checked independently and the process tree is stopped on a breach.
+	let childViolation: CodexChildViolation | undefined;
+	if (events instanceof CodexEventAccumulator) {
+		const childGuard = new CodexChildGuard(current.nativeSubagents === true);
+		events.onChildActivity = activity => {
+			if (childViolation) { return; }
+			childViolation = childGuard.observe(activity);
+			if (childViolation) { cancel(); }
+		};
+	}
 	const stdoutDecoder = new StringDecoder('utf8');
 	const child = spawn(command.executable, command.args, {
 		cwd: canonical, env, shell: false, windowsHide: true, detached: process.platform !== 'win32',
@@ -237,7 +247,7 @@ export async function executeReviewedAgent(review: AgentReview, current: AgentDr
 				const parsed = events.finish() || parseProviderOutput(current.provider, stdout);
 				if (stdoutOverflow && !parsed.structured) { truncated = true; }
 				// Claude exits non-zero when it runs out of turns; that is reported through `stopReason`, not as passed.
-				let status: AgentOutcome['status'] = searchLeak ? 'failed' : timedOut ? 'timeout' : cancelled ? 'cancelled' : exitCode === 0 && !parsed.providerError && !parsed.stopReason && !truncated ? 'passed' : 'failed';
+				let status: AgentOutcome['status'] = searchLeak || childViolation ? 'failed' : timedOut ? 'timeout' : cancelled ? 'cancelled' : exitCode === 0 && !parsed.providerError && !parsed.stopReason && !truncated ? 'passed' : 'failed';
 				let scopeViolation = false;
 				let scopeVerified = false;
 				let scopeUnscanned: string[] | undefined;
@@ -261,7 +271,7 @@ export async function executeReviewedAgent(review: AgentReview, current: AgentDr
 				}
 				resolve({
 					status, exitCode, durationMs: Date.now() - started, truncated,
-					output: redactSecrets(parsed.structured ? parsed.message : stdout + (stderr ? '\n' + stderr : '')),
+					output: childViolation ?? redactSecrets(parsed.structured ? parsed.message : stdout + (stderr ? '\n' + stderr : '')),
 					scopeViolation, scopeVerified, ...(scopeUnscanned?.length ? { scopeUnscanned } : {}), structuredOutput: parsed.structured, usage: parsed.usage,
 					...(parsed.rateLimited ? { rateLimited: true as const } : {}),
 					...(parsed.stopReason ? { stopReason: parsed.stopReason } : {}),

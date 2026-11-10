@@ -465,8 +465,10 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 	/** Every IDE agent draft: read-only unless implementing, with the model and effort chosen for its provider. */
 	const codexReadonlyOptIn = (): boolean => vscode.workspace.getConfiguration('atsHarness').inspect?.('codexReadOnlySubagents')?.globalValue === true;
 	const draftOf = (root: string, provider: NativeProvider, role: AgentRole, instruction: string, extra: Pick<AgentDraft, 'maxTurns' | 'resumeSession' | 'nativeSubagents'> = {}): AgentDraft =>
-		({ schemaVersion: 1, provider, role, projectRoot: root, instruction, readOnly: role !== 'implementer', ...modelOption(modelFor(provider)), ...effortOption(effortFor(provider)), ...(webSearchOn(root) ? { webSearch: true } : {}),
-			...(provider === 'codex' && role !== 'implementer' && !webSearchOn(root) && codexReadonlyOptIn() ? { nativeSubagents: true } : {}), ...extra });
+	({
+		schemaVersion: 1, provider, role, projectRoot: root, instruction, readOnly: role !== 'implementer', ...modelOption(modelFor(provider)), ...effortOption(effortFor(provider)), ...(webSearchOn(root) ? { webSearch: true } : {}),
+		...(provider === 'codex' && role !== 'implementer' && !webSearchOn(root) && codexReadonlyOptIn() ? { nativeSubagents: true } : {}), ...extra
+	});
 	/**
 	 * Native transport of the chat (r8): persistent provider sessions behind the same guarded pipeline. The setting decides
 	 * (structured | native | auto); an incompatible CLI keeps the structured transport and says why once per provider.
@@ -985,7 +987,8 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 				vscode.l10n.t('B\u00fasqueda web en {0}: {1}.', folder.name, webSearchOn(root) ? vscode.l10n.t('encendida') : vscode.l10n.t('apagada')),
 				{ modal: true, detail: vscode.l10n.t('Encendida, el agente puede buscar documentaci\u00f3n con el buscador de su proveedor. Las consultas llegan a ese buscador, quedan en el informe y una consulta con un secreto corta la corrida. Nunca puede abrir URLs, y los comandos siguen sin red. Aplica desde la pr\u00f3xima corrida.') },
 				on, off);
-			if (picked) { await context.globalState.update(webSearchKey(root), picked === on); }
+			// An open session keeps the tools it started with: close it so search and native children are never active together.
+			if (picked) { await context.globalState.update(webSearchKey(root), picked === on); await nativeChat.dispose(); }
 		} catch (error) { showError(error); }
 	}));
 	/** Manage development secrets (block V): add or rotate, remove, list with use audit; values are never shown. */
@@ -1114,7 +1117,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			if (provider === 'codex' && role !== 'implementer' && !webSearchOn(root)) {
 				const delegation = await vscode.window.showQuickPick([
 					{ label: 'Sin subagentes (predeterminado)', value: false },
-					{ label: 'Hasta dos subagentes Codex simult\\u00e1neos (cuota adicional)', value: true }
+					{ label: 'Hasta dos subagentes Codex simult\u00e1neos (cuota adicional)', value: true }
 				], { title: 'Delegaci\u00f3n opt-in de solo lectura' });
 				if (!delegation) { return; }
 				nativeSubagents = delegation.value;

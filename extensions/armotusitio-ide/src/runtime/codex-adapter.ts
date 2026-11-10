@@ -12,7 +12,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { resolveNativeCommand } from '../native-runtime.ts';
 import { validateChatImages } from '../native-chat-images.ts';
-import { readonlyCodexSubagentOverrides } from '../native-codex-subagents.ts';
+import { CodexChildGuard, codexChildActivity, readonlyCodexSubagentOverrides } from '../native-codex-subagents.ts';
 import { captureAgentScope } from '../native-agent-scope.ts';
 import {
 	CODEX_PROTOCOL_VERSION,
@@ -131,9 +131,11 @@ class CodexConnection implements AgentConnection {
 	/** Paths of file-change items, so their approval card can say which files. */
 	private readonly changePaths = new Map<string, string[]>();
 	private readonly messages = new Map<string, string>();
+	private readonly childGuard: CodexChildGuard;
 
 	constructor(child: ProviderProcess, options: SessionOpenOptions, host: AdapterHost, fullAccess: boolean) {
 		this.child = child; this.options = options; this.host = host; this.fullAccess = fullAccess;
+		this.childGuard = new CodexChildGuard(options.nativeSubagents === true);
 		this.rpc = new JsonRpcConnection(child.child.stdin, child.child.stdout, {
 			request: (method, params) => this.serverRequest(method, params),
 			notification: (method, params) => this.notification(method, params),
@@ -177,6 +179,7 @@ class CodexConnection implements AgentConnection {
 		if (input.images) { validateChatImages(input.images); }
 		if (this.turn) { return Promise.reject(new RuntimeError('RUNTIME_TURN_ALREADY_RUNNING')); }
 		return new Promise<TurnResult>((resolve, reject) => {
+			this.childGuard.beginTurn();
 			this.turn = { clientTurnId: input.clientTurnId, output: '', resolve };
 			const params: TurnStartParams = {
 				threadId: this.nativeSessionId, input: [...textInput(input.text), ...(input.images ?? []).map(image => ({ type: 'image' as const, url: 'data:' + image.mime + ';base64,' + image.data }))], clientUserMessageId: input.clientTurnId,
@@ -232,6 +235,7 @@ class CodexConnection implements AgentConnection {
 	private notification(method: string, params: unknown): void {
 		const value = (params ?? {}) as Record<string, unknown>;
 		const turnId = typeof value.turnId === 'string' ? value.turnId : this.turn?.id;
+		if ((method === 'item/started' || method === 'item/completed') && this.childViolation(value)) { return; }
 		// Another thread's traffic (a shared server) is never mixed into this session.
 		if (typeof value.threadId === 'string' && this.nativeSessionId && value.threadId !== this.nativeSessionId) { return; }
 		switch (method) {
@@ -281,6 +285,22 @@ class CodexConnection implements AgentConnection {
 			default:
 				if (!QUIET_NOTIFICATIONS.has(method)) { this.host.emit({ turnId, payload: { type: 'diagnostic', source: 'codex', text: 'unhandled notification ' + method } }); }
 		}
+	}
+
+	/**
+	 * Checked before the thread filter, so a child thread that tries to delegate again is seen. A violation fails the
+	 * turn and stops the process that owns every child.
+	 */
+	private childViolation(value: Record<string, unknown>): boolean {
+		const activity = codexChildActivity(value.item as Record<string, unknown> | undefined);
+		if (!activity) { return false; }
+		const sender = activity.senderThreadId ?? (typeof value.threadId === 'string' ? value.threadId : undefined);
+		const violation = this.childGuard.observe({ ...activity, ...(sender ? { senderThreadId: sender } : {}) }, this.nativeSessionId || undefined);
+		if (!violation) { return false; }
+		this.host.emit({ payload: { type: 'diagnostic', source: 'codex', text: violation } });
+		this.finishTurn({ status: 'failed', error: violation });
+		this.child.stop();
+		return true;
 	}
 
 	private itemStarted({ item, turnId }: ItemStartedNotification): void {
