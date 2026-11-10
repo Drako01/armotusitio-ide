@@ -296,3 +296,36 @@
 - **Pruebas sintéticas nuevas (PENDING):** `extensions/armotusitio-ide/test/native-agent-execution.test.mts`, `extensions/armotusitio-ide/test/native-codex-subagents-guard.test.mts` comprueban rechazo antes del spawn en repositorio no auditable y éxito/fallo con/sin uso estructurado del padre. No llaman a proveedores ni consumen cuota.
 - **Límites reconocidos:** el escaneo Git es detección complementaria, **no** sandbox de sistema operativo; la telemetría del padre no es recibo granular de sus hijos; con límites de tokens/USD o llamadas diarias la delegación sigue bloqueada. Los E2E reales, interfaz instalada, capturas y accesibilidad siguen pendientes; estado de subagentes **PARTIAL**, no DONE.
 - **Siguiente acción:** validar código/contratos Linux y Windows, empaquetado y gate sobre el HEAD resultante; corregir fallos sin desactivar pruebas. PR continúa Draft; no tocar `main`, no publicar releases y no ejecutar modelos autenticados sin autorización.
+
+
+### Cierre local de fases P0–P5 — 2026-11-10 (sin push)
+
+Punto de partida: `dc88a453bd9` (local = remoto, CI [42916514858](https://github.com/Drako01/armotusitio-ide/actions/runs/42916514858) PASS). Los commits de este bloque son **locales**: no existe CI remoto para ellos y no se interpretan como PASS de CI.
+
+| Fase | Estado | Evidencia local |
+|---|---|---|
+| P0 Subagentes Codex | PARTIAL (código DONE; proveedor real BLOCKED por cuota) | Commit `6e42a167b82`; suites focalizadas 118 PASS |
+| P1 Checkpoints | DONE en código y tests; recuperación en IDE instalado sin evidencia | Commit `9520e8be9b4`; 5 PASS propios, 32 PASS relacionados |
+| P2 Multimodal | DONE en código y tests; interfaz instalada sin evidencia | 12 PASS (imágenes y documentos) |
+| P3 MCP | DONE en código y tests | 27 PASS (stdio, HTTP JSON/SSE, legacy SSE) |
+| P4 Instalación real y UX | BLOCKED | No hay candidato del SHA del PR (ver abajo) |
+| P5 README y capturas | README DONE; capturas BLOCKED por P4 | Sin mockups ni capturas sintéticas |
+
+**P0 — hallazgo y corrección.** Verificado contra el binario real **Codex CLI 0.166.0** con `codex features list` (sin llamadas al modelo): `multi_agent` es `stable` y viene en `true`. Las sesiones sin opt-in **no** tenían los hijos apagados; además `features.collab` ya no tiene efecto en esa versión. Corrección: toda invocación Codex sin opt-in pasa `features.multi_agent=false` y `features.multi_agent_v2=false` (solo claves `features.*`, que un CLI viejo ignora; una clave `agents.*` desconocida se rechaza como rol mal formado). Con opt-in: `features.multi_agent=true`, `agents.max_threads=2`, `agents.max_concurrent_threads_per_session=2`, `agents.max_depth=1`. Nuevo `CodexChildGuard` (one-shot y app-server) detiene el árbol de procesos y falla la corrida con `HARNESS_DELEGATION_CHILD_UNEXPECTED`, `_DEPTH` o `_LIMIT` (más de 4 inicios/reanudaciones por turno; el límite de 2 es de simultaneidad). Cambiar la búsqueda web cierra las sesiones abiertas: antes una sesión abierta con hijos podía seguir activa sin pasar por el control de presupuesto. Se corrigió la etiqueta del selector que mostraba `\u00e1` literal.
+Archivos: `src/native-codex-subagents.ts`, `src/runtime/codex-adapter.ts`, `src/native-agent-execution.ts`, `src/native-provider-output.ts`, `src/native-integration.ts`, `src/native-error-catalog.ts` y tests `native-codex-subagents-guard`, `native-agent-execution`, `native-agent-adversarial`, `native-runtime-fakes`.
+Límite reconocido: no hay recibos de consumo por hijo, así que con cuota diaria o topes de tokens/USD la delegación sigue bloqueada (`HARNESS_DELEGATION_BUDGET_UNVERIFIED`). La herencia real del sandbox en los hijos no se probó: requiere cuota autorizada.
+
+**P1 — hallazgos y corrección.** (1) La lista y la retención ordenaban por nombre de archivo, que es un UUID aleatorio: se podían podar checkpoints recientes; ahora se ordena por fecha del registro. (2) El contenido previo se leía con `git show`, que devuelve el blob normalizado; con `core.autocrlf` restaurar cambiaba los finales de línea. Ahora usa `git cat-file --filters`. (3) Una restauración interrumpida quedaba bloqueada para siempre; ahora una nueva confirmación la reanuda y una edición humana posterior la bloquea entera. (4) Cada registro guarda `turnId` y `sequence` (campos opcionales; los registros anteriores siguen siendo válidos). El descarte por corrida no cambió.
+Archivos: `src/native-chat-tool-checkpoints.ts`, `src/native-integration.ts`, `src/native-error-catalog.ts`, `test/native-chat-tool-checkpoints.test.mts`.
+
+**P2 — auditoría sin defectos de código.** Se agregaron pruebas negativas que faltaban: imagen pegada/arrastrada con MIME falso, base64 inválido, bytes truncados o sobrantes, dimensiones excesivas y expiración; worker de documentos que se cuelga (timeout), agota memoria, termina solo o responde fuera de contrato.
+
+**P3 — una corrección.** Una respuesta HTTP JSON mal formada propagaba el error del parser, que cita el cuerpo recibido; ahora se informa solo `HARNESS_MCP_PROTOCOL`. Test `malformed` agregado. Sin cambios de política; todo sigue fail closed.
+
+**Higiene.** El hook Husky falló al tocar archivos con deuda previa (commits anteriores se hicieron sin hook): caracteres no ASCII en `native-error-catalog.ts`, formato en `native-integration.ts` y encabezados no estándar. Se corrigieron en los archivos tocados, sin bypass; la línea de autoría ArmoTuSitio se conservó en un comentario propio bajo el encabezado de Microsoft. Otros 17 archivos conservan ese encabezado no estándar y fallarán el lint cuando se editen.
+
+**P4 — bloqueo comprobado.** Los únicos binarios del equipo (`F:/armotusitio-ide-win32-x64` y la instalación en `%LOCALAPPDATA%/Programs/ArmotuSitio IDE`) son IDE 1.145.2, commit `45d7e833c3d`, anteriores a este PR. No se usaron como evidencia. Las seis extensiones figuran en la carpeta de ese build viejo, lo que **no** prueba instalación ni activación en el candidato del PR. Linux, macOS y WSL: NO EJECUTADO. Procedimiento: publicar la rama, esperar CI verde del SHA final, construir con `scripts/ats-package-windows.mts` desde ese SHA, instalar y seguir `docs/PR86_SCREENSHOT_CAPTURE.md`.
+
+**Validación final local (Windows 11, Node 24.22.1).** `npm run check` PASS; `npm run compile` PASS; `npm run check:native-package` PASS (incluye worker PDF); ESLint de los archivos tocados PASS; Husky/hygiene PASS en cada commit. Suite completa `npm test`: **888 tests, 875 PASS, 1 FAIL, 12 SKIP** (412 s). El FAIL es `a provider that dies while starting is retried once (R06)` del contrato de runtime **Claude** (esperado `completed`, obtenido `failed`). Es intermitente en Windows local: aislado pasó 36/36 en dos corridas y falló 35/36 en una; ya figuraba como fallo local en este checklist y pasó en el CI de `dc88a453bd9`. El adaptador Claude y su proveedor falso no se modificaron. Queda **FAIL abierto (inestable)**, no reclasificado como PASS; hay que confirmarlo en el CI del SHA final. Los 12 SKIP son de plataforma y se conservan.
+
+**Pendiente.** Push de la rama (no autorizado en esta sesión), CI Linux/Windows del SHA final, candidato instalado con capturas y accesibilidad, E2E autenticado de Codex/Claude (cuota), tests Rust (sin `cargo`). El PR sigue Draft: **no está listo para merge**.

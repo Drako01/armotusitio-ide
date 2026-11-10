@@ -40,8 +40,8 @@ incorpora el upgrade de Code - OSS a 1.145.3 y el alcance resumido abajo.
 | Imágenes | Adjuntar, pegar y arrastrar PNG/JPEG; vista previa y consentimiento | E2E de interfaz y proveedor |
 | Documentos | `/documento` opt-in: texto de PDF/notebook en worker acotado | CI Linux/Windows y VSIX instalado |
 | MCP | Stdio, HTTP JSON/SSE y legacy SSE; credenciales en host | Contratos y ciclo completo |
-| Subagentes | Roles Claude aislados y subagentes Codex opt-in, máximo dos, solo lectura | Cuota, medición integral y cancelación E2E |
-| Checkpoints | Deshacer por corrida/archivo y checkpoints limitados por herramienta | Integridad, pruebas y recuperación instalada |
+| Subagentes | Roles Claude aislados y subagentes Codex opt-in: apagados explícitamente por defecto, dos simultáneos, cuatro por turno, profundidad uno, solo lectura | Proveedor autenticado (requiere cuota) e IDE instalado |
+| Checkpoints | Deshacer por corrida/archivo y checkpoints por turno y herramienta, con restauración reanudable | Recuperación en IDE instalado |
 | Extensiones | Sección ArmoTuSitio con seis extensiones del ecosistema | Activación real de las seis en IDE instalado |
 
 Las nuevas funciones usan controles de confianza, límites de tamaño/tiempo y
@@ -60,8 +60,17 @@ presupuesto rígido de tokens/USD, la delegación se **bloquea** hasta disponer
 de contabilidad auditable por hijo. El límite simultáneo no equivale a un
 límite acumulado de consumo.
 
-La ejecución con proveedor autenticado **consume cuota** y no se lanzó en
-esta auditoría. El comportamiento real depende también de la versión del CLI.
+Codex CLI trae sus subagentes **activados de fábrica**. Por eso el IDE los apaga
+de forma explícita en cada ejecución (`features.multi_agent=false`) y solo los
+enciende con tu opt-in. Además vigila el flujo de eventos: si aparece un hijo sin
+opt-in, un hijo que intenta delegar otra vez o más de **cuatro hijos en un turno**,
+detiene el proceso completo del proveedor y la corrida se informa como fallida
+(`HARNESS_DELEGATION_CHILD_UNEXPECTED`, `_DEPTH`, `_LIMIT`). Cambiar la búsqueda
+web cierra las sesiones abiertas para que nunca convivan búsqueda e hijos.
+
+Las claves de configuración se comprobaron contra **Codex CLI 0.166.0** sin
+llamar al modelo. La ejecución con proveedor autenticado **consume cuota** y no
+se lanzó: la herencia efectiva del sandbox en los hijos sigue sin evidencia real.
 
 ### Checkpoints y recuperación
 
@@ -69,9 +78,12 @@ Después de herramientas secuenciales que producen cambios medibles, el IDE
 puede conservar hasta 24 snapshots privados, con límites de archivos y bytes.
 **ArmoTuSitio: Restaurar checkpoint de herramienta del Chat Harness** permite
 revisarlos y restaurar bajo confirmación, fence de escritura y comparación de
-huellas. Si un humano editó el resultado o los eventos son ambiguos/concurrentes,
-no se aplica una restauración automática. Para descartar una corrida completa
-seguís teniendo `/deshacer`.
+huellas. Cada registro indica el turno y el orden de la herramienta que lo produjo,
+y la lista muestra primero los más recientes. Si un humano editó el resultado o
+los eventos son ambiguos/concurrentes, no se aplica ninguna restauración. Si una
+restauración se interrumpe, volver a confirmarla la **reanuda**: los archivos ya
+restaurados se respetan y una edición humana posterior la bloquea entera. Para
+descartar una corrida completa seguís teniendo `/deshacer`.
 
 ### Documentos, imágenes y MCP
 
@@ -117,10 +129,12 @@ antes de levantar Draft o realizar el merge.
 
 ## Evidencia visual
 
-No se incorporaron capturas sintéticas. Las capturas definitivas de
-interfaz, consentimientos, accesibilidad, MCP y las seis extensiones
-deben provenir de un **IDE instalado y verificable**, conforme al
-[protocolo de capturas](docs/PR86_SCREENSHOT_CAPTURE.md).
+No se incorporaron capturas sintéticas ni mockups. Al 2026-11-10 los únicos
+binarios disponibles en el equipo de desarrollo corresponden a la versión
+anterior (IDE 1.145.2, commit `45d7e83`), por lo que **no hay capturas de este PR**.
+Las capturas definitivas de interfaz, consentimientos, accesibilidad, MCP y las
+seis extensiones deben provenir de un **IDE instalado y construido desde el SHA
+final**, conforme al [protocolo de capturas](docs/PR86_SCREENSHOT_CAPTURE.md).
 Se agregarán a esta sección únicamente tras inspeccionar su procedencia
 y anonimizar credenciales y rutas.
 

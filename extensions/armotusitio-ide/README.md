@@ -376,7 +376,12 @@ Al escribir `@` el compositor sugiere archivos del proyecto (hasta 50, los que c
 **Imágenes**: activá `atsHarness.imageInput` y usá `/imagen [pedido]` para elegir un PNG o JPEG del proyecto.
 El IDE valida formato, tamaño y dimensiones, abre una vista previa y pide confirmación antes de enviar los bytes.
 Requiere transporte nativo y modelo con visión. No guarda archivos temporales ni imágenes en el journal local.
-El proveedor puede conservar la imagen en su propia sesión. Pegado, arrastre, PDF y notebooks siguen pendientes.
+El proveedor puede conservar la imagen en su propia sesión.
+También podés **pegar o arrastrar** un PNG/JPEG al chat: el IDE valida los bytes por contenido (no confía en el tipo que declara la vista), muestra la vista previa y pide una confirmación modal nueva para cada imagen.
+
+**Documentos**: activá `atsHarness.documentInput` y usá `/documento` para elegir un PDF o un notebook `.ipynb` del proyecto (4 MiB como máximo).
+El texto se extrae en un worker aislado con 5 segundos y memoria acotada; se envían hasta 32 000 caracteres y 20 páginas.
+De un notebook solo se lee el código y el Markdown fuente: no se ejecuta nada ni se incluyen salidas, metadatos o adjuntos.
 
 **Diagnóstico y sesiones**: `/debug COMANDO | ERROR` propone un plan de reproducción, hipótesis, experimento y regresión.
 Los experimentos y cambios requieren aprobar el plan. `/sesiones [búsqueda]` busca conversaciones archivadas.
@@ -467,8 +472,23 @@ delegación se **rechaza** con `HARNESS_DELEGATION_BUDGET_UNVERIFIED`:
 Codex limita hijos **simultáneos**, no el número acumulado de invocaciones,
 y todavía no existe contabilidad auditable por hijo en este puente. Cada ejecución necesita la
 confirmación modal existente. Cancelar detiene el proceso supervisor del proveedor.
-La compatibilidad y cancelación de procesos descendientes requieren pruebas con la
-versión de Codex instalada; **no se declara validación autenticada ni paridad total**.
+
+Codex CLI trae `multi_agent` activado de fábrica, así que toda ejecución sin opt-in
+recibe `features.multi_agent=false` y `features.multi_agent_v2=false`. Con opt-in se
+usan `features.multi_agent=true`, `agents.max_threads=2`,
+`agents.max_concurrent_threads_per_session=2` y `agents.max_depth=1`, comprobadas
+contra Codex CLI 0.166.0 sin llamar al modelo. El IDE además corta el árbol de
+procesos del proveedor y marca la corrida como fallida ante:
+
+| Código | Motivo |
+|---|---|
+| `HARNESS_DELEGATION_CHILD_UNEXPECTED` | Apareció un subagente sin opt-in |
+| `HARNESS_DELEGATION_CHILD_DEPTH` | Un subagente intentó delegar a otro nivel |
+| `HARNESS_DELEGATION_CHILD_LIMIT` | Más de cuatro subagentes iniciados o reanudados en un turno |
+
+Dos es el límite **simultáneo** (lo aplica el CLI) y cuatro el **acumulado por turno**
+(lo aplica el IDE). **No se declara validación autenticada ni paridad total**: la
+herencia real del sandbox en los hijos requiere una corrida con cuota autorizada.
 
 
 ### Checkpoints por herramienta del chat (guardados localmente)
@@ -484,8 +504,14 @@ preexistentes, rutas sensibles, enlaces y archivos demasiado grandes quedan fuer
 Usá **ArmoTuSitio: Restaurar checkpoint de herramienta del Chat Harness** para
 seleccionar un registro y confirmar. Se verifica el lock/fence de escritura, la
 huella exacta de cada archivo y que no existan ediciones posteriores. Ante un
-conflicto, la restauración se cancela sin tocar archivos. Un error en mitad de
-la operación deja un marcador de recuperación, nunca un retry automático.
+conflicto, la restauración se cancela sin tocar archivos. Cada registro guarda el
+turno y el número de orden de su herramienta; el selector los lista del más nuevo
+al más viejo y los más antiguos se descartan al superar los 24. Un error en mitad
+de la operación deja un marcador de recuperación, nunca un retry automático: al
+confirmar otra vez el mismo checkpoint, la restauración se reanuda, da por hechos
+los archivos que ya tienen el contenido anterior y se detiene sin escribir si
+alguno fue editado después. El contenido previo se toma con los filtros de Git
+(finales de línea), para devolver los mismos bytes que escribe un checkout.
 El descarte por corrida anterior sigue disponible; los checkpoints no sustituyen
 los commits convencionales ni garantizan restauración de herramientas concurrentes.
 

@@ -41,5 +41,5 @@ No crear capturas mediante mockups o HTML recreado y presentarlas como reales.
 - Checkpoints y herramientas: cada captura debe tener prueba funcional
   asociada; una captura por sí sola no verifica aislamiento ni permisos.
 
-**Estado a 2026-11-10:** sin capturas auténticas nuevas en la rama.
+**Estado a 2026-11-10:** NO EJECUTADO. Los únicos binarios disponibles en el equipo de desarrollo son IDE 1.145.2 (commit `45d7e833c3d`), anteriores a este PR, y no sirven como evidencia. Falta construir el candidato desde el SHA final con `scripts/ats-package-windows.mts`. Sin capturas auténticas nuevas en la rama.
 El checklist permanece abierto hasta obtenerlas.

@@ -73,3 +73,15 @@ accesibilidad y seis extensiones continúan abiertas conforme a
 El PR **sigue Draft**. No declarar listo para merge ni publicar release
 antes de cerrar fallos, pruebas de instalación, las validaciones de
 permisos/cancelación y las evidencias que requieran entorno o cuota.
+
+
+## Continuación local P0–P5 — 2026-11-10 (commits sin publicar)
+
+Base `dc88a453bd9` con CI verde. Encima hay commits **locales** sin push ni CI remoto; el detalle está en el apartado "Cierre local de fases P0–P5" de `docs/CHAT_HARNESS_UPGRADE_PROGRESS.md`.
+
+- P0: Codex CLI 0.166.0 trae `multi_agent` activado; ahora se apaga explícitamente sin opt-in y un guardián corta hijos inesperados, anidados o más de cuatro por turno.
+- P1: checkpoints atribuidos por turno, ordenados por antigüedad, con bytes fieles a Git y restauración reanudable.
+- P2/P3: pruebas negativas nuevas; respuestas MCP HTTP mal formadas se informan solo por código.
+- P4/P5: **bloqueadas**. Los binarios del equipo son 1.145.2 (`45d7e833c3d`), anteriores al PR. Sin capturas.
+
+Próximas acciones: (1) publicar la rama con autorización; (2) verificar CI Linux/Windows del SHA exacto; (3) construir e instalar el candidato desde ese SHA; (4) capturas y accesibilidad según `docs/PR86_SCREENSHOT_CAPTURE.md`; (5) E2E autenticado solo con cuota autorizada. El PR sigue Draft.
