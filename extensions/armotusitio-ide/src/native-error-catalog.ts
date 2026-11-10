@@ -29,6 +29,7 @@ const EXACT: Record<string, Hint> = {
 	HARNESS_ATTACHMENT_LIMIT: t => t('El adjunto supera el l\u00edmite de tama\u00f1o o cantidad. Eleg\u00ed uno m\u00e1s peque\u00f1o.'),
 	HARNESS_DOCUMENT_CANCELLED: t => t('La lectura del documento fue cancelada y su texto no se agreg\u00f3 al chat. Seleccionalo nuevamente si quer\u00e9s reintentar.'),
 	HARNESS_DOCUMENT_INVALID: t => t('El documento no pudo validarse. Verific\u00e1 su formato y eleg\u00ed otro PDF o notebook del proyecto.'),
+	HARNESS_DOCUMENT_PARSER_NOT_PACKAGED: t => t('El paquete del IDE no contiene el parser PDF local. Reinstal\u00e1 la extensi\u00f3n desde una versi\u00f3n verificada.'),
 	HARNESS_DOCUMENT_NO_TEXT: t => t('No se encontr\u00f3 texto utilizable en el documento. Eleg\u00ed un archivo con texto seleccionable.'),
 	HARNESS_DOCUMENT_TEXT_LIMIT: t => t('El texto extra\u00eddo excede el l\u00edmite permitido. Acot\u00e1 el documento antes de adjuntarlo.'),
 	HARNESS_DOCUMENT_TIMEOUT: t => t('La extracci\u00f3n excedi\u00f3 el tiempo permitido. Prob\u00e1 con un documento m\u00e1s peque\u00f1o.'),
