@@ -8,7 +8,7 @@ const api = acquireVsCodeApi();
 const { parseMarkdown, parseInline } = require('./markdown.ts');
 const { createSuggest } = require('./composer-suggest.ts');
 
-const SECRET_LIKE = /(?:sk-|ghp_|github_pat_|xox[bap]-|AKIA)[A-Za-z0-9_-]{8,}|(?:password|passwd|secret|token|api[_-]?key)s*[:=]/i;
+const { safeChatDraft } = require('../src/native-chat-draft.ts');
 const app = document.getElementById('app');
 let L: any = null;
 let state: any = null;
@@ -135,7 +135,7 @@ function shell(): void {
 
 	const details = el('section', 'popover mcp-details'); details.id = 'mcp-details'; details.hidden = true; details.setAttribute('aria-label', L.mcp);
 	const menu = el('div', 'popover menu'); menu.id = 'menu'; menu.hidden = true; menu.setAttribute('role', 'group'); menu.setAttribute('aria-label', L.menu);
-	for (const [action, label] of [['reset', L.newChat], ['commands', L.commands], ['providerCheck', L.refreshProviders], ['setupCheck', L.setupCheck], ['openTasks', L.openTasks]]) {
+	for (const [action, label] of [['expandChat', L.expandChat], ['sidebarChat', L.sidebarChat], ['reset', L.newChat], ['commands', L.commands], ['providerCheck', L.refreshProviders], ['setupCheck', L.setupCheck], ['openTasks', L.openTasks]]) {
 		const item = el('button', 'menu-item', label) as HTMLButtonElement; item.type = 'button';
 		item.addEventListener('click', () => {
 			closePopovers();
@@ -167,9 +167,8 @@ function shell(): void {
 	(form.lastElementChild as HTMLElement).id = 'composer-hint';
 	form.addEventListener('submit', event => { event.preventDefault(); submit(input.value); });
 	// An unsent message survives the view being hidden or reloaded. Text that looks like a credential is never kept.
-	const restored = (api.getState() as { draft?: unknown } | undefined)?.draft;
-	if (typeof restored === 'string' && restored && !input.value) { input.value = restored; requestAnimationFrame(autosize); }
-	input.addEventListener('input', () => api.setState({ draft: SECRET_LIKE.test(input.value) ? '' : input.value.slice(0, L.maxMessageChars) }));
+	if (state?.project?.id) { input.value = projectDraft(state.project.id); requestAnimationFrame(autosize); }
+	input.addEventListener('input', () => retainDraft(input.value));
 	suggest = createSuggest(input, form, message => api.postMessage(message), { commands: L.commandsLabel, files: L.filesLabel, commandList: L.commandList });
 	input.addEventListener('keydown', event => {
 		if (suggest.key(event)) { event.preventDefault(); return; }
@@ -204,14 +203,29 @@ function closePopovers(): void {
 	document.getElementById('mcp-pill')?.setAttribute('aria-expanded', 'false');
 	document.getElementById('menu-button')?.setAttribute('aria-expanded', 'false');
 }
+/** Drafts are scoped by project and mirrored only after the shared credential filter. */
+function projectDraft(project: string): string {
+	const saved = api.getState() as { drafts?: Record<string, string> } | undefined;
+	const value = typeof state?.draft === 'string' ? state.draft : saved?.drafts?.[project];
+	return typeof value === 'string' ? safeChatDraft(value, L.maxMessageChars) : '';
+}
+function retainDraft(value: string, notify = true): void {
+	const project = state?.project?.id;
+	if (!project) { return; }
+	const text = safeChatDraft(value, L.maxMessageChars);
+	const saved = api.getState() as { drafts?: Record<string, string> } | undefined;
+	api.setState({ drafts: { ...saved?.drafts, [project]: text } });
+	state.draft = text;
+	if (notify) { api.postMessage({ action: 'draft', project, text }); }
+}
 function busy(): boolean { return !!state?.chat?.activity; }
 function submit(value: string): void {
 	const text = value.trim();
 	if (!text || !state?.chat) { return; }
-	api.postMessage({ action: 'send', text });
 	// An oversized message is answered with how many characters to remove; the text stays so it can be trimmed.
-	if (text.length > L.maxMessageChars) { return; }
-	const input = document.getElementById('prompt') as HTMLTextAreaElement; input.value = ''; api.setState({ draft: '' }); autosize(); suggest?.close();
+	if (text.length > L.maxMessageChars) { api.postMessage({ action: 'send', text }); return; }
+	const input = document.getElementById('prompt') as HTMLTextAreaElement; input.value = ''; retainDraft(''); autosize(); suggest?.close();
+	api.postMessage({ action: 'send', text });
 }
 
 // ---------------------------------------------------------------- provider quota
@@ -745,11 +759,24 @@ function render(): void {
 window.addEventListener('message', event => {
 	const data = event.data;
 	if (data?.type === 'completions' && data.kind === 'mention') { suggest?.complete(data); return; }
+	if (data?.type === 'draft' && data.project === state?.project?.id && typeof data.text === 'string' && L) {
+		const input = document.getElementById('prompt') as HTMLTextAreaElement;
+		input.value = safeChatDraft(data.text, L.maxMessageChars); retainDraft(input.value, false); autosize(); return;
+	}
 	if (data?.type === 'init') { L = data.labels; shell(); if (state) { render(); } return; }
 	if (data?.type === 'state') {
 		if (data.chat && data.chat.messages === undefined) { data.chat.messages = state?.chat?.messages ?? []; }
+		const changedProject = state?.project?.id !== data.project?.id;
 		state = data;
-		if (L) { render(); }
+		if (L) {
+			if (changedProject) {
+				const input = document.getElementById('prompt') as HTMLTextAreaElement;
+				input.value = data.project?.id ? projectDraft(data.project.id) : '';
+				if (input.value) { retainDraft(input.value); }
+				autosize();
+			}
+			render();
+		}
 	}
 });
 api.postMessage({ action: 'ready' });

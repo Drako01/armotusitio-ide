@@ -72,4 +72,16 @@
 - Windows cancellation tests required sandbox escalation for `taskkill` of verified fixture processes.
 - Review: secret fragmentation, ANSI, UTF-8, truncated multiline/PEM EOF and log-close handling checked.
 - Limit: secret redaction is heuristic; private file modes do not establish Windows ACL isolation.
+- Commit: `19eaad7dc28` (`fix(harness): serialize grants and redact persisted command output`).
+
+### Shared chat surfaces
+
+- DONE: sidebar `atsHarness.chat` and central editor share renderer, session map, approval pipeline and store.
+- DONE: expand/sidebar actions retain the same conversation and mirror filtered project-scoped drafts.
+- DONE: history revisions and completion responses are tracked per surface, without duplicate chat services.
+- Files: `chat.ts`, `native-chat-draft.ts`, chat resources, extension manifest and host/browser fixtures.
+- Tests: host/draft 29 PASS; new browser draft test PASS; three affected renderer regressions fixed and PASS.
+- Tests: responsive chat at widths 320/520/1100 PASS; TypeScript/resources/ten native skills check PASS.
+- Review: untrusted webview actions, project scope, credential-filtered drafts and disposable ownership checked.
+- PARTIAL: installed product, screen reader and 10k-event virtualization are not verified by browser fixtures.
 - Commit: pending local commit; record SHA in the next block.

@@ -143,7 +143,7 @@ async function panelFixture(replies, providerStatus = { claude: 'authenticated',
 	const storage = await fsp.mkdtemp(path.join(os.tmpdir(), 'ats-chat-panel-'));
 	const root = await fsp.realpath(storage);
 	const posted = [], executed = [], calls = [], instructions = [], approvals = [];
-	let receive;
+	let receive, sidebarProvider;
 	const noop = () => ({ dispose() { } });
 	const panel = { reveal() { }, onDidDispose: noop, dispose() { }, webview: { cspSource: 'csp', asWebviewUri: value => value, onDidReceiveMessage: fn => { receive = fn; return noop(); }, postMessage: async value => { posted.push(JSON.parse(JSON.stringify(value))); return true; } } };
 	const commands = new Map();
@@ -159,7 +159,7 @@ async function panelFixture(replies, providerStatus = { claude: 'authenticated',
 		l10n: { t: (text, ...args) => text.replace(/\{(\d+)\}/g, (_, i) => String(args[i])) }, ViewColumn: { One: 1 },
 		Uri: { joinPath: (base, ...parts) => base + '/' + parts.join('/'), file: fsPath => ({ fsPath }) },
 		workspace: { isTrusted: true, workspaceFolders, getConfiguration: () => ({ get: (key, fallback) => settings.get(key) ?? fallback, update: async (key, value) => { settings.set(key, value); } }) },
-		window: { createWebviewPanel: () => panel, showWarningMessage: async (_text, _options, choice) => options.confirm ? choice : undefined, showErrorMessage: async () => undefined },
+		window: { registerWebviewViewProvider: (_id, provider) => { sidebarProvider = provider; return noop(); }, createWebviewPanel: () => panel, showWarningMessage: async (_text, _options, choice) => options.confirm ? choice : undefined, showErrorMessage: async () => undefined },
 		commands: { registerCommand: (id, fn) => { commands.set(id, fn); return noop(); }, executeCommand: async (...args) => { executed.push(args); } },
 		CancellationTokenSource: class { token = { isCancellationRequested: false, onCancellationRequested: noop }; cancel() { this.token.isCancellationRequested = true; } dispose() { } }
 	};
@@ -198,7 +198,15 @@ async function panelFixture(replies, providerStatus = { claude: 'authenticated',
 		return { ...last, chat: last.chat && { ...last.chat, messages: last.chat.messages ?? messages } };
 	};
 	const cleanup = async () => { context.subscriptions.forEach(item => item.dispose()); await fsp.rm(storage, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); };
-	return { receive, state, posted, calls, executed, instructions, approvals, root, settings, cleanup };
+	const openSidebar = async () => {
+		const posted = [];
+		let receive;
+		const sidebar = { onDidDispose: noop, webview: { cspSource: 'csp', asWebviewUri: value => value, onDidReceiveMessage: fn => { receive = fn; return noop(); }, postMessage: async value => { posted.push(JSON.parse(JSON.stringify(value))); return true; } } };
+		sidebarProvider.resolveWebviewView(sidebar);
+		await receive({ action: 'ready' });
+		return { receive, posted };
+	};
+	return { receive, state, posted, calls, executed, instructions, approvals, root, settings, cleanup, openSidebar };
 }
 
 test('Chat Harness panel: converse, revise, approve and follow execution without leaving the chat', async () => {
@@ -527,5 +535,29 @@ test('"Administrar cuentas..." of the selector opens the AI Accounts tab, never 
 	try {
 		await f.receive({ action: 'accounts' });
 		assert.deepEqual(f.executed.map(call => call[0]).filter(id => String(id).startsWith('atsHarness.accounts')), ['atsHarness.accounts.open']);
+	} finally { await f.cleanup(); }
+});
+
+
+test('sidebar and editor share one conversation and drafts stay scoped, bounded and credential filtered', async () => {
+	const f = await panelFixture(['Shared answer'], undefined, { folders: 2 });
+	try {
+		await f.receive({ action: 'send', text: 'one conversation' });
+		const side = await f.openSidebar();
+		const original = f.state().chat.messages;
+		assert.deepEqual(side.posted.filter(item => item.type === 'state' && item.chat?.messages).at(-1).chat.messages.map(item => item.id), original.map(item => item.id));
+		await side.receive({ action: 'draft', project: 'file:///clientes', text: 'shared draft' });
+		assert.deepEqual(f.posted.filter(item => item.type === 'draft').at(-1), { type: 'draft', project: 'file:///clientes', text: 'shared draft' });
+		await side.receive({ action: 'draft', project: 'file:///clientes', text: 'token = synthetic-secret' });
+		assert.equal(f.posted.filter(item => item.type === 'draft').at(-1).text, '');
+		await side.receive({ action: 'draft', project: 'file:///clientes', text: 'saved in A' });
+		await side.receive({ action: 'project', id: 'file:///proyecto-1' });
+		assert.equal(f.state().draft, undefined);
+		await side.receive({ action: 'draft', project: 'file:///clientes', text: 'stale A' });
+		await side.receive({ action: 'draft', project: 'file:///proyecto-1', text: 'saved in B' });
+		await side.receive({ action: 'project', id: 'file:///clientes' });
+		assert.deepEqual({ draft: f.state().draft, conversations: f.calls.filter(call => call[0] === 'converse').length }, { draft: 'saved in A', conversations: 1 });
+		await side.receive({ action: 'expandChat' });
+		assert.deepEqual(f.executed.at(-1), ['atsIde.chat']);
 	} finally { await f.cleanup(); }
 });

@@ -232,3 +232,28 @@ test('Chat Harness quota indicator shows the shortest window of the active provi
 		assert.equal((await probe()).hidden, true);
 	} finally { await browser.close(); }
 });
+
+
+test('project drafts restore without crossing projects and sidebar commands remain keyboard accessible', async () => {
+	const browser = await launchBrowser();
+	try {
+		const page = await browser.newPage();
+		const push = await mountChat(page, undefined, { drafts: { a: 'restored A', b: 'restored B' } });
+		await push(state());
+		assert.equal(await page.locator('#prompt').inputValue(), 'restored A');
+		await page.locator('#prompt').fill('shared new draft');
+		assert.deepEqual(await page.evaluate(() => window.sent.filter(item => item.action === 'draft').at(-1)), { action: 'draft', project: 'a', text: 'shared new draft' });
+		await push({ ...state(), project: { id: 'b', name: 'second' } });
+		assert.equal(await page.locator('#prompt').inputValue(), 'restored B');
+		await push({ type: 'draft', project: 'a', text: 'stale' });
+		assert.equal(await page.locator('#prompt').inputValue(), 'restored B');
+		await push({ type: 'draft', project: 'b', text: 'mirrored B' });
+		assert.equal(await page.locator('#prompt').inputValue(), 'mirrored B');
+		await page.locator('#prompt').fill('token = synthetic-secret');
+		assert.equal(await page.evaluate(() => window.savedState.drafts.b), '');
+		await page.locator('#menu-button').click();
+		await page.getByRole('button', { name: 'Expandir Chat', exact: true }).focus();
+		await page.keyboard.press('Enter');
+		assert.equal(await page.evaluate(() => window.sent.at(-1).action), 'expandChat');
+	} finally { await browser.close(); }
+});

@@ -207,3 +207,11 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, .log:focus-v
 	.provider-status { display: none; }
 	.message.user .bubble { max-width: 100%; }
 }
+
+/* The same controls fit the narrow sidebar without changing the conversation surface. */
+@media (max-width: 480px) {
+	.brand { max-width: 100%; }
+	.brand-text { flex-wrap: wrap; gap: 4px; }
+	.controls { width: 100%; min-width: 0; }
+	.project-select, .account-select, .model-select, .effort-select, .mode-select { max-width: 100%; min-width: 0; }
+}

@@ -16,6 +16,7 @@ const html = '<!doctype html><html lang="es-AR"><head><meta charset="utf-8"><sty
 const sources = Object.fromEntries(['chat', 'markdown', 'composer-suggest'].map(name => ['./' + name + '.ts', stripTypeScriptTypes(fs.readFileSync(path.join(root, 'resources/' + name + '.ts'), 'utf8'))]));
 sources['../src/native-chat-mention-syntax.ts'] = stripTypeScriptTypes(fs.readFileSync(path.join(root, 'src/native-chat-mention-syntax.ts'), 'utf8')).replace(/export /g, '');
 sources['../src/native-chat-mention-syntax.ts'] += '\nmodule.exports = { parseMentions, activeMention, formatMention };';
+sources['../src/native-chat-draft.ts'] = stripTypeScriptTypes(fs.readFileSync(path.join(root, 'src/native-chat-draft.ts'), 'utf8')).replace(/export /g, '') + '\nmodule.exports = { safeChatDraft };';
 const t = (text, ...args) => text.replace(/\{(\d+)\}/g, (_, index) => String(args[index]));
 const plan = { version: 1, digest: 'd'.repeat(64), title: 'CRUD', summary: '', steps: ['Modelo'], files: [], risks: [], skills: [] };
 const at = new Date().toISOString();

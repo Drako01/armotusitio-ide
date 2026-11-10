@@ -11,6 +11,7 @@
 	"main": "./dist/extension.js",
 	"activationEvents": [
 		"onView:atsHarness.tasks",
+		"onView:atsHarness.chat",
 		"onCommand:atsHarness.execute",
 		"onCommand:atsHarness.accounts.open",
 		"onCommand:atsHarness.accounts.add",
@@ -393,10 +394,19 @@
 				{
 					"id": "atsHarness.tasks",
 					"name": "Harness & Agents"
+				},
+				{
+					"type": "webview",
+					"id": "atsHarness.chat",
+					"name": "Chat Harness"
 				}
 			]
 		},
 		"commands": [
+			{
+				"command": "atsIde.chatSidebar",
+				"title": "ArmoTuSitio: Abrir Chat Lateral"
+			},
 			{
 				"command": "atsHarness.nativeRemoveConfiguration",
 				"title": "ArmoTuSitio: Retirar Configuración Generada del Harness"

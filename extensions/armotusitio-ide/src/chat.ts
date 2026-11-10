@@ -19,6 +19,7 @@ const { endpoint } = require('./mcp.ts');
 const { TtlCache } = require('./native-ttl-cache.ts');
 const { chatCommands, commandHelp, runSessionCommand } = require('./native-chat-commands.ts');
 const { resolveMentions, mentionNotice, suggestMentionFiles } = require('./native-chat-mentions.ts');
+const { safeChatDraft } = require('./native-chat-draft.ts');
 const { captureTerminalOutput } = require('./native-terminal-capture.ts');
 const { resolveSkillInvocation } = require('./native-chat-skills.ts');
 const { configuredPreset } = require('./native-permissions.ts');
@@ -212,7 +213,7 @@ function labels(t: any) {
 		verification: t('Verificaciones'), verificationSkipped: t('Sin verificaciones configuradas'), duration: t('Duraci\u00f3n'), copy: t('Copiar'), copied: t('Copiado'),
 		copyMessage: t('Copiar respuesta'), partial: t('Respuesta en curso'), copyCode: t('Copiar c\u00f3digo'), activity: t('Actividad en curso'), idle: t('Sin actividad en curso'), cancelling: t('Deteniendo\u2026'),
 		setupCheck: t('Revisar mi entorno'),
-		menu: t('M\u00e1s opciones'), newChat: t('Nueva conversaci\u00f3n'), openTasks: t('Abrir panel de tareas'), refreshProviders: t('Verificar proveedores'), commands: t('Ver comandos'),
+		expandChat: t('Expandir Chat'), sidebarChat: t('Abrir Chat Lateral'), menu: t('M\u00e1s opciones'), newChat: t('Nueva conversaci\u00f3n'), openTasks: t('Abrir panel de tareas'), refreshProviders: t('Verificar proveedores'), commands: t('Ver comandos'),
 		noProject: t('Abr\u00ed una carpeta para empezar a conversar sobre su c\u00f3digo.'), untrusted: t('Este workspace no es confiable. Marcalo como confiable para conversar y ejecutar.'), hybrid: t('Este proyecto tiene su propio Harness: pod\u00e9s conversar y planificar, pero la ejecuci\u00f3n con escritura requiere habilitar \u00abatsHarness.coordinatedProjectWriters\u00bb y un motor con lease de escritura.'),
 		isolation: t('Aislamiento de escritura: {0}.', '{0}'),
 		isolationLevel: { 'os-kernel': t('kernel del sistema'), 'provider-sandbox': t('sandbox del proveedor; las lecturas fuera del proyecto no est\u00e1n confinadas'), 'tool-allowlist': t('solo permisos de herramientas del proveedor, sin sandbox del sistema operativo'), none: t('sin aislamiento') },
@@ -259,6 +260,9 @@ function registerChat(context: any, controller: any, projects: any, mcp: any, vs
 	const chosenModels = () => Object.fromEntries(Object.entries(models).map(([provider, found]) => [provider, { ...found, selected: vscode.workspace.getConfiguration('atsHarness').get(modelSetting(provider), '') }]));
 	let mcpStatus: { state: string; reason?: string; tools?: number; checkedAt?: string } = { state: 'checking' };
 	let panel: any, mcpCheck: any;
+	// Both visual surfaces share the same sessions, approvals and draft policy.
+	const surfaces = new Map<any, { key: string | undefined; revision: number }>();
+	const drafts = new Map<string, string>();
 	if (vscode.window?.createStatusBarItem) {
 		const shortcut = vscode.window.createStatusBarItem('atsHarness.chat', vscode.StatusBarAlignment.Left, 19);
 		context.subscriptions.push(shortcut);
@@ -284,22 +288,24 @@ function registerChat(context: any, controller: any, projects: any, mcp: any, vs
 		const saved = context.workspaceState?.get('atsChat.folder');
 		return folders().find((folder: any) => folder.uri.toString() === saved) || folders()[0];
 	};
-	const post = (message: any) => { void panel?.webview.postMessage(message); };
+	const post = (message: any, target?: any) => {
+		for (const surface of surfaces.keys()) { if (!target || surface === target) { void surface.webview.postMessage(message); } }
+	};
 	// Progress events are frequent; the history is resent only when it changed or the webview lost it.
-	let posted = { key: undefined, revision: -1 };
 	const publish = (folder = selectedFolder()) => {
 		const key = folder?.uri.toString();
 		const session = key && sessions.get(key);
-		let chat = session?.loaded ? session.snapshot() : null;
-		if (chat && posted.key === key && posted.revision === chat.revision) { chat = { ...chat, messages: undefined }; }
-		// The webview drops its history whenever it receives no chat, so the next one must be complete.
-		else { posted = chat ? { key, revision: chat.revision } : { key: undefined, revision: -1 }; }
-		post({
-			type: 'state', trusted: !!vscode.workspace.isTrusted, providers, models: chosenModels(), accounts, ranWith, efforts: chosenEfforts(), chatMode: chatMode(), codexFullAccess: codexFullAccess(), mcp: { ...mcpStatus, endpoint: new URL(endpoint).host, enabled: !!mcp.enabled?.() },
-			project: folder ? { name: folder.name, id: key } : null,
-			projects: folders().map((item: any) => ({ name: item.name, id: item.uri.toString() })),
-			chat
-		});
+		const chat = session?.loaded ? session.snapshot() : null;
+		for (const [surface, posted] of surfaces) {
+			const outgoing = chat && posted.key === key && posted.revision === chat.revision ? { ...chat, messages: undefined } : chat;
+			surfaces.set(surface, chat ? { key, revision: chat.revision } : { key: undefined, revision: -1 });
+			post({
+				type: 'state', trusted: !!vscode.workspace.isTrusted, providers, models: chosenModels(), accounts, ranWith, efforts: chosenEfforts(), chatMode: chatMode(), codexFullAccess: codexFullAccess(), mcp: { ...mcpStatus, endpoint: new URL(endpoint).host, enabled: !!mcp.enabled?.() },
+				project: folder ? { name: folder.name, id: key } : null,
+				projects: folders().map((item: any) => ({ name: item.name, id: item.uri.toString() })),
+				chat: outgoing, draft: key ? drafts.get(key) : undefined
+			}, surface);
+		}
 	};
 	/** A load that finishes after the user switched projects must not replace the visible one. */
 	const publishIfSelected = (folder: any) => { if (selectedFolder()?.uri.toString() === folder.uri.toString()) { publish(folder); } };
@@ -440,16 +446,25 @@ function registerChat(context: any, controller: any, projects: any, mcp: any, vs
 		if (entry?.loaded) { void entry.session.note(describeFailure(t, error), 'error').catch(() => undefined); }
 		else { void vscode.window.showErrorMessage(t('Chat Harness: {0}', harnessErrorCode(error))); }
 	};
-	const receive = async (message: any) => {
+	const receive = async (message: any, source?: any) => {
 		const folder = selectedFolder();
 		const action = message?.action;
 		if (action === 'ready') {
-			posted = { key: undefined, revision: -1 };
-			post({ type: 'init', labels: labels(t) });
+			for (const surface of surfaces.keys()) { if (!source || surface === source) { surfaces.set(surface, { key: undefined, revision: -1 }); } }
+			post({ type: 'init', labels: labels(t) }, source);
 			publish();
 			if (folder && vscode.workspace.isTrusted) { await sessionFor(folder).then(() => publishIfSelected(folder), (error: any) => report(folder, error)); }
 			return;
 		}
+		if (action === 'draft') {
+			if (!folder || !vscode.workspace.isTrusted || message.project !== folder.uri.toString() || typeof message.text !== 'string' || message.text.length > MAX_USER_MESSAGE_CHARS) { return; }
+			const text = safeChatDraft(message.text, MAX_USER_MESSAGE_CHARS);
+			drafts.set(message.project, text);
+			for (const surface of surfaces.keys()) { if (surface !== source) { post({ type: 'draft', project: message.project, text }, surface); } }
+			return;
+		}
+		if (action === 'expandChat') { await vscode.commands.executeCommand('atsIde.chat'); return; }
+		if (action === 'sidebarChat') { await vscode.commands.executeCommand('atsIde.chatSidebar'); return; }
 		if (action === 'project' && typeof message.id === 'string') {
 			const target = folders().find((item: any) => item.uri.toString() === message.id);
 			if (!target) { return; }
@@ -468,7 +483,7 @@ function registerChat(context: any, controller: any, projects: any, mcp: any, vs
 		if (action === 'openTasks') { await vscode.commands.executeCommand('atsIde.home'); return; }
 		if (action === 'setupCheck') { await vscode.commands.executeCommand('atsIde.setupCheck'); return; }
 		if (action === 'complete' && message.kind === 'mention' && typeof message.query === 'string' && message.query.length <= 300 && Number.isSafeInteger(message.seq)) {
-			if (folder && vscode.workspace.isTrusted) { post({ type: 'completions', kind: 'mention', seq: message.seq, items: await suggestFiles(folder, message.query).catch(() => []) }); }
+			if (folder && vscode.workspace.isTrusted) { post({ type: 'completions', kind: 'mention', seq: message.seq, items: await suggestFiles(folder, message.query).catch(() => []) }, source); }
 			return;
 		}
 		if (!folder) { return; }
@@ -586,24 +601,39 @@ function registerChat(context: any, controller: any, projects: any, mcp: any, vs
 			}
 		} catch (error: any) { report(folder, error); }
 	};
-	context.subscriptions.push(vscode.commands.registerCommand('atsIde.chat', () => {
-		if (panel) { panel.reveal(); return; }
-		const resources = vscode.Uri.joinPath(context.extensionUri, 'resources');
-		panel = vscode.window.createWebviewPanel('atsIde.chat', t('Chat Harness'), vscode.ViewColumn.One, { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [resources, vscode.Uri.joinPath(context.extensionUri, 'dist')] });
-		const current = panel;
+	const resources = vscode.Uri.joinPath(context.extensionUri, 'resources');
+	const surfaceOptions = { enableScripts: true, localResourceRoots: [resources, vscode.Uri.joinPath(context.extensionUri, 'dist')] };
+	/** A single renderer and receiver serve both the editor and the sidebar. */
+	const attachSurface = (current: any) => {
+		surfaces.set(current, { key: undefined, revision: -1 });
+		current.webview.options = surfaceOptions;
 		const nonce = randomBytes(24).toString('base64');
 		const uri = (name: any) => current.webview.asWebviewUri(vscode.Uri.joinPath(resources, name)).toString();
 		current.webview.html = `<!doctype html><html lang="es-AR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${current.webview.cspSource}; style-src ${current.webview.cspSource}; script-src 'nonce-${nonce}';"><link rel="stylesheet" href="${uri('chat.css')}"><title>Chat Harness</title></head><body><div id="app" class="chat-app" data-logo="${uri('logo.png')}"></div><script nonce="${nonce}" src="${current.webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'dist', 'chat.js'))}"></script></body></html>`;
-		const subscriptions = [current.webview.onDidReceiveMessage((message: any) => receive(message).catch(error => report(selectedFolder(), error)))];
-		// A status older than five minutes is re-verified when the panel becomes visible again.
-		subscriptions.push(current.onDidChangeViewState?.((event: any) => {
+		const subscriptions = [current.webview.onDidReceiveMessage((message: any) => receive(message, current).catch(error => report(selectedFolder(), error)))];
+		const refreshVisible = (visible: boolean) => {
 			const age = mcpStatus.checkedAt ? Date.now() - Date.parse(mcpStatus.checkedAt) : Infinity;
-			if (event.webviewPanel.visible && mcpStatus.state !== 'checking' && age > 5 * 60 * 1000) { void refreshMcp(); }
-		}) ?? { dispose() { } });
-		subscriptions.push(current.onDidDispose(() => { mcpCheck?.cancel(); panel = undefined; subscriptions.forEach(item => item.dispose()); }));
+			if (visible && mcpStatus.state !== 'checking' && age > 5 * 60 * 1000) { void refreshMcp(); }
+		};
+		subscriptions.push(current.onDidChangeViewState?.((event: any) => refreshVisible(event.webviewPanel.visible)) ?? current.onDidChangeVisibility?.(() => refreshVisible(current.visible)) ?? { dispose() { } });
+		subscriptions.push(current.onDidDispose(() => {
+			surfaces.delete(current);
+			if (panel === current) { panel = undefined; }
+			subscriptions.forEach(item => item.dispose());
+		}));
 		void refreshProviders();
 		void refreshMcp();
+	};
+	context.subscriptions.push(vscode.commands.registerCommand('atsIde.chat', () => {
+		if (panel) { panel.reveal(); return; }
+		panel = vscode.window.createWebviewPanel('atsIde.chat', t('Chat Harness'), vscode.ViewColumn.One, { ...surfaceOptions, retainContextWhenHidden: true });
+		attachSurface(panel);
 	}));
+	context.subscriptions.push(vscode.commands.registerCommand('atsIde.chatSidebar', () => vscode.commands.executeCommand('atsHarness.chat.focus')));
+	if (vscode.window?.registerWebviewViewProvider) {
+		context.subscriptions.push(vscode.window.registerWebviewViewProvider('atsHarness.chat', { resolveWebviewView: attachSurface }, { webviewOptions: { retainContextWhenHidden: true } }));
+	}
+
 	if (vscode.workspace.onDidChangeConfiguration) {
 		context.subscriptions.push(vscode.workspace.onDidChangeConfiguration((event: any) => {
 			if (['codex', 'claude'].some(provider => event.affectsConfiguration('atsHarness.' + modelSetting(provider)))) { providerCache.invalidate(); }
@@ -613,19 +643,19 @@ function registerChat(context: any, controller: any, projects: any, mcp: any, vs
 			}
 			if (event.affectsConfiguration('atsHarness.codexSandbox')) {
 				useCodexSandbox(vscode.workspace.getConfiguration('atsHarness').get('codexSandbox'));
-				if (panel) { publish(); }
+				if (surfaces.size) { publish(); }
 			}
-			if (panel && event.affectsConfiguration('atsHarness.chatMode')) { publish(); }
-			if (panel && ['codex', 'claude'].some(provider => event.affectsConfiguration('atsHarness.' + modelSetting(provider)) || event.affectsConfiguration('atsHarness.' + effortSetting(provider)))) { publish(); }
+			if (surfaces.size && event.affectsConfiguration('atsHarness.chatMode')) { publish(); }
+			if (surfaces.size && ['codex', 'claude'].some(provider => event.affectsConfiguration('atsHarness.' + modelSetting(provider)) || event.affectsConfiguration('atsHarness.' + effortSetting(provider)))) { publish(); }
 			// Writer settings apply immediately: the plan card re-reads the project facts instead of asking for a reload.
 			if (['atsHarness.coordinatedProjectWriters', 'atsHarness.writerIsolation', 'atsHarness.promptBudgetKiB'].some(setting => event.affectsConfiguration(setting))) {
 				for (const entry of sessions.values()) { if (entry.loaded) { void entry.session.refreshContext(); } }
 			}
 		}));
 	}
-	if (mcp.onDidChange) { context.subscriptions.push(mcp.onDidChange(() => { if (panel) { void refreshMcp(); } })); }
+	if (mcp.onDidChange) { context.subscriptions.push(mcp.onDidChange(() => { if (surfaces.size) { void refreshMcp(); } })); }
 	if (vscode.workspace.onDidGrantWorkspaceTrust) { context.subscriptions.push(vscode.workspace.onDidGrantWorkspaceTrust(() => { publish(); void receive({ action: 'ready' }); })); }
-	context.subscriptions.push({ dispose() { for (const entry of sessions.values()) { entry.session?.cancel(); } mcpCheck?.cancel(); panel?.dispose(); } });
+	context.subscriptions.push({ dispose() { for (const entry of sessions.values()) { entry.session?.cancel(); } mcpCheck?.cancel(); for (const surface of surfaces.keys()) { surface.dispose?.(); } surfaces.clear(); drafts.clear(); } });
 	/** Select a project in the chat and show it; Inicio uses this so both views share one conversation. */
 	const focus = async (folder: any) => {
 		await context.workspaceState?.update('atsChat.folder', folder.uri.toString());
