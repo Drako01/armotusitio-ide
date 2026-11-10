@@ -167,7 +167,6 @@ function shell(): void {
 	const media = el('div', 'pending-media'); media.id = 'pending-media'; media.setAttribute('aria-live', 'polite'); media.hidden = true;
 	box.append(input, stop, send);
 	form.append(media, box, el('p', 'hint', L.keyboard));
-	drawStagedImage();
 	const capture = (file: File | undefined): void => {
 		if (!file || !state?.trusted) { return; }
 		if (file.type !== 'image/png' && file.type !== 'image/jpeg') { return; }
@@ -211,6 +210,7 @@ function shell(): void {
 	input.addEventListener('input', () => suggest.update());
 	input.addEventListener('blur', () => suggest.close());
 	app.append(header, details, menu, banner, log, approvals, activity, announcer, form);
+	drawStagedImage();
 }
 // Registered once: `shell()` runs again whenever the host re-sends labels.
 document.addEventListener('keydown', event => {
