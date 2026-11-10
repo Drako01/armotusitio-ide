@@ -1,6 +1,9 @@
 **
 !package.json
 !dist/*.js
+!dist/*.mjs
+!dist/pdfjs/*.mjs
+!dist/pdfjs/LICENSE
 !resources/*.css
 !resources/*.png
 !resources/*.svg
