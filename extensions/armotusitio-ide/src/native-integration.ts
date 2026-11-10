@@ -463,7 +463,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 		};
 	};
 	/** Every IDE agent draft: read-only unless implementing, with the model and effort chosen for its provider. */
-	const codexReadonlyOptIn = (): boolean => vscode.workspace.getConfiguration('atsHarness').inspect('codexReadOnlySubagents')?.globalValue === true;
+	const codexReadonlyOptIn = (): boolean => vscode.workspace.getConfiguration('atsHarness').inspect?.('codexReadOnlySubagents')?.globalValue === true;
 	const draftOf = (root: string, provider: NativeProvider, role: AgentRole, instruction: string, extra: Pick<AgentDraft, 'maxTurns' | 'resumeSession' | 'nativeSubagents'> = {}): AgentDraft =>
 		({ schemaVersion: 1, provider, role, projectRoot: root, instruction, readOnly: role !== 'implementer', ...modelOption(modelFor(provider)), ...effortOption(effortFor(provider)), ...(webSearchOn(root) ? { webSearch: true } : {}),
 			...(provider === 'codex' && role !== 'implementer' && !webSearchOn(root) && codexReadonlyOptIn() ? { nativeSubagents: true } : {}), ...extra });

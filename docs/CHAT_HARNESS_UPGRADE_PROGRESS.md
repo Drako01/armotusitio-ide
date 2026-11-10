@@ -279,3 +279,11 @@
 
 - Se observó un commit concurrente `c6143f7` que añadió el mismo `npm ci --prefix extensions` a Linux/Windows mientras se preparaba el fix `b5dd91f`. El workflow resultante contenía cada instalación dos veces; se deduplicó en la misma rama y se conservó una instalación fijada por lockfile en cada SO.
 - El nuevo CI debe validarse sobre el SHA de este commit. No se usa `--force`, no se reescribe historial ni se toca `main`.
+
+
+### Fix: host mocks sin API inspect — 2026-11-10
+
+- **Base fallida:** [run 42914858122](https://github.com/Drako01/armotusitio-ide/actions/runs/42914858122) sobre `316904e0a73cdc097cbb9c1865d059957bc00180`, contrato Linux FAIL con 11 tests: `Cannot read properties of undefined (reading 'digest')`, `content`, y `getConfiguration(...).inspect is not a function`. Windows aún no concluyó en el instante de este cambio; no se declara PASS.
+- **Causa raíz comprobable:** la nueva preferencia de subagentes usa `inspect()` en `native-integration.ts`, pero varios hosts falsos de regresión solo implementan `get()`. El acceso lanzaba `TypeError` antes de ejecutar las rutas normales, causando múltiples fallos en cascada.
+- **Corrección:** uso conservador de `inspect?.()` para mantener desactivados los hijos cuando el host no expone la inspección de ámbito. Un proyecto no puede activar la opción por omisión; con la API real se sigue exigiendo `globalValue === true`.
+- **Validación:** PENDING para el nuevo SHA; los 11 tests anteriores siguen contados FAIL en el histórico, no se cambia el CI ni se desactivan tests. Próxima acción: comprobar Linux/Windows y `ATS gate` del último SHA.
