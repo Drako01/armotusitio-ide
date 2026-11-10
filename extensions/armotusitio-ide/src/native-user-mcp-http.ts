@@ -49,7 +49,10 @@ export async function withHttpMcp<T>(entry: HttpLaunch, options: { signal: Abort
 			const decoder = new TextDecoder('utf-8', { fatal: true });
 			let serverRequests = 0;
 			const decode = async (raw: string): Promise<R | undefined> => {
-				const value = JSON.parse(raw) as { jsonrpc?: string; id?: number | string; method?: unknown; result?: R; error?: object };
+				// A parser error quotes the response body; a malformed reply is reported by code only.
+				let value: { jsonrpc?: string; id?: number | string; method?: unknown; result?: R; error?: object };
+				try { value = JSON.parse(raw) as typeof value; }
+				catch { throw Error('HARNESS_MCP_PROTOCOL'); }
 				if (!value || value.jsonrpc !== '2.0') { throw Error('HARNESS_MCP_PROTOCOL'); }
 				if (typeof value.method === 'string') {
 					// Server notifications may be observed, but never grant new tools, model calls, roots or permissions.

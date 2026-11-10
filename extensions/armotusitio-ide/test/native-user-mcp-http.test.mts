@@ -34,7 +34,7 @@ async function fixture(mode = 'json') {
 		} else if (mode === 'sse') {
 			// Leave the stream open: the client must complete at the matching message, not at EOF.
 			response.write(': keepalive\r\n\r\ndata: ' + payload + '\r\n\r\n');
-		} else { response.end(mode === 'large' ? 'x'.repeat(270 * 1024) : payload); }
+		} else { response.end(mode === 'large' ? 'x'.repeat(270 * 1024) : mode === 'malformed' ? '{"leaked":"synthetic-response-secret' : payload); }
 	});
 	server.listen(0, '127.0.0.1'); await once(server, 'listening');
 	const address = server.address(); assert.ok(address && typeof address !== 'string');
@@ -82,12 +82,13 @@ test('disposing cancels an active HTTP discovery without dispatching a tool', as
 	} finally { await f.close(); }
 });
 
-for (const mode of ['redirect', 'wrong-id', 'large', 'hang']) {
+for (const mode of ['redirect', 'wrong-id', 'large', 'hang', 'malformed']) {
 	test(`HTTP ${mode} fails closed without tool dispatch`, async () => {
 		const f = await fixture(mode);
 		try {
 			assert.deepEqual(await f.bridge.tools(), []);
 			assert.equal(f.bridge.diagnostics().length, 1);
+			assert.equal(JSON.stringify(f.bridge.diagnostics()).includes('synthetic-response-secret'), false);
 			assert.equal(f.requests.length, 1); assert.equal(f.calls(), 0);
 		} finally { await f.close(); }
 	});

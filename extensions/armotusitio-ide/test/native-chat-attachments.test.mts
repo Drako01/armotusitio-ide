@@ -1,8 +1,8 @@
 /*---------------------------------------------------------------------------------------------
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
- *  ArmoTuSitio integration: Alejandro Daniel Di Stefano - ArmoTuSitio.com.ar.
  *--------------------------------------------------------------------------------------------*/
+/** ArmoTuSitio integration: Alejandro Daniel Di Stefano - ArmoTuSitio.com.ar. */
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
@@ -117,5 +117,30 @@ test('document reads reject sensitive, outside and oversized paths', async () =>
 		await fs.writeFile(outside, '%PDF-outside');
 		try { await assert.rejects(readBoundedDocument(root, outside), /HARNESS_ATTACHMENT_INVALID/); }
 		finally { await fs.rm(outside, { force: true }); }
+	});
+});
+
+test('a document worker that hangs, exhausts memory, exits or answers out of contract never yields text', async () => {
+	await fixture(async root => {
+		const file = path.join(root, 'doc.pdf');
+		await fs.writeFile(file, tinyPdf('bounded'));
+		const hostile = async (name: string, source: string): Promise<string> => {
+			const workerFile = path.join(root, name + '.mjs');
+			await fs.writeFile(workerFile, 'import { parentPort } from "node:worker_threads";\n' + source);
+			const started = Date.now();
+			const outcome = await extractChatDocument(root, file, { ...files, workerFile }).then(() => 'accepted', error => (error as Error).message);
+			return outcome + (Date.now() - started < 9000 ? '' : ' (slow)');
+		};
+		assert.deepEqual({
+			hangs: await hostile('hang', 'setInterval(() => undefined, 1000);'),
+			memory: await hostile('memory', 'const hoard = []; while (true) { hoard.push(new Array(1e6).fill(1)); }'),
+			exits: await hostile('exit', 'process.exit(0);'),
+			oversized: await hostile('oversized', 'parentPort.postMessage({ text: "x".repeat(32001) });'),
+			foreignError: await hostile('foreign', 'parentPort.postMessage({ error: "C:/Users/private/secret.pdf failed" });'),
+			emptyText: await hostile('empty', 'parentPort.postMessage({ text: "   " });')
+		}, {
+			hangs: 'HARNESS_DOCUMENT_TIMEOUT', memory: 'HARNESS_DOCUMENT_WORKER_FAILED', exits: 'HARNESS_DOCUMENT_WORKER_EXIT',
+			oversized: 'HARNESS_DOCUMENT_WORKER_FAILED', foreignError: 'HARNESS_DOCUMENT_WORKER_FAILED', emptyText: 'HARNESS_DOCUMENT_WORKER_FAILED'
+		});
 	});
 });

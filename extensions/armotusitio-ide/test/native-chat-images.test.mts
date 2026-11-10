@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { chooseChatImage, readChatImage, validateChatImages, MAX_IMAGE_BYTES } from '../src/native-chat-images.ts';
+import { chatImageFromData, chooseChatImage, readChatImage, validateChatImages, MAX_IMAGE_BYTES } from '../src/native-chat-images.ts';
 import { harness } from './native-runtime-harness.mts';
 
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64');
@@ -57,3 +57,31 @@ for (const provider of ['codex', 'claude'] as const) {
 		} finally { await h.close(); }
 	});
 }
+
+test('pasted or dropped image bytes are validated by content on the host, whatever the webview declares', () => {
+	const now = 1_000_000;
+	const data = PNG.toString('base64');
+	const image = chatImageFromData('image/png', data, now);
+	const code = (run: () => unknown): string => { try { run(); return 'accepted'; } catch (error) { return (error as Error).message; } };
+	// IHDR declaring 20000 x 20000 pixels: valid structure, refused before any decoder sees it.
+	const huge = Buffer.from(PNG); huge.writeUInt32BE(20000, 16); huge.writeUInt32BE(20000, 20);
+	assert.deepEqual({
+		accepted: [image.mime, image.expiresAt - now, Buffer.from(image.data, 'base64').equals(PNG)],
+		wrongMime: code(() => chatImageFromData('image/jpeg', data, now)),
+		unsupportedMime: code(() => chatImageFromData('image/svg+xml', data, now)),
+		notBase64: code(() => chatImageFromData('image/png', '<svg onload=alert(1)>', now)),
+		paddedBase64: code(() => chatImageFromData('image/png', data.replace(/=+$/, '') + 'A===', now)),
+		truncated: code(() => chatImageFromData('image/png', PNG.subarray(0, PNG.length - 12).toString('base64'), now)),
+		trailingBytes: code(() => chatImageFromData('image/png', Buffer.concat([PNG, Buffer.from('<script>')]).toString('base64'), now)),
+		oversized: code(() => chatImageFromData('image/png', 'A'.repeat(Math.ceil(MAX_IMAGE_BYTES / 3) * 4 + 4), now)),
+		dimensions: code(() => chatImageFromData('image/png', huge.toString('base64'), now)),
+		empty: code(() => chatImageFromData('image/png', '', now)),
+		nonString: code(() => chatImageFromData('image/png', { data }, now)),
+		expired: code(() => validateChatImages([image], image.expiresAt + 1))
+	}, {
+		accepted: ['image/png', 10 * 60 * 1000, true],
+		wrongMime: 'HARNESS_IMAGE_INVALID', unsupportedMime: 'HARNESS_IMAGE_INVALID', notBase64: 'HARNESS_IMAGE_INVALID', paddedBase64: 'HARNESS_IMAGE_INVALID',
+		truncated: 'HARNESS_IMAGE_INVALID', trailingBytes: 'HARNESS_IMAGE_INVALID', oversized: 'HARNESS_IMAGE_INVALID', dimensions: 'HARNESS_IMAGE_DIMENSIONS',
+		empty: 'HARNESS_IMAGE_INVALID', nonString: 'HARNESS_IMAGE_INVALID', expired: 'HARNESS_IMAGE_INVALID'
+	});
+});
