@@ -17,20 +17,27 @@ jobs:
     outputs:
       relevant: ${{ steps.filter.outputs.relevant }}
     steps:
+      # The classifier is executable policy: read it from the trusted base, never the PR head.
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .nvmrc
       - name: Detect changes to the ATS extension, its tooling or the toolchain
         id: filter
         env:
           GH_TOKEN: ${{ github.token }}
           EVENT: ${{ github.event_name }}
           FILES_URL: repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files
+          EXPECTED_FILES: ${{ github.event.pull_request.changed_files }}
         run: |
           if [ "$EVENT" != 'pull_request' ]; then echo 'relevant=true' >> "$GITHUB_OUTPUT"; exit 0; fi
-          files=$(gh api --paginate "$FILES_URL" --jq '.[].filename')
-          if echo "$files" | grep -Eq '^(extensions/armotusitio-ide/|scripts/ats-|release\.sh$|\.github/workflows/ats-|package(-lock)?\.json$|\.nvmrc$)'; then
-            echo 'relevant=true' >> "$GITHUB_OUTPUT"
-          else
-            echo 'relevant=false' >> "$GITHUB_OUTPUT"
-          fi
+          # During the first policy rollout, absence in the base enables all contracts.
+          if [ ! -f scripts/ats-ci-changes.mts ]; then echo 'relevant=true' >> "$GITHUB_OUTPUT"; exit 0; fi
+          gh api --paginate --slurp "$FILES_URL" > "$RUNNER_TEMP/ats-files.json"
+          node scripts/ats-ci-changes.mts "$RUNNER_TEMP/ats-files.json" "$EXPECTED_FILES"
   contract:
     needs: changes
     if: needs.changes.outputs.relevant == 'true'
@@ -49,7 +56,7 @@ jobs:
       - name: Contract tests
         run: npm test --prefix extensions/armotusitio-ide
       - name: Release tooling tests
-        run: node --test scripts/ats-release-ci.test.mts
+        run: node --test scripts/ats-release-ci.test.mts scripts/ats-ci-changes.test.mts
   # The extension runs on Windows, and Windows-only failures (the "Path" spelling of PowerShell, 8.3 temp folders, folders still held by
   # a child process) used to surface only in the release job, after an hour of compiling. Same shell as the release validation (pwsh).
   contract-windows:
@@ -71,6 +78,8 @@ jobs:
           TEMP: ${{ runner.temp }}
           TMP: ${{ runner.temp }}
         run: npm test --prefix extensions/armotusitio-ide
+      - name: Release tooling tests on Windows
+        run: node --test scripts/ats-release-ci.test.mts scripts/ats-ci-changes.test.mts
   # Required status check. A skipped contract job is fine only when `changes` found nothing relevant; a failed, cancelled or
   # skipped-by-error dependency fails the gate.
   gate:
@@ -92,6 +101,8 @@ jobs:
           if [ "$RELEVANT" = 'true' ]; then
             [ "$CONTRACT" = 'success' ] || { echo '::error::Contract suite did not pass.'; exit 1; }
             [ "$CONTRACT_WINDOWS" = 'success' ] || { echo '::error::Windows contract suite did not pass.'; exit 1; }
-          else
+          elif [ "$RELEVANT" = 'false' ]; then
             [ "$CONTRACT" = 'skipped' ] && [ "$CONTRACT_WINDOWS" = 'skipped' ] || { echo '::error::Contract suites should have been skipped.'; exit 1; }
+          else
+            echo '::error::Change detection returned an invalid classification.'; exit 1
           fi
