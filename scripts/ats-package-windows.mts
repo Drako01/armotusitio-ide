@@ -56,7 +56,7 @@ async function main(): Promise<void> {
 	try {
 		await access(path.join(path.dirname(require.resolve('@types/node/package.json')), 'index.d.ts'));
 	} catch {
-		throw new Error('Node type definitions are missing. Run npm install in the repository root, wait for it to finish, then retry.');
+		throw new Error('Node type definitions are missing. Run pnpm install --frozen-lockfile in the repository root, wait for it to finish, then retry.');
 	}
 	await execute([path.join(path.dirname(require.resolve('@typescript/native/package.json')), 'bin', 'tsc'), '--project', 'extensions/armotusitio-ide/tsconfig.json', '--noEmit', '--pretty', 'false']);
 	await configureWindowsSdk();
