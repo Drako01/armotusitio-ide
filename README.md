@@ -28,7 +28,7 @@ Este fork conserva los avisos y la licencia MIT de [Microsoft Code - OSS](https:
    desde `Ctrl+Shift+P`. También podés usar el panel lateral o `@harness`.
 
 La rama de trabajo del [PR #86](https://github.com/Drako01/armotusitio-ide/pull/86)
-incorpora el upgrade de Code - OSS a 1.145.3 y el alcance resumido abajo.
+incorpora el upgrade de Code - OSS a 1.146.0 y el alcance resumido abajo.
 **Es código en revisión, no una release instalada ni evidencia de aprobación.**
 
 ## Chat Harness: funciones y límites

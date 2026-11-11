@@ -49,10 +49,12 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
+          cache-dependency-path: extensions/armotusitio-ide/package-lock.json
+      - uses: ./.github/actions/setup-pnpm
       - name: Install the pinned TypeScript toolchain and Node types (no install scripts)
-        run: npm ci --ignore-scripts --no-audit --no-fund
+        run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Install shared extension build dependencies (pinned esbuild)
-        run: npm ci --prefix extensions --ignore-scripts --no-audit --no-fund
+        run: pnpm --dir extensions install --frozen-lockfile --ignore-scripts
       - name: Install pinned offline PDF parser (no native optional dependencies)
         run: npm ci --prefix extensions/armotusitio-ide --ignore-scripts --omit=optional --no-audit --no-fund
       - name: Syntax checks
@@ -78,10 +80,12 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
+          cache-dependency-path: extensions/armotusitio-ide/package-lock.json
+      - uses: ./.github/actions/setup-pnpm
       - name: Install the pinned TypeScript toolchain and Node types (no install scripts)
-        run: npm ci --ignore-scripts --no-audit --no-fund
+        run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Install shared extension build dependencies (pinned esbuild)
-        run: npm ci --prefix extensions --ignore-scripts --no-audit --no-fund
+        run: pnpm --dir extensions install --frozen-lockfile --ignore-scripts
       - name: Install pinned offline PDF parser on Windows
         run: npm ci --prefix extensions/armotusitio-ide --ignore-scripts --omit=optional --no-audit --no-fund
       - name: Windows syntax and worker typechecks

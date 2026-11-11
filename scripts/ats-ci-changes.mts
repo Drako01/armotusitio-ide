@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 
 /** Inputs that can change the Harness, packaged product, updater or its validation. */
 export function isAtsInput(file: string): boolean {
-	return /^(extensions\/armotusitio-ide\/|extensions\/[^/]+\/package(-lock)?\.json$|scripts\/ats-|release\.sh$|\.github\/workflows\/ats-|package(-lock)?\.json$|product\.json$|\.nvmrc$|\.npmrc$|build\/|remote\/(package(-lock)?\.json|\.npmrc)$|resources\/(win32|linux|darwin)\/|src\/vs\/platform\/update\/|src\/vs\/workbench\/contrib\/update\/)/.test(file);
+	return /^(extensions\/armotusitio-ide\/|extensions\/[^/]+\/package(-lock)?\.json$|scripts\/ats-|release\.sh$|\.github\/workflows\/ats-|package(-lock)?\.json$|pnpm-(lock|workspace)\.yaml$|\.pnpmfile\.mjs$|product\.json$|\.nvmrc$|\.npmrc$|build\/|remote\/(package(-lock)?\.json|pnpm-(lock|workspace)\.yaml|\.pnpmfile\.mjs|\.npmrc)$|resources\/(win32|linux|darwin)\/|src\/vs\/platform\/update\/|src\/vs\/workbench\/contrib\/update\/)/.test(file);
 }
 
 /** GitHub lists at most this many files of a pull request, however many it changes. */

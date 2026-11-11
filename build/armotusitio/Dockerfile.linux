@@ -2,6 +2,7 @@
 FROM ubuntu:22.04
 ARG DEBIAN_FRONTEND=noninteractive
 ARG NODE_VERSION
+ARG PNPM_VERSION
 ARG TARGETARCH
 # Package mirrors drop connections now and then; retry instead of failing a multi-hour build.
 RUN echo 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/80-ats-retries && echo 'Acquire::http::Timeout "30";' >> /etc/apt/apt.conf.d/80-ats-retries
@@ -22,7 +23,9 @@ RUN set -eu; case "$TARGETARCH" in amd64) arch=x64;; arm64) arch=arm64;; *) exit
     tar -xJf "$file" -C /usr/local --strip-components=1; rm "$file"; \
     update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-12 100; \
     update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-12 100
-ENV PATH="/usr/lib/ccache:${PATH}" CCACHE_DIR=/cache/ccache npm_config_cache=/cache/npm \
+# The pnpm version is the one pinned by the packageManager field of the root package.json.
+RUN npm install -g "pnpm@${PNPM_VERSION}"
+ENV PATH="/usr/lib/ccache:${PATH}" CCACHE_DIR=/cache/ccache npm_config_cache=/cache/npm npm_config_store_dir=/cache/pnpm \
     ELECTRON_SKIP_BINARY_DOWNLOAD=1 NODE_OPTIONS=--max-old-space-size=8192
 # Keep root only for initial permission reconciliation of persistent Docker volumes.
 # All package installs, compilation and Electron cache generation run as a real user.

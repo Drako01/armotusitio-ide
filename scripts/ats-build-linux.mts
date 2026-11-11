@@ -77,7 +77,8 @@ export async function buildLinux(architectures = ['x64', 'arm64'], root = path.r
 		if (await run('git', ['status', '--porcelain', '--untracked-files=no'], root)) { throw new Error('Linux builds require clean tracked sources.'); }
 		const commit = await run('git', ['rev-parse', 'HEAD'], root);
 		const nodeVersion = (await readFile(path.join(root, '.nvmrc'), 'utf8')).trim();
-		if (!/^[a-f0-9]{40}$/.test(commit) || !/^\d+\.\d+\.\d+$/.test(nodeVersion)) { throw new Error('Invalid build identity.'); }
+		const pnpmVersion = /^pnpm@(\d+\.\d+\.\d+)$/.exec(JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8')).packageManager ?? '')?.[1];
+		if (!/^[a-f0-9]{40}$/.test(commit) || !/^\d+\.\d+\.\d+$/.test(nodeVersion) || !pnpmVersion) { throw new Error('Invalid build identity.'); }
 		const directory = path.join(root, '.build', 'ats-linux', commit);
 		const output = path.join(root, '.build', 'releases');
 		await mkdir(directory, { recursive: true }); await mkdir(output, { recursive: true });
@@ -90,8 +91,8 @@ export async function buildLinux(architectures = ['x64', 'arm64'], root = path.r
 		for (const arch of architectures) {
 			if (resume && await reusableLinux(output, commit, version, arch)) { console.log(`Reusing verified Linux ${arch} artifacts at ${commit}`); continue; }
 			const platform = arch === 'x64' ? 'linux/amd64' : 'linux/arm64';
-			const image = `armotusitio-build:ubuntu22-node${nodeVersion}-${arch}`;
-			await execute(['build', '--platform', platform, '--build-arg', `NODE_VERSION=${nodeVersion}`, '-f', 'build/armotusitio/Dockerfile.linux', '-t', image, 'build/armotusitio'], root);
+			const image = `armotusitio-build:ubuntu22-node${nodeVersion}-pnpm${pnpmVersion}-${arch}`;
+			await execute(['build', '--platform', platform, '--build-arg', `NODE_VERSION=${nodeVersion}`, '--build-arg', `PNPM_VERSION=${pnpmVersion}`, '-f', 'build/armotusitio/Dockerfile.linux', '-t', image, 'build/armotusitio'], root);
 			const cache = process.env.ATS_LINUX_BIND_CACHE === '1' ? path.join(root, '.build', 'cache', 'linux', arch) : undefined;
 			if (cache) { await mkdir(cache, { recursive: true }); }
 			const runArgs = linuxRunArgs(arch, commit, { source, output, logs: directory, cache }, image, !!sysrootToken);

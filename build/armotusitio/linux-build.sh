@@ -29,8 +29,8 @@ fi
 # The source volume is scoped to commit and architecture. A failed install never writes this marker.
 if [[ ! -f /work/dependencies-ready ]]; then
     # Bootstrap JS tooling before the upstream Electron/Node compiler setup.
-    npm ci --ignore-scripts --no-audit --no-fund
-    npm ci --prefix build --ignore-scripts --no-audit --no-fund
+    pnpm install --frozen-lockfile --ignore-scripts
+    pnpm --dir build install --frozen-lockfile --ignore-scripts
     export npm_config_arch="$ATS_LINUX_ARCH" VSCODE_ARCH="$ATS_LINUX_ARCH"
     if [[ "$ATS_LINUX_ARCH" == arm64 && "$(uname -m)" == aarch64 ]]; then
         # Upstream ships an x86_64 cross toolchain for arm64; it cannot run on a native arm64 host
@@ -43,7 +43,7 @@ if [[ ! -f /work/dependencies-ready ]]; then
     fi
     # Match upstream ordering: install and patch headers before native modules run in parallel.
     node build/npm/preinstall.ts
-    npm ci --no-audit --no-fund
+    pnpm install --frozen-lockfile
     touch /work/dependencies-ready
 fi
 # The release container does not inherit the extension-only dependencies installed by PR CI.

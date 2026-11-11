@@ -27,7 +27,7 @@
 		"revision": 1
 	},
 	"armotusitioUpstream": {
-		"ref": "1.145.3",
-		"commit": "dcd3ad6e368fbe19d03f37054a40dbaf40d676f4"
+		"ref": "1.146.0",
+		"commit": "69047191fc427f2f92828279aae1d90d8eeda7ab"
 	}
 }

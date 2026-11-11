@@ -532,9 +532,12 @@ export async function withFileLock<T>(lock: string, work: () => Promise<T>): Pro
 	for (; ;) {
 		try { await fs.writeFile(lock, owner, { flag: 'wx', mode: 0o600 }); break; }
 		catch (error) {
-			if ((error as NodeJS.ErrnoException).code !== 'EEXIST') { throw error; }
-			if (await removeAbandonedLock(lock)) { continue; }
-			if (Date.now() > deadline) { throw Error('HARNESS_CHAT_STATE_BUSY'); }
+			const code = (error as NodeJS.ErrnoException).code;
+			// Windows reports a lock that its owner is still deleting as EPERM (delete pending), not EEXIST.
+			const deleting = code === 'EPERM' && process.platform === 'win32';
+			if (code !== 'EEXIST' && !deleting) { throw error; }
+			if (!deleting && await removeAbandonedLock(lock)) { continue; }
+			if (Date.now() > deadline) { throw deleting ? error : Error('HARNESS_CHAT_STATE_BUSY'); }
 			await new Promise(resolve => setTimeout(resolve, 15));
 		}
 	}
