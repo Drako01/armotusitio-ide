@@ -75,7 +75,7 @@ jobs:
       - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684
         with:
           path: .build/cache/linux/${{ matrix.arch }}
-          key: ats-linux-${{ matrix.arch }}-${{ hashFiles('.nvmrc', 'package-lock.json', 'remote/package-lock.json', 'build/package-lock.json', 'remote/.npmrc') }}
+          key: ats-linux-${{ matrix.arch }}-${{ hashFiles('.nvmrc', 'package.json', 'pnpm-lock.yaml', 'remote/pnpm-lock.yaml', 'build/pnpm-lock.yaml', '**/pnpm-workspace.yaml') }}
       - name: Build isolated Ubuntu 22.04 artifacts
         env:
           ATS_LINUX_BIND_CACHE: '1'
@@ -109,14 +109,14 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version-file: .nvmrc
-          cache: npm
+      - uses: ./.github/actions/setup-pnpm
       - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684
         with:
           path: |
             **/node_modules
             .build/npm
-          key: ats-windows-x64-${{ hashFiles('.nvmrc', '**/.npmrc', '**/package-lock.json', 'build/npm/**') }}
-      - name: Restore verified dependencies or install the exact lockfiles
+          key: ats-windows-x64-${{ hashFiles('.nvmrc', 'package.json', '**/pnpm-lock.yaml', '**/pnpm-workspace.yaml', '**/.pnpmfile.mjs', 'extensions/armotusitio-ide/package-lock.json', 'build/npm/**') }}
+      - name: Install the exact lockfiles
         shell: pwsh
         env:
           npm_config_arch: x64
@@ -126,17 +126,12 @@ jobs:
           # Same as upstream CI: authenticated downloads avoid the GitHub API rate limit of shared runners.
           GITHUB_TOKEN: ${{ github.token }}
         run: |
-          node --input-type=module -e "import { isUpToDate } from './build/npm/installStateHash.ts'; process.exit(isUpToDate() ? 0 : 1)"
-          if ($LASTEXITCODE -eq 0) {
-            npm run install-fast
-            exit $LASTEXITCODE
-          }
           node build/npm/preinstall.ts
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           for ($attempt = 1; $attempt -le 3; $attempt++) {
-            npm ci --no-audit --no-fund
+            pnpm install --frozen-lockfile
             if ($LASTEXITCODE -eq 0) { exit 0 }
-            Write-Host "npm ci failed (attempt $attempt), retrying..."
+            Write-Host "pnpm install failed (attempt $attempt), retrying..."
             Start-Sleep -Seconds 10
           }
           exit 1

@@ -63,8 +63,8 @@ test('Linux builds forward a GitHub token to the container by name only, and onl
 test('Linux bootstrap extracts immutable source and installs dependencies on first use', async () => {
 	const script = await readFile(path.join(root, 'build/armotusitio/linux-build.sh'), 'utf8');
 	assert.match(script, /tar -xzf \/input\/source\.tar\.gz/);
-	assert.match(script, /npm ci --ignore-scripts --no-audit --no-fund/);
-	assert.match(script, /npm ci --no-audit --no-fund/);
+	assert.match(script, /pnpm install --frozen-lockfile --ignore-scripts/);
+	assert.match(script, /pnpm install --frozen-lockfile\r?\n\s+touch/);
 	assert.match(script, /touch \/work\/dependencies-ready/);
 	assert.doesNotMatch(script, /refresh_sources|dependency_fingerprint|source\.keep/);
 	assert.match(script, /Refusing Linux build as root/);
