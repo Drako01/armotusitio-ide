@@ -818,7 +818,7 @@
 	},
 	"scripts": {
 		"compile": "node esbuild.mts",
-		"test": "node --test test/*.test.cts test/native-*.test.mts",
+		"test": "node --test --test-concurrency=4 test/*.test.cts test/native-*.test.mts",
 		"check": "node ../../node_modules/@typescript/native/bin/tsc --project tsconfig.json && node ../../node_modules/@typescript/native/bin/tsc --project tsconfig.worker.json && node check-resources.mts && node sync-engineering-skills.mts",
 		"vscode:prepublish": "npm run compile",
 		"check:native-package": "node check-native-package.mts",

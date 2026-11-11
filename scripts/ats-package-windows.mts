@@ -6,7 +6,7 @@ import * as path from 'node:path';
 import { spawn } from 'node:child_process';
 import { access, mkdir, readdir, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
-import { fileDigest, run, withLock } from './ats-autoupdate.mts';
+import { extensionDependencyInstallArgs, fileDigest, npmCLI, run, withLock } from './ats-autoupdate.mts';
 import { ensureInnoSetup } from '../build/lib/innoSetup.ts';
 
 const root = path.resolve(import.meta.dirname, '..');
@@ -60,6 +60,8 @@ async function main(): Promise<void> {
 	}
 	await execute([path.join(path.dirname(require.resolve('@typescript/native/package.json')), 'bin', 'tsc'), '--project', 'extensions/armotusitio-ide/tsconfig.json', '--noEmit', '--pretty', 'false']);
 	await configureWindowsSdk();
+	// Runs on every attempt, before gulp bundles the extension, as the Linux container does.
+	await execute([npmCLI, ...extensionDependencyInstallArgs]);
 	const copilot = path.join(root, 'extensions', 'copilot');
 	await execute([path.join(copilot, 'node_modules', 'tsx', 'dist', 'cli.mjs'), path.join(copilot, 'script', 'postinstall.ts')], copilot);
 	const gulp = ['--experimental-strip-types', '--max-old-space-size=8192', path.join(root, 'node_modules', 'gulp', 'bin', 'gulp.js')];

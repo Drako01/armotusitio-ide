@@ -20,6 +20,13 @@ const stateRoot = path.join(repositoryRoot, '.build', 'ats-autoupdate');
 const overridesPath = path.join(repositoryRoot, releaseMetadataPath);
 const github = `https://api.github.com/repos/${armotusitioRepository}`;
 const privateKeyPath = process.env.ATS_IDE_SIGNING_KEY ? path.resolve(process.env.ATS_IDE_SIGNING_KEY) : path.join(stateRoot, 'signing', 'private.pem');
+/** The npm bundled with the Windows Node runtime, run through Node itself so no shell is involved. */
+export const npmCLI = path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js');
+/**
+ * The repository install does not cover the extension's own lockfile, whose offline PDF parser is copied by its bundle.
+ * Pinned by that lockfile, without install scripts or native optional dependencies. Every release platform runs exactly this.
+ */
+export const extensionDependencyInstallArgs = ['ci', '--prefix', 'extensions/armotusitio-ide', '--ignore-scripts', '--omit=optional', '--no-audit', '--no-fund'];
 
 /** Run argument arrays without a shell; gh keeps credentials outside the repository. */
 export async function run(command: string, args: string[], cwd = repositoryRoot, timeout = 120000): Promise<string> {
@@ -397,7 +404,6 @@ async function validate(): Promise<unknown> {
 	if (await run('git', ['status', '--porcelain', '--untracked-files=no'])) {
 		throw new Error('Review and commit the candidate before recording release validation.');
 	}
-	const npmCLI = path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js');
 	await access(npmCLI);
 	for (const args of [['run', 'hygiene'], ['run', 'typecheck-client'], ['run', 'check', '--prefix', 'extensions/armotusitio-ide'], ['test', '--prefix', 'extensions/armotusitio-ide']]) {
 		console.log(`Validating: npm ${args.join(' ')}`);

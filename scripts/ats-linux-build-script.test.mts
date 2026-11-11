@@ -8,6 +8,7 @@ import * as path from 'node:path';
 import { readFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { linuxRunArgs } from './ats-build-linux.mts';
+import { extensionDependencyInstallArgs } from './ats-autoupdate.mts';
 import { createNodeCompileCacheGenerationEnvironment, validateNodeCompileCache } from '../build/lib/nodeCompileCache.ts';
 
 const root = path.resolve(import.meta.dirname, '..');
@@ -71,7 +72,7 @@ test('Linux bootstrap extracts immutable source and installs dependencies on fir
 
 test('Linux release installs the pinned PDF parser on every attempt before bundling', async () => {
 	const script = await readFile(path.join(root, 'build/armotusitio/linux-build.sh'), 'utf8');
-	const install = 'npm ci --prefix extensions/armotusitio-ide --ignore-scripts --omit=optional --no-audit --no-fund';
+	const install = ['npm', ...extensionDependencyInstallArgs].join(' ');
 	const dependencyGate = script.indexOf('if [[ ! -f /work/dependencies-ready ]]');
 	const gateEnd = script.indexOf('\nfi\n', dependencyGate);
 	const installAt = script.indexOf(install);
@@ -83,6 +84,14 @@ test('Linux release installs the pinned PDF parser on every attempt before bundl
 	const lock = JSON.parse(await readFile(path.join(root, 'extensions/armotusitio-ide/package-lock.json'), 'utf8'));
 	assert.equal(lock.packages[''].dependencies['pdfjs-dist'], pkg.dependencies['pdfjs-dist']);
 	assert.equal(lock.packages['node_modules/pdfjs-dist'].version, pkg.dependencies['pdfjs-dist']);
+});
+
+test('Windows packaging installs the same pinned PDF parser before bundling', async () => {
+	const script = await readFile(path.join(root, 'scripts/ats-package-windows.mts'), 'utf8');
+	const installAt = script.indexOf('await execute([npmCLI, ...extensionDependencyInstallArgs]);');
+	const bundleAt = script.indexOf('[...gulp, \'vscode-win32-x64\']');
+	assert.ok(installAt >= 0, 'Windows packaging must install the extension dependencies');
+	assert.ok(bundleAt > installAt, 'PDF install must precede the Windows bundle');
 });
 
 test('Linux build scopes the sandbox override to transient Node compile-cache generation', async () => {
