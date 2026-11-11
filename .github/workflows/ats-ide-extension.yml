@@ -64,7 +64,7 @@ jobs:
       - name: Contract tests
         run: npm test --prefix extensions/armotusitio-ide
       - name: Release tooling tests
-        run: node --test scripts/ats-release-ci.test.mts scripts/ats-ci-changes.test.mts
+        run: node --test scripts/ats-release-ci.test.mts scripts/ats-ci-changes.test.mts scripts/ats-linux-build-script.test.mts
   # The extension runs on Windows, and Windows-only failures (the "Path" spelling of PowerShell, 8.3 temp folders, folders still held by
   # a child process) used to surface only in the release job, after an hour of compiling. Same shell as the release validation (pwsh).
   contract-windows:
@@ -97,7 +97,7 @@ jobs:
           TMP: ${{ runner.temp }}
         run: npm test --prefix extensions/armotusitio-ide
       - name: Release tooling tests on Windows
-        run: node --test scripts/ats-release-ci.test.mts scripts/ats-ci-changes.test.mts
+        run: node --test scripts/ats-release-ci.test.mts scripts/ats-ci-changes.test.mts scripts/ats-linux-build-script.test.mts
   # Required status check. A skipped contract job is fine only when `changes` found nothing relevant; a failed, cancelled or
   # skipped-by-error dependency fails the gate.
   gate:

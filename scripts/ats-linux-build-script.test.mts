@@ -69,6 +69,22 @@ test('Linux bootstrap extracts immutable source and installs dependencies on fir
 	assert.match(script, /Refusing Linux build as root/);
 });
 
+test('Linux release installs the pinned PDF parser on every attempt before bundling', async () => {
+	const script = await readFile(path.join(root, 'build/armotusitio/linux-build.sh'), 'utf8');
+	const install = 'npm ci --prefix extensions/armotusitio-ide --ignore-scripts --omit=optional --no-audit --no-fund';
+	const dependencyGate = script.indexOf('if [[ ! -f /work/dependencies-ready ]]');
+	const gateEnd = script.indexOf('\nfi\n', dependencyGate);
+	const installAt = script.indexOf(install);
+	const bundleAt = script.indexOf('node extensions/armotusitio-ide/esbuild.mts');
+	assert.ok(dependencyGate >= 0 && gateEnd > dependencyGate, 'Linux bootstrap gate must exist');
+	assert.ok(installAt > gateEnd, 'PDF install must execute even when the upstream dependency marker exists');
+	assert.ok(bundleAt > installAt, 'PDF install must precede the extension bundle');
+	const pkg = JSON.parse(await readFile(path.join(root, 'extensions/armotusitio-ide/package.json'), 'utf8'));
+	const lock = JSON.parse(await readFile(path.join(root, 'extensions/armotusitio-ide/package-lock.json'), 'utf8'));
+	assert.equal(lock.packages[''].dependencies['pdfjs-dist'], pkg.dependencies['pdfjs-dist']);
+	assert.equal(lock.packages['node_modules/pdfjs-dist'].version, pkg.dependencies['pdfjs-dist']);
+});
+
 test('Linux build scopes the sandbox override to transient Node compile-cache generation', async () => {
 	const script = await readFile(path.join(root, 'build/armotusitio/linux-build.sh'), 'utf8');
 	const cache = await readFile(path.join(root, 'build/lib/nodeCompileCache.ts'), 'utf8');
