@@ -12,14 +12,21 @@ export function isAtsInput(file: string): boolean {
 	return /^(extensions\/armotusitio-ide\/|extensions\/[^/]+\/package(-lock)?\.json$|scripts\/ats-|release\.sh$|\.github\/workflows\/ats-|package(-lock)?\.json$|pnpm-(lock|workspace)\.yaml$|\.pnpmfile\.mjs$|product\.json$|\.nvmrc$|\.npmrc$|build\/|remote\/(package(-lock)?\.json|pnpm-(lock|workspace)\.yaml|\.pnpmfile\.mjs|\.npmrc)$|resources\/(win32|linux|darwin)\/|src\/vs\/platform\/update\/|src\/vs\/workbench\/contrib\/update\/)/.test(file);
 }
 
-/** Validate the complete paginated API result; a renamed packaging input remains material. */
+/** GitHub lists at most this many files of a pull request, however many it changes. */
+const listedFilesLimit = 3000;
+
+/**
+ * Validate the complete paginated API result; a renamed packaging input remains material.
+ * A pull request above the listing limit cannot be proven irrelevant, so its contracts always run.
+ */
 export function classifyAtsChanges(pages: unknown, expectedCount: number): boolean {
 	if (!Number.isSafeInteger(expectedCount) || expectedCount < 1 || !Array.isArray(pages)
 		|| pages.some(page => !Array.isArray(page))) {
 		throw new Error('Invalid change detection response or expected file count.');
 	}
 	const files: unknown[] = pages.flat();
-	if (files.length !== expectedCount) {
+	const capped = expectedCount > listedFilesLimit && files.length === listedFilesLimit;
+	if (files.length !== expectedCount && !capped) {
 		throw new Error('Incomplete changed-files response; refusing to skip ATS contracts.');
 	}
 	const names = new Set<string>();
@@ -34,7 +41,7 @@ export function classifyAtsChanges(pages: unknown, expectedCount: number): boole
 		relevant = relevant || isAtsInput(file.filename)
 			|| ('previous_filename' in file && typeof file.previous_filename === 'string' && isAtsInput(file.previous_filename));
 	}
-	return relevant;
+	return relevant || capped;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

@@ -39,6 +39,13 @@ test('classification checks every page and both names of a renamed material file
 	], [true, true, false]);
 });
 
+test('a pull request above the GitHub listing limit always runs the contracts', () => {
+	const listed = [Array.from({ length: 3000 }, (_, index) => ({ filename: `docs/page-${index}.md` }))];
+	assert.equal(classifyAtsChanges(listed, 3281), true);
+	assert.throws(() => classifyAtsChanges([listed[0].slice(1)], 3281));
+	assert.throws(() => classifyAtsChanges([[...listed[0].slice(1), { filename: '' }]], 3281));
+});
+
 test('empty, truncated, malformed and duplicate API responses fail closed', () => {
 	for (const [pages, count] of [
 		[[], 0], [[], 1], [[[]], 2], [[{ filename: 'README.md' }], 1],
