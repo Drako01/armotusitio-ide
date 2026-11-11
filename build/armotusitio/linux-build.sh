@@ -46,6 +46,10 @@ if [[ ! -f /work/dependencies-ready ]]; then
     npm ci --no-audit --no-fund
     touch /work/dependencies-ready
 fi
+# The release container does not inherit the extension-only dependencies installed by PR CI.
+# Install the lockfile-pinned offline PDF parser on every attempt, including resumed work volumes.
+# Its assets are required by esbuild.mts; avoid native optional deps and install scripts.
+npm ci --prefix extensions/armotusitio-ide --ignore-scripts --omit=optional --no-audit --no-fund
 node extensions/armotusitio-ide/esbuild.mts
 gulp() { node --experimental-strip-types --max-old-space-size=8192 node_modules/gulp/bin/gulp.js "$@"; }
 gulp "vscode-reh-linux-${ATS_LINUX_ARCH}-min"
