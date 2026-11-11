@@ -1,8 +1,8 @@
 /*---------------------------------------------------------------------------------------------
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
- *  ArmoTuSitio integration: Alejandro Daniel Di Stefano - ArmoTuSitio.com.ar.
  *--------------------------------------------------------------------------------------------*/
+/** ArmoTuSitio integration: Alejandro Daniel Di Stefano - ArmoTuSitio.com.ar. */
 import { mkdir, copyFile } from 'node:fs/promises';
 import * as path from 'node:path';
 import { run } from '../esbuild-extension-common.mts';

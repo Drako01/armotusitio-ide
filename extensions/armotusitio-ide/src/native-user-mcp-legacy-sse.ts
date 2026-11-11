@@ -1,8 +1,8 @@
 /*---------------------------------------------------------------------------------------------
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
- *  ArmoTuSitio integration: Alejandro Daniel Di Stefano - ArmoTuSitio.com.ar.
  *--------------------------------------------------------------------------------------------*/
+/** ArmoTuSitio integration: Alejandro Daniel Di Stefano - ArmoTuSitio.com.ar. */
 /** Legacy MCP GET event stream + POST endpoint. Tools still go through the IDE authorization broker. */
 import type { McpLaunch } from './native-mcp-servers.ts';
 import type { UserMcpRpc } from './native-user-mcp-http.ts';
@@ -47,8 +47,10 @@ export async function withLegacySseMcp<T>(
 	const connectTimer = setTimeout(() => connect.abort(), options.timeoutMs);
 	let opening: Response;
 	try {
-		opening = await fetch(source, { method: 'GET', headers: openHeaders, redirect: 'error', credentials: 'omit',
-			signal: AbortSignal.any([signal, connect.signal]) });
+		opening = await fetch(source, {
+			method: 'GET', headers: openHeaders, redirect: 'error', credentials: 'omit',
+			signal: AbortSignal.any([signal, connect.signal])
+		});
 	} catch (error) {
 		if (connect.signal.aborted) { throw Error('HARNESS_MCP_TIMEOUT'); }
 		throw error;
@@ -111,8 +113,7 @@ export async function withLegacySseMcp<T>(
 				if ((typeof value.id !== 'number' && typeof value.id !== 'string') || ++serverRequests > 8) {
 					throw Error('HARNESS_MCP_SERVER_REQUEST_DENIED');
 				}
-				let acknowledgment: Promise<void>;
-				acknowledgment = post(value.method === 'ping'
+				const acknowledgment: Promise<void> = post(value.method === 'ping'
 					? { jsonrpc: '2.0', id: value.id, result: {} }
 					: { jsonrpc: '2.0', id: value.id, error: { code: -32601, message: 'Method not found' } }, options.timeoutMs)
 					.catch(() => fail(Error('HARNESS_MCP_SERVER_REQUEST_DENIED')))

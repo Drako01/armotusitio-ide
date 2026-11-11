@@ -1,8 +1,8 @@
 /*---------------------------------------------------------------------------------------------
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
- *  ArmoTuSitio integration: Alejandro Daniel Di Stefano - ArmoTuSitio.com.ar.
  *--------------------------------------------------------------------------------------------*/
+/** ArmoTuSitio integration: Alejandro Daniel Di Stefano - ArmoTuSitio.com.ar. */
 /** Isolated text extraction. Never render, execute cells, fetch documents or include notebook outputs. */
 import { parentPort, workerData } from 'node:worker_threads';
 import { pathToFileURL } from 'node:url';
