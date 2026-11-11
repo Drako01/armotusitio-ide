@@ -116,6 +116,12 @@ In these cases make sure to update the `meta.schema` property on your rule with 
 
 The rule checks static imports, re-exports, import types, literal dynamic imports, and literal `require` calls, resolving relative paths and `vs/` aliases. Run its tests with `node --test .eslint-plugin-local/tests/code-no-private-agent-host-meta-import.test.ts`.
 
+## Restricted import paths
+
+`local/code-no-restricted-path-imports` reports imports whose resolved repository path matches one of its `paths` globs, with that entry's `message`. It resolves relative paths, absolute paths and `vs/` aliases before matching (with Windows path semantics on Windows, so drive letters and UNC host/share names compare case-insensitively), so non-canonical specifiers such as `./../..//sessions/x.js` are caught, and an unrelated folder with the same name is not. The rule checks static imports, re-exports, import types, `import x = require()`, and dynamic `import()` and `require()` calls whose argument is a string literal or a template literal without substitutions. Only an unbound (global) `require` is checked; a locally declared `require` is not. Node modules are ignored. Computed or variable dynamic imports, such as ``import(`../${name}.js`)``, can't be resolved statically and are not enforced. Use the ESLint configuration's `files` and `ignores` to choose the importing files.
+
+It keeps `src/vs/workbench/contrib/chat/` from importing `src/vs/workbench/contrib/sessions/`, because Sessions depends on chat and never the reverse. Existing violations are listed in that configuration block's `ignores` and should be removed from the list once they are fixed ([#346756](https://github.com/microsoft/vscode/issues/346756)). Run its tests with `node --test .eslint-plugin-local/tests/code-no-restricted-path-imports.test.ts`.
+
 
 ## Asynchronous production filesystem operations
 
@@ -129,7 +135,7 @@ Existing suppressions document audited legacy constraints and deferred work, not
 
 Justifications must explain the concrete failure or lifecycle constraint an async replacement would introduce, not merely describe the synchronous operation. Temporary migration TODOs must name the readiness, sequencing, or ownership change needed to remove the suppression; they do not establish that synchronous I/O is permanently required.
 
-Run the rule and configuration tests with `node --test .eslint-plugin-local/tests/code-no-sync-fs.test.ts`. Custom rule tests also run in CI through `npm run test-build-scripts`.
+Run the rule and configuration tests with `node --test .eslint-plugin-local/tests/code-no-sync-fs.test.ts`. Custom rule tests also run in CI through `pnpm run test-build-scripts`.
 
 (Written by Copilot)
 
@@ -144,7 +150,7 @@ To add a fix for a custom rule:
 
 See the [Double quoted to single quoted string conversion fix](https://github.com/microsoft/vscode/blob/b074375e1884ae01033967bf0bbceeaa4795354a/.eslint-plugin-local/code-no-unexternalized-strings.ts#L128) for an example. The ESLint docs also have [details on adding fixes and the fixer API](https://eslint.org/docs/latest/extend/custom-rules#applying-fixes).
 
-The fixes can be run using `npx eslint --fix` in the VS Code repo.
+The fixes can be run using `pnpm exec eslint --fix` in the VS Code repo.
 
 ## Tests nested inside tests
 

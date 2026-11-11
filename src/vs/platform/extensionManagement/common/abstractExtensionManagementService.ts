@@ -744,6 +744,10 @@ export abstract class AbstractExtensionManagementService extends CommontExtensio
 			}
 		}
 
+		if (compatibleExtension.blockingInfo) {
+			throw new ExtensionManagementError(getExtensionBlockedMessage(compatibleExtension.blockingInfo).value, ExtensionManagementErrorCode.NotAllowed);
+		}
+
 		this.logService.info('Getting Manifest...', compatibleExtension.identifier.id);
 		const manifest = await this.galleryService.getManifest(compatibleExtension, CancellationToken.None);
 		if (manifest === null) {
