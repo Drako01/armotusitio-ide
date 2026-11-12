@@ -63,7 +63,9 @@ test('Linux builds forward a GitHub token to the container by name only, and onl
 test('Linux bootstrap extracts immutable source and installs dependencies on first use', async () => {
 	const script = await readFile(path.join(root, 'build/armotusitio/linux-build.sh'), 'utf8');
 	assert.match(script, /tar -xzf \/input\/source\.tar\.gz/);
-	assert.match(script, /pnpm install --frozen-lockfile --ignore-scripts/);
+	assert.match(script, /pnpm --dir build install --frozen-lockfile\r?\n/);
+	// A root install without scripts leaves pnpm considering the workspace current, so it skips native builds.
+	assert.doesNotMatch(script, /pnpm install --frozen-lockfile --ignore-scripts/);
 	assert.match(script, /pnpm install --frozen-lockfile\r?\n\s+touch/);
 	// preinstall.ts needs the node-gyp that pnpm passes in npm_config_node_gyp, so pnpm must run it.
 	assert.match(script, /pnpm run preinstall\r?\n\s+pnpm install --frozen-lockfile\r?\n/);

@@ -10,6 +10,7 @@ import { promisify } from 'node:util';
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { armotusitioProduct as product } from '../build/lib/armotusitioProduct.ts';
+import { getServerNodeVersion } from '../build/lib/node.ts';
 
 const execute = promisify(execFile);
 const root = path.resolve(import.meta.dirname, '..');
@@ -56,7 +57,7 @@ export async function linuxArtifacts(arch: string, output: string): Promise<void
 	const server = path.resolve(root, '..', `vscode-reh-linux-${arch}`);
 	const metadata = JSON.parse(await readFile(path.join(server, 'product.json'), 'utf8'));
 	validateIdentity(metadata, commit, version);
-	const remoteNode = /^target="([^"]+)"/m.exec(await readFile(path.join(root, 'remote', '.npmrc'), 'utf8'))?.[1];
+	const remoteNode = getServerNodeVersion(root).nodeVersion;
 	const node = (await execute(path.join(server, 'node'), ['--version'])).stdout.trim();
 	if (node !== `v${remoteNode}`) { throw new Error('REH Node runtime mismatch.'); }
 	// Exercise the packaged dependency graph before publishing a server that installs signed extensions.
