@@ -65,6 +65,9 @@ test('Linux bootstrap extracts immutable source and installs dependencies on fir
 	assert.match(script, /tar -xzf \/input\/source\.tar\.gz/);
 	assert.match(script, /pnpm install --frozen-lockfile --ignore-scripts/);
 	assert.match(script, /pnpm install --frozen-lockfile\r?\n\s+touch/);
+	// preinstall.ts needs the node-gyp that pnpm passes in npm_config_node_gyp, so pnpm must run it.
+	assert.match(script, /pnpm run preinstall\r?\n\s+pnpm install --frozen-lockfile\r?\n/);
+	assert.doesNotMatch(script, /node build\/npm\/preinstall\.ts/);
 	assert.match(script, /touch \/work\/dependencies-ready/);
 	assert.doesNotMatch(script, /refresh_sources|dependency_fingerprint|source\.keep/);
 	assert.match(script, /Refusing Linux build as root/);

@@ -126,7 +126,7 @@ jobs:
           # Same as upstream CI: authenticated downloads avoid the GitHub API rate limit of shared runners.
           GITHUB_TOKEN: ${{ github.token }}
         run: |
-          node build/npm/preinstall.ts
+          pnpm run preinstall
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           for ($attempt = 1; $attempt -le 3; $attempt++) {
             pnpm install --frozen-lockfile
