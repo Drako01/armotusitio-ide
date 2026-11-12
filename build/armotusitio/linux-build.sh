@@ -28,9 +28,9 @@ if [[ "$ATS_LINUX_ARCH" == x64 ]]; then
 fi
 # The source volume is scoped to commit and architecture. A failed install never writes this marker.
 if [[ ! -f /work/dependencies-ready ]]; then
-    # Bootstrap JS tooling before the upstream Electron/Node compiler setup.
-    pnpm install --frozen-lockfile --ignore-scripts
-    pnpm --dir build install --frozen-lockfile --ignore-scripts
+    # Match upstream: install the build tooling first, then the workspace once with its install scripts.
+    # A root install with --ignore-scripts would leave pnpm considering it current and skip native builds.
+    pnpm --dir build install --frozen-lockfile
     export npm_config_arch="$ATS_LINUX_ARCH" VSCODE_ARCH="$ATS_LINUX_ARCH"
     if [[ "$ATS_LINUX_ARCH" == arm64 && "$(uname -m)" == aarch64 ]]; then
         # Upstream ships an x86_64 cross toolchain for arm64; it cannot run on a native arm64 host
