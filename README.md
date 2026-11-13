@@ -45,6 +45,11 @@ incorpora el upgrade de Code - OSS a 1.146.0 y el alcance resumido abajo.
 | Extensiones | Sección ArmoTuSitio con siete extensiones del ecosistema | Activación real de las siete en IDE instalado |
 | Codex CLI | Compatibilidad por rango (0.166.0 a 0.169.0 validados; versiones más nuevas siguen en transporte nativo con aviso), política `on-request`, aprobaciones `humanCommand` de decisión única y errores tipados con próximo paso | Proveedor autenticado (requiere cuota) |
 | Objetivos | `/objetivos` muestra los objetivos autónomos de la ventana y permite pausarlos o detenerlos | IDE instalado |
+| Especialistas | `.armotusitio/agents.json` define planificadores y revisores con instrucción, modelo y turnos; solo bajan límites, sin herramientas; el Control Center muestra el mapa de agentes y el consumo por proveedor | Proveedor autenticado (requiere cuota) |
+| Integraciones Claude | `/integraciones` descubre hooks, agentes, skills, comandos y plugins de `.claude` como datos; solo hooks `UserPromptSubmit` de comando simple se habilitan, con confirmación por ejecución | IDE instalado |
+| Memoria del proyecto | `/memoria` guarda, corrige y quita decisiones, convenciones y soluciones confirmadas; el modelo las recibe como datos, nunca como permisos | IDE instalado |
+| Historial | Menú «Historial de checkpoints»: por turno, estado por archivo, diff antes/ahora y restauración por el mismo camino que `/checkpoints` | IDE instalado |
+| Presupuestos | Aviso al 80 % de cada límite de 24 h antes de lanzar un agente; `/costo` muestra el uso registrado contra los límites | — |
 
 Las nuevas funciones usan controles de confianza, límites de tamaño/tiempo y
 denegación por defecto. **La salida de una IA o de un MCP no concede permisos.**
@@ -128,6 +133,7 @@ limitan los datos y rechazan solicitudes privilegiadas iniciadas por el servidor
 | [Releases](docs/guia/07-releases.md) | Publicación protegida |
 | [Referencia de la extensión](extensions/armotusitio-ide/README.md) | API, integración y comandos |
 | [Checklist PR #86](docs/CHAT_HARNESS_UPGRADE_PROGRESS.md) | Evidencia por commit y pendientes |
+| [Paridad con Claude Code](docs/CLAUDE_CODE_PARITY_MATRIX.md) | Subagentes, hooks, memoria, tokens, historial: estado y límites |
 | [Upgrade Codex 0.169 y paridad](docs/CHAT_HARNESS_UPGRADE_2026-11.md) | Auditoría contra el CLI real, checklist maestro, evidencia y límites |
 | [Capturas de aceptación](docs/PR86_SCREENSHOT_CAPTURE.md) | Matriz para capturas reales del candidato |
 

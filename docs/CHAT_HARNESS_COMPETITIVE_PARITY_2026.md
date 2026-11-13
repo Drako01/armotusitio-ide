@@ -108,3 +108,10 @@ official configuration reference. Findings and closure are tracked in `CHAT_HARN
 
 Memory: compacted runs keep edited files, failed gates, discards, reverts and continuations from IDE records only.
 Still BLOCKED: authenticated provider runs, installed-candidate screenshots and accessibility, Rust tests (no cargo).
+
+## Claude Code parity continuation (2026-11-13)
+
+The capability-by-capability comparison with Claude Code, its evidence and its limits live in
+`CLAUDE_CODE_PARITY_MATRIX.md`. Summary: specialist profiles, the opt-in hook and plugin bridge, user-controlled
+project memory, the checkpoint history with diffs and budget alerts are IMPLEMENTED_VERIFIED (unit, fake and browser
+tests); Agent Teams, remote browsing and measured savings stay BLOCKED on provider capabilities or quota.

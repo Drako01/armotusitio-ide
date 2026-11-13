@@ -26,7 +26,7 @@ Abrí los ajustes con `Ctrl+,` y buscá `atsHarness`. Los ajustes de IA y permis
 | `atsHarness.providerTokensPer24h` | Tokens informados por el proveedor en 24 horas. |
 | `atsHarness.providerCostUsdPer24h` | Costo estimado informado por el proveedor en 24 horas. |
 
-En todos, `0` significa sin límite.
+En todos, `0` significa sin límite. Al llegar al 80 % del uso registrado de un límite el IDE avisa una vez antes de lanzar el agente, y `/costo` lo marca; al 100 % el lanzamiento se rechaza.
 
 ## Integraciones
 

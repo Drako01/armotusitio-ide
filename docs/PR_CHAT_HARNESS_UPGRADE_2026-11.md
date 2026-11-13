@@ -39,6 +39,16 @@ auditoría dejó a la vista.
 - `/checkpoints` y `/checkpoints restaurar ID`: mismos registros, confirmación, fence y lease que la paleta.
 - `/objetivos`, `/objetivos pausar ID`, `/objetivos detener ID`.
 
+### Paridad con Claude Code (continuación 2026-11-13)
+
+- Perfiles de especialistas en `.armotusitio/agents.json` (solo bajan límites, sin herramientas, digest fijado) y mapa de agentes con consumo por proveedor en el Control Center.
+- `/integraciones`: descubrimiento de hooks, agentes, skills, comandos y plugins de `.claude` como datos; hooks `UserPromptSubmit` de comando simple habilitables con confirmación por ejecución. `--setting-sources ''` intacto.
+- `/memoria`: memoria confirmada del proyecto con lock, límites y redacción; snapshot por relevancia rotulado como datos.
+- Historial de checkpoints en el chat: por turno, estado por archivo, diff antes/ahora y restauración por `/checkpoints restaurar`.
+- Alertas al 80 % de los presupuestos de 24 h y uso registrado en `/costo`.
+- Vinculivo 0.2.1 como séptima extensión oficial (pin verificado).
+- Guard de codificación ampliado; nueve literales rotos reparados.
+
 ### Documentación
 
 README, guía del chat, historial, matriz de paridad, evidencia competitiva y el checklist maestro
@@ -66,6 +76,8 @@ sobre el último commit de la rama; el CI de Linux y Windows del SHA final debe 
 - Recibos de consumo de subagentes y latencia al primer token en `/costo`.
 - Comandos `/checkpoints` y `/objetivos`.
 - Memoria compactada con archivos editados, verificación, descartes y reversiones.
+- Perfiles de especialistas, `/integraciones`, `/memoria`, historial de checkpoints con diff, alertas de presupuesto y `docs/CLAUDE_CODE_PARITY_MATRIX.md`.
+- Vinculivo 0.2.1 como séptima extensión oficial.
 
 ### Changed
 

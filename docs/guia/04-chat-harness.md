@@ -52,10 +52,33 @@ Las reglas permanentes viven en `~/.armotusitio/permissions.json` (tuyas) y `.ar
 | `/objetivos [pausar\|detener ID]` | Objetivos autónomos en curso en esta ventana, con estado y preguntas pendientes; pausar o detener en el próximo punto seguro. |
 | `/doctor` | Revisa la máquina y el proyecto. |
 | `/auditoria` | Últimas acciones de las herramientas del agente. |
-| `/costo` | Tokens informados por el proveedor en el último turno, consumo de subagentes cuando el proveedor lo informa y latencia hasta el primer token. |
+| `/costo` | Tokens informados por el proveedor en el último turno, consumo de subagentes cuando el proveedor lo informa, latencia hasta el primer token y uso registrado de los presupuestos de 24 horas. |
+| `/memoria [guardar decision\|convencion\|solucion TEXTO \| corregir ID TEXTO \| quitar ID]` | Memoria confirmada del proyecto. Solo tus comandos la escriben; la IA la recibe como datos de fondo. |
+| `/integraciones [ver\|habilitar\|deshabilitar ID]` | Hooks, agentes, skills, comandos y plugins de `.claude` del proyecto. Solo se habilitan hooks `UserPromptSubmit` de comando simple, con confirmación en cada envío. |
 | `/check`, `/verify`, `/test` | Corren las verificaciones del proyecto. |
 | `/proyectos`, `/tareas CLAVE`, `/tarea CLAVE-123` | Consultan Work Management. |
 | `/crear`, `/mover`, `/comentar` | Modifican tareas de Work Management (piden confirmación). |
+
+## Historial de checkpoints
+
+En el menú del chat, «Historial de checkpoints» lista las herramientas que editaron archivos, agrupadas por turno. Cada archivo muestra si fue creado, modificado o borrado y si se puede restaurar; un archivo que cambiaste después bloquea la restauración completa y lo dice. «Ver diff» compara el contenido anterior a la herramienta con el archivo actual. «Restaurar» usa `/checkpoints restaurar ID`, con la misma confirmación.
+
+## Especialistas del proyecto
+
+`.armotusitio/agents.json` (hasta 64 KiB) declara perfiles para la delegación de solo lectura:
+
+```json
+{
+	"schemaVersion": 1,
+	"maxConcurrent": 1,
+	"maxLaunches": 2,
+	"agents": [
+		{ "id": "revisor-seguridad", "role": "reviewer", "enabled": true, "instruction": "Revisá autorización y tenancy.", "maxTurns": 4 }
+	]
+}
+```
+
+Los roles son `planner` o `reviewer`; `model` es opcional; `tools` solo admite `[]`. Los límites solo pueden bajar los del IDE (máximo 2). El archivo es contexto, nunca permisos: cada lanzamiento sigue pidiendo tu aprobación.
 
 ## Más detalle
 
