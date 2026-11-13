@@ -28,7 +28,7 @@ async function main() {
 	html = html.replace(/<img[^>]*>/g, '');
 	const sources = Object.fromEntries(['home', 'workflow', 'tools', 'reconcile'].map(name => ['./' + name + '.ts', stripTypeScriptTypes(fs.readFileSync(path.join(root, 'resources/' + name + '.ts'), 'utf8'))]));
 	sources['./home/feed.ts'] = stripTypeScriptTypes(fs.readFileSync(path.join(root, 'resources/home/feed.ts'), 'utf8'));
-	sources['../src/presentation.ts'] =stripTypeScriptTypes(fs.readFileSync(path.join(root, 'src/presentation.ts'), 'utf8'));
+	sources['../src/presentation.ts'] = stripTypeScriptTypes(fs.readFileSync(path.join(root, 'src/presentation.ts'), 'utf8'));
 	const browser = await chromium.launch({ headless: true, ...(process.env.ATS_TEST_BROWSER ? { executablePath: process.env.ATS_TEST_BROWSER } : process.platform === 'win32' ? { executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe' } : { channel: 'chrome' }) });
 	const results = [];
 	try {
@@ -115,6 +115,15 @@ async function main() {
 		}, state);
 		assert.ok(timings[56] < 150, '100-node renderer p95 must stay under 150ms');
 		state.nativeProjects = [{ root: '/generic', name: 'Generic project', configured: true, tasks: [{ id: 'local', title: 'Local verification', status: 'running', attempts: 1 }] }]; await push();
+		state.nativeProjects[0].workflows = [{ id: 'team', status: 'running', steps: [{ id: '<img src=x onerror=alert(1)>', role: 'reviewer', provider: 'claude', status: 'running', durationMs: 12 }] }];
+		state.nativeProjects[0].agentMetrics = { providerBreakdown: [{ provider: 'claude', inputTokens: 21, outputTokens: 3, cachedInputTokens: null, averageDurationMs: 12 }], unmeteredSamples: 1, recommendations: ['partial-usage'] };
+		await push();
+		const agentMap = page.getByText('Agentes de la tarea', { exact: true }); await agentMap.focus(); await page.keyboard.press('Enter');
+		assert.match(await agentMap.locator('..').textContent(), /reviewer.*claude.*running.*12 ms/);
+		assert.equal(await agentMap.locator('..').locator('img').count(), 0);
+		const usageMap = page.getByText('Consumo por proveedor', { exact: true }); await usageMap.click();
+		assert.match(await usageMap.locator('..').textContent(), /21 entrada \/ 3 salida \/ no disponible/);
+		assert.match(await usageMap.locator('..').textContent(), /El consumo informado es parcial/);
 		await page.locator('.project-options').last().locator('summary').click();
 		const nativeCreate = page.locator('button[data-command="nativeNewTask"]'); await nativeCreate.focus(); await push();
 		assert.equal(await nativeCreate.evaluate(button => button === document.activeElement), true);

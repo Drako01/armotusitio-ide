@@ -99,6 +99,15 @@ window.addEventListener('message', event => {
 		if (project.workflows?.length) {
 			const workflow = project.workflows[0];
 			article.append(element('p', '\u00daltimo workflow multiagente: ' + workflow.status + (workflow.verification ? ' \u00b7 verificaci\u00f3n: ' + workflow.verification : ''), 'muted'));
+			const agents = options(project.root + '/agents/' + workflow.id);
+			agents.querySelector('summary').textContent = 'Agentes de la tarea';
+			const list = document.createElement('ol');
+			for (const step of workflow.steps || []) {
+				const row = document.createElement('li');
+				row.textContent = [step.id, step.role, step.provider, step.status, typeof step.durationMs === 'number' ? step.durationMs + ' ms' : 'duraci\u00f3n no disponible'].filter(Boolean).join(' \u00b7 ');
+				list.append(row);
+			}
+			agents.append(list); article.append(agents);
 		}
 		if (project.agentMetrics?.count) {
 			article.append(element('p', 'Agentes IA: ' + project.agentMetrics.count + ' ejecuciones \u00b7 \u00e9xito: ' + project.agentMetrics.successRate + '% \u00b7 p95: ' + project.agentMetrics.p95DurationMs + ' ms', 'muted'));
@@ -107,6 +116,18 @@ window.addEventListener('message', event => {
 				article.append(element('p', 'Tokens medidos (' + metric.usageSamples + ' ejecuciones): ' + metric.measuredInputTokens + ' entrada / ' + metric.measuredOutputTokens + ' salida' +
 					(metric.estimatedCostUsd === null ? '' : ' \u00b7 costo estimado parcial: USD ' + metric.estimatedCostUsd.toFixed(4)), 'muted'));
 			}
+		}
+		if (project.agentMetrics?.providerBreakdown?.length) {
+			const metrics = options(project.root + '/agent-usage');
+			metrics.querySelector('summary').textContent = 'Consumo por proveedor';
+			for (const provider of project.agentMetrics.providerBreakdown) {
+				const value = count => typeof count === 'number' ? String(count) : 'no disponible';
+				metrics.append(element('p', provider.provider + ': ' + value(provider.inputTokens) + ' entrada / ' + value(provider.outputTokens) + ' salida / ' + value(provider.cachedInputTokens) + ' cach\u00e9; duraci\u00f3n media: ' + value(provider.averageDurationMs) + ' ms', 'muted'));
+			}
+			if (project.agentMetrics.unmeteredSamples) { metrics.append(element('p', 'Ejecuciones sin consumo informado: ' + project.agentMetrics.unmeteredSamples, 'muted')); }
+			const recommendations = { 'usage-unavailable': 'El proveedor no inform\u00f3 consumo.', 'partial-usage': 'El consumo informado es parcial.', 'context-dominates': 'Revis\u00e1 el contexto enviado: predominan los tokens de entrada.' };
+			for (const code of project.agentMetrics.recommendations || []) { if (recommendations[code]) { metrics.append(element('p', recommendations[code], 'muted')); } }
+			article.append(metrics);
 		}
 		if (project.gatePerformance?.attempts) {
 			const perf = project.gatePerformance;
