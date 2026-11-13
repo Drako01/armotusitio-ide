@@ -40,3 +40,33 @@ test('rejects oversized or corrupted metrics rather than rewriting them', async 
 		await assert.rejects(readAgentStatistics(directory), /HARNESS_METRICS_INVALID/);
 	} finally { await fs.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
+
+test('provider summaries distinguish absent receipts from measured zero and recommend without claiming savings', async () => {
+	const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-metrics-summary-'));
+	try {
+		const outcome = { status: 'passed' as const, exitCode: 0, durationMs: 100, truncated: false, output: '' };
+		await recordAgentMetric(directory, 'claude', 'reviewer', outcome);
+		assert.deepEqual((await readAgentStatistics(directory)).recommendations, ['usage-unavailable']);
+		for (let index = 0; index < 3; index++) {
+			await recordAgentMetric(directory, 'codex', 'implementer', { ...outcome, usage: { inputTokens: 100, outputTokens: 0, cachedInputTokens: 0 } });
+		}
+		const result = await readAgentStatistics(directory);
+		assert.deepEqual({ unmetered: result.unmeteredSamples, cache: result.measuredCachedInputTokens, recommendations: result.recommendations, providers: result.providerBreakdown }, {
+			unmetered: 1, cache: 0, recommendations: ['partial-usage', 'context-dominates'], providers: [
+				{ provider: 'codex', count: 3, usageSamples: 3, inputTokens: 300, outputTokens: 0, cachedInputTokens: 0, averageDurationMs: 100 },
+				{ provider: 'claude', count: 1, usageSamples: 0, inputTokens: null, outputTokens: null, cachedInputTokens: null, averageDurationMs: 100 }
+			]
+		});
+	} finally { await fs.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
+});
+
+test('an overflowing token aggregate is unavailable, never a rounded measurement', async () => {
+	const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-metrics-overflow-'));
+	try {
+		for (let index = 0; index < 2; index++) {
+			await recordAgentMetric(directory, 'codex', 'implementer', { status: 'passed', exitCode: 0, durationMs: 1, truncated: false, output: '', usage: { inputTokens: Number.MAX_SAFE_INTEGER, outputTokens: 0 } });
+		}
+		const result = await readAgentStatistics(directory);
+		assert.deepEqual([result.measuredInputTokens, result.providerBreakdown[0].inputTokens, result.measuredCachedInputTokens], [null, null, null]);
+	} finally { await fs.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
+});

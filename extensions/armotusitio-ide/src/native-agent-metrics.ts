@@ -33,8 +33,21 @@ export interface AgentStatistics {
 	usageSamples: number;
 	measuredInputTokens: number | null;
 	measuredOutputTokens: number | null;
+	measuredCachedInputTokens: number | null;
+	unmeteredSamples: number;
+	providerBreakdown: ProviderMetricSummary[];
+	recommendations: ('usage-unavailable' | 'partial-usage' | 'context-dominates')[];
 	estimatedCostUsd: number | null;
 	entries: AgentMetric[];
+}
+export interface ProviderMetricSummary {
+	provider: NativeProvider;
+	count: number;
+	usageSamples: number;
+	inputTokens: number | null;
+	outputTokens: number | null;
+	cachedInputTokens: number | null;
+	averageDurationMs: number | null;
 }
 const LIMIT = 100;
 const MAX_LEDGER_BYTES = 64 * 1024;
@@ -86,14 +99,39 @@ export async function readAgentStatistics(directory: string): Promise<AgentStati
 	const durations = entries.map(e => e.durationMs).sort((a, b) => a - b);
 	const metered = entries.filter(e => e.inputTokens !== undefined && e.outputTokens !== undefined);
 	const priced = entries.filter(e => e.estimatedCostUsd !== undefined);
+	const measuredTotal = (rows: AgentMetric[], key: 'inputTokens' | 'outputTokens' | 'cachedInputTokens'): number | null => {
+		const samples = rows.filter(row => row[key] !== undefined);
+		if (!samples.length) { return null; }
+		const total = samples.reduce((sum, row) => sum + row[key]!, 0);
+		return Number.isSafeInteger(total) ? total : null;
+	};
+	const providerBreakdown = (['codex', 'claude'] as const).flatMap(provider => {
+		const rows = entries.filter(entry => entry.provider === provider);
+		if (!rows.length) { return []; }
+		const measured = rows.filter(entry => entry.inputTokens !== undefined && entry.outputTokens !== undefined);
+		return [{
+			provider, count: rows.length, usageSamples: measured.length,
+			inputTokens: measuredTotal(measured, 'inputTokens'), outputTokens: measuredTotal(measured, 'outputTokens'),
+			cachedInputTokens: measuredTotal(rows, 'cachedInputTokens'),
+			averageDurationMs: Math.round(rows.reduce((sum, row) => sum + row.durationMs, 0) / rows.length)
+		}];
+	});
+	const measuredInputTokens = measuredTotal(metered, 'inputTokens');
+	const measuredOutputTokens = measuredTotal(metered, 'outputTokens');
+	const recommendations: AgentStatistics['recommendations'] = [];
+	if (count && !metered.length) { recommendations.push('usage-unavailable'); }
+	else if (metered.length < count) { recommendations.push('partial-usage'); }
+	// A descriptive threshold, not evidence of duplicated context or a claim of potential savings.
+	if (metered.length >= 3 && measuredInputTokens !== null && measuredOutputTokens !== null && measuredInputTokens > 4 * Math.max(1, measuredOutputTokens)) { recommendations.push('context-dominates'); }
 	return {
 		count, successes, failures, cancelled,
 		successRate: count ? Math.round(successes / count * 10000) / 100 : null,
 		averageDurationMs: count ? Math.round(durations.reduce((a, b) => a + b, 0) / count) : null,
 		p95DurationMs: count ? durations[Math.ceil(count * .95) - 1] : null,
 		usageSamples: metered.length,
-		measuredInputTokens: metered.length ? metered.reduce((sum, e) => sum + e.inputTokens!, 0) : null,
-		measuredOutputTokens: metered.length ? metered.reduce((sum, e) => sum + e.outputTokens!, 0) : null,
+		measuredInputTokens, measuredOutputTokens,
+		measuredCachedInputTokens: measuredTotal(entries, 'cachedInputTokens'),
+		unmeteredSamples: count - metered.length, providerBreakdown, recommendations,
 		estimatedCostUsd: priced.length ? Math.round(priced.reduce((sum, e) => sum + e.estimatedCostUsd!, 0) * 1e6) / 1e6 : null,
 		entries
 	};

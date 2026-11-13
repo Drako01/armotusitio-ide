@@ -151,3 +151,32 @@ Pruebas focalizadas ejecutadas tras los cambios: `native-chat-memory`, `native-c
 - BLOCKED por toolchain: tests Rust (`cargo`).
 - Opcional: refrescar la lista de objetivos en el webview cuando un objetivo termina sin otra publicación de estado (hoy se actualiza con cualquier publicación o al pulsar un control).
 - Antes del PR: correr `npm test` completo sobre el SHA final una sola vez y revisar el CI de Linux/Windows.
+
+## 8. Continuación del prompt Claude Code (2026-11-13)
+
+Fuente única de reanudación: este checklist. Rama obligatoria `feat/chat-harness-codex-parity-upgrade`, PR #97. Base local y remota confirmada: `2c23ddeaf37ecf04ef65a0ba5091ef6c0868b563`, árbol inicialmente limpio. GitHub confirmó éxito del workflow ATS IDE Extension, corrida `43484785459`, sobre esa base; no valida los cambios locales siguientes. No hacer push, merge ni release sin nueva autorización.
+
+Autoridad del checkout comprobada con `codex-harness.mjs context`: modo global, sin comandos de Harness local registrados. Aplican `AGENTS.md` y `.github/copilot-instructions.md` del IDE; la copia RedEvent de `.harness` no define el proceso activo de este repositorio.
+
+| Paquete | Estado | Archivos / evidencia | Próximo paso |
+|---|---|---|---|
+| Observabilidad por proveedor y caché | PARTIAL | `native-agent-metrics.ts`, test: 4/4 PASS; conserva ausencia de datos como null, rechaza sumas fuera de enteros seguros | Integrar panel y revisar diff antes del commit |
+| Especialistas configurables y mapa | PARTIAL, implementación en curso | `native-agent-profiles.ts`, `native-agent-delegation.ts`, `native-integration.ts`, `resources/home.ts`; reutiliza workflow/DAG existente | Terminar pruebas focalizadas y commit |
+| Puente Claude | PARTIAL, implementación en curso | `native-claude-integrations.ts`, comandos y `chat.ts`; descubrimiento acotado, deshabilitado por defecto, permisos y digest | Terminar integración segura UserPromptSubmit y pruebas |
+| Memoria de proyecto | PARTIAL, implementación en curso | Reutiliza `DecisionLog` en `native-decisions.ts`, comandos y `native-chat-session.ts`; no crea otro almacén equivalente | Terminar corrección/borrado y selección de contexto con pruebas |
+| Proveedores autenticados y presupuesto de hijos | BLOCKED | Cuota no autorizada; se mantiene `HARNESS_DELEGATION_BUDGET_UNVERIFIED` | Requiere autorización y evidencia real |
+| Browser/remoto, capturas instaladas y lectores de pantalla | BLOCKED | Sin servicio autorizado ni candidato instalado del SHA final | Mantener límites explícitos |
+| CI del futuro SHA final | BLOCKED hasta autorización de push | El CI verde de la base no se atribuye a cambios locales | Revisar Linux/Windows después del push autorizado |
+
+Referencias oficiales contrastadas: [hooks](https://code.claude.com/docs/en/hooks), [Agent Teams](https://code.claude.com/docs/en/agent-teams) y [plugins](https://code.claude.com/docs/en/plugins). Agent Teams es experimental; no se declara equivalencia completa con sesiones autónomas de Claude. Configuraciones externas nunca otorgan autoridad y se conserva `--setting-sources ''`.
+
+### Registro incremental de commits
+
+Los SHA se agregan inmediatamente después de cada commit; el registro actualizado queda en disco y se incluye en el siguiente paquete. No repetir checks verdes mientras sus entradas relevantes no cambien.
+
+### Continuidad y reglas aprendidas
+
+- En PowerShell, pasar directorio y `-g` a `rg`: los globs incrustados en una ruta no se expanden como en Bash.
+- Consultar el checklist nombrado por el PR antes de usar checklists antiguos de otras ramas.
+- Reutilizar `DecisionLog` para memoria confirmada; no duplicarlo con otro almacén de decisiones.
+- Antes de cada commit TypeScript, usar `node build/lib/formatter.ts --replace <archivos>`: ESLint no cubre el formatter de hygiene. Primer intento de commit detenido por formato, sin omitir el hook. El checker Markdown solo informa LEN001; se conserva la regla local de no cortar párrafos a ancho fijo.
