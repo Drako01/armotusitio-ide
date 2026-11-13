@@ -48,9 +48,11 @@ Las reglas permanentes viven en `~/.armotusitio/permissions.json` (tuyas) y `.ar
 | `/permisos temporales quitar [REGLA]` | Revoca permisos de esta tarea o sesión. |
 | `/bifurcar` | Sigue en una copia de la sesión; la original queda guardada. |
 | `/deshacer` | Descarta los cambios de la última ejecución. |
+| `/checkpoints [restaurar ID]` | Lista los checkpoints por herramienta (turno, archivos) y restaura uno con la misma confirmación que la paleta. |
+| `/objetivos [pausar\|detener ID]` | Objetivos autónomos en curso en esta ventana, con estado y preguntas pendientes; pausar o detener en el próximo punto seguro. |
 | `/doctor` | Revisa la máquina y el proyecto. |
 | `/auditoria` | Últimas acciones de las herramientas del agente. |
-| `/costo` | Tokens informados por el proveedor en el último turno. |
+| `/costo` | Tokens informados por el proveedor en el último turno, consumo de subagentes cuando el proveedor lo informa y latencia hasta el primer token. |
 | `/check`, `/verify`, `/test` | Corren las verificaciones del proyecto. |
 | `/proyectos`, `/tareas CLAVE`, `/tarea CLAVE-123` | Consultan Work Management. |
 | `/crear`, `/mover`, `/comentar` | Modifican tareas de Work Management (piden confirmación). |

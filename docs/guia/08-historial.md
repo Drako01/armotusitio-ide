@@ -12,6 +12,7 @@ Resumen de las etapas principales. El detalle de cada una está en su PR y en lo
 | r5–r6 | Agente directo en el chat con autonomía, permisos por reglas y tarjetas de aprobación. |
 | r7 | Paridad del chat: herramientas estructuradas de git, auditoría, `/doctor`, `/deshacer` y conformidad contra proyectos reales. |
 | r8 | Sesiones nativas y persistentes de Claude Code y Codex: streaming, preguntas del agente, permisos temporales, bifurcación, recuperación tras reinicios y release automático por CI. Ver [estado de r8](../R8_IMPLEMENTATION_STATUS.md). |
+| r9 | Compatibilidad con Codex CLI por rango (0.166 a 0.169, protocolo regenerado), política `on-request`, aprobaciones `humanCommand`, errores tipados con próximo paso, memoria compactada con archivos y verificaciones, latencia al primer token, recibos de subagentes, `/checkpoints` y `/objetivos`. Ver [upgrade 2026-11](../CHAT_HARNESS_UPGRADE_2026-11.md). |
 
 ## Límites conocidos
 

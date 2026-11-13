@@ -6,8 +6,14 @@ Status legend:
 - BLOCKED = the provider was not available (quota).
 - N/A = excluded before implementation (see R8_BASELINE.md §6.5).
 
-| Capability | Claude Code 2.1.316 (CLI) | Codex 0.166.0 (app-server) | ArmoTuSitio IDE implementation | Claude | Codex |
+| Capability | Claude Code 2.1.316 (CLI) | Codex 0.166.0–0.169.0 (app-server) | ArmoTuSitio IDE implementation | Claude | Codex |
 |---|---|---|---|---|---|
+| C16 CLI version range | `--help` feature probe | validated range 0.166.0–0.169.0; newer stays native with a notice, older falls back | `codexCompatibility` | PASS (fake) | PASS (fake, S20), VERIFIED against both binaries without model calls |
+| C17 approval policy | permission prompt tool | `on-request` (documented; `untrusted` retired upstream) | `approvalPolicy()` | N/A | PASS (fake, S21), VERIFIED (`thread/start` on 0.166 and 0.169) |
+| C18 one-time human approvals | unavailable | `humanCommand` (0.169) | session scope narrowed to `accept` | N/A | PASS (fake, S21) |
+| C19 typed turn errors | `result` subtype | `codexErrorInfo` | `RUNTIME_*` codes + recovery hint | PASS (existing) | PASS (fake, S21) |
+| C20 child usage receipts | unavailable | `thread/tokenUsage/updated` of child threads | `childThreads/childInputTokens/childOutputTokens` | N/A | PASS (fake, guard suite), BLOCKED (real emission unconfirmed) |
+| C21 time to first token | first text delta or tool use | first `agentMessage/delta` or item | `firstTokenMs` in the result and `/costo` | PASS (fake) | PASS (fake) |
 | C01 multi-turn session | stream-json, one process | thread + turns | `ManagedSession.runTurn` | PASS (E01) | PASS (fake), BLOCKED |
 | C02 token streaming | `--include-partial-messages` | `agentMessage/delta` | `message.delta` → partial in the chat | PASS (E01) | PASS (fake), BLOCKED |
 | C03 tool lifecycle | tool_use / tool_result | item started/completed | `tool.*` → timeline steps | PASS (E04) | PASS (fake), BLOCKED |

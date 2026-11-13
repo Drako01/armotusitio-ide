@@ -88,3 +88,23 @@ Redirects, insecure remote HTTP, cookie/routing headers and server-initiated dat
 This supports Streamable HTTP request/response sessions, without legacy SSE endpoints or sampling/elicitation.
 Local fixtures cover discovery, call, consent denial, revocation, cancellation, redaction and malformed replies.
 Authenticated remote services remain unverified. All other original-plan residuals above still apply.
+
+
+## Codex 0.169 continuation (2026-11-13)
+
+Audit against the real CLI without model calls: `generate-ts` and `features list` of 0.166.0 and 0.169.0, plus the
+official configuration reference. Findings and closure are tracked in `CHAT_HARNESS_UPGRADE_2026-11.md`.
+
+| Benchmark dimension | Change | Status |
+|---|---|---|
+| 02 Streaming and timeline | Time to first token measured per turn on both adapters, shown by `/costo` | IMPLEMENTED_VERIFIED (fake) |
+| 07 Permission scopes | Writers use the documented `on-request` policy; `humanCommand` approvals are one-time | IMPLEMENTED_VERIFIED (fake; `thread/start` probed on both binaries) |
+| 12 Codex app-server | Bindings regenerated from 0.169.0; validated range 0.166.0–0.169.0 instead of an exact minor; newer CLIs stay native with one notice | IMPLEMENTED_VERIFIED |
+| 13 Dynamic subagents | Child-thread usage receipts aggregated into the turn; `agents.enabled=false` added to the explicit off switch | PARTIAL (receipts implemented; real emission and budget gate release need an authenticated run) |
+| 19 Fine checkpoints | `/checkpoints` lists and restores through the same confirmation, fence and lease as the command | IMPLEMENTED_VERIFIED (fake) |
+| 23 Governance/trust | Typed provider errors map to stable `RUNTIME_*` codes with recovery hints; raw provider text is never an error code | IMPLEMENTED_VERIFIED (fake) |
+| 24 Cost/quota | Child receipts and first-token latency only when reported; no estimates | IMPLEMENTED_VERIFIED (fake) |
+| Goals in chat | `/objetivos` lists, pauses and stops the window's live goals | IMPLEMENTED_VERIFIED (fake) |
+
+Memory: compacted runs keep edited files, failed gates, discards, reverts and continuations from IDE records only.
+Still BLOCKED: authenticated provider runs, installed-candidate screenshots and accessibility, Rust tests (no cargo).
