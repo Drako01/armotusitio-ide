@@ -59,6 +59,8 @@ async function runTurn(id, params) {
 	const flood = /FLOOD (\d+)/.exec(text);
 	if (flood) { for (let i = 0; i < Number(flood[1]); i++) { delta('d' + i + ' '); } }
 	if (text.includes('SLOW')) { for (let i = 0; i < 30 && !interrupted; i++) { delta('.'); await sleep(100); } }
+	// A receipt from a child of an earlier turn arriving late: it must not be charged to this turn.
+	if (text.includes('LATE_CHILD')) { write({ method: 'thread/tokenUsage/updated', params: { threadId: 'child-thread-0', turnId: 'child-turn-0', tokenUsage: { last: { inputTokens: 500, outputTokens: 500, cachedInputTokens: 0, totalTokens: 1000, cacheWriteInputTokens: 0, reasoningOutputTokens: 0 }, total: {}, modelContextWindow: null } } }); }
 	const children = /CHILD (\d+)/.exec(text);
 	if (children) {
 		const sender = text.includes('NESTED') ? 'child-thread' : thread;

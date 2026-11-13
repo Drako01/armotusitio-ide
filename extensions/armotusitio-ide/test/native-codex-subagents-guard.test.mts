@@ -116,6 +116,8 @@ test('opted-in Codex children are bounded per turn, limited to depth one and die
 		const within = await turn(allowed, 'CHILD ' + CODEX_CHILD_SPAWNS_PER_TURN);
 		// The bound is per turn: an earlier turn's children do not consume the next one's.
 		const next = await turn(allowed, 'again CHILD 1');
+		// A late receipt of the first turn's child arrives during a turn with no children: nothing is charged to it.
+		const late = await turn(allowed, 'LATE_CHILD plain');
 		const over = await turn(allowed, 'CHILD ' + (CODEX_CHILD_SPAWNS_PER_TURN + 1));
 		await allowed.exited;
 		const nested = await codex.open(true);
@@ -131,8 +133,9 @@ test('opted-in Codex children are bounded per turn, limited to depth one and die
 			['features.multi_agent=true', 'features.multi_agent_v2=false', 'agents.max_threads=2', 'agents.max_depth=1', 'tools.web_search=false'].filter(flag => !argv.includes(flag)),
 			within.status, next.status, [over.status, over.error], [depth.status, depth.error], interrupted.status, await settledPids(await codex.pids()),
 			// Child receipts: one per child thread the fake reported, added to the parent's own usage, never estimated.
-			[within.usage?.childThreads, within.usage?.childInputTokens, within.usage?.childOutputTokens, within.usage?.inputTokens], [next.usage?.childThreads, next.usage?.childInputTokens]
-		], [[], 'completed', 'completed', ['failed', 'HARNESS_DELEGATION_CHILD_LIMIT'], ['failed', 'HARNESS_DELEGATION_CHILD_DEPTH'], 'interrupted', [], [CODEX_CHILD_SPAWNS_PER_TURN, 7 * CODEX_CHILD_SPAWNS_PER_TURN, 3 * CODEX_CHILD_SPAWNS_PER_TURN, 10], [1, 7]]);
+			[within.usage?.childThreads, within.usage?.childInputTokens, within.usage?.childOutputTokens, within.usage?.inputTokens], [next.usage?.childThreads, next.usage?.childInputTokens],
+			[late.status, late.usage?.childThreads, late.usage?.childInputTokens, late.usage?.inputTokens]
+		], [[], 'completed', 'completed', ['failed', 'HARNESS_DELEGATION_CHILD_LIMIT'], ['failed', 'HARNESS_DELEGATION_CHILD_DEPTH'], 'interrupted', [], [CODEX_CHILD_SPAWNS_PER_TURN, 7 * CODEX_CHILD_SPAWNS_PER_TURN, 3 * CODEX_CHILD_SPAWNS_PER_TURN, 10], [1, 7], ['completed', undefined, undefined, 10]]);
 		assert.ok(typeof within.firstTokenMs === 'number' && within.firstTokenMs >= 0, 'time to first token is measured');
 	} finally { await codex.close(); }
 });

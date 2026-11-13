@@ -209,7 +209,9 @@ function shell(): void {
 	input.addEventListener('input', autosize);
 	input.addEventListener('input', () => suggest.update());
 	input.addEventListener('blur', () => suggest.close());
-	app.append(header, details, menu, banner, log, approvals, activity, announcer, form);
+	// Autonomous goals of the window share the approvals' card language: what runs, its state, open questions and controls.
+	const goals = el('section', 'goals'); goals.id = 'goals'; goals.setAttribute('aria-label', L.goals); goals.hidden = true;
+	app.append(header, details, menu, banner, log, approvals, goals, activity, announcer, form);
 	drawStagedImage();
 }
 // Registered once: `shell()` runs again whenever the host re-sends labels.
@@ -749,6 +751,36 @@ function renderApprovals(): void {
 		(box.querySelector('button, input') as HTMLElement | null)?.focus();
 	}
 }
+let renderedGoals = '';
+/** One card per live goal: project and objective, state, pending questions, and pause/stop that act at the next safe point. */
+function renderGoals(): void {
+	const box = document.getElementById('goals');
+	const goals: any[] = Array.isArray(state?.goals) ? state.goals : [];
+	const key = goals.map(goal => goal.id + ':' + goal.status + ':' + (goal.questions?.length ?? 0)).join(',');
+	if (key === renderedGoals) { return; }
+	renderedGoals = key; box.textContent = ''; box.hidden = !goals.length;
+	for (const goal of goals) {
+		const card = el('div', 'approval goal'); card.setAttribute('role', 'group'); card.setAttribute('aria-labelledby', 'goal-title-' + goal.id);
+		const title = el('strong', 'approval-title', goal.project + ' · ' + goal.objective); title.id = 'goal-title-' + goal.id;
+		const status = el('p', 'muted approval-rule', (L.goalStatus[goal.status] ?? goal.status) + (goal.startedAt ? ' · ' + format(L.goalSince, new Date(goal.startedAt).toLocaleTimeString()) : ''));
+		card.append(title, status);
+		if (goal.questions?.length) {
+			const questions = el('ul', 'approval-detail'); questions.setAttribute('aria-label', L.goalQuestions);
+			for (const question of goal.questions.slice(0, 3)) { questions.append(el('li', undefined, question)); }
+			card.append(questions);
+		}
+		const actions = el('div', 'approval-actions');
+		for (const [control, label] of [['pause', L.goalPause], ['stop', L.goalStop]] as const) {
+			const button = el('button', 'secondary', label) as HTMLButtonElement; button.type = 'button';
+			button.setAttribute('aria-label', label + ': ' + goal.objective);
+			// A requested pause or stop cannot be undone from here; the buttons say so by staying disabled.
+			button.disabled = goal.status === 'stopping' || (control === 'pause' && goal.status === 'pausing');
+			button.addEventListener('click', () => { button.disabled = true; api.postMessage({ action: 'goal', id: goal.id, control }); });
+			actions.append(button);
+		}
+		card.append(actions); box.append(card);
+	}
+}
 /** One card per agent question set: options as radio buttons or checkboxes, an optional free answer, answer or skip. */
 function questionCard(item: { id: string; questions: any[] }): HTMLElement {
 	const card = el('form', 'approval question'); card.setAttribute('aria-label', L.questions);
@@ -806,7 +838,7 @@ function renderComposer(): void {
 function render(): void {
 	const log = document.getElementById('log');
 	const pinned = log.scrollHeight - log.scrollTop - log.clientHeight < 120;
-	renderHeader(); renderThread(); renderEmpty(); renderApprovals(); renderActivity(); renderComposer();
+	renderHeader(); renderThread(); renderEmpty(); renderApprovals(); renderGoals(); renderActivity(); renderComposer();
 	if (pinned) { log.scrollTop = log.scrollHeight; }
 }
 

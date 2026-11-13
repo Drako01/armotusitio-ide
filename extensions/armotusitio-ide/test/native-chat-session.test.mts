@@ -672,3 +672,17 @@ test('a failed verification drops queued requests instead of starting another wr
 		assert.deepEqual({ queue: s.chat.snapshot().queue, dropped: /mensajes en cola/.test(s.chat.snapshot().messages.at(-1)!.text) }, { queue: undefined, dropped: true });
 	} finally { finish(); await s.cleanup(); }
 });
+
+test('the latency of the last turn reaches /costo in both modes, and only when the provider measured it', async () => {
+	const s = await session([{ ...outcome('respuesta'), usage: { inputTokens: 1, outputTokens: 1 }, firstTokenMs: 321 }, plan('Latencia', ['paso']), { ...outcome('sin latencia'), usage: { inputTokens: 1, outputTokens: 1 } }]);
+	try {
+		await s.chat.send('hola');
+		const ask = s.chat.lastUsage();
+		s.runtime.implement = async (request, hooks) => { hooks.started(() => undefined); return { agent: { ...outcome('Informe'), usage: { inputTokens: 5, outputTokens: 2 }, firstTokenMs: 654 }, verification: { status: 'skipped', gates: [] }, diff: changed('a.ts') }; };
+		await s.chat.send('planeá algo');
+		await s.chat.approve(s.chat.snapshot().plan!.digest);
+		const act = s.chat.lastUsage();
+		await s.chat.send('otra');
+		assert.deepEqual([ask?.firstTokenMs, act?.firstTokenMs, act?.usage.inputTokens, s.chat.lastUsage()?.firstTokenMs], [321, 654, 5, undefined]);
+	} finally { await s.cleanup(); }
+});

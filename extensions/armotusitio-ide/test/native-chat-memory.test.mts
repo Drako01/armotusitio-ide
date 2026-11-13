@@ -134,3 +134,24 @@ test('a long conversation compacts into persisted memory, keeps plan versions in
 		assert.equal(JSON.parse(await fs.readFile(path.join(directory, 'conversation.json'), 'utf8')).memory, undefined);
 	} finally { await fs.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
+
+test('under saturation the rendered memory keeps every recent record and the newest requests, inside its byte limit', () => {
+	const longUser = (index: number) => chatMessage('user', 'requisito ' + index + ' ' + 'x'.repeat(230));
+	const runs = Array.from({ length: 15 }, (_, index) => chatMessage('run', 'informe', { run: { planVersion: index + 1, status: 'passed', durationMs: 1, verification: { status: 'passed', gates: [] }, steps: [{ id: 's', kind: 'edit', label: 'src/file-' + index + '.ts', status: 'ok' }] } }));
+	// Twenty-five oversized requests first, then the records: the old layout would spend the whole budget on requests.
+	const memory = absorbMessages(undefined, [...Array.from({ length: 25 }, (_, index) => longUser(index)), ...runs], root);
+	const rendered = renderMemory(memory, root);
+	const bytes = rendered.reduce((sum, line) => sum + Buffer.byteLength(line, 'utf8') + 1, 0);
+	const records = rendered.filter(line => line.startsWith('- record: '));
+	const requests = rendered.filter(line => line.startsWith('- user asked: '));
+	assert.deepEqual({
+		withinBudget: bytes <= 4 * 1024 + 64, records: records.length, newestRecordKept: records.at(-1)?.includes('plan v15') && records.at(-1)?.includes('src/file-14.ts'),
+		someRequests: requests.length > 0 && requests.length < 25, newestRequestKept: requests.at(-1)?.includes('requisito 24'), oldestRequestDropped: !requests.some(line => line.includes('requisito 0 ')),
+		chronological: rendered.indexOf(requests[0]) < rendered.indexOf(records[0]), stable: JSON.stringify(renderMemory(memory, root)) === JSON.stringify(rendered)
+	}, { withinBudget: true, records: 15, newestRecordKept: true, someRequests: true, newestRequestKept: true, oldestRequestDropped: true, chronological: true, stable: true });
+	// Few records and many requests: requests get the room records do not use.
+	const light = absorbMessages(undefined, [...Array.from({ length: 25 }, (_, index) => longUser(index)), runs[0]], root);
+	const lightRendered = renderMemory(light, root);
+	assert.ok(lightRendered.filter(line => line.startsWith('- user asked: ')).length >= 12, 'unused record budget flows to requests');
+	assert.ok(lightRendered.reduce((sum, line) => sum + Buffer.byteLength(line, 'utf8') + 1, 0) <= 4 * 1024 + 64);
+});

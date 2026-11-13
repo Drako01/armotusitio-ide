@@ -58,12 +58,12 @@ export function compareVersions(left: string, right: string): number {
  * generated bindings keeps working and says so once, so unknown fields are a known risk rather than a silent one.
  */
 export function codexCompatibility(version: string): Pick<RuntimeCapabilities, 'compatible' | 'incompatibility' | 'notice'> {
-	if (!/\d+\.\d+/.test(version)) { return { compatible: false, incompatibility: 'No se pudo leer la versi00f3n de Codex (' + version.slice(0, 40) + ').' }; }
+	if (!/\d+\.\d+/.test(version)) { return { compatible: false, incompatibility: 'No se pudo leer la versi\u00f3n de Codex (' + version.slice(0, 40) + ').' }; }
 	if (compareVersions(version, CODEX_MIN_SUPPORTED_VERSION) < 0) {
-		return { compatible: false, incompatibility: 'Codex ' + version + ' es anterior a la versi00f3n m00ednima validada del protocolo app-server (' + CODEX_MIN_SUPPORTED_VERSION + '). Actualiz00e1 el CLI.' };
+		return { compatible: false, incompatibility: 'Codex ' + version + ' es anterior a la versi\u00f3n m\u00ednima validada del protocolo app-server (' + CODEX_MIN_SUPPORTED_VERSION + '). Actualiz\u00e1 el CLI.' };
 	}
 	if (compareVersions(version, CODEX_PROTOCOL_VERSION) > 0) {
-		return { compatible: true, notice: 'Codex ' + version + ' es m00e1s nuevo que el protocolo validado (' + CODEX_PROTOCOL_VERSION + '); se usa el protocolo conocido y se ignoran los campos nuevos.' };
+		return { compatible: true, notice: 'Codex ' + version + ' es m\u00e1s nuevo que el protocolo validado (' + CODEX_PROTOCOL_VERSION + '); se usa el protocolo conocido y se ignoran los campos nuevos.' };
 	}
 	return { compatible: true };
 }
@@ -248,6 +248,8 @@ class CodexConnection implements AgentConnection {
 		if (this.turn) { return Promise.reject(new RuntimeError('RUNTIME_TURN_ALREADY_RUNNING')); }
 		return new Promise<TurnResult>((resolve, reject) => {
 			this.childGuard.beginTurn();
+			// Children are named per turn: a late receipt from an earlier turn's child is never charged to this one.
+			this.childThreads.clear();
 			this.turn = { clientTurnId: input.clientTurnId, output: '', resolve, startedAt: Date.now(), children: new Map() };
 			const params: TurnStartParams = {
 				threadId: this.nativeSessionId, input: [...textInput(input.text), ...(input.images ?? []).map(image => ({ type: 'image' as const, url: 'data:' + image.mime + ';base64,' + image.data }))], clientUserMessageId: input.clientTurnId,

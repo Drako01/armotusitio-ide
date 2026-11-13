@@ -203,6 +203,7 @@ test('structured Codex provider usage flows through real local subprocess transp
 		assert.equal(outcome.structuredOutput, true);
 		assert.equal(outcome.output, 'Validated\nHARNESS_REVIEW: PASS');
 		assert.deepEqual(outcome.usage, { inputTokens: 90, outputTokens: 12, cachedInputTokens: 40 });
+		assert.ok(typeof outcome.firstTokenMs === 'number' && outcome.firstTokenMs >= 0 && outcome.firstTokenMs <= outcome.durationMs, 'one-shot runs measure time to first output');
 	} finally {
 		if (oldPath === undefined) { delete process.env.PATH; } else { process.env.PATH = oldPath; }
 		await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });

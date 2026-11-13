@@ -203,6 +203,8 @@ function labels(t: any) {
 		change: { added: t('nuevo'), modified: t('modificado'), deleted: t('borrado') },
 		continueRun: t('Continuar'), retry: t('Reintentar'), continuedRun: t('Continuaci\u00f3n'), maxMessageChars: MAX_USER_MESSAGE_CHARS,
 		discardRun: t('Deshacer esta ejecuci\u00f3n'), openHome: t('Ver en Inicio'),
+		goals: t('Objetivos aut\u00f3nomos en curso'), goalPause: t('Pausar'), goalStop: t('Detener'), goalQuestions: t('Preguntas pendientes'), goalSince: t('desde {0}', '{0}'),
+		goalStatus: { running: t('en ejecuci\u00f3n'), pausing: t('pausa pedida'), stopping: t('detenci\u00f3n pedida'), 'waiting-answers': t('espera tus respuestas') },
 		approvals: t('Aprobaciones pendientes'), allowOnce: t('Permitir una vez'), allowTask: t('Esta tarea'), allowSession: t('Esta sesi\u00f3n'), account: t('Cuenta de {0}', '{0}'), accountIde: t('Cuenta del IDE'), accountManage: t('Administrar cuentas\u2026'), accountSplit: t('Esta conversaci\u00f3n sigue con {0}; el pr\u00f3ximo mensaje usar\u00e1 {1}.', '{0}', '{1}'), authState: { authenticated: t('Autenticada'), 'not-authenticated': t('Sin sesi\u00f3n'), unknown: t('Estado desconocido'), 'cli-unavailable': t('CLI no disponible') }, allowAlways: t('Siempre en este proyecto'), allowGlobal: t('En todos mis proyectos'), globalRule: t('\u00abEn todos mis proyectos\u00bb se ofrece solo para comandos de inspecci\u00f3n y vale en cualquier proyecto.'), denyApproval: t('Denegar'),
 		alwaysRule: t('\u00abSiempre en este proyecto\u00bb guarda la regla \u00ab{0}\u00bb en {1}; \u00abEsta tarea\u00bb y \u00abEsta sesi\u00f3n\u00bb no guardan nada.', '{0}', '{1}'), permissionsFile: '~/.armotusitio/permissions.json',
 		noRemember: {
@@ -303,6 +305,8 @@ function registerChat(context: any, controller: any, projects: any, mcp: any, vs
 				type: 'state', trusted: !!vscode.workspace.isTrusted, providers, models: chosenModels(), accounts, ranWith, efforts: chosenEfforts(), chatMode: chatMode(), codexFullAccess: codexFullAccess(), mcp: { ...mcpStatus, endpoint: new URL(endpoint).host, enabled: !!mcp.enabled?.() },
 				project: folder ? { name: folder.name, id: key } : null,
 				projects: folders().map((item: any) => ({ name: item.name, id: item.uri.toString() })),
+				// Live autonomous goals of this window: names and states only, the same listing `/objetivos` reads.
+				goals: controller.goals?.list?.() ?? [],
 				chat: outgoing, draft: key ? drafts.get(key) : undefined
 			}, surface);
 		}
@@ -691,6 +695,11 @@ function registerChat(context: any, controller: any, projects: any, mcp: any, vs
 			if (action === 'continue' && typeof message.messageId === 'string' && message.messageId.length <= 64) { await session.continueRun(message.messageId); }
 			if (action === 'discard' && typeof message.messageId === 'string' && message.messageId.length <= 64) {
 				if (await confirmDiscard()) { await session.discardRun(message.messageId); }
+			}
+			// Goal controls take effect at the goal's next safe point; an unknown id or control is ignored.
+			if (action === 'goal' && typeof message.id === 'string' && message.id.length <= 64 && (message.control === 'pause' || message.control === 'stop')) {
+				controller.goals?.control(message.id, message.control);
+				publish();
 			}
 			if (action === 'approval' && typeof message.id === 'string' && message.id.length <= 64 && APPROVAL_ANSWERS.includes(message.answer)) { await session.resolveApproval(message.id, message.answer); }
 			// The session validates every answer against the question it asked; anything else is ignored.
