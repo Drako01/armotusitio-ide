@@ -818,7 +818,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 				const boundedSkills = fitEngineeringContext(skillText, promptBudget({ promptBudget: promptBudgetBytes() }) - Buffer.byteLength(basePrompt) - 2);
 				const prompt = resumeSession ? instruction : basePrompt + (boundedSkills ? '\n\n' + boundedSkills : '');
 				let before: WorkingTreeSnapshot | undefined;
-				const toolCheckpoints = new ChatToolCheckpointRecorder(root, path.join(metricsDirectory(root), 'chat-tool-checkpoints'));
+				const toolCheckpoints = new ChatToolCheckpointRecorder(root, toolCheckpointStorage(root));
 				let diff: RunDiffSummary = { available: false, files: [], count: 0 };
 				const agent = await runGuardedAgent(folder, draftOf(root, provider, 'implementer', prompt, { maxTurns, ...(resumeSession ? { resumeSession } : {}) }), {
 					...(server ? { toolServer: server.launch } : {}),
@@ -1027,6 +1027,8 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 		} catch (error) { showError(error); }
 	}));
 	controller.nativeRunning = () => running.size + runningAgents.size + pendingAgents.size + runningWorkflows.size + pendingWorkflows.size + goalIntegration.running();
+	// The chat's `/objetivos` reads and steers the same live goals as the activity feed.
+	controller.goals = { list: () => goalIntegration.list(), control: (id: string, action: 'pause' | 'stop') => goalIntegration.control(id, action) };
 	controller.nativeProjects = async () => {
 		const rows: any[] = [];
 		if (!vscode.workspace.getConfiguration('atsHarness').get('enabled', true)) { return rows; }
@@ -1337,39 +1339,50 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			vscode.window.showInformationMessage('Worktree limpio retirado.');
 		} catch (error) { showError(error); } finally { controller.refresh(); }
 	}));
+	const toolCheckpointStorage = (root: string): string => path.join(metricsDirectory(root), 'chat-tool-checkpoints');
+	const listToolCheckpoints = async (folder: Host, root: string) => {
+		if (!ensureTrust() || !authorized(folder)) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
+		return listChatToolCheckpoints(root, toolCheckpointStorage(root));
+	};
+	/** Confirms, then restores one tool checkpoint under the shared fence (and the project's writer lease when it has its own Harness). */
+	const restoreToolCheckpoint = async (folder: Host, root: string, checkpointId: string): Promise<{ restored: string[]; skipped: string[] } | undefined> => {
+		if (!ensureTrust()) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
+		const approval = await vscode.window.showWarningMessage(
+			'Restaurar 00fanicamente archivos con huella id00e9ntica a la salida de esa herramienta. Cualquier edici00f3n posterior bloquear00e1 la restauraci00f3n completa. No modifica commits ni la rama. 00bfConfirmar?',
+			{ modal: true }, 'Restaurar checkpoint');
+		if (approval !== 'Restaurar checkpoint' || !authorized(folder)) { return undefined; }
+		assertIdle(root, folder);
+		const fence = await acquireSharedExecutionFence(root, metricsDirectory(root), 'native-agent');
+		let lease: WriterLease | undefined;
+		try {
+			if ((await inspectHarnessAuthority(root)).engine === 'project') {
+				if (!coordinatedWriters()) { throw Error('HARNESS_HYBRID_WRITER_UNAVAILABLE'); }
+				lease = await acquireWriterLease(root, true, () => authorized(folder), fence);
+			}
+			return await restoreChatToolCheckpoint(root, toolCheckpointStorage(root), checkpointId, async () => {
+				await fence.assertCurrent();
+				if (!authorized(folder)) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
+			});
+		} finally { await lease?.release().catch(() => undefined); await fence.release(); controller.refresh(); }
+	};
 	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.nativeChatToolRestore', async (requested?: string) => {
 		try {
 			if (!ensureTrust()) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
 			const chosen = await choose(requested, true); if (!chosen) { return; }
 			const root = await fs.realpath(chosen.folder.uri.fsPath);
 			assertIdle(root, chosen.folder);
-			const storage = path.join(metricsDirectory(root), 'chat-tool-checkpoints');
-			const checkpoints = await listChatToolCheckpoints(root, storage);
+			const checkpoints = await listToolCheckpoints(chosen.folder, root);
 			if (!checkpoints.length) { vscode.window.showInformationMessage('No hay checkpoints granulares seguros disponibles.'); return; }
 			const selected = await vscode.window.showQuickPick(checkpoints.map(item => ({
 				label: item.stepId.slice(0, 64), description: item.kind + ' \u00b7 ' + item.files.length + ' archivos \u00b7 ' + item.at + (item.turnId ? ' \u00b7 turno ' + item.turnId.slice(0, 8) + ' #' + String(item.sequence ?? 1) : ''), checkpoint: item
 			})), { title: 'Restaurar una herramienta del Chat Harness' });
 			if (!selected) { return; }
-			const approval = await vscode.window.showWarningMessage(
-				'Restaurar \u00fanicamente archivos con huella id\u00e9ntica a la salida de esa herramienta. Cualquier edici\u00f3n posterior bloquear\u00e1 la restauraci\u00f3n completa. No modifica commits ni la rama. \u00bfConfirmar?',
-				{ modal: true }, 'Restaurar checkpoint');
-			if (approval !== 'Restaurar checkpoint' || !authorized(chosen.folder)) { return; }
-			assertIdle(root, chosen.folder);
-			const fence = await acquireSharedExecutionFence(root, metricsDirectory(root), 'native-agent');
-			let lease: WriterLease | undefined;
-			try {
-				if ((await inspectHarnessAuthority(root)).engine === 'project') {
-					if (!coordinatedWriters()) { throw Error('HARNESS_HYBRID_WRITER_UNAVAILABLE'); }
-					lease = await acquireWriterLease(root, true, () => authorized(chosen.folder), fence);
-				}
-				const outcome = await restoreChatToolCheckpoint(root, storage, selected.checkpoint.id, async () => {
-					await fence.assertCurrent();
-					if (!authorized(chosen.folder)) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
-				});
-				void vscode.window.showInformationMessage('Checkpoint: ' + outcome.restored.length + ' restaurados; ' + outcome.skipped.length + ' preservados por conflicto.');
-			} finally { await lease?.release().catch(() => undefined); await fence.release(); }
+			const outcome = await restoreToolCheckpoint(chosen.folder, root, selected.checkpoint.id);
+			if (outcome) { void vscode.window.showInformationMessage('Checkpoint: ' + outcome.restored.length + ' restaurados; ' + outcome.skipped.length + ' preservados por conflicto.'); }
 		} catch (error) { showError(error); } finally { controller.refresh(); }
 	}));
+	// The chat's `/checkpoints` shares the command's listing, confirmation, fence and lease: one restore path.
+	controller.toolCheckpoints = { list: listToolCheckpoints, restore: restoreToolCheckpoint };
 	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.nativeWorktreeRollback', async (requested?: string) => {
 		try {
 			if (!ensureTrust()) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }

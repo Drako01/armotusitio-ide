@@ -10,8 +10,11 @@ import * as path from 'node:path';
 import { auditLines, runSessionCommand, type SessionCommandDeps } from '../src/native-chat-commands.ts';
 import { addUserRule, projectKey } from '../src/native-permissions.ts';
 import type { HarnessChatSession } from '../src/native-chat-session.ts';
+import type { ToolCheckpoint } from '../src/native-chat-tool-checkpoints.ts';
 
 const t = (text: string, ...args: string[]) => text.replace(/\{(\d+)\}/g, (_, index) => args[Number(index)]);
+/** A chat session with only the members a command reads; `Object.create(null)` keeps it free of inherited surprises. */
+const fakeSession = (members: object): HarnessChatSession => Object.assign(Object.create(null), members);
 
 test('/permisos lists the saved rules and /permisos quitar revokes one so the action asks again', async () => {
 	const base = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'ats-chat-commands-')));
@@ -84,12 +87,75 @@ test('/motor runs a project command in the IDE terminal only when the chat is id
 	const base = { t, chatMode: () => 'act' as const, setChatMode: async () => undefined, permissionsPreset: () => undefined, openFile: async () => undefined, confirmDiscard: async () => false };
 	const ran: string[][] = [];
 	const deps: SessionCommandDeps = { ...base, motor: async (command, args) => { ran.push([command, ...args]); return 'exit 0 \u00b7 1.2 s\nok'; } };
-	const idle = { snapshot: () => ({}) } as unknown as HarnessChatSession;
-	const busy = { snapshot: () => ({ activity: { kind: 'implementing' } }) } as unknown as HarnessChatSession;
+	const idle = fakeSession({ snapshot: () => ({}) });
+	const busy = fakeSession({ snapshot: () => ({ activity: { kind: 'implementing' } }) });
 	const result = await runSessionCommand(deps, 'motor', ['pnpm', 'harness:preflight', '--', 'api'], '/p', idle);
 	const usage = await runSessionCommand(deps, 'motor', [], '/p', idle);
 	const refused = await runSessionCommand(deps, 'motor', ['pnpm', 'test'], '/p', busy);
 	const unavailable = await runSessionCommand(base, 'motor', ['pnpm'], '/p', idle);
 	assert.deepEqual({ result, ran, usage: usage?.startsWith('Uso: /motor'), refused: refused?.includes('en curso'), unavailable: unavailable?.includes('no puede abrir la terminal') },
 		{ result: 'exit 0 \u00b7 1.2 s\nok', ran: [['pnpm', 'harness:preflight', '--', 'api']], usage: true, refused: true, unavailable: true });
+});
+
+test('/checkpoints lists granular checkpoints and restores one only after the shared confirmation, never during a run', async () => {
+	const base = { t, chatMode: () => 'act' as const, setChatMode: async () => undefined, permissionsPreset: () => undefined, openFile: async () => undefined, confirmDiscard: async () => false };
+	let activity: unknown;
+	const refreshed: number[] = [];
+	const session = fakeSession({ snapshot: () => ({ activity }), refreshContext: async () => { refreshed.push(1); } });
+	const checkpoint = (id: string, at: string, files: string[], turn?: { turnId: string; sequence: number }): ToolCheckpoint => ({
+		schemaVersion: 1, id, rootDigest: 'r', at, stepId: 's-' + id.slice(0, 4), kind: 'edit', state: 'ready', files: files.map(path => ({ path, before: null, after: 'missing' })), ...turn
+	});
+	const items = [
+		checkpoint('aaaa1111-0000-4000-8000-000000000001', '2026-11-13T10:00:00.000Z', ['src/a.ts', 'src/b.ts', 'src/c.ts', 'src/d.ts'], { turnId: 'turn-1234-xyz', sequence: 2 }),
+		checkpoint('aaaa2222-0000-4000-8000-000000000002', '2026-11-13T09:00:00.000Z', ['README.md'])
+	];
+	let confirm = false;
+	const restored: string[] = [];
+	const deps: SessionCommandDeps = {
+		...base,
+		checkpoints: { list: async () => items, restore: async (_root, id) => { if (!confirm) { return undefined; } restored.push(id); return { restored: ['src/a.ts'], skipped: ['src/b.ts'] }; } }
+	};
+	const listing = await runSessionCommand(deps, 'checkpoints', [], '/p', session);
+	const declined = await runSessionCommand(deps, 'checkpoints', ['restaurar', 'aaaa1111'], '/p', session);
+	confirm = true;
+	const ambiguous = await runSessionCommand(deps, 'checkpoints', ['restaurar', 'aaaa'], '/p', session);
+	const unknown = await runSessionCommand(deps, 'checkpoints', ['restaurar', 'zzzz'], '/p', session);
+	activity = { kind: 'run' };
+	const busy = await runSessionCommand(deps, 'checkpoints', ['restaurar', 'aaaa1111'], '/p', session);
+	activity = undefined;
+	const done = await runSessionCommand(deps, 'checkpoints', ['restaurar', 'AAAA1111'], '/p', session);
+	assert.deepEqual({
+		listsBoth: listing?.includes('aaaa1111') && listing?.includes('aaaa2222') && listing?.includes('turno turn-123 #2') && listing?.includes('src/a.ts, src/b.ts, src/c.ts +1'),
+		declined: declined?.includes('cancelada'), ambiguous: ambiguous?.includes('varios'), unknown: unknown?.includes('No encontr'), busy: busy?.includes('tarea en curso'),
+		done: done?.includes('1 archivos restaurados; 1 preservados'), restored, refreshed: refreshed.length,
+		usage: await runSessionCommand(deps, 'checkpoints', ['borrar'], '/p', session),
+		absent: (await runSessionCommand(base, 'checkpoints', [], '/p', session))?.includes('no est'),
+		empty: (await runSessionCommand({ ...base, checkpoints: { ...deps.checkpoints!, list: async () => [] } }, 'checkpoints', [], '/p', session))?.includes('No hay checkpoints')
+	}, { listsBoth: true, declined: true, ambiguous: true, unknown: true, busy: true, done: true, restored: ['aaaa1111-0000-4000-8000-000000000001'], refreshed: 1, usage: 'Uso: /checkpoints [restaurar ID]', absent: true, empty: true });
+});
+
+test('/objetivos lists the live goals of the window and asks one to pause or stop at its next safe point', async () => {
+	const base = { t, chatMode: () => 'act' as const, setChatMode: async () => undefined, permissionsPreset: () => undefined, openFile: async () => undefined, confirmDiscard: async () => false };
+	const session: HarnessChatSession = Object.create(null);
+	const controls: string[] = [];
+	const deps: SessionCommandDeps = {
+		...base,
+		goals: {
+			list: () => [
+				{ id: 'g1', project: 'redevent', objective: 'Subir cobertura', status: 'running', startedAt: '2026-11-13T10:00:00.000Z', questions: [] },
+				{ id: 'g2', project: 'redevent', objective: 'Migrar auth', status: 'waiting-answers', startedAt: '2026-11-13T10:05:00.000Z', questions: ['¿Qué proveedor?'] }
+			],
+			control: (id, action) => { if (id !== 'g1' && id !== 'g2') { return false; } controls.push(id + ':' + action); return true; }
+		}
+	};
+	const listing = await runSessionCommand(deps, 'objetivos', [], '/p', session);
+	assert.deepEqual({
+		listing: listing?.includes('g1') && listing?.includes('en ejecución') && listing?.includes('espera tus respuestas') && listing?.includes('¿Qué proveedor?'),
+		paused: (await runSessionCommand(deps, 'objetivos', ['pausar', 'g1'], '/p', session))?.includes('pausar el objetivo g1'),
+		stopped: (await runSessionCommand(deps, 'objetivos', ['detener', 'g2'], '/p', session))?.includes('detener el objetivo g2'),
+		unknown: (await runSessionCommand(deps, 'objetivos', ['detener', 'nope'], '/p', session))?.includes('No hay un objetivo'),
+		usage: await runSessionCommand(deps, 'objetivos', ['reanudar', 'g1'], '/p', session), controls,
+		absent: (await runSessionCommand(base, 'objetivos', [], '/p', session))?.includes('no est'),
+		empty: (await runSessionCommand({ ...base, goals: { ...deps.goals!, list: () => [] } }, 'objetivos', [], '/p', session))?.includes('No hay objetivos')
+	}, { listing: true, paused: true, stopped: true, unknown: true, usage: 'Uso: /objetivos [pausar|detener ID]', controls: ['g1:pause', 'g2:stop'], absent: true, empty: true });
 });

@@ -71,6 +71,26 @@ interface LiveGoal {
 	root?: string;
 	saved?: Set<string>;
 	files?: Set<string>;
+	/** First line of the objective and start time, for listings (chat `/objetivos`, activity). */
+	objective: string;
+	startedAt: string;
+}
+
+/** What the chat shows about a goal running in this window; names and states only, never output. */
+export interface LiveGoalListing {
+	id: string;
+	project: string;
+	objective: string;
+	status: 'running' | 'pausing' | 'stopping' | 'waiting-answers';
+	startedAt: string;
+	questions: string[];
+}
+
+export interface GoalIntegration {
+	running(): number;
+	list(): LiveGoalListing[];
+	/** Ask a running goal to pause or stop at its next safe point; `false` when the id is unknown. */
+	control(id: string, action: 'pause' | 'stop'): boolean;
 }
 interface GoalRunOptions { delivery?: Delivery; card?: CardContext; linked?: string }
 interface GoalResult { status: string; delivery?: Delivery }
@@ -79,7 +99,7 @@ const firstLine = (text: string, length: number): string => text.split('\n')[0].
 const relativeTo = (root: string, file: string): string => path.relative(root, file).split(path.sep).join('/');
 
 /** Registers the goal commands and returns how many goals are running, for the IDE's activity count. */
-export function registerGoalIntegration(deps: GoalIntegrationDeps): { running(): number } {
+export function registerGoalIntegration(deps: GoalIntegrationDeps): GoalIntegration {
 	const { context, vscode, controller, metricsDirectory, showError } = deps;
 	const t = (message: string, ...args: string[]): string => vscode.l10n.t(message, ...args);
 	const log = vscode.window.createOutputChannel?.('ArmotuSitio Harness: objetivos', { log: true });
@@ -249,7 +269,7 @@ export function registerGoalIntegration(deps: GoalIntegrationDeps): { running():
 	const runGoal = async (folder: Host, charter: GoalCharter, options: GoalRunOptions = {}): Promise<GoalResult | undefined> => {
 		const root = await fs.realpath(folder.uri.fsPath);
 		const goalId = Date.now().toString(36) + '-' + randomBytes(3).toString('hex');
-		const live: LiveGoal = { folder };
+		const live: LiveGoal = { folder, objective: firstLine(charter.objective, 160), startedAt: new Date().toISOString() };
 		goals.set(goalId, live);
 		const storage = path.join(metricsDirectory(root), 'goals');
 		let environment: Awaited<ReturnType<typeof createGoalEnvironment>>;
@@ -447,5 +467,18 @@ export function registerGoalIntegration(deps: GoalIntegrationDeps): { running():
 			else { void runGoal(folder, charter, card ? { card } : {}); }
 		} catch (error) { showError(error); }
 	}));
-	return { running: () => goals.size };
+	return {
+		running: () => goals.size,
+		list: () => [...goals.entries()].map(([id, goal]) => ({
+			id, project: String(goal.folder.name ?? ''), objective: goal.objective, startedAt: goal.startedAt, questions: goal.questions ?? [],
+			status: goal.control === 'stop' ? 'stopping' : goal.control === 'pause' ? 'pausing' : goal.questions?.length ? 'waiting-answers' : 'running'
+		})),
+		control: (id, action) => {
+			const goal = goals.get(id);
+			if (!goal) { return false; }
+			// Stop wins over pause, like the activity feed buttons; the goal honors it at its next safe point.
+			if (goal.control !== 'stop') { goal.control = action; }
+			return true;
+		}
+	};
 }

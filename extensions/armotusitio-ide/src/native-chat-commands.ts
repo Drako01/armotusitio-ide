@@ -13,6 +13,8 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { harnessErrorCode, type ChatMode } from './native-chat.ts';
 import type { HarnessChatSession } from './native-chat-session.ts';
+import type { ToolCheckpoint } from './native-chat-tool-checkpoints.ts';
+import type { GoalIntegration, LiveGoalListing } from './native-goal-integration.ts';
 import type { EngineLease, EngineLeaseState } from './native-hybrid-writer.ts';
 import { listUserRules, loadPermissions, projectKey, removeUserRule } from './native-permissions.ts';
 import type { PermissionPreset } from './native-permissions-types.ts';
@@ -54,6 +56,8 @@ export function chatCommands(t: CommandTranslator): ChatCommand[] {
 		{ name: 'bifurcar', description: t('Contin\u00faa en una copia de la sesi\u00f3n nativa del proveedor; la original queda guardada sin cambios.'), session: true },
 		{ name: 'modo', usage: '[actuar|preguntar]', description: t('Muestra o cambia el modo del chat.'), session: true },
 		{ name: 'deshacer', description: t('Descarta los cambios de la \u00faltima ejecuci\u00f3n.'), session: true },
+		{ name: 'checkpoints', usage: '[restaurar ID]', description: t('Lista los checkpoints granulares que dejaron las herramientas del agente (por turno y herramienta); "restaurar ID" vuelve esos archivos a su estado anterior solo si nadie los edit\u00f3 despu\u00e9s.'), session: true },
+		{ name: 'objetivos', usage: '[pausar|detener ID]', description: t('Muestra los objetivos aut\u00f3nomos en curso en esta ventana, con su etapa y preguntas pendientes; "pausar" o "detener" act\u00faan en el pr\u00f3ximo punto seguro.'), session: true },
 		{ name: 'lease', usage: '[liberar]', description: t('Estado del lease de escritura del Harness propio del proyecto; "liberar" lo retira cuando el IDE muri\u00f3 con \u00e9l.'), session: true },
 		{ name: 'motor', usage: 'COMANDO [ARGUMENTOS]', description: t('Corre un comando del Harness propio del proyecto (por ejemplo pnpm harness:preflight) en la terminal del IDE, donde pod\u00e9s contestar sus preguntas; el resultado queda en la conversaci\u00f3n.'), session: true },
 		{ name: 'skills', description: t('Lista las skills nativas y del proyecto (carpetas .agents, .codex o .claude).'), session: true },
@@ -154,6 +158,56 @@ export interface SessionCommandDeps {
 	motor?: (command: string, args: string[]) => Promise<string>;
 	image?: (request: string, root: string, session: HarnessChatSession) => Promise<string>;
 	document?: (request: string, root: string, session: HarnessChatSession) => Promise<string>;
+	/** Granular tool checkpoints of the project (`/checkpoints`); `restore` confirms with the user and returns `undefined` when they decline. */
+	checkpoints?: { list(root: string): Promise<ToolCheckpoint[]>; restore(root: string, id: string): Promise<{ restored: string[]; skipped: string[] } | undefined> };
+	/** Autonomous goals running in this window (`/objetivos`). */
+	goals?: Pick<GoalIntegration, 'list' | 'control'>;
+}
+
+const GOAL_STATUS: Record<LiveGoalListing['status'], (t: CommandTranslator) => string> = {
+	running: t => t('en ejecuci\u00f3n'), pausing: t => t('pausa pedida'), stopping: t => t('detenci\u00f3n pedida'), 'waiting-answers': t => t('espera tus respuestas')
+};
+
+/** `/checkpoints` lists what can be restored; `/checkpoints restaurar ID` restores one after the shared confirmation. */
+async function runCheckpointsCommand(deps: SessionCommandDeps, words: string[], root: string, session: HarnessChatSession): Promise<string> {
+	const { t, checkpoints } = deps;
+	if (!checkpoints) { return t('Los checkpoints granulares no est00e1n disponibles en esta ventana.'); }
+	if (words.length === 0) {
+		const items = await checkpoints.list(root);
+		if (!items.length) { return t('No hay checkpoints granulares seguros en este proyecto. Se crean cuando el agente edita archivos en una ejecuci00f3n del chat.'); }
+		return [
+			t('Checkpoints granulares (m00e1s reciente primero). Restaur00e1 uno con /checkpoints restaurar ID:'),
+			...items.slice(0, 20).map(item => '  ' + item.id.slice(0, 8) + ' \u00b7 ' + item.at + ' \u00b7 ' + item.kind + ' \u00b7 ' + t('{0} archivos', String(item.files.length)) + (item.turnId ? ' \u00b7 ' + t('turno {0} #{1}', item.turnId.slice(0, 8), String(item.sequence ?? 1)) : '') + ' \u00b7 ' + item.files.slice(0, 3).map(file => file.path).join(', ') + (item.files.length > 3 ? ' +' + String(item.files.length - 3) : '')),
+			...(items.length > 20 ? [t('  2026 y {0} m00e1s', String(items.length - 20))] : [])
+		].join('\n');
+	}
+	if (words[0] !== 'restaurar' || words.length !== 2) { return t('Uso: /checkpoints [restaurar ID]'); }
+	if (session.snapshot().activity) { return t('Hay una tarea en curso: esper00e1 a que termine o detenela antes de restaurar.'); }
+	const wanted = words[1].toLowerCase();
+	const matches = (await checkpoints.list(root)).filter(item => item.id.toLowerCase().startsWith(wanted));
+	if (matches.length !== 1) { return matches.length ? t('El ID coincide con varios checkpoints; escrib00ed m00e1s caracteres.') : t('No encontr00e9 ese checkpoint. Consult00e1 /checkpoints.'); }
+	const outcome = await checkpoints.restore(root, matches[0].id);
+	if (!outcome) { return t('Restauraci00f3n cancelada.'); }
+	await session.refreshContext();
+	return t('Checkpoint {0}: {1} archivos restaurados; {2} preservados porque cambiaron despu00e9s.', matches[0].id.slice(0, 8), String(outcome.restored.length), String(outcome.skipped.length));
+}
+
+/** `/objetivos` lists the goals of this window; `/objetivos pausar|detener ID` asks one to stop at its next safe point. */
+function runGoalsCommand(deps: SessionCommandDeps, words: string[]): string {
+	const { t, goals } = deps;
+	if (!goals) { return t('Los objetivos aut00f3nomos no est00e1n disponibles en esta ventana.'); }
+	if (words.length === 0) {
+		const items = goals.list();
+		if (!items.length) { return t('No hay objetivos aut00f3nomos en curso en esta ventana. Cre00e1 uno con 00abArmoTuSitio: Nuevo objetivo aut00f3nomo00bb.'); }
+		return [
+			t('Objetivos en curso:'),
+			...items.map(item => '  ' + item.id + ' \u00b7 ' + item.project + ' \u00b7 ' + GOAL_STATUS[item.status](t) + ' \u00b7 ' + item.objective + (item.questions.length ? '\n    ' + t('Preguntas pendientes: {0}', item.questions.slice(0, 3).join(' | ')) : ''))
+		].join('\n');
+	}
+	const action = words[0] === 'pausar' ? 'pause' : words[0] === 'detener' ? 'stop' : undefined;
+	if (!action || words.length !== 2) { return t('Uso: /objetivos [pausar|detener ID]'); }
+	if (!goals.control(words[1], action)) { return t('No hay un objetivo en curso con ese ID. Consult00e1 /objetivos.'); }
+	return action === 'pause' ? t('Ped00ed pausar el objetivo {0}; se detiene en su pr00f3ximo punto seguro.', words[1]) : t('Ped00ed detener el objetivo {0}; se detiene en su pr00f3ximo punto seguro.', words[1]);
 }
 
 const LEASE_TEXT: Record<EngineLeaseState, (t: CommandTranslator, until?: string) => string> = {
@@ -276,6 +330,8 @@ export async function runSessionCommand(deps: SessionCommandDeps, action: string
 		await session.discardRun(status.messageId);
 		return t('Listo: descart\u00e9 los cambios de la \u00faltima ejecuci\u00f3n.');
 	}
+	if (action === 'checkpoints') { return runCheckpointsCommand(deps, words, root, session); }
+	if (action === 'objetivos') { return runGoalsCommand(deps, words); }
 	if (action === 'auditoria') {
 		const directory = deps.runsDirectory?.(root);
 		const lines = directory ? await auditLines(directory) : [];

@@ -145,6 +145,14 @@
 					{
 						"name": "comentar",
 						"description": "Agregar un comentario con confirmación"
+					},
+					{
+						"name": "checkpoints",
+						"description": "Listar o restaurar checkpoints granulares de herramientas del agente"
+					},
+					{
+						"name": "objetivos",
+						"description": "Ver, pausar o detener los objetivos aut00f3nomos en curso"
 					}
 				]
 			}
