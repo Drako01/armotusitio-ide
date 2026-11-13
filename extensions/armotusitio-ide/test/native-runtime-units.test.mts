@@ -14,7 +14,8 @@ import { JsonRpcConnection, ProviderRequestError } from '../src/runtime/json-rpc
 import { AgentSessionStore, migrateStore, SESSION_STORE_VERSION, type SessionRecord } from '../src/runtime/session-store.ts';
 import { ApprovalBroker, SESSION_GRANT_TTL_MS } from '../src/runtime/approval-broker.ts';
 import { decideProviderCall, unwrapShell, verdictOf } from '../src/runtime/provider-policy.ts';
-import { minorOf } from '../src/runtime/codex-adapter.ts';
+import { CODEX_MIN_SUPPORTED_VERSION, codexCompatibility, codexTurnError, compareVersions, minorOf } from '../src/runtime/codex-adapter.ts';
+import { CODEX_PROTOCOL_VERSION } from '../src/runtime/codex-protocol.generated.ts';
 import { claudeToolCall } from '../src/runtime/claude-adapter.ts';
 import { SESSION_TRANSITIONS, sessionKey, type SessionIdentity } from '../src/runtime/contracts.ts';
 import { createCommandPolicy } from '../src/native-command-policy.ts';
@@ -176,6 +177,24 @@ test('contracts: lifecycle transitions, tool normalization, question parsing and
 	assert.deepEqual([minorOf('0.166.0'), minorOf('codex-cli 0.167.2')], ['0.166', '0.167']);
 	assert.notEqual(sessionKey(identity), sessionKey({ ...identity, root: '/q' }));
 	assert.notEqual(sessionKey(identity), sessionKey({ ...identity, provider: 'claude' }));
+});
+
+test('codex compatibility is a range: older than the floor fails closed, validated releases pass, newer ones pass with a notice', () => {
+	assert.deepEqual([compareVersions('0.166.0', '0.169.0'), compareVersions('0.169.0', '0.169.0'), compareVersions('0.170.1', '0.169.0'), compareVersions('1.0.0', '0.999.0'), compareVersions('garbage', '0.0.0')], [-1, 0, 1, 1, -1]);
+	assert.ok(compareVersions(CODEX_MIN_SUPPORTED_VERSION, CODEX_PROTOCOL_VERSION) <= 0);
+	const [older, floor, validated, newer, unreadable] = ['0.150.0', CODEX_MIN_SUPPORTED_VERSION, CODEX_PROTOCOL_VERSION, '0.250.3', 'codex-cli ?'].map(codexCompatibility);
+	assert.deepEqual([older.compatible, floor.compatible, validated.compatible, newer.compatible, unreadable.compatible], [false, true, true, true, false]);
+	assert.match(older.incompatibility ?? '', /0\.150\.0/);
+	assert.deepEqual([floor.notice, validated.notice, floor.incompatibility, validated.incompatibility], [undefined, undefined, undefined, undefined]);
+	assert.match(newer.notice ?? '', /0\.250\.3/);
+	assert.equal(newer.incompatibility, undefined);
+});
+
+test('typed codex turn errors become stable runtime codes; untyped ones keep the provider message', () => {
+	const error = (codexErrorInfo: unknown) => codexTurnError({ message: 'provider text', codexErrorInfo: codexErrorInfo as never, additionalDetails: null, misalignment: null });
+	assert.deepEqual(
+		[error('usageLimitExceeded'), error('rateLimitExceeded'), error('contextWindowExceeded'), error('unauthorized'), error({ httpConnectionFailed: { httpStatusCode: 502 } }), error('modelNotFound'), error('inferenceHookDenied'), error('other'), error(null), error('somethingNew')],
+		['RUNTIME_RATE_LIMITED', 'RUNTIME_RATE_LIMITED', 'RUNTIME_CONTEXT_EXCEEDED', 'RUNTIME_UNAUTHENTICATED', 'RUNTIME_PROVIDER_UNAVAILABLE', 'RUNTIME_MODEL_UNAVAILABLE', 'RUNTIME_POLICY_BLOCKED', 'provider text', 'provider text', 'provider text']);
 });
 
 test('a file change through a junction or symlink that leaves the project is denied without a card (S17)', async () => {

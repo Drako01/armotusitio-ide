@@ -45,6 +45,8 @@ export interface AgentOutcome {
 	usage?: ProviderUsage;
 	structuredOutput?: boolean;
 	rateLimited?: true;
+	/** Stable `RUNTIME_*` code of a failed native turn, when the provider typed its error; never raw provider text. */
+	errorCode?: string;
 	/** The provider used its whole turn budget: the run is incomplete and can be continued. */
 	stopReason?: 'max-turns';
 	/** Provider session that a continuation can resume (Claude only). */

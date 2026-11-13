@@ -102,8 +102,8 @@ test('Codex sessions switch native children off unless the user opted in, and st
 		const argv = await codex.argv();
 		const result = await turn(connection, 'CHILD 1');
 		await connection.exited;
-		assert.deepEqual([argv.slice(0, 5), result.status, result.error, await settledPids(await codex.pids())], [
-			['--config', 'features.multi_agent=false', '--config', 'features.multi_agent_v2=false', 'app-server'], 'failed', 'HARNESS_DELEGATION_CHILD_UNEXPECTED', []
+		assert.deepEqual([argv.slice(0, 7), result.status, result.error, await settledPids(await codex.pids())], [
+			['--config', 'features.multi_agent=false', '--config', 'features.multi_agent_v2=false', '--config', 'agents.enabled=false', 'app-server'], 'failed', 'HARNESS_DELEGATION_CHILD_UNEXPECTED', []
 		]);
 	} finally { await codex.close(); }
 });

@@ -271,7 +271,7 @@ test('native Codex child threads are explicit, reviewed and read-only', () => {
 
 test('shared native Codex overrides are disabled by default and force V1 depth enforcement', () => {
 	// Codex ships multi_agent enabled: off must be explicit, with feature keys older CLIs ignore.
-	assert.deepEqual(readonlyCodexSubagentOverrides(false), ['--config', 'features.multi_agent=false', '--config', 'features.multi_agent_v2=false']);
+	assert.deepEqual(readonlyCodexSubagentOverrides(false), ['--config', 'features.multi_agent=false', '--config', 'features.multi_agent_v2=false', '--config', 'agents.enabled=false']);
 	assert.deepEqual(readonlyCodexSubagentOverrides(true), [
 		'--config', 'features.multi_agent_v2=false',
 		'--config', 'features.multi_agent=true',

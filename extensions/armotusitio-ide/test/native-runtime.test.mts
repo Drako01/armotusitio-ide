@@ -304,7 +304,9 @@ test('an installed CLI that speaks another protocol version keeps the structured
 	for (const [provider, env, expected] of [
 		['codex', { FAKE_VERSION: '0.150.0' }, /0\.150\.0/],
 		['claude', { FAKE_HELP: '--resume --session-id' }, /--input-format/],
-		['codex', {}, undefined]
+		['codex', {}, undefined],
+		// A weekly Codex release newer than the generated bindings keeps the native transport (additive protocol).
+		['codex', { FAKE_VERSION: '0.199.0' }, undefined]
 	] as const) {
 		const h = await harness(provider, env);
 		try {
@@ -319,6 +321,29 @@ test('an installed CLI that speaks another protocol version keeps the structured
 			else { assert.equal(decision.native, true); }
 		} finally { await h.close(); }
 	}
+});
+
+test('codex writers use the documented on-request policy, humanCommand approvals are one-time and typed failures become stable codes (S21)', async () => {
+	const h = await harness('codex');
+	try {
+		const session = await h.session();
+		h.user.approval = () => 'session';
+		const human = await session.runTurn('HUMAN docker ps', 'writer');
+		const failed = await session.runTurn('FAIL contextWindowExceeded', 'conversation');
+		const sessions = JSON.parse(await fs.readFile(path.join(h.state, 'sessions.json'), 'utf8')) as Record<string, { approvalPolicy?: unknown }>;
+		assert.deepEqual({
+			human: human.output.includes('executed=docker ps decision=accept') && !human.output.includes('acceptForSession'),
+			failed: [failed.status, failed.error], policies: [...new Set(Object.values(sessions).map(thread => thread.approvalPolicy))].sort()
+		}, { human: true, failed: ['failed', 'RUNTIME_CONTEXT_EXCEEDED'], policies: ['never', 'on-request'].filter(policy => Object.values(sessions).some(thread => thread.approvalPolicy === policy)) });
+		assert.ok(!Object.values(sessions).some(thread => thread.approvalPolicy === 'untrusted'));
+	} finally { await h.close(); }
+	const control = await harness('codex');
+	try {
+		const session = await control.session();
+		control.user.approval = () => 'session';
+		const plain = await session.runTurn('RUN docker ps', 'writer');
+		assert.ok(plain.output.includes('decision=acceptForSession'), plain.output);
+	} finally { await control.close(); }
 });
 
 for (const provider of ['codex', 'claude'] as const) {

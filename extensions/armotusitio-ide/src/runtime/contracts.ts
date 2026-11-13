@@ -201,6 +201,8 @@ export interface RuntimeCapabilities {
 	compatible: boolean;
 	/** Why it is not compatible, in user terms. */
 	incompatibility?: string;
+	/** Compatible with a caveat worth showing once (for example a CLI newer than the validated protocol). */
+	notice?: string;
 	features: Record<'session' | 'streaming' | 'resume' | 'fork' | 'interrupt' | 'steer' | 'approvals' | 'questions' | 'commandOutput' | 'mcp' | 'usage', CapabilityLevel>;
 }
 

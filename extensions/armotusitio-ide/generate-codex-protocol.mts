@@ -5,7 +5,7 @@
 /**
  * Regenerates `src/runtime/codex-protocol.generated.ts` from the INSTALLED Codex CLI (`codex app-server generate-ts`), so
  * the adapter's protocol types are never invented. Only the transitive closure of the types the adapter uses is kept, in
- * one file with the generator version pinned. Usage: `node generate-codex-protocol.mts` (needs `codex` on PATH).
+ * one file with the generator version pinned. Usage: `node generate-codex-protocol.mts` (needs `codex` on PATH, or `CODEX_BIN`).
  */
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
@@ -28,9 +28,11 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const target = path.join(here, 'src', 'runtime', 'codex-protocol.generated.ts');
 const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'codex-ts-'));
 const shell = process.platform === 'win32';
+/** `CODEX_BIN` points at a specific CLI (for example a newer release unpacked for validation) instead of the one on PATH. */
+const codex = process.env.CODEX_BIN ?? 'codex';
 try {
-	const version = execFileSync('codex', ['--version'], { encoding: 'utf8', shell }).trim();
-	execFileSync('codex', ['app-server', 'generate-ts', '--out', temporary], { stdio: 'ignore', shell });
+	const version = execFileSync(codex, ['--version'], { encoding: 'utf8', shell }).trim();
+	execFileSync(codex, ['app-server', 'generate-ts', '--out', temporary], { stdio: 'ignore', shell });
 	const files = new Map<string, string>();
 	const queue = [...ROOTS];
 	while (queue.length) {

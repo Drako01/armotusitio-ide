@@ -763,6 +763,11 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 					}
 					return { native: false, ...(decision.reason ? { reason: decision.reason } : {}) };
 				}
+				// Compatible with a caveat (a CLI newer than the validated protocol): said once, never blocks the native transport.
+				if (decision.capabilities?.notice && !transportWarned.has(provider)) {
+					transportWarned.add(provider);
+					void vscode.window.showInformationMessage(decision.capabilities.notice);
+				}
 				return { native: true, lastInputRef: await nativeChat.lastInputRef(await rootOf(), provider, conversationId) };
 			},
 			fork: async (provider, conversationId, next) => nativeChat.fork(await rootOf(), provider, conversationId, next),

@@ -18,7 +18,7 @@ import { liveQuota, mergeQuota, type ProviderQuota } from './native-quota.ts';
 import { redactSecrets } from './native-redact.ts';
 import { absorbMessages, compactionSplit } from './native-chat-memory.ts';
 import { classifyRun } from './native-run-outcome.ts';
-import { recoveryHint } from './native-error-catalog.ts';
+import { hasRecoveryHint, recoveryHint } from './native-error-catalog.ts';
 import type { ActivityActionId, ActivityItem } from './native-activity-feed.ts';
 import type { RunDiffSummary, RunFileChange } from './native-run-diff.ts';
 import { summarizeSteps, upsertStep, type ChatStep } from './native-run-steps.ts';
@@ -149,6 +149,8 @@ function failureNotice(t: Translate, outcome: AgentOutcome): string {
 	}
 	if (outcome.scopeViolation) { return t('La consulta se descart\u00f3 porque el workspace cambi\u00f3 durante una tarea de solo lectura. Volv\u00e9 a enviarla.'); }
 	if (outcome.stopReason === 'max-turns') { return t('La IA us\u00f3 todos sus turnos de consulta antes de responder. Acot\u00e1 la pregunta o ped\u00ed que revise menos archivos a la vez.'); }
+	// A typed provider error gets its own next step (sign in, shorten, wait); the code stays visible for support.
+	if (outcome.errorCode && hasRecoveryHint(outcome.errorCode)) { return t('La IA no pudo completar la respuesta ({0}). {1}', outcome.errorCode, recoveryHint(t, outcome.errorCode)); }
 	return t('La IA no pudo completar la respuesta (c\u00f3digo {0}). Revis\u00e1 que el proveedor est\u00e9 instalado y autenticado.', String(outcome.exitCode ?? 'n/a'));
 }
 
