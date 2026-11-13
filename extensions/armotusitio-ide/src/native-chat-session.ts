@@ -302,12 +302,12 @@ export class HarnessChatSession {
 	get busy(): boolean { return !!this.activity; }
 
 	/** Usage the provider reported for the latest turn of this window; memory only and never estimated. */
-	private reportedUsage?: { provider: NativeProvider; at: string; usage: ProviderUsage };
+	private reportedUsage?: { provider: NativeProvider; at: string; usage: ProviderUsage; firstTokenMs?: number };
 
-	lastUsage(): { provider: NativeProvider; at: string; usage: ProviderUsage } | undefined { return this.reportedUsage; }
+	lastUsage(): { provider: NativeProvider; at: string; usage: ProviderUsage; firstTokenMs?: number } | undefined { return this.reportedUsage; }
 
-	private noteUsage(provider: NativeProvider, usage: ProviderUsage | undefined): void {
-		this.reportedUsage = usage ? { provider, at: new Date().toISOString(), usage } : undefined;
+	private noteUsage(provider: NativeProvider, usage: ProviderUsage | undefined, firstTokenMs?: number): void {
+		this.reportedUsage = usage ? { provider, at: new Date().toISOString(), usage, ...(firstTokenMs !== undefined ? { firstTokenMs } : {}) } : undefined;
 	}
 
 	/** Latest limits known per provider, from the streams of this window or the provider's own files. */
@@ -663,7 +663,7 @@ export class HarnessChatSession {
 				: undefined;
 			if (controller.signal.aborted) { throw Error('HARNESS_CANCELLED_BEFORE_START'); }
 			const outcome = await this.runtime.converse(provider, instruction, hooks, controller.signal, transport);
-			this.noteUsage(provider, outcome.usage);
+			this.noteUsage(provider, outcome.usage, outcome.firstTokenMs);
 			await this.noteQuota(provider, outcome.quota);
 			this.turnOk = outcome.status === 'passed' && !!outcome.output.trim();
 			if (this.turnOk && native?.native) { this.deliveredSkills.set(skillKey, reused ? fitted : delivered); }

@@ -14,6 +14,11 @@ export interface ProviderUsage {
 	outputTokens: number;
 	cachedInputTokens?: number;
 	estimatedCostUsd?: number;
+	/** Tokens reported by native child threads (Codex subagents) during the turn; present only when the provider sent receipts. */
+	childInputTokens?: number;
+	childOutputTokens?: number;
+	/** Distinct child threads that reported usage. */
+	childThreads?: number;
 }
 export interface ParsedProviderOutput {
 	message: string;

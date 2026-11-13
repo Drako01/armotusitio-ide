@@ -47,6 +47,8 @@ export interface AgentOutcome {
 	rateLimited?: true;
 	/** Stable `RUNTIME_*` code of a failed native turn, when the provider typed its error; never raw provider text. */
 	errorCode?: string;
+	/** Milliseconds until the provider produced visible output in this turn; absent when it was not measured. */
+	firstTokenMs?: number;
 	/** The provider used its whole turn budget: the run is incomplete and can be continued. */
 	stopReason?: 'max-turns';
 	/** Provider session that a continuation can resume (Claude only). */

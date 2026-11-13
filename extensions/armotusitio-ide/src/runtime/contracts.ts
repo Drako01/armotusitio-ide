@@ -154,6 +154,8 @@ export interface TurnResult {
 	usage?: ProviderUsage;
 	quota?: ProviderQuota;
 	stopReason?: 'max-turns';
+	/** Milliseconds from the turn request to the first visible provider output (text or tool start); absent when nothing streamed. */
+	firstTokenMs?: number;
 }
 
 export interface SessionOpenOptions {

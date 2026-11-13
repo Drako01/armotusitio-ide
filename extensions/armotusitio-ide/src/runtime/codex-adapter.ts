@@ -168,7 +168,21 @@ export class CodexAdapter implements AgentAdapter {
 	}
 }
 
-interface ActiveTurn { id?: string; clientTurnId: string; output: string; resolve(result: TurnResult): void; usage?: TurnResult['usage'] }
+interface ActiveTurn {
+	id?: string; clientTurnId: string; output: string; resolve(result: TurnResult): void; usage?: TurnResult['usage'];
+	startedAt: number; firstTokenAt?: number;
+	/** Usage receipts of child threads, keyed by thread id (last report per thread, like the parent's `last`). */
+	children: Map<string, { inputTokens: number; outputTokens: number }>;
+}
+
+/** Child thread ids a collaboration or subagent item names; the parent's own id is never one of them. */
+function childThreadIds(item: Record<string, unknown> | undefined, parent: string): string[] {
+	if (!item) { return []; }
+	const ids: unknown[] = [];
+	if (item.type === 'collabAgentToolCall') { ids.push(...(Array.isArray(item.receiverThreadIds) ? item.receiverThreadIds : []), ...Object.keys(item.agentsStates && typeof item.agentsStates === 'object' ? item.agentsStates : {})); }
+	if (item.type === 'subAgentActivity') { ids.push(item.agentThreadId); }
+	return ids.filter((id): id is string => typeof id === 'string' && !!id && id !== parent);
+}
 
 class CodexConnection implements AgentConnection {
 	nativeSessionId = '';
@@ -184,6 +198,8 @@ class CodexConnection implements AgentConnection {
 	private readonly changePaths = new Map<string, string[]>();
 	private readonly messages = new Map<string, string>();
 	private readonly childGuard: CodexChildGuard;
+	/** Threads this session's items named as children; only their usage receipts are accounted to the turn. */
+	private readonly childThreads = new Set<string>();
 
 	constructor(child: ProviderProcess, options: SessionOpenOptions, host: AdapterHost, fullAccess: boolean) {
 		this.child = child; this.options = options; this.host = host; this.fullAccess = fullAccess;
@@ -232,7 +248,7 @@ class CodexConnection implements AgentConnection {
 		if (this.turn) { return Promise.reject(new RuntimeError('RUNTIME_TURN_ALREADY_RUNNING')); }
 		return new Promise<TurnResult>((resolve, reject) => {
 			this.childGuard.beginTurn();
-			this.turn = { clientTurnId: input.clientTurnId, output: '', resolve };
+			this.turn = { clientTurnId: input.clientTurnId, output: '', resolve, startedAt: Date.now(), children: new Map() };
 			const params: TurnStartParams = {
 				threadId: this.nativeSessionId, input: [...textInput(input.text), ...(input.images ?? []).map(image => ({ type: 'image' as const, url: 'data:' + image.mime + ';base64,' + image.data }))], clientUserMessageId: input.clientTurnId,
 				approvalPolicy: approvalPolicy(input.role), sandboxPolicy: sandboxPolicy(input.role, [this.options.identity.root, ...(this.options.writableRoots ?? [])], this.fullAccess)
@@ -281,13 +297,34 @@ class CodexConnection implements AgentConnection {
 		this.turn = undefined;
 		// An exhausted plan or throttling is reported as such, so the chat can say when to retry or suggest the other provider.
 		const limited = result.error && /usage limit|rate limit|too many requests/i.test(result.error);
-		turn.resolve({ turnId: turn.id ?? turn.clientTurnId, output: result.output ?? turn.output, ...(turn.usage ? { usage: turn.usage } : {}), ...result, ...(limited ? { output: result.error, error: 'RUNTIME_RATE_LIMITED' } : {}) });
+		// Child receipts are added to the parent's own report, never invented: without receipts the fields stay absent.
+		const children = [...turn.children.values()];
+		const usage = turn.usage || children.length ? {
+			...(turn.usage ?? { inputTokens: 0, outputTokens: 0 }),
+			...(children.length ? { childThreads: children.length, childInputTokens: children.reduce((sum, child) => sum + child.inputTokens, 0), childOutputTokens: children.reduce((sum, child) => sum + child.outputTokens, 0) } : {})
+		} : undefined;
+		turn.resolve({
+			turnId: turn.id ?? turn.clientTurnId, output: result.output ?? turn.output, ...(usage ? { usage } : {}), ...(turn.firstTokenAt ? { firstTokenMs: turn.firstTokenAt - turn.startedAt } : {}),
+			...result, ...(limited ? { output: result.error, error: 'RUNTIME_RATE_LIMITED' } : {})
+		});
+	}
+
+	/** The first visible output of the turn (text or a tool) marks its time to first token. */
+	private firstOutput(): void {
+		if (this.turn && !this.turn.firstTokenAt) { this.turn.firstTokenAt = Date.now(); }
 	}
 
 	private notification(method: string, params: unknown): void {
 		const value = (params ?? {}) as Record<string, unknown>;
 		const turnId = typeof value.turnId === 'string' ? value.turnId : this.turn?.id;
 		if ((method === 'item/started' || method === 'item/completed') && this.childViolation(value)) { return; }
+		if (method === 'item/started' || method === 'item/completed') { for (const id of childThreadIds(value.item as Record<string, unknown> | undefined, this.nativeSessionId)) { this.childThreads.add(id); } }
+		// A child thread's usage is the only traffic of another thread this session accounts for (aggregate budget receipts).
+		if (method === 'thread/tokenUsage/updated' && typeof value.threadId === 'string' && this.childThreads.has(value.threadId)) {
+			const usage = (value as unknown as ThreadTokenUsageUpdatedNotification).tokenUsage.last;
+			this.turn?.children.set(value.threadId, { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens });
+			return;
+		}
 		// Another thread's traffic (a shared server) is never mixed into this session.
 		if (typeof value.threadId === 'string' && this.nativeSessionId && value.threadId !== this.nativeSessionId) { return; }
 		switch (method) {
@@ -300,6 +337,7 @@ class CodexConnection implements AgentConnection {
 				const { itemId, delta } = value as { itemId: string; delta: string };
 				// A runaway stream stops growing at the event bound (like the Claude adapter) and says so once.
 				const before = this.messages.get(itemId) ?? '';
+				this.firstOutput();
 				if (before.length >= MAX_TEXT_CHARS) { return; }
 				const text = (before + delta).slice(0, MAX_TEXT_CHARS);
 				this.messages.set(itemId, text);
@@ -358,7 +396,7 @@ class CodexConnection implements AgentConnection {
 
 	private itemStarted({ item, turnId }: ItemStartedNotification): void {
 		const call = this.callOf(item as unknown as Record<string, unknown>);
-		if (call) { this.host.emit({ turnId, toolCallId: item.id, nativeKey: 'item/started:' + item.id, payload: { type: 'tool.started', call } }); }
+		if (call) { this.firstOutput(); this.host.emit({ turnId, toolCallId: item.id, nativeKey: 'item/started:' + item.id, payload: { type: 'tool.started', call } }); }
 	}
 
 	private itemCompleted({ item, turnId }: ItemCompletedNotification): void {

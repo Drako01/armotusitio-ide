@@ -294,7 +294,10 @@ export async function runSessionCommand(deps: SessionCommandDeps, action: string
 				t('  Entrada: {0} tokens', String(usage.inputTokens)),
 				t('  Salida: {0} tokens', String(usage.outputTokens)),
 				...(usage.cachedInputTokens !== undefined ? [t('  Entrada desde cach\u00e9: {0} tokens', String(usage.cachedInputTokens))] : []),
-				...(usage.estimatedCostUsd !== undefined ? [t('  Costo estimado por el proveedor: US$ {0}', usage.estimatedCostUsd.toFixed(4))] : [])
+				...(usage.estimatedCostUsd !== undefined ? [t('  Costo estimado por el proveedor: US$ {0}', usage.estimatedCostUsd.toFixed(4))] : []),
+				// Child receipts and latency appear only when the provider reported them: never an estimate.
+				...(usage.childThreads ? [t('  Subagentes: {0} hilos, {1} tokens de entrada y {2} de salida informados por el proveedor', String(usage.childThreads), String(usage.childInputTokens ?? 0), String(usage.childOutputTokens ?? 0))] : []),
+				...(last.firstTokenMs !== undefined ? [t('  Primer token: {0} ms', String(last.firstTokenMs))] : [])
 			] : [t('El proveedor no inform\u00f3 el uso del \u00faltimo turno (o todav\u00eda no hubo turnos desde que abriste esta ventana).')]),
 			...(quota.length ? ['', ...quota] : [])
 		].join('\n');

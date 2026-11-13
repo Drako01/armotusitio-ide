@@ -62,7 +62,15 @@ async function runTurn(id, params) {
 	const children = /CHILD (\d+)/.exec(text);
 	if (children) {
 		const sender = text.includes('NESTED') ? 'child-thread' : thread;
-		for (let i = 0; i < Number(children[1]); i++) { write({ method: 'item/started', params: { threadId: sender, turnId: id, item: { type: 'collabAgentToolCall', id: 'child-' + i, tool: 'spawnAgent', status: 'inProgress', senderThreadId: sender, receiverThreadIds: [], prompt: null, model: null, reasoningEffort: null, agentsStates: {} } } }); }
+		for (let i = 0; i < Number(children[1]); i++) {
+			const childThread = 'child-thread-' + i;
+			write({ method: 'item/started', params: { threadId: sender, turnId: id, item: { type: 'collabAgentToolCall', id: 'child-' + i, tool: 'spawnAgent', status: 'inProgress', senderThreadId: sender, receiverThreadIds: [childThread], prompt: null, model: null, reasoningEffort: null, agentsStates: {} } } });
+			// The child thread reports its own usage twice; only the last report counts, like the parent's own last report.
+			write({ method: 'thread/tokenUsage/updated', params: { threadId: childThread, turnId: 'child-turn-' + i, tokenUsage: { last: { inputTokens: 2, outputTokens: 1, cachedInputTokens: 0, totalTokens: 3, cacheWriteInputTokens: 0, reasoningOutputTokens: 0 }, total: {}, modelContextWindow: null } } });
+			write({ method: 'thread/tokenUsage/updated', params: { threadId: childThread, turnId: 'child-turn-' + i, tokenUsage: { last: { inputTokens: 7, outputTokens: 3, cachedInputTokens: 0, totalTokens: 10, cacheWriteInputTokens: 0, reasoningOutputTokens: 0 }, total: {}, modelContextWindow: null } } });
+		}
+		// Usage of a thread this session never named is foreign traffic and must not be accounted.
+		write({ method: 'thread/tokenUsage/updated', params: { threadId: 'stranger-thread', turnId: 'x', tokenUsage: { last: { inputTokens: 1000, outputTokens: 1000, cachedInputTokens: 0, totalTokens: 2000, cacheWriteInputTokens: 0, reasoningOutputTokens: 0 }, total: {}, modelContextWindow: null } } });
 		await sleep(100);
 	}
 	if (text.includes('CRASH')) { delta('partial'); await sleep(50); process.exit(3); }

@@ -49,9 +49,29 @@ test('memory is built only from the user and recorded facts: assistant prose nev
 		compacted: memory.compacted, lastPlanVersion: memory.lastPlanVersion,
 		leaked: /IGNORE ALL|ignor\u00e1 las reglas|texto de aviso/.test(rendered),
 		fencesOrNewlinesInEntries: [...memory.requirements, ...memory.decisions].some(entry => /[`\n]/.test(entry)),
-		hasRequirement: rendered.includes('Quiero un CRUD de clientes'), hasRun: rendered.includes('run of plan v4 ended: passed'),
+		hasRequirement: rendered.includes('Quiero un CRUD de clientes'), hasRun: rendered.includes('run of plan v4 ended: passed (agent passed); verification passed'),
 		statesItIsNotAuthority: /never authorizes execution/.test(rendered), valid: validMemory(memory)
 	}, { compacted: 5, lastPlanVersion: 4, leaked: false, fencesOrNewlinesInEntries: false, hasRequirement: true, hasRun: true, statesItIsNotAuthority: true, valid: true });
+});
+
+test('a compacted run keeps what later turns need: edited files, failed gates, discards and reverts, from IDE records only', () => {
+	const steps = [
+		{ id: 's1', kind: 'edit' as const, label: 'src/a.ts, src/b.ts', status: 'ok' as const },
+		{ id: 's2', kind: 'read' as const, label: 'README.md', status: 'ok' as const },
+		{ id: 's3', kind: 'edit' as const, label: 'src/a.ts, src/b.ts', status: 'ok' as const },
+		{ id: 's4', kind: 'command' as const, label: 'pnpm test `rm -rf`', status: 'error' as const }
+	];
+	const failed = chatMessage('run', 'informe', { run: { planVersion: 2, status: 'failed', agentStatus: 'passed', durationMs: 1, steps, verification: { status: 'failed', gates: [{ id: 'lint', status: 'passed' }, { id: 'typecheck', status: 'failed' }] } } });
+	const discarded = chatMessage('run', 'informe', { run: { planVersion: 3, status: 'passed', durationMs: 1, discarded: true, verification: { status: 'skipped', gates: [] } } });
+	const reverted = chatMessage('run', 'informe', { run: { planVersion: 3, status: 'passed', durationMs: 1, continued: true, reverted: ['src/c.ts'], verification: { status: 'skipped', gates: [] } } });
+	const memory = absorbMessages(undefined, [failed, discarded, reverted], root);
+	assert.deepEqual(memory.decisions, [
+		'run of plan v2 ended: failed (agent passed); edited src/a.ts, src/b.ts; verification failed (typecheck)',
+		'run of plan v3 ended: passed; changes discarded by the user',
+		'run of plan v3 ended: passed; reverted src/c.ts; continued an earlier partial run'
+	]);
+	assert.ok(!memory.decisions.some(entry => entry.includes('rm -rf') || entry.includes('README')), 'commands and reads are not recorded');
+	assert.ok(validMemory(memory));
 });
 
 test('memory is bounded, accumulates across compactions and is dropped for another project', () => {

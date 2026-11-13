@@ -49,6 +49,22 @@ export function compactionSplit(messages: readonly ChatMessage[]): number {
 	return Math.max(0, Math.min(messages.length - KEEP_MESSAGES, limit));
 }
 
+/**
+ * One recorded run: outcome, the files its edit steps named (IDE-observed, not model prose), verification and whether
+ * the user discarded or reverted it. This is what a later turn needs to know about work that already happened.
+ */
+function runRecord(run: NonNullable<ChatMessage['run']>): string {
+	const edited = [...new Set((run.steps ?? []).filter(step => step.kind === 'edit').map(step => step.label))];
+	const parts = [
+		'run of plan v' + run.planVersion + ' ended: ' + run.status + (run.agentStatus ? ' (agent ' + run.agentStatus + ')' : ''),
+		...(edited.length ? ['edited ' + edited.slice(0, 6).join(', ') + (edited.length > 6 ? ' +' + (edited.length - 6) : '')] : []),
+		...(run.verification.status !== 'skipped' ? ['verification ' + run.verification.status + (run.verification.status === 'failed' && run.verification.gates.some(gate => gate.status === 'failed') ? ' (' + run.verification.gates.filter(gate => gate.status === 'failed').map(gate => gate.id).slice(0, 3).join(', ') + ')' : '')] : []),
+		...(run.discarded ? ['changes discarded by the user'] : run.reverted?.length ? ['reverted ' + run.reverted.slice(0, 4).join(', ')] : []),
+		...(run.continued ? ['continued an earlier partial run'] : [])
+	];
+	return oneLine(parts.join('; '));
+}
+
 /** Fold `dropped` messages into the memory. Assistant prose and notices are deliberately ignored. */
 export function absorbMessages(previous: ChatMemory | undefined, dropped: readonly ChatMessage[], root: string): ChatMemory {
 	const base: ChatMemory = previous && previous.root === root ? previous : { root, compacted: 0, requirements: [], decisions: [], lastPlanVersion: 0 };
@@ -61,7 +77,7 @@ export function absorbMessages(previous: ChatMemory | undefined, dropped: readon
 			lastPlanVersion = Math.max(lastPlanVersion, message.plan.version);
 			decisions.push('plan v' + message.plan.version + ' proposed: ' + oneLine(message.plan.title) + ' [' + message.plan.digest.slice(0, 12) + ']');
 		}
-		if (message.run) { decisions.push('run of plan v' + message.run.planVersion + ' ended: ' + message.run.status + (message.run.agentStatus ? ' (agent ' + message.run.agentStatus + ')' : '')); }
+		if (message.run) { decisions.push(runRecord(message.run)); }
 	}
 	return {
 		root, compacted: base.compacted + dropped.length, lastPlanVersion,
