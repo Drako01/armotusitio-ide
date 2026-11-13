@@ -19,6 +19,7 @@ import type { EngineLease, EngineLeaseState } from './native-hybrid-writer.ts';
 import { listUserRules, loadPermissions, projectKey, removeUserRule } from './native-permissions.ts';
 import type { PermissionPreset } from './native-permissions-types.ts';
 import type { ProviderQuota } from './native-quota.ts';
+import type { BudgetStatus, BudgetWarning } from './native-provider-quota.ts';
 import { redactSecrets } from './native-redact.ts';
 import { skillsListing } from './native-chat-skills.ts';
 import { runProjectMemoryCommand } from './native-project-memory-command.ts';
@@ -51,6 +52,24 @@ export function quotaLines(quotas: readonly ProviderQuota[], t: CommandTranslato
 	]);
 }
 
+/** Configured 24 h limits with recorded use; without limits it says how to set them instead of inventing a figure. */
+export function budgetLines(status: BudgetStatus, t: CommandTranslator): string[] {
+	const limits: Array<[BudgetWarning['kind'], number, string, (usage: BudgetStatus['budget']['providers']['codex'], calls: BudgetStatus['quota']['providers']['codex']) => string]> = [
+		['calls', status.quota.maxCallsPer24h ?? 0, t('llamadas'), (_usage, calls) => String(calls.used)],
+		['tokens', status.budget.policy.maxTokensPer24h, t('tokens'), usage => String(usage.tokens)],
+		['cost', status.budget.policy.maxCostUsdPer24h, t('US$'), usage => usage.costUsd.toFixed(4)]
+	];
+	const enabled = limits.filter(([, limit]) => limit > 0);
+	if (!enabled.length) { return [t('Presupuestos de 24 h: sin l\u00edmites configurados (atsHarness.providerCallsPer24h, providerTokensPer24h, providerCostUsdPer24h).')]; }
+	return [t('Presupuestos de 24 h (uso registrado, nunca estimado):'), ...(['codex', 'claude'] as const).flatMap(provider => [
+		'  ' + providerName(provider) + ': ' + enabled.map(([kind, limit, label, used]) => {
+			const warning = status.warnings.find(item => item.provider === provider && item.kind === kind);
+			return used(status.budget.providers[provider], status.quota.providers[provider]) + ' / ' + limit + ' ' + label + (warning ? ' ' + t('(\u00a1{0}%!)', String(warning.usedPercent)) : '');
+		}).join(' \u00b7 '),
+		...(status.budget.providers[provider].unmeteredCalls ? ['    ' + t('{0} llamadas sin consumo informado: con presupuesto de tokens o costo el pr\u00f3ximo lanzamiento se rechaza.', String(status.budget.providers[provider].unmeteredCalls))] : [])
+	])];
+}
+
 export function chatCommands(t: CommandTranslator): ChatCommand[] {
 	return [
 		{ name: 'ayuda', description: t('Lista los comandos disponibles.'), session: false },
@@ -73,7 +92,7 @@ export function chatCommands(t: CommandTranslator): ChatCommand[] {
 		{ name: 'sesiones', usage: '[b\u00fasqueda]', description: t('Busca las conversaciones guardadas de este proyecto.'), session: true },
 		{ name: 'sesion', usage: 'ID', description: t('Retoma una conversaci\u00f3n guardada del proyecto sin repetir operaciones interrumpidas.'), session: true },
 		{ name: 'auditoria', description: t('\u00daltimas acciones de las herramientas del agente en este proyecto (comandos, git, archivos) y su resultado.'), session: true },
-		{ name: 'costo', description: t('Muestra los tokens que inform\u00f3 el proveedor en el \u00faltimo turno.'), session: true },
+		{ name: 'costo', description: t('Muestra los tokens que inform\u00f3 el proveedor en el \u00faltimo turno y el uso de los presupuestos de 24 h.'), session: true },
 		{ name: 'estado', description: t('Progreso de las tareas del Harness.'), session: false },
 		{ name: 'comandos', description: t('Acciones disponibles por proyecto.'), session: false },
 		{ name: 'check', usage: '[proyecto]', description: t('Corre las verificaciones r\u00e1pidas del proyecto.'), session: false },
@@ -140,6 +159,8 @@ export async function auditLines(runsDirectory: string, limit = 30): Promise<str
 const exists = (file: string): Promise<boolean> => fs.lstat(file).then(() => true, () => false);
 
 export interface SessionCommandDeps {
+	/** Recorded 24 h use against the configured limits; absent when the window has no Harness controller. */
+	budget?(root: string): Promise<BudgetStatus>;
 	integrations?: ClaudeIntegrationBridge;
 	nativeSkillsDirectory?: string;
 	t: CommandTranslator;
@@ -351,6 +372,7 @@ export async function runSessionCommand(deps: SessionCommandDeps, action: string
 		const last = session.lastUsage();
 		const usage = last?.usage;
 		const quota = quotaLines(Object.values(session.quotaStatus()), t);
+		const budget = deps.budget ? budgetLines(await deps.budget(root), t) : [];
 		return [
 			...(usage ? [
 				t('\u00daltimo turno ({0}):', providerName(last.provider)),
@@ -362,7 +384,8 @@ export async function runSessionCommand(deps: SessionCommandDeps, action: string
 				...(usage.childThreads ? [t('  Subagentes: {0} hilos, {1} tokens de entrada y {2} de salida informados por el proveedor', String(usage.childThreads), String(usage.childInputTokens ?? 0), String(usage.childOutputTokens ?? 0))] : []),
 				...(last.firstTokenMs !== undefined ? [t('  Primer token: {0} ms', String(last.firstTokenMs))] : [])
 			] : [t('El proveedor no inform\u00f3 el uso del \u00faltimo turno (o todav\u00eda no hubo turnos desde que abriste esta ventana).')]),
-			...(quota.length ? ['', ...quota] : [])
+			...(quota.length ? ['', ...quota] : []),
+			...(budget.length ? ['', ...budget] : [])
 		].join('\n');
 	}
 	return undefined;

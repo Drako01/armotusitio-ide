@@ -11,6 +11,7 @@ import { auditLines, runSessionCommand, type SessionCommandDeps } from '../src/n
 import { addUserRule, projectKey } from '../src/native-permissions.ts';
 import type { HarnessChatSession } from '../src/native-chat-session.ts';
 import type { ToolCheckpoint } from '../src/native-chat-tool-checkpoints.ts';
+import type { BudgetStatus } from '../src/native-provider-quota.ts';
 
 const t = (text: string, ...args: string[]) => text.replace(/\{(\d+)\}/g, (_, index) => args[Number(index)]);
 /** A chat session with only the members a command reads; `Object.create(null)` keeps it free of inherited surprises. */
@@ -158,4 +159,24 @@ test('/objetivos lists the live goals of the window and asks one to pause or sto
 		absent: (await runSessionCommand(base, 'objetivos', [], '/p', session))?.includes('no est'),
 		empty: (await runSessionCommand({ ...base, goals: { ...deps.goals!, list: () => [] } }, 'objetivos', [], '/p', session))?.includes('No hay objetivos')
 	}, { listing: true, paused: true, stopped: true, unknown: true, usage: 'Uso: /objetivos [pausar|detener ID]', controls: ['g1:pause', 'g2:stop'], absent: true, empty: true });
+});
+
+test('/costo reports the 24 h budgets from recorded use, says when none is configured and flags a near limit', async () => {
+	const base = { t, chatMode: () => 'act' as const, setChatMode: async () => undefined, permissionsPreset: () => undefined, openFile: async () => undefined, confirmDiscard: async () => false };
+	const session = fakeSession({ lastUsage: () => undefined, quotaStatus: () => ({}) });
+	const status = (calls: number | null, tokens: number, cost: number, warnings: BudgetStatus['warnings'], unmetered = 0): BudgetStatus => ({
+		quota: { enabled: calls !== null, maxCallsPer24h: calls, windowHours: 24, providers: { codex: { used: 3, remaining: calls === null ? null : calls - 3 }, claude: { used: 0, remaining: calls } } },
+		budget: { enabled: tokens > 0 || cost > 0, policy: { maxTokensPer24h: tokens, maxCostUsdPer24h: cost }, windowHours: 24, providers: { codex: { tokens: 820, costUsd: 0.25, unmeteredCalls: unmetered, rateLimitedUntil: null }, claude: { tokens: 0, costUsd: 0, unmeteredCalls: 0, rateLimitedUntil: null } } },
+		warnings
+	});
+	const none = await runSessionCommand({ ...base, budget: async () => status(null, 0, 0, []) }, 'costo', [], '/p', session);
+	const near = await runSessionCommand({ ...base, budget: async () => status(10, 1000, 1, [{ provider: 'codex', kind: 'tokens', used: 820, limit: 1000, usedPercent: 82 }], 1) }, 'costo', [], '/p', session);
+	const without = await runSessionCommand(base, 'costo', [], '/p', session);
+	assert.deepEqual({
+		none: none?.split('\n').at(-1), near: near?.split('\n').slice(-4), without: without?.includes('Presupuestos')
+	}, {
+		none: 'Presupuestos de 24 h: sin l\u00edmites configurados (atsHarness.providerCallsPer24h, providerTokensPer24h, providerCostUsdPer24h).',
+		near: ['Presupuestos de 24 h (uso registrado, nunca estimado):', '  Codex: 3 / 10 llamadas \u00b7 820 / 1000 tokens (\u00a182%!) \u00b7 0.2500 / 1 US$', '    1 llamadas sin consumo informado: con presupuesto de tokens o costo el pr\u00f3ximo lanzamiento se rechaza.', '  Claude Code: 0 / 10 llamadas \u00b7 0 / 1000 tokens \u00b7 0.0000 / 1 US$'],
+		without: false
+	});
 });

@@ -510,6 +510,7 @@ function registerChat(context: any, controller: any, projects: any, mcp: any, vs
 		runsDirectory: (root: string) => controller.runsDirectory?.(root),
 		doctor: async (root: string) => doctorReport(controller.doctorFor ? await controller.doctorFor(root) : []),
 		motor: controller.runProjectCommand && ((command: string, args: string[]) => controller.runProjectCommand(selectedFolder(), command, args)),
+		budget: controller.providerBudgetStatus && ((root: string) => controller.providerBudgetStatus(selectedFolder(), root)),
 		checkpoints: controller.toolCheckpoints && {
 			list: (root: string) => controller.toolCheckpoints.list(selectedFolder(), root),
 			restore: (root: string, id: string) => controller.toolCheckpoints.restore(selectedFolder(), root, id)

@@ -78,7 +78,7 @@ import { withHarnessProvider } from './native-provider-environment.ts';
 import { describeAgentIsolation, meetsWriterIsolation, parseWriterIsolation } from './native-isolation.ts';
 import { describeTrace, taskTrace, traceparent, workflowTrace, type TraceSpan } from './native-trace.ts';
 import {
-	reserveProviderInvocation, readProviderInvocationQuota, assertProviderBudget, recordProviderSpend, readProviderBudget,
+	reserveProviderInvocation, readProviderInvocationQuota, assertProviderBudget, recordProviderSpend, readProviderBudget, readBudgetStatus, type BudgetStatus,
 	validateProviderBudgetPolicy, budgetEnabled, type ProviderBudgetPolicy
 } from './native-provider-quota.ts';
 
@@ -182,13 +182,27 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 	};
 	/** Minimum confinement a writer must have; user-level, so a repository cannot lower it. */
 	const requiredWriterIsolation = () => parseWriterIsolation(vscode.workspace.getConfiguration('atsHarness').get('writerIsolation', 'tool-allowlist'));
+	const budgetStatus = (root: string, folder: Host): Promise<BudgetStatus> => readBudgetStatus(metricsDirectory(root), providerCallsPer24h(folder), providerBudget(folder));
+	/** Warned once per limit while it stays near; cleared when the 24 h window frees it, so the next approach warns again. */
+	const nearBudgets = new Set<string>();
+	const warnNearBudget = async (root: string, folder: Host, provider: NativeProvider): Promise<void> => {
+		const { warnings } = await budgetStatus(root, folder);
+		const kinds: Record<string, string> = { calls: vscode.l10n.t('llamadas'), tokens: vscode.l10n.t('tokens'), cost: vscode.l10n.t('costo (US$)') };
+		for (const kind of ['calls', 'tokens', 'cost']) {
+			const key = root + ':' + provider + ':' + kind;
+			const warning = warnings.find(item => item.provider === provider && item.kind === kind);
+			if (!warning) { nearBudgets.delete(key); continue; }
+			if (nearBudgets.has(key)) { continue; }
+			nearBudgets.add(key);
+			void vscode.window.showWarningMessage(vscode.l10n.t('{0}: {1}% del presupuesto de {2} de 24 h usado ({3} de {4}). Al llegar al 100% los lanzamientos se rechazan; revis\u00e1 /costo o la configuraci\u00f3n atsHarness.provider*Per24h.', provider, String(warning.usedPercent), kinds[kind], String(warning.used), String(warning.limit)));
+		}
+	};
 	/** Live facts for adaptive provider assignment: local diagnostics only, no model call. */
 	const providerAvailability = async (root: string, folder: Host): Promise<ProviderAvailability[]> => {
 		const providers = ['codex', 'claude'] as const;
-		const [diagnostics, quota, budget] = await Promise.all([
+		const [diagnostics, { quota, budget }] = await Promise.all([
 			Promise.all(providers.map(provider => diagnoseProvider(provider).catch(() => undefined))),
-			readProviderInvocationQuota(metricsDirectory(root), providerCallsPer24h(folder)),
-			readProviderBudget(metricsDirectory(root), providerBudget(folder))
+			budgetStatus(root, folder)
 		]);
 		return providers.map((provider, index) => ({
 			provider,
@@ -615,6 +629,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			// Strict cost or daily-call budgets must fail closed without per-child receipts.
 			if (draft.nativeSubagents && (budgetEnabled(providerBudget(folder)) || cap > 0)) { throw Error('HARNESS_DELEGATION_BUDGET_UNVERIFIED'); }
 			if (cap > 0) { await reserveProviderInvocation(metricsDirectory(root), draft.provider, fence, cap); }
+			await warnNearBudget(root, folder, draft.provider);
 			if (!authorized(folder)) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
 			await hooks.beforeLaunch?.();
 			await fence.assertCurrent();
@@ -1343,9 +1358,9 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 		} catch (error) { showError(error); } finally { controller.refresh(); }
 	}));
 	const toolCheckpointStorage = (root: string): string => path.join(metricsDirectory(root), 'chat-tool-checkpoints');
-	const assertCheckpointReader = (folder: Host): void => { if (!ensureTrust() || !authorized(folder)) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); } };
+	const assertTrustedReader = (folder: Host): void => { if (!ensureTrust() || !authorized(folder)) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); } };
 	const listToolCheckpoints = async (folder: Host, root: string) => {
-		assertCheckpointReader(folder);
+		assertTrustedReader(folder);
 		return listChatToolCheckpoints(root, toolCheckpointStorage(root));
 	};
 	/** Confirms, then restores one tool checkpoint under the shared fence (and the project's writer lease when it has its own Harness). */
@@ -1386,11 +1401,13 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 		} catch (error) { showError(error); } finally { controller.refresh(); }
 	}));
 	// The chat's `/checkpoints` shares the command's listing, confirmation, fence and lease: one restore path.
+	/** Budget figures for /costo: recorded use against the configured 24 h limits, with the same near-limit rule as the alert. */
+	controller.providerBudgetStatus = async (folder: Host, root: string): Promise<BudgetStatus> => { assertTrustedReader(folder); return budgetStatus(root, folder); };
 	controller.toolCheckpoints = {
 		list: listToolCheckpoints, restore: restoreToolCheckpoint,
 		/** Read-only views for the chat timeline and its diffs; same trust gate as the listing. */
-		inspect: async (folder: Host, root: string) => { assertCheckpointReader(folder); return inspectChatToolCheckpoints(root, toolCheckpointStorage(root)); },
-		before: async (folder: Host, root: string, id: string, file: string) => { assertCheckpointReader(folder); return toolCheckpointBefore(root, toolCheckpointStorage(root), id, file); }
+		inspect: async (folder: Host, root: string) => { assertTrustedReader(folder); return inspectChatToolCheckpoints(root, toolCheckpointStorage(root)); },
+		before: async (folder: Host, root: string, id: string, file: string) => { assertTrustedReader(folder); return toolCheckpointBefore(root, toolCheckpointStorage(root), id, file); }
 	};
 	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.nativeWorktreeRollback', async (requested?: string) => {
 		try {
