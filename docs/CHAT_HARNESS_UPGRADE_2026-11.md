@@ -199,7 +199,7 @@ Codex quedó sin cuota a las 15:55 con los cuatro paquetes sin commitear; Claude
 | Panel de tokens: presupuestos configurables y alertas | DONE | `2d9421def0d`: `readBudgetStatus`/`budgetWarnings` (80 % de cada límite de 24 h habilitado), aviso único por límite antes de lanzar un agente, `/costo` muestra uso registrado contra `providerCallsPer24h`/`providerTokensPer24h`/`providerCostUsdPer24h` o cómo configurarlos; quota 7/7, commands PASS | Mostrar también en Control Center: opcional, mismo lector |
 | Browser / sesiones remotas | BLOCKED | Sin servicio ni autorización; mantener ADR existente |
 | Docs: matriz Claude Code vs IDE, uso de `.armotusitio/agents.json`, `/integraciones`, `/memoria`, historial | DONE | `docs/CLAUDE_CODE_PARITY_MATRIX.md` nuevo; README (tabla Chat Harness y guías), `docs/guia/04` (comandos, historial, especialistas), `docs/guia/05` (alerta 80 %), cuerpo del PR, evidencia competitiva | — |
-| `npm test` completo sobre el SHA final + CI tras push autorizado | TODO | Una sola vez antes del push; no se hizo push en esta sesión |
+| `npm test` completo sobre el SHA final + CI tras push autorizado | DONE local / BLOCKED CI | Sobre `0957c72153b`: 917 tests, 905 PASS, 0 FAIL, 12 SKIP (102,9 s); `check`, `compile`, `check:native-package` PASS; build `armotusitioOfficialExtensions` 4/4 | CI Linux/Windows requiere push autorizado |
 
 Reglas aprendidas: la herramienta de edición colapsa `\` → escribir barras con `String.fromCharCode(92)`; formatear con `build/lib/formatter.ts` antes de commitear; el guard de codificación ahora cubre palabras tipo `id00e9ntica`.
 
