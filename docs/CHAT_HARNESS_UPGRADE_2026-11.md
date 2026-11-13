@@ -160,10 +160,10 @@ Autoridad del checkout comprobada con `codex-harness.mjs context`: modo global, 
 
 | Paquete | Estado | Archivos / evidencia | Próximo paso |
 |---|---|---|---|
-| Observabilidad por proveedor y caché | PARTIAL | `native-agent-metrics.ts`, test: 4/4 PASS; conserva ausencia de datos como null, rechaza sumas fuera de enteros seguros | Integrar panel y revisar diff antes del commit |
-| Especialistas configurables y mapa | PARTIAL, implementación en curso | `native-agent-profiles.ts`, `native-agent-delegation.ts`, `native-integration.ts`, `resources/home.ts`; reutiliza workflow/DAG existente | Terminar pruebas focalizadas y commit |
-| Puente Claude | PARTIAL, implementación en curso | `native-claude-integrations.ts`, comandos y `chat.ts`; descubrimiento acotado, deshabilitado por defecto, permisos y digest | Terminar integración segura UserPromptSubmit y pruebas |
-| Memoria de proyecto | PARTIAL, implementación en curso | Reutiliza `DecisionLog` en `native-decisions.ts`, comandos y `native-chat-session.ts`; no crea otro almacén equivalente | Terminar corrección/borrado y selección de contexto con pruebas |
+| Observabilidad por proveedor y caché | DONE | `native-agent-metrics.ts` (`12510e75562`), panel "Consumo por proveedor" en el Control Center (`fbd46128ffa`); null cuando el proveedor no informa; renderer PASS | Medición real con proveedor: BLOCKED por cuota |
+| Especialistas configurables y mapa | DONE | `.armotusitio/agents.json` (`native-agent-profiles.ts`, `f7f3fdb0545`): rol, instrucción, modelo y turnos; solo baja límites (máx. 2), sin herramientas, digest fijado entre aprobación y lanzamiento. Mapa "Agentes de la tarea" (`fbd46128ffa`) | Comunicación entre agentes y equipos persistentes: no expuestos por el proveedor, ver §9 |
+| Puente Claude | DONE | `/integraciones` (`ddbc0154bcc`): descubre hooks, agentes, comandos, skills y plugins como datos; solo hooks `UserPromptSubmit` de comando simple, habilitados en memoria, fijados por digest, confirmación por ejecución y política de comandos del IDE; `--setting-sources ''` intacto | Más eventos de hook: requieren mediación propia, ver §9 |
+| Memoria de proyecto | DONE | `/memoria` (`521f7da1270`, `ddbc0154bcc`): guardar decisión/convención/solución, corregir y quitar; `DecisionLog` con lock, límites, redacción; snapshot de 2 KiB por relevancia, rotulado como datos y reenviado solo si cambió | — |
 | Proveedores autenticados y presupuesto de hijos | BLOCKED | Cuota no autorizada; se mantiene `HARNESS_DELEGATION_BUDGET_UNVERIFIED` | Requiere autorización y evidencia real |
 | Browser/remoto, capturas instaladas y lectores de pantalla | BLOCKED | Sin servicio autorizado ni candidato instalado del SHA final | Mantener límites explícitos |
 | CI del futuro SHA final | BLOCKED hasta autorización de push | El CI verde de la base no se atribuye a cambios locales | Revisar Linux/Windows después del push autorizado |
@@ -173,6 +173,17 @@ Referencias oficiales contrastadas: [hooks](https://code.claude.com/docs/en/hook
 ### Registro incremental de commits
 
 Los SHA se agregan inmediatamente después de cada commit; el registro actualizado queda en disco y se incluye en el siguiente paquete. No repetir checks verdes mientras sus entradas relevantes no cambien.
+
+Codex quedó sin cuota a las 15:55 con los cuatro paquetes sin commitear; Claude los validó y commiteó.
+
+| SHA | Contenido | Evidencia |
+|---|---|---|
+| `12510e75562` | Consumo medido por proveedor | métricas 4/4 PASS |
+| `f7f3fdb0545` | Perfiles de especialistas | check PASS; foco 89/89 PASS |
+| `fbd46128ffa` | Mapa de agentes y consumo en el Control Center | renderer PASS (incluye inyección HTML) |
+| `521f7da1270` | Memoria de proyecto controlada por el usuario | project-memory/operations PASS |
+| `ddbc0154bcc` | Puente de integraciones Claude y pistas de error | integrations, error-catalog PASS |
+| `86f9e7299ac` | Comandos en el manifiesto; literal roto reparado | encoding rojo→verde |
 
 ### Continuidad y reglas aprendidas
 
