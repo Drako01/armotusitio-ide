@@ -5,7 +5,7 @@
 import manifest from '../armotusitio/official-extensions.json' with { type: 'json' };
 import type { IExtensionDefinition } from './builtInExtensions.ts';
 
-const expectedNames = new Set(['orquestivo', 'probato-pr', 'indizivo', 'saturivo', 'noditrivo', 'vestigivo'].map(name => `armotusitio.${name}`));
+const expectedNames = new Set(['orquestivo', 'probato-pr', 'indizivo', 'saturivo', 'noditrivo', 'vestigivo', 'vinculivo'].map(name => `armotusitio.${name}`));
 
 function invalid(detail: string): never {
 	throw new Error(`ARMOTUSITIO_OFFICIAL_EXTENSIONS_INVALID: ${detail}`);

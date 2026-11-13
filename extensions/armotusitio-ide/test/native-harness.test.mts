@@ -82,7 +82,12 @@ test('cancelled execution never marks the task passed', async () => {
 		const task = await f.engine.create('cancel', plan);
 		const signal = new AbortController();
 		const execution = f.engine.execute(task.id, approvalDigest(plan, await fs.realpath(f.project)), () => true, signal.signal);
-		setTimeout(() => signal.abort(), 150);
+		// Abort once the attempt is running: a fixed delay raced the lock on slow runners and hit the pre-start guard instead.
+		for (let waited = 0; (await f.engine.get(task.id)).attempts.at(-1)?.status !== 'running'; waited += 25) {
+			if (waited > 10000) { throw Error('attempt never started'); }
+			await new Promise(resolve => setTimeout(resolve, 25));
+		}
+		signal.abort();
 		const done = await execution;
 		assert.equal(done.attempts.at(-1)?.status, 'cancelled');
 	} finally { await f.cleanup(); }
@@ -303,10 +308,12 @@ test('resume reuses passed gates from a safe checkpoint and re-runs only the fai
 	try {
 		await fs.writeFile(path.join(root, 'input.txt'), 'v1');
 		const engine = new NativeHarness(root, path.join(root, '.state'));
-		const task = await engine.create('Resumable', { schemaVersion: 1, inputs: ['input.txt'], gates: [
-			{ id: 'build', executable: 'node', args: ['-e', 'require("fs").appendFileSync("runs.txt", "b")'] },
-			{ id: 'verify', executable: 'node', args: ['-e', 'process.exit(require("fs").existsSync("ready") ? 0 : 1)'], dependsOn: ['build'] }
-		] });
+		const task = await engine.create('Resumable', {
+			schemaVersion: 1, inputs: ['input.txt'], gates: [
+				{ id: 'build', executable: 'node', args: ['-e', 'require("fs").appendFileSync("runs.txt", "b")'] },
+				{ id: 'verify', executable: 'node', args: ['-e', 'process.exit(require("fs").existsSync("ready") ? 0 : 1)'], dependsOn: ['build'] }
+			]
+		});
 		const approval = await engine.reviewDigest(task.plan);
 		await assert.rejects(engine.execute(task.id, approval, () => true, undefined, undefined, { resume: true }), /HARNESS_RESUME_UNAVAILABLE/);
 		const first = await engine.execute(task.id, approval, () => true);

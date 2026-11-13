@@ -34,6 +34,7 @@ import type { PermissionPreset } from './native-permissions-types.ts';
 import { runEditorTool, type EditorBackend } from './native-editor-tools.ts';
 import { McpServerStore } from './native-mcp-servers.ts';
 import { createUserMcpBridge } from './native-user-mcp.ts';
+import { loadAgentProfiles } from './native-agent-profiles.ts';
 import { createDelegationBroker } from './native-agent-delegation.ts';
 import { KeychainDevSecrets } from './native-dev-secrets.ts';
 import { doctorReport, runDoctor, type DoctorCheck, type Exec } from './native-machine-doctor.ts';
@@ -49,7 +50,7 @@ import { harnessErrorCode, promptBudget, type GateSummary } from './native-chat.
 import { proposeProjectConfig, loadProjectConfig, writeProjectConfig, generatedConfigDigest, removeGeneratedProjectConfig } from './native-project.ts';
 import { reviewAgentDraft, inspectAgentWorkspace, modelOption, effortOption, validModel, validEffort, MAX_AGENT_TURNS, type NativeProvider, type NativeEffort, type AgentRole, type AgentDraft } from './native-providers.ts';
 import { captureWorkingTree, diffWorkingTree, discardRunChanges, fingerprintFiles, type RunDiffSummary, type WorkingTreeSnapshot } from './native-run-diff.ts';
-import { ChatToolCheckpointRecorder, listChatToolCheckpoints, restoreChatToolCheckpoint } from './native-chat-tool-checkpoints.ts';
+import { ChatToolCheckpointRecorder, listChatToolCheckpoints, inspectChatToolCheckpoints, toolCheckpointBefore, restoreChatToolCheckpoint } from './native-chat-tool-checkpoints.ts';
 import { buildSupportReport, exportSupportReport } from './native-support.ts';
 import { inspectHarnessAuthority } from './native-authority.ts';
 import { fitEngineeringContext, engineeringContext, engineeringSkillContext, listEngineeringSkills, readEngineeringSkill } from './native-engineering-skills.ts';
@@ -77,7 +78,7 @@ import { withHarnessProvider } from './native-provider-environment.ts';
 import { describeAgentIsolation, meetsWriterIsolation, parseWriterIsolation } from './native-isolation.ts';
 import { describeTrace, taskTrace, traceparent, workflowTrace, type TraceSpan } from './native-trace.ts';
 import {
-	reserveProviderInvocation, readProviderInvocationQuota, assertProviderBudget, recordProviderSpend, readProviderBudget,
+	reserveProviderInvocation, readProviderInvocationQuota, assertProviderBudget, recordProviderSpend, readProviderBudget, readBudgetStatus, type BudgetStatus,
 	validateProviderBudgetPolicy, budgetEnabled, type ProviderBudgetPolicy
 } from './native-provider-quota.ts';
 
@@ -181,13 +182,27 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 	};
 	/** Minimum confinement a writer must have; user-level, so a repository cannot lower it. */
 	const requiredWriterIsolation = () => parseWriterIsolation(vscode.workspace.getConfiguration('atsHarness').get('writerIsolation', 'tool-allowlist'));
+	const budgetStatus = (root: string, folder: Host): Promise<BudgetStatus> => readBudgetStatus(metricsDirectory(root), providerCallsPer24h(folder), providerBudget(folder));
+	/** Warned once per limit while it stays near; cleared when the 24 h window frees it, so the next approach warns again. */
+	const nearBudgets = new Set<string>();
+	const warnNearBudget = async (root: string, folder: Host, provider: NativeProvider): Promise<void> => {
+		const { warnings } = await budgetStatus(root, folder);
+		const kinds: Record<string, string> = { calls: vscode.l10n.t('llamadas'), tokens: vscode.l10n.t('tokens'), cost: vscode.l10n.t('costo (US$)') };
+		for (const kind of ['calls', 'tokens', 'cost']) {
+			const key = root + ':' + provider + ':' + kind;
+			const warning = warnings.find(item => item.provider === provider && item.kind === kind);
+			if (!warning) { nearBudgets.delete(key); continue; }
+			if (nearBudgets.has(key)) { continue; }
+			nearBudgets.add(key);
+			void vscode.window.showWarningMessage(vscode.l10n.t('{0}: {1}% del presupuesto de {2} de 24 h usado ({3} de {4}). Al llegar al 100% los lanzamientos se rechazan; revis\u00e1 /costo o la configuraci\u00f3n atsHarness.provider*Per24h.', provider, String(warning.usedPercent), kinds[kind], String(warning.used), String(warning.limit)));
+		}
+	};
 	/** Live facts for adaptive provider assignment: local diagnostics only, no model call. */
 	const providerAvailability = async (root: string, folder: Host): Promise<ProviderAvailability[]> => {
 		const providers = ['codex', 'claude'] as const;
-		const [diagnostics, quota, budget] = await Promise.all([
+		const [diagnostics, { quota, budget }] = await Promise.all([
 			Promise.all(providers.map(provider => diagnoseProvider(provider).catch(() => undefined))),
-			readProviderInvocationQuota(metricsDirectory(root), providerCallsPer24h(folder)),
-			readProviderBudget(metricsDirectory(root), providerBudget(folder))
+			budgetStatus(root, folder)
 		]);
 		return providers.map((provider, index) => ({
 			provider,
@@ -378,6 +393,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 		if (provider === 'claude' && writerTools && approve && (!session || session.profileEnvironment)) {
 			config.delegation = true;
 			delegation = createDelegationBroker({
+				profiles: () => loadAgentProfiles(root),
 				enabled: () => ensureTrust() && delegationParents.has(root) && !delegationParents.get(root)!.stopping,
 				step: session?.step ?? onStep, redact: text => devSecrets.redact(redactSecrets(text)),
 				authorize: async request => {
@@ -389,7 +405,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 					return await approve({
 						kind: 'mcp', title: vscode.l10n.t('Delegar a un agente de solo lectura'), rule: '', noRemember: 'inexact',
 						detail: [vscode.l10n.t('Esta acci\u00f3n consume una llamada adicional al modelo con la misma cuenta del agente principal.'),
-						'role: ' + request.role, devSecrets.redact(redactSecrets(request.instruction)).slice(0, 1000)]
+						'role: ' + request.role, 'profile: ' + (request.profile ?? 'default') + '; model: ' + (request.model ?? parent.draft.model ?? 'provider default') + '; tools: none; maxTurns: ' + (request.maxTurns ?? 6), devSecrets.redact(redactSecrets(request.instruction)).slice(0, 1000)]
 					}) === 'once';
 				},
 				launch: async request => {
@@ -409,9 +425,10 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 						if (cap > 0) { await reserveProviderInvocation(metricsDirectory(root), provider, parent.fence, cap); }
 						await parent.fence.assertCurrent();
 						if (!authorized(parent.folder) || parent.stopping) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
+						if (request.profileDigest && (await loadAgentProfiles(root)).digest !== request.profileDigest) { throw Error('HARNESS_DELEGATION_PROFILE_CHANGED'); }
 						const child: AgentDraft = {
 							schemaVersion: 1, provider, role: request.role, projectRoot: root, instruction: request.instruction,
-							readOnly: true, maxTurns: 6, ...modelOption(parent.draft.model), ...effortOption(parent.draft.effort)
+							readOnly: true, maxTurns: request.maxTurns ?? 6, ...modelOption(request.model ?? parent.draft.model), ...effortOption(parent.draft.effort)
 						};
 						const pinned = { ...(session?.profileEnvironment ?? parent.environment) };
 						// No child tool server: there is no recursion, MCP, git or write tool grant to inherit.
@@ -612,6 +629,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			// Strict cost or daily-call budgets must fail closed without per-child receipts.
 			if (draft.nativeSubagents && (budgetEnabled(providerBudget(folder)) || cap > 0)) { throw Error('HARNESS_DELEGATION_BUDGET_UNVERIFIED'); }
 			if (cap > 0) { await reserveProviderInvocation(metricsDirectory(root), draft.provider, fence, cap); }
+			await warnNearBudget(root, folder, draft.provider);
 			if (!authorized(folder)) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
 			await hooks.beforeLaunch?.();
 			await fence.assertCurrent();
@@ -763,6 +781,11 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 					}
 					return { native: false, ...(decision.reason ? { reason: decision.reason } : {}) };
 				}
+				// Compatible with a caveat (a CLI newer than the validated protocol): said once, never blocks the native transport.
+				if (decision.capabilities?.notice && !transportWarned.has(provider)) {
+					transportWarned.add(provider);
+					void vscode.window.showInformationMessage(decision.capabilities.notice);
+				}
 				return { native: true, lastInputRef: await nativeChat.lastInputRef(await rootOf(), provider, conversationId) };
 			},
 			fork: async (provider, conversationId, next) => nativeChat.fork(await rootOf(), provider, conversationId, next),
@@ -813,7 +836,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 				const boundedSkills = fitEngineeringContext(skillText, promptBudget({ promptBudget: promptBudgetBytes() }) - Buffer.byteLength(basePrompt) - 2);
 				const prompt = resumeSession ? instruction : basePrompt + (boundedSkills ? '\n\n' + boundedSkills : '');
 				let before: WorkingTreeSnapshot | undefined;
-				const toolCheckpoints = new ChatToolCheckpointRecorder(root, path.join(metricsDirectory(root), 'chat-tool-checkpoints'));
+				const toolCheckpoints = new ChatToolCheckpointRecorder(root, toolCheckpointStorage(root));
 				let diff: RunDiffSummary = { available: false, files: [], count: 0 };
 				const agent = await runGuardedAgent(folder, draftOf(root, provider, 'implementer', prompt, { maxTurns, ...(resumeSession ? { resumeSession } : {}) }), {
 					...(server ? { toolServer: server.launch } : {}),
@@ -1022,6 +1045,8 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 		} catch (error) { showError(error); }
 	}));
 	controller.nativeRunning = () => running.size + runningAgents.size + pendingAgents.size + runningWorkflows.size + pendingWorkflows.size + goalIntegration.running();
+	// The chat's `/objetivos` reads and steers the same live goals as the activity feed.
+	controller.goals = { list: () => goalIntegration.list(), control: (id: string, action: 'pause' | 'stop') => goalIntegration.control(id, action) };
 	controller.nativeProjects = async () => {
 		const rows: any[] = [];
 		if (!vscode.workspace.getConfiguration('atsHarness').get('enabled', true)) { return rows; }
@@ -1036,7 +1061,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 				const workflows = ensureTrust() ? await new NativeAgentWorkflow(folder.uri.fsPath, path.join(metricsDirectory(folder.uri.fsPath), 'workflows')).history().catch(() => []) : [];
 				const agentMetrics = ensureTrust() ? await readAgentStatistics(metricsDirectory(folder.uri.fsPath)).catch(() => null) : null;
 				const engineContract = await describeEngine(folder.uri.fsPath);
-				rows.push({ root: folder.uri.fsPath, name: folder.name, engine: 'ide-native', configured, lock: diagnostic?.lock, engineContract: { version: engineContract.schemaVersion, supported: engineContract.supported, unavailable: engineContract.unavailable }, workflows: workflows.slice(0, 5).map(w => ({ id: w.id, status: w.status, verification: w.verification, steps: w.steps.map(step => ({ id: step.id, status: step.status })) })), agentMetrics: agentMetrics ? { count: agentMetrics.count, successRate: agentMetrics.successRate, p95DurationMs: agentMetrics.p95DurationMs, usageSamples: agentMetrics.usageSamples, measuredInputTokens: agentMetrics.measuredInputTokens, measuredOutputTokens: agentMetrics.measuredOutputTokens, estimatedCostUsd: agentMetrics.estimatedCostUsd } : null, gatePerformance: summarizeGatePerformance(tasks), agentActive: runningAgents.has(folder.uri.fsPath) || runningWorkflows.has(folder.uri.fsPath), tasks: tasks.sort((a, b) => Number(b.attempts.at(-1)?.status === 'running') - Number(a.attempts.at(-1)?.status === 'running')).slice(0, 100).map(task => ({ id: task.id, title: task.title, status: task.attempts.at(-1)?.status || 'pending', attempts: task.attempts.length, gates: task.plan.gates.map(gate => ({ id: gate.id, dependsOn: gate.dependsOn || [], status: task.attempts.at(-1)?.results.find(result => result.id === gate.id)?.status || 'pending' })), reconciliationRequired: task.attempts.at(-1)?.status === 'running' && (diagnostic?.lock !== 'active' || diagnostic?.lockTask !== task.id || diagnostic?.lockAttempt !== task.attempts.at(-1)?.id) })) });
+				rows.push({ root: folder.uri.fsPath, name: folder.name, engine: 'ide-native', configured, lock: diagnostic?.lock, engineContract: { version: engineContract.schemaVersion, supported: engineContract.supported, unavailable: engineContract.unavailable }, workflows: workflows.slice(0, 5).map(w => ({ id: w.id, status: w.status, verification: w.verification, steps: w.steps.map(step => ({ id: step.id, status: step.status, role: step.role, provider: step.provider, durationMs: step.durationMs })) })), agentMetrics: agentMetrics ? { count: agentMetrics.count, successRate: agentMetrics.successRate, p95DurationMs: agentMetrics.p95DurationMs, usageSamples: agentMetrics.usageSamples, measuredInputTokens: agentMetrics.measuredInputTokens, measuredOutputTokens: agentMetrics.measuredOutputTokens, estimatedCostUsd: agentMetrics.estimatedCostUsd, measuredCachedInputTokens: agentMetrics.measuredCachedInputTokens, providerBreakdown: agentMetrics.providerBreakdown, unmeteredSamples: agentMetrics.unmeteredSamples, recommendations: agentMetrics.recommendations } : null, gatePerformance: summarizeGatePerformance(tasks), agentActive: runningAgents.has(folder.uri.fsPath) || runningWorkflows.has(folder.uri.fsPath), tasks: tasks.sort((a, b) => Number(b.attempts.at(-1)?.status === 'running') - Number(a.attempts.at(-1)?.status === 'running')).slice(0, 100).map(task => ({ id: task.id, title: task.title, status: task.attempts.at(-1)?.status || 'pending', attempts: task.attempts.length, gates: task.plan.gates.map(gate => ({ id: gate.id, dependsOn: gate.dependsOn || [], status: task.attempts.at(-1)?.results.find(result => result.id === gate.id)?.status || 'pending' })), reconciliationRequired: task.attempts.at(-1)?.status === 'running' && (diagnostic?.lock !== 'active' || diagnostic?.lockTask !== task.id || diagnostic?.lockAttempt !== task.attempts.at(-1)?.id) })) });
 			} catch { rows.push({ root: folder.uri.fsPath, name: folder.name, engine: 'ide-native', error: true, tasks: [] }); }
 		}
 		return rows;
@@ -1332,39 +1357,58 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			vscode.window.showInformationMessage('Worktree limpio retirado.');
 		} catch (error) { showError(error); } finally { controller.refresh(); }
 	}));
+	const toolCheckpointStorage = (root: string): string => path.join(metricsDirectory(root), 'chat-tool-checkpoints');
+	const assertTrustedReader = (folder: Host): void => { if (!ensureTrust() || !authorized(folder)) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); } };
+	const listToolCheckpoints = async (folder: Host, root: string) => {
+		assertTrustedReader(folder);
+		return listChatToolCheckpoints(root, toolCheckpointStorage(root));
+	};
+	/** Confirms, then restores one tool checkpoint under the shared fence (and the project's writer lease when it has its own Harness). */
+	const restoreToolCheckpoint = async (folder: Host, root: string, checkpointId: string): Promise<{ restored: string[]; skipped: string[] } | undefined> => {
+		if (!ensureTrust()) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
+		const approval = await vscode.window.showWarningMessage(
+			'Restaurar \u00fanicamente archivos con huella id\u00e9ntica a la salida de esa herramienta. Cualquier edici\u00f3n posterior bloquear\u00e1 la restauraci\u00f3n completa. No modifica commits ni la rama. \u00bfConfirmar?',
+			{ modal: true }, 'Restaurar checkpoint');
+		if (approval !== 'Restaurar checkpoint' || !authorized(folder)) { return undefined; }
+		assertIdle(root, folder);
+		const fence = await acquireSharedExecutionFence(root, metricsDirectory(root), 'native-agent');
+		let lease: WriterLease | undefined;
+		try {
+			if ((await inspectHarnessAuthority(root)).engine === 'project') {
+				if (!coordinatedWriters()) { throw Error('HARNESS_HYBRID_WRITER_UNAVAILABLE'); }
+				lease = await acquireWriterLease(root, true, () => authorized(folder), fence);
+			}
+			return await restoreChatToolCheckpoint(root, toolCheckpointStorage(root), checkpointId, async () => {
+				await fence.assertCurrent();
+				if (!authorized(folder)) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
+			});
+		} finally { await lease?.release().catch(() => undefined); await fence.release(); controller.refresh(); }
+	};
 	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.nativeChatToolRestore', async (requested?: string) => {
 		try {
 			if (!ensureTrust()) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
 			const chosen = await choose(requested, true); if (!chosen) { return; }
 			const root = await fs.realpath(chosen.folder.uri.fsPath);
 			assertIdle(root, chosen.folder);
-			const storage = path.join(metricsDirectory(root), 'chat-tool-checkpoints');
-			const checkpoints = await listChatToolCheckpoints(root, storage);
+			const checkpoints = await listToolCheckpoints(chosen.folder, root);
 			if (!checkpoints.length) { vscode.window.showInformationMessage('No hay checkpoints granulares seguros disponibles.'); return; }
 			const selected = await vscode.window.showQuickPick(checkpoints.map(item => ({
 				label: item.stepId.slice(0, 64), description: item.kind + ' \u00b7 ' + item.files.length + ' archivos \u00b7 ' + item.at + (item.turnId ? ' \u00b7 turno ' + item.turnId.slice(0, 8) + ' #' + String(item.sequence ?? 1) : ''), checkpoint: item
 			})), { title: 'Restaurar una herramienta del Chat Harness' });
 			if (!selected) { return; }
-			const approval = await vscode.window.showWarningMessage(
-				'Restaurar \u00fanicamente archivos con huella id\u00e9ntica a la salida de esa herramienta. Cualquier edici\u00f3n posterior bloquear\u00e1 la restauraci\u00f3n completa. No modifica commits ni la rama. \u00bfConfirmar?',
-				{ modal: true }, 'Restaurar checkpoint');
-			if (approval !== 'Restaurar checkpoint' || !authorized(chosen.folder)) { return; }
-			assertIdle(root, chosen.folder);
-			const fence = await acquireSharedExecutionFence(root, metricsDirectory(root), 'native-agent');
-			let lease: WriterLease | undefined;
-			try {
-				if ((await inspectHarnessAuthority(root)).engine === 'project') {
-					if (!coordinatedWriters()) { throw Error('HARNESS_HYBRID_WRITER_UNAVAILABLE'); }
-					lease = await acquireWriterLease(root, true, () => authorized(chosen.folder), fence);
-				}
-				const outcome = await restoreChatToolCheckpoint(root, storage, selected.checkpoint.id, async () => {
-					await fence.assertCurrent();
-					if (!authorized(chosen.folder)) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
-				});
-				void vscode.window.showInformationMessage('Checkpoint: ' + outcome.restored.length + ' restaurados; ' + outcome.skipped.length + ' preservados por conflicto.');
-			} finally { await lease?.release().catch(() => undefined); await fence.release(); }
+			const outcome = await restoreToolCheckpoint(chosen.folder, root, selected.checkpoint.id);
+			if (outcome) { void vscode.window.showInformationMessage('Checkpoint: ' + outcome.restored.length + ' restaurados; ' + outcome.skipped.length + ' preservados por conflicto.'); }
 		} catch (error) { showError(error); } finally { controller.refresh(); }
 	}));
+	// The chat's `/checkpoints` shares the command's listing, confirmation, fence and lease: one restore path.
+	/** Budget figures for /costo: recorded use against the configured 24 h limits, with the same near-limit rule as the alert. */
+	controller.providerBudgetStatus = async (folder: Host, root: string): Promise<BudgetStatus> => { assertTrustedReader(folder); return budgetStatus(root, folder); };
+	controller.toolCheckpoints = {
+		list: listToolCheckpoints, restore: restoreToolCheckpoint,
+		/** Read-only views for the chat timeline and its diffs; same trust gate as the listing. */
+		inspect: async (folder: Host, root: string) => { assertTrustedReader(folder); return inspectChatToolCheckpoints(root, toolCheckpointStorage(root)); },
+		before: async (folder: Host, root: string, id: string, file: string) => { assertTrustedReader(folder); return toolCheckpointBefore(root, toolCheckpointStorage(root), id, file); }
+	};
 	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.nativeWorktreeRollback', async (requested?: string) => {
 		try {
 			if (!ensureTrust()) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }

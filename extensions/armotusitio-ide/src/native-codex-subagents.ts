@@ -14,8 +14,14 @@ export const CODEX_CHILD_CONCURRENCY = 2;
 /** Children started or resumed in one turn; enforced by the IDE, because concurrency is not a cumulative bound. */
 export const CODEX_CHILD_SPAWNS_PER_TURN = 4;
 
-/** Only `features.*` keys: an older CLI ignores an unknown feature, but rejects an unknown `agents.*` key as a malformed role. */
-const DISABLED: readonly string[] = ['--config', 'features.multi_agent=false', '--config', 'features.multi_agent_v2=false'];
+/**
+ * Both generations of the switch, because neither alone covers every supported CLI: `features.multi_agent` is
+ * deprecated since 0.169 (it still controls the V1 fallback) and `agents.enabled=false` is what 0.169 documents as
+ * the switch that disables the subagent tools whichever version the model selects. `agents.enabled` is accepted by
+ * 0.166 as well (verified with `codex -c agents.enabled=false features list`); any other unknown `agents.*` key is
+ * rejected as a malformed role, so nothing else is added here.
+ */
+const DISABLED: readonly string[] = ['--config', 'features.multi_agent=false', '--config', 'features.multi_agent_v2=false', '--config', 'agents.enabled=false'];
 
 export function readonlyCodexSubagentOverrides(enabled: boolean): string[] {
 	return enabled ? [

@@ -45,6 +45,10 @@ export interface AgentOutcome {
 	usage?: ProviderUsage;
 	structuredOutput?: boolean;
 	rateLimited?: true;
+	/** Stable `RUNTIME_*` code of a failed native turn, when the provider typed its error; never raw provider text. */
+	errorCode?: string;
+	/** Milliseconds until the provider produced visible output in this turn; absent when it was not measured. */
+	firstTokenMs?: number;
 	/** The provider used its whole turn budget: the run is incomplete and can be continued. */
 	stopReason?: 'max-turns';
 	/** Provider session that a continuation can resume (Claude only). */
@@ -188,6 +192,7 @@ export async function executeReviewedAgent(review: AgentReview, current: AgentDr
 	if (command.embeddedNode) { env.ELECTRON_RUN_AS_NODE = '1'; }
 	if (current.provider === 'claude') { env.CLAUDE_CODE_SKIP_PROMPT_HISTORY = '1'; }
 	const started = Date.now();
+	let firstOutputAt: number | undefined;
 	let cancelled = false, timedOut = false, truncated = false;
 	let stdout = '', stderr = '', size = 0;
 	let lastProgress = 0;
@@ -225,6 +230,8 @@ export async function executeReviewedAgent(review: AgentReview, current: AgentDr
 		}
 		if (channel === 'stdout') {
 			const piece = stdoutDecoder.write(chunk);
+			// First provider output of the run (a streamed event line): the one-shot equivalent of time to first token.
+			if (firstOutputAt === undefined && piece.trim()) { firstOutputAt = Date.now(); }
 			events.push(piece);
 			if (stdout.length + piece.length <= MAX_STDOUT_RETAINED) { stdout += piece; }
 			else { stdoutOverflow = true; }
@@ -270,7 +277,7 @@ export async function executeReviewedAgent(review: AgentReview, current: AgentDr
 					status = 'failed';
 				}
 				resolve({
-					status, exitCode, durationMs: Date.now() - started, truncated,
+					status, exitCode, durationMs: Date.now() - started, truncated, ...(firstOutputAt !== undefined ? { firstTokenMs: firstOutputAt - started } : {}),
 					output: childViolation ?? redactSecrets(parsed.structured ? parsed.message : stdout + (stderr ? '\n' + stderr : '')),
 					scopeViolation, scopeVerified, ...(scopeUnscanned?.length ? { scopeUnscanned } : {}), structuredOutput: parsed.structured, usage: parsed.usage,
 					...(parsed.rateLimited ? { rateLimited: true as const } : {}),

@@ -7,9 +7,10 @@
  * protocols as the installed CLIs (Codex app-server JSON-RPC, Claude stream-json + MCP permission prompts), with fault
  * injection by keyword. They verify the IDE's side of the contracts; they are never counted as real-provider E2E.
  *
- * Turn keywords: RUN <cmd> (command needing approval), ASK (question), SLOW (3 s stream), FLOOD <n> (n deltas), CHILD <n>
- * (n child agents spawned; with NESTED, by a child thread), CRASH (exit
- * mid-turn), GARBAGE (malformed line), APPROVE_WAIT (approval that waits forever). State lives in FAKE_STATE_DIR:
+ * Turn keywords: RUN <cmd> (command needing approval), HUMAN <cmd> (same, as a `humanCommand` approval), ASK (question),
+ * SLOW (3 s stream), FLOOD <n> (n deltas), CHILD <n> (n child agents spawned; with NESTED, by a child thread), CRASH (exit
+ * mid-turn), GARBAGE (malformed line), APPROVE_WAIT (approval that waits forever), FAIL <codexErrorInfo> (typed turn
+ * failure). State lives in FAKE_STATE_DIR:
  * sessions.json (history per native id, so resume proves continuity) and executions.log (one line per executed command).
  */
 import * as fs from 'node:fs/promises';
@@ -58,18 +59,33 @@ async function runTurn(id, params) {
 	const flood = /FLOOD (\d+)/.exec(text);
 	if (flood) { for (let i = 0; i < Number(flood[1]); i++) { delta('d' + i + ' '); } }
 	if (text.includes('SLOW')) { for (let i = 0; i < 30 && !interrupted; i++) { delta('.'); await sleep(100); } }
+	// A receipt from a child of an earlier turn arriving late: it must not be charged to this turn.
+	if (text.includes('LATE_CHILD')) { write({ method: 'thread/tokenUsage/updated', params: { threadId: 'child-thread-0', turnId: 'child-turn-0', tokenUsage: { last: { inputTokens: 500, outputTokens: 500, cachedInputTokens: 0, totalTokens: 1000, cacheWriteInputTokens: 0, reasoningOutputTokens: 0 }, total: {}, modelContextWindow: null } } }); }
 	const children = /CHILD (\d+)/.exec(text);
 	if (children) {
 		const sender = text.includes('NESTED') ? 'child-thread' : thread;
-		for (let i = 0; i < Number(children[1]); i++) { write({ method: 'item/started', params: { threadId: sender, turnId: id, item: { type: 'collabAgentToolCall', id: 'child-' + i, tool: 'spawnAgent', status: 'inProgress', senderThreadId: sender, receiverThreadIds: [], prompt: null, model: null, reasoningEffort: null, agentsStates: {} } } }); }
+		for (let i = 0; i < Number(children[1]); i++) {
+			const childThread = 'child-thread-' + i;
+			write({ method: 'item/started', params: { threadId: sender, turnId: id, item: { type: 'collabAgentToolCall', id: 'child-' + i, tool: 'spawnAgent', status: 'inProgress', senderThreadId: sender, receiverThreadIds: [childThread], prompt: null, model: null, reasoningEffort: null, agentsStates: {} } } });
+			// The child thread reports its own usage twice; only the last report counts, like the parent's own last report.
+			write({ method: 'thread/tokenUsage/updated', params: { threadId: childThread, turnId: 'child-turn-' + i, tokenUsage: { last: { inputTokens: 2, outputTokens: 1, cachedInputTokens: 0, totalTokens: 3, cacheWriteInputTokens: 0, reasoningOutputTokens: 0 }, total: {}, modelContextWindow: null } } });
+			write({ method: 'thread/tokenUsage/updated', params: { threadId: childThread, turnId: 'child-turn-' + i, tokenUsage: { last: { inputTokens: 7, outputTokens: 3, cachedInputTokens: 0, totalTokens: 10, cacheWriteInputTokens: 0, reasoningOutputTokens: 0 }, total: {}, modelContextWindow: null } } });
+		}
+		// Usage of a thread this session never named is foreign traffic and must not be accounted.
+		write({ method: 'thread/tokenUsage/updated', params: { threadId: 'stranger-thread', turnId: 'x', tokenUsage: { last: { inputTokens: 1000, outputTokens: 1000, cachedInputTokens: 0, totalTokens: 2000, cacheWriteInputTokens: 0, reasoningOutputTokens: 0 }, total: {}, modelContextWindow: null } } });
 		await sleep(100);
 	}
 	if (text.includes('CRASH')) { delta('partial'); await sleep(50); process.exit(3); }
-	const run = /RUN (.+)$/m.exec(text);
+	const failure = /FAIL (\w+)$/m.exec(text);
+	if (failure) {
+		write({ method: 'turn/completed', params: { threadId: thread, turn: { id, status: 'failed', items: [], error: { message: 'provider said ' + failure[1], codexErrorInfo: failure[1], additionalDetails: null, misalignment: null } } } });
+		return;
+	}
+	const run = /(RUN|HUMAN) (.+)$/m.exec(text);
 	if (run || text.includes('APPROVE_WAIT')) {
-		const command = run ? run[1].trim() : 'pnpm wait';
+		const command = run ? run[2].trim() : 'pnpm wait';
 		write({ method: 'item/started', params: { threadId: thread, turnId: id, item: { type: 'commandExecution', id: 'cmd-' + id, command, cwd: params.cwd ?? '.', status: 'inProgress' } } });
-		const response = await request('item/commandExecution/requestApproval', { threadId: thread, turnId: id, itemId: 'cmd-' + id, command, cwd: '.', kind: 'command', startedAtMs: Date.now(), environmentId: null });
+		const response = await request('item/commandExecution/requestApproval', { threadId: thread, turnId: id, itemId: 'cmd-' + id, command, cwd: '.', kind: run?.[1] === 'HUMAN' ? 'humanCommand' : 'command', startedAtMs: Date.now(), environmentId: null });
 		const accepted = response.decision === 'accept' || response.decision === 'acceptForSession';
 		if (accepted) { executed(command); write({ method: 'item/commandExecution/outputDelta', params: { threadId: thread, turnId: id, itemId: 'cmd-' + id, delta: 'ran ' + command + '\n' } }); }
 		write({ method: 'item/completed', params: { threadId: thread, turnId: id, item: { type: 'commandExecution', id: 'cmd-' + id, command, status: accepted ? 'completed' : 'declined', exitCode: accepted ? 0 : null } } });

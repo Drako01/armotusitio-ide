@@ -154,6 +154,8 @@ export interface TurnResult {
 	usage?: ProviderUsage;
 	quota?: ProviderQuota;
 	stopReason?: 'max-turns';
+	/** Milliseconds from the turn request to the first visible provider output (text or tool start); absent when nothing streamed. */
+	firstTokenMs?: number;
 }
 
 export interface SessionOpenOptions {
@@ -201,6 +203,8 @@ export interface RuntimeCapabilities {
 	compatible: boolean;
 	/** Why it is not compatible, in user terms. */
 	incompatibility?: string;
+	/** Compatible with a caveat worth showing once (for example a CLI newer than the validated protocol). */
+	notice?: string;
 	features: Record<'session' | 'streaming' | 'resume' | 'fork' | 'interrupt' | 'steer' | 'approvals' | 'questions' | 'commandOutput' | 'mcp' | 'usage', CapabilityLevel>;
 }
 

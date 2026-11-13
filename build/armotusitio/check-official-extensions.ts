@@ -54,6 +54,6 @@ export async function verifyOfficialArchives(archiveDirectory: string, outputDir
 
 if (import.meta.main) {
 	const directory = process.argv[2];
-	if (!directory || process.argv.length > 3) { throw new Error('Usage: node build/armotusitio/check-official-extensions.ts <directory-with-six-pinned-vsix-files>'); }
+	if (!directory || process.argv.length > 3) { throw new Error('Usage: node build/armotusitio/check-official-extensions.ts <directory-with-seven-pinned-vsix-files>'); }
 	await verifyOfficialArchives(path.resolve(directory), path.resolve(import.meta.dirname, '../../.build/official-extensions-verification'));
 }

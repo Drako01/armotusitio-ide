@@ -86,6 +86,9 @@ interface ActiveTurn {
 	/** The streamed text reached `MAX_TEXT_CHARS`; later deltas of this message are dropped. */
 	truncated: boolean;
 	interrupted: boolean;
+	startedAt: number;
+	/** First visible output (text delta or tool use), for the time-to-first-token measurement. */
+	firstTokenAt?: number;
 }
 
 class ClaudeConnection implements AgentConnection {
@@ -161,7 +164,7 @@ class ClaudeConnection implements AgentConnection {
 		const child = this.process!;
 		return new Promise<TurnResult>(resolve => {
 			this.turn = {
-				clientTurnId: input.clientTurnId, resolve, itemId: 'm' + ++this.messages, partial: '', truncated: false, interrupted: false,
+				clientTurnId: input.clientTurnId, resolve, itemId: 'm' + ++this.messages, partial: '', truncated: false, interrupted: false, startedAt: Date.now(),
 				accumulator: new ClaudeEventAccumulator(undefined, undefined, undefined)
 			};
 			this.host.emit({ turnId: input.clientTurnId, payload: { type: 'turn.started' } });
@@ -240,6 +243,7 @@ class ClaudeConnection implements AgentConnection {
 				if (inner.type === 'message_start') { turn.itemId = 'm' + ++this.messages; turn.partial = ''; turn.truncated = false; }
 				if (inner.type === 'content_block_delta' && inner.delta?.type === 'text_delta' && typeof inner.delta.text === 'string') {
 					if (turn.truncated) { return; }
+					turn.firstTokenAt ??= Date.now();
 					// Bounded before it grows: a runaway stream cannot hold more than one limit plus one delta in memory.
 					turn.partial = (turn.partial + inner.delta.text).slice(0, MAX_TEXT_CHARS);
 					this.host.emit({ turnId, payload: { type: 'message.delta', itemId: turn.itemId, text: turn.partial } });
@@ -258,6 +262,7 @@ class ClaudeConnection implements AgentConnection {
 				for (const block of blocks) {
 					if (block?.type !== 'tool_use' || typeof block.id !== 'string') { continue; }
 					const input = (block.input && typeof block.input === 'object' ? block.input : {}) as Record<string, unknown>;
+					turn.firstTokenAt ??= Date.now();
 					this.host.emit({ turnId, toolCallId: block.id, nativeKey: 'tool_use:' + block.id, payload: { type: 'tool.started', call: claudeToolCall(String(block.name ?? ''), input) } });
 				}
 				return;
@@ -281,7 +286,8 @@ class ClaudeConnection implements AgentConnection {
 				this.turn = undefined;
 				const result: TurnResult = {
 					turnId, status: failed ? 'failed' : 'completed', output, ...(failed ? { error: parsed?.rateLimited ? 'RUNTIME_RATE_LIMITED' : 'RUNTIME_PROVIDER_ERROR' } : {}),
-					...(parsed?.usage ? { usage: parsed.usage } : {}), ...(parsed?.quota ? { quota: parsed.quota } : {}), ...(maxTurns ? { stopReason: 'max-turns' as const } : {})
+					...(parsed?.usage ? { usage: parsed.usage } : {}), ...(parsed?.quota ? { quota: parsed.quota } : {}), ...(maxTurns ? { stopReason: 'max-turns' as const } : {}),
+					...(turn.firstTokenAt ? { firstTokenMs: turn.firstTokenAt - turn.startedAt } : {})
 				};
 				if (parsed?.usage || parsed?.quota) { this.host.emit({ turnId, payload: { type: 'usage', ...(parsed.usage ? { usage: parsed.usage } : {}), ...(parsed.quota ? { quota: parsed.quota } : {}) } }); }
 				this.host.emit({ turnId, payload: { type: 'turn.completed', status: result.status, output, ...(result.error ? { error: result.error } : {}), ...(maxTurns ? { stopReason: 'max-turns' as const } : {}) } });

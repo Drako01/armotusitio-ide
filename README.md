@@ -41,8 +41,15 @@ incorpora el upgrade de Code - OSS a 1.146.0 y el alcance resumido abajo.
 | Documentos | `/documento` opt-in: texto de PDF/notebook en worker acotado | CI Linux/Windows y VSIX instalado |
 | MCP | Stdio, HTTP JSON/SSE y legacy SSE; credenciales en host | Contratos y ciclo completo |
 | Subagentes | Roles Claude aislados y subagentes Codex opt-in: apagados explícitamente por defecto, dos simultáneos, cuatro por turno, profundidad uno, solo lectura | Proveedor autenticado (requiere cuota) e IDE instalado |
-| Checkpoints | Deshacer por corrida/archivo y checkpoints por turno y herramienta, con restauración reanudable | Recuperación en IDE instalado |
-| Extensiones | Sección ArmoTuSitio con seis extensiones del ecosistema | Activación real de las seis en IDE instalado |
+| Checkpoints | Deshacer por corrida/archivo y checkpoints por turno y herramienta, con restauración reanudable; `/checkpoints` los lista y restaura desde el chat | Recuperación en IDE instalado |
+| Extensiones | Sección ArmoTuSitio con siete extensiones del ecosistema | Activación real de las siete en IDE instalado |
+| Codex CLI | Compatibilidad por rango (0.166.0 a 0.169.0 validados; versiones más nuevas siguen en transporte nativo con aviso), política `on-request`, aprobaciones `humanCommand` de decisión única y errores tipados con próximo paso | Proveedor autenticado (requiere cuota) |
+| Objetivos | `/objetivos` muestra los objetivos autónomos de la ventana y permite pausarlos o detenerlos | IDE instalado |
+| Especialistas | `.armotusitio/agents.json` define planificadores y revisores con instrucción, modelo y turnos; solo bajan límites, sin herramientas; el Control Center muestra el mapa de agentes y el consumo por proveedor | Proveedor autenticado (requiere cuota) |
+| Integraciones Claude | `/integraciones` descubre hooks, agentes, skills, comandos y plugins de `.claude` como datos; solo hooks `UserPromptSubmit` de comando simple se habilitan, con confirmación por ejecución | IDE instalado |
+| Memoria del proyecto | `/memoria` guarda, corrige y quita decisiones, convenciones y soluciones confirmadas; el modelo las recibe como datos, nunca como permisos | IDE instalado |
+| Historial | Menú «Historial de checkpoints»: por turno, estado por archivo, diff antes/ahora y restauración por el mismo camino que `/checkpoints` | IDE instalado |
+| Presupuestos | Aviso al 80 % de cada límite de 24 h antes de lanzar un agente; `/costo` muestra el uso registrado contra los límites | — |
 
 Las nuevas funciones usan controles de confianza, límites de tamaño/tiempo y
 denegación por defecto. **La salida de una IA o de un MCP no concede permisos.**
@@ -61,16 +68,31 @@ de contabilidad auditable por hijo. El límite simultáneo no equivale a un
 límite acumulado de consumo.
 
 Codex CLI trae sus subagentes **activados de fábrica**. Por eso el IDE los apaga
-de forma explícita en cada ejecución (`features.multi_agent=false`) y solo los
-enciende con tu opt-in. Además vigila el flujo de eventos: si aparece un hijo sin
+de forma explícita en cada ejecución (`features.multi_agent=false` y, desde la
+versión 0.169 donde esa clave quedó en desuso, también `agents.enabled=false`) y
+solo los enciende con tu opt-in. Cuando el servidor informa el consumo de cada
+hilo hijo, `/costo` lo suma al turno como «Subagentes»; si no hay recibos, no se
+estima nada y el presupuesto sigue bloqueado. Además vigila el flujo de eventos: si aparece un hijo sin
 opt-in, un hijo que intenta delegar otra vez o más de **cuatro hijos en un turno**,
 detiene el proceso completo del proveedor y la corrida se informa como fallida
 (`HARNESS_DELEGATION_CHILD_UNEXPECTED`, `_DEPTH`, `_LIMIT`). Cambiar la búsqueda
 web cierra las sesiones abiertas para que nunca convivan búsqueda e hijos.
 
-Las claves de configuración se comprobaron contra **Codex CLI 0.166.0** sin
-llamar al modelo. La ejecución con proveedor autenticado **consume cuota** y no
+Las claves de configuración se comprobaron contra **Codex CLI 0.166.0 y 0.169.0**
+sin llamar al modelo. La ejecución con proveedor autenticado **consume cuota** y no
 se lanzó: la herencia efectiva del sandbox en los hijos sigue sin evidencia real.
+
+### Compatibilidad con Codex CLI
+
+Los tipos del protocolo app-server se generan desde el CLI real (0.169.0). El IDE
+acepta cualquier versión desde la 0.166.0: una más nueva que la validada sigue
+usando el transporte nativo y lo avisa una vez; una más vieja cae al canal
+estructurado y dice por qué. Los escritores usan la política de aprobación
+`on-request` que documenta Codex (la antigua `untrusted` fue retirada), las
+aprobaciones `humanCommand` se responden con una decisión única y los errores
+del proveedor (contexto excedido, límite de uso, sesión vencida, servicio no
+disponible, modelo inexistente, política) llegan con un código estable y el
+próximo paso sugerido.
 
 ### Checkpoints y recuperación
 
@@ -82,8 +104,10 @@ huellas. Cada registro indica el turno y el orden de la herramienta que lo produ
 y la lista muestra primero los más recientes. Si un humano editó el resultado o
 los eventos son ambiguos/concurrentes, no se aplica ninguna restauración. Si una
 restauración se interrumpe, volver a confirmarla la **reanuda**: los archivos ya
-restaurados se respetan y una edición humana posterior la bloquea entera. Para
-descartar una corrida completa seguís teniendo `/deshacer`.
+restaurados se respetan y una edición humana posterior la bloquea entera. Desde el
+chat, `/checkpoints` lista los mismos registros y `/checkpoints restaurar ID` usa
+exactamente el mismo camino de confirmación y bloqueo. Para descartar una corrida
+completa seguís teniendo `/deshacer`.
 
 ### Documentos, imágenes y MCP
 
@@ -109,6 +133,8 @@ limitan los datos y rechazan solicitudes privilegiadas iniciadas por el servidor
 | [Releases](docs/guia/07-releases.md) | Publicación protegida |
 | [Referencia de la extensión](extensions/armotusitio-ide/README.md) | API, integración y comandos |
 | [Checklist PR #86](docs/CHAT_HARNESS_UPGRADE_PROGRESS.md) | Evidencia por commit y pendientes |
+| [Paridad con Claude Code](docs/CLAUDE_CODE_PARITY_MATRIX.md) | Subagentes, hooks, memoria, tokens, historial: estado y límites |
+| [Upgrade Codex 0.169 y paridad](docs/CHAT_HARNESS_UPGRADE_2026-11.md) | Auditoría contra el CLI real, checklist maestro, evidencia y límites |
 | [Capturas de aceptación](docs/PR86_SCREENSHOT_CAPTURE.md) | Matriz para capturas reales del candidato |
 
 ## Verificación del upgrade en la rama del PR
@@ -133,7 +159,7 @@ No se incorporaron capturas sintéticas ni mockups. Al 2026-11-10 los únicos
 binarios disponibles en el equipo de desarrollo corresponden a la versión
 anterior (IDE 1.145.2, commit `45d7e83`), por lo que **no hay capturas de este PR**.
 Las capturas definitivas de interfaz, consentimientos, accesibilidad, MCP y las
-seis extensiones deben provenir de un **IDE instalado y construido desde el SHA
+siete extensiones deben provenir de un **IDE instalado y construido desde el SHA
 final**, conforme al [protocolo de capturas](docs/PR86_SCREENSHOT_CAPTURE.md).
 Se agregarán a esta sección únicamente tras inspeccionar su procedencia
 y anonimizar credenciales y rutas.

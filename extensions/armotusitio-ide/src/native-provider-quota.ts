@@ -287,3 +287,35 @@ export async function readProviderBudget(
 		providers: { codex: summarizeSpend(ledger, 'codex', policy, now), claude: summarizeSpend(ledger, 'claude', policy, now) }
 	};
 }
+
+/** Preventive alert threshold: a limit is "near" once recorded use reaches this share of it. */
+export const BUDGET_WARNING_PERCENT = 80;
+export interface BudgetWarning { provider: NativeProvider; kind: 'calls' | 'tokens' | 'cost'; used: number; limit: number; usedPercent: number }
+export interface BudgetStatus {
+	quota: ProviderInvocationQuotaStatus;
+	budget: Awaited<ReturnType<typeof readProviderBudget>>;
+	warnings: BudgetWarning[];
+}
+
+/** Deterministic: only enabled limits, only recorded figures, never an estimate of what the provider did not report. */
+export function budgetWarnings(quota: ProviderInvocationQuotaStatus, budget: BudgetStatus['budget']): BudgetWarning[] {
+	const warnings: BudgetWarning[] = [];
+	for (const provider of ['codex', 'claude'] as const) {
+		const candidates: Array<[BudgetWarning['kind'], number, number]> = [
+			['calls', quota.providers[provider].used, quota.maxCallsPer24h ?? 0],
+			['tokens', budget.providers[provider].tokens, budget.policy.maxTokensPer24h],
+			['cost', budget.providers[provider].costUsd, budget.policy.maxCostUsdPer24h]
+		];
+		for (const [kind, used, limit] of candidates) {
+			const usedPercent = limit > 0 ? Math.floor(used / limit * 100) : 0;
+			if (limit > 0 && usedPercent >= BUDGET_WARNING_PERCENT) { warnings.push({ provider, kind, used, limit, usedPercent }); }
+		}
+	}
+	return warnings;
+}
+
+/** One read of both ledgers for the chat, the Control Center and the pre-launch alert. */
+export async function readBudgetStatus(directory: string, maxCallsPer24h: number, policy: ProviderBudgetPolicy, now = Date.now()): Promise<BudgetStatus> {
+	const [quota, budget] = await Promise.all([readProviderInvocationQuota(directory, maxCallsPer24h, now), readProviderBudget(directory, policy, now)]);
+	return { quota, budget, warnings: budgetWarnings(quota, budget) };
+}

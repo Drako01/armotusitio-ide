@@ -9,7 +9,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { acquireSharedExecutionFence } from '../src/native-shared-fence.ts';
 import {
-	reserveProviderInvocation, readProviderInvocationQuota, assertProviderBudget, recordProviderSpend, readProviderBudget
+	reserveProviderInvocation, readProviderInvocationQuota, assertProviderBudget, recordProviderSpend, readProviderBudget, readBudgetStatus
 } from '../src/native-provider-quota.ts';
 import { parseProviderOutput, CodexEventAccumulator } from '../src/native-provider-output.ts';
 
@@ -154,3 +154,24 @@ test('provider throttling is detected from structured error events only', () => 
 		codexOtherError: parseProviderOutput('codex', JSON.stringify({ type: 'error', message: 'sandbox denied' })).rateLimited
 	}, { claude429: true, claudeAnswerMentionsLimit: undefined, codexStream: true, codexBatch: true, codexOtherError: undefined });
 });
+
+test('budget status warns at 80% of each enabled limit from recorded figures only', () => withBudgetStorage(async (storage, fence) => {
+	const now = 1700000000000;
+	const policy = { maxTokensPer24h: 1000, maxCostUsdPer24h: 2 };
+	// Nothing recorded and no call cap: no warnings, limits reported as configured.
+	const idle = await readBudgetStatus(storage, 0, policy, now);
+	assert.deepEqual([idle.warnings, idle.quota.maxCallsPer24h, idle.budget.policy], [[], null, policy]);
+	await recordProviderSpend(storage, 'codex', fence, { usage: { inputTokens: 700, outputTokens: 99, estimatedCostUsd: 0.5 } }, now);
+	await reserveProviderInvocation(storage, 'claude', fence, 5, now);
+	await reserveProviderInvocation(storage, 'claude', fence, 5, now + 1);
+	await reserveProviderInvocation(storage, 'claude', fence, 5, now + 2);
+	await reserveProviderInvocation(storage, 'claude', fence, 5, now + 3);
+	const near = await readBudgetStatus(storage, 5, policy, now + 4);
+	// 799/1000 tokens stays below the threshold; 4/5 calls reaches it; cost 0.5/2 does not.
+	assert.deepEqual(near.warnings, [{ provider: 'claude', kind: 'calls', used: 4, limit: 5, usedPercent: 80 }]);
+	await recordProviderSpend(storage, 'codex', fence, { usage: { inputTokens: 1, outputTokens: 0 } }, now + 5);
+	assert.deepEqual((await readBudgetStatus(storage, 5, policy, now + 6)).warnings.map(warning => [warning.provider, warning.kind, warning.usedPercent]), [['codex', 'tokens', 80], ['claude', 'calls', 80]]);
+	// The rolling window frees both; a disabled limit never warns regardless of use.
+	assert.deepEqual((await readBudgetStatus(storage, 5, policy, now + 24 * 3600 * 1000 + 6)).warnings, []);
+	assert.deepEqual((await readBudgetStatus(storage, 0, { maxTokensPer24h: 0, maxCostUsdPer24h: 0 }, now + 6)).warnings, []);
+}));

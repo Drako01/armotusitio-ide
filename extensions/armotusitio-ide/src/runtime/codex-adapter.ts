@@ -20,7 +20,7 @@ import {
 	type FileChangeRequestApprovalResponse, type InitializeParams, type InitializeResponse, type ItemCompletedNotification, type ItemStartedNotification,
 	type McpServerElicitationRequestResponse, type PermissionsRequestApprovalParams, type PermissionsRequestApprovalResponse, type SandboxPolicy,
 	type ThreadForkResponse, type ThreadResumeResponse, type ThreadStartParams, type ThreadStartResponse, type ThreadTokenUsageUpdatedNotification,
-	type ToolRequestUserInputParams, type ToolRequestUserInputResponse, type TurnCompletedNotification, type TurnStartParams, type TurnStartResponse,
+	type ToolRequestUserInputParams, type ToolRequestUserInputResponse, type TurnCompletedNotification, type TurnError, type TurnStartParams, type TurnStartResponse,
 	type TurnSteerResponse, type UserInput
 } from './codex-protocol.generated.ts';
 import { RuntimeError, type AdapterHost, type AgentAdapter, type AgentConnection, type AgentQuestion, type RuntimeCapabilities, type SessionOpenOptions, type SessionRole, type ToolCall, type TurnInput, type TurnResult } from './contracts.ts';
@@ -35,8 +35,38 @@ const IGNORED_NOTIFICATIONS = ['item/reasoning/summaryTextDelta', 'item/reasonin
 /** Methods that are part of the session's normal life but carry nothing for the chat. */
 const QUIET_NOTIFICATIONS = new Set(['warning', 'account/rateLimits/updated', 'thread/started', 'thread/status/changed', 'account/updated', 'remoteControl/status/changed', 'mcpServer/startupStatus/updated', 'skills/changed', 'thread/settings/updated', 'serverRequest/resolved', 'hook/started', 'hook/completed', 'turn/diff/updated', 'turn/plan/updated', 'thread/name/updated', 'model/safetyBuffering/updated', 'thread/readState/changed', 'app/list/updated', 'thread/queue/changed']);
 
-/** `major.minor` of a version string; the generated bindings are trusted within the same minor version. */
+/**
+ * Oldest CLI whose app-server protocol was validated against these bindings. The generated file names the newest one;
+ * every release in between only added fields (checked with `generate-codex-protocol.mts` against both binaries).
+ */
+export const CODEX_MIN_SUPPORTED_VERSION = '0.166.0';
+
+/** `major.minor` of a version string. */
 export function minorOf(version: string): string { return /(?<major>\d+)\.(?<minor>\d+)/.exec(version)?.slice(1, 3).join('.') ?? ''; }
+
+/** Numeric `major.minor.patch` comparison; a string without a version is older than everything. */
+export function compareVersions(left: string, right: string): number {
+	const parse = (value: string): number[] => (/(\d+)\.(\d+)(?:\.(\d+))?/.exec(value)?.slice(1).map(part => Number(part ?? 0)) ?? [-1, 0, 0]);
+	const [a, b] = [parse(left), parse(right)];
+	for (let index = 0; index < 3; index++) { if ((a[index] ?? 0) !== (b[index] ?? 0)) { return (a[index] ?? 0) < (b[index] ?? 0) ? -1 : 1; } }
+	return 0;
+}
+
+/**
+ * Compatibility by range, not by exact minor: Codex ships weekly and app-server v2 only adds fields between the
+ * validated releases. Older than the floor fails closed (the structured transport takes over); newer than the
+ * generated bindings keeps working and says so once, so unknown fields are a known risk rather than a silent one.
+ */
+export function codexCompatibility(version: string): Pick<RuntimeCapabilities, 'compatible' | 'incompatibility' | 'notice'> {
+	if (!/\d+\.\d+/.test(version)) { return { compatible: false, incompatibility: 'No se pudo leer la versi\u00f3n de Codex (' + version.slice(0, 40) + ').' }; }
+	if (compareVersions(version, CODEX_MIN_SUPPORTED_VERSION) < 0) {
+		return { compatible: false, incompatibility: 'Codex ' + version + ' es anterior a la versi\u00f3n m\u00ednima validada del protocolo app-server (' + CODEX_MIN_SUPPORTED_VERSION + '). Actualiz\u00e1 el CLI.' };
+	}
+	if (compareVersions(version, CODEX_PROTOCOL_VERSION) > 0) {
+		return { compatible: true, notice: 'Codex ' + version + ' es m\u00e1s nuevo que el protocolo validado (' + CODEX_PROTOCOL_VERSION + '); se usa el protocolo conocido y se ignoran los campos nuevos.' };
+	}
+	return { compatible: true };
+}
 
 /** TOML basic string; JSON escaping is a valid subset for paths and arguments. */
 const toml = (value: string): string => JSON.stringify(value);
@@ -47,10 +77,34 @@ function sandboxPolicy(role: SessionRole, writableRoots: readonly string[], full
 	return { type: 'workspaceWrite', writableRoots: [...writableRoots], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false };
 }
 
-/** A conversation never escalates; a writer asks for every command Codex does not consider safe, and the IDE decides. */
-const approvalPolicy = (role: SessionRole): AskForApproval => role === 'conversation' ? 'never' : 'untrusted';
+/**
+ * A conversation never escalates. A writer uses `on-request`, the policy Codex documents for interactive clients: the
+ * sandbox runs workspace commands and every escalation (network, paths outside the workspace, full access) reaches the
+ * IDE's card. `untrusted` was retired upstream ("Codex no longer supports approval_policy = untrusted") and is kept
+ * only as an internal marker for untrusted projects, so it is never sent.
+ */
+const approvalPolicy = (role: SessionRole): AskForApproval => role === 'conversation' ? 'never' : 'on-request';
 
 function textInput(text: string): UserInput[] { return [{ type: 'text', text, text_elements: [] }]; }
+
+/**
+ * Stable error codes from Codex's typed `codexErrorInfo`, so the chat can say what to do (wait, sign in, shorten the
+ * conversation) instead of guessing from prose. Unknown or untyped errors keep the provider message; the regex in
+ * `finishTurn` still catches throttling that only appears in the text of older CLIs.
+ */
+export function codexTurnError(error: TurnError): string {
+	const info = error.codexErrorInfo;
+	const code = typeof info === 'string' ? info : info && typeof info === 'object' ? Object.keys(info)[0] : undefined;
+	switch (code) {
+		case 'usageLimitExceeded': case 'rateLimitExceeded': case 'sessionBudgetExceeded': case 'policyCapacityUnavailable': return 'RUNTIME_RATE_LIMITED';
+		case 'contextWindowExceeded': return 'RUNTIME_CONTEXT_EXCEEDED';
+		case 'unauthorized': return 'RUNTIME_UNAUTHENTICATED';
+		case 'serverOverloaded': case 'flexUnavailable': case 'internalServerError': case 'httpConnectionFailed': case 'responseStreamConnectionFailed': case 'responseStreamDisconnected': case 'responseTooManyFailedAttempts': return 'RUNTIME_PROVIDER_UNAVAILABLE';
+		case 'modelNotFound': return 'RUNTIME_MODEL_UNAVAILABLE';
+		case 'cyberPolicy': case 'misalignmentPolicyViolation': case 'inferenceHookDenied': case 'tooManyDenials': return 'RUNTIME_POLICY_BLOCKED';
+		default: return error.message;
+	}
+}
 
 function questionsOf(params: ToolRequestUserInputParams): AgentQuestion[] {
 	return params.questions.slice(0, 8).map(question => ({
@@ -75,10 +129,8 @@ export class CodexAdapter implements AgentAdapter {
 		const command = await resolveNativeCommand('codex', ['--version'], env);
 		const { stdout } = await run(command.executable, command.args, { env: command.embeddedNode ? { ...env, ELECTRON_RUN_AS_NODE: '1' } : env, windowsHide: true, timeout: 15_000 });
 		const version = stdout.trim().replace(/^codex-cli\s+/, '');
-		const compatible = minorOf(version) === minorOf(CODEX_PROTOCOL_VERSION);
 		return {
-			provider: 'codex', version, transport: 'app-server', compatible,
-			...(compatible ? {} : { incompatibility: 'Codex ' + version + ' habla una versi\u00f3n del protocolo app-server distinta de la validada (' + CODEX_PROTOCOL_VERSION + ').' }),
+			provider: 'codex', version, transport: 'app-server', ...codexCompatibility(version),
 			features: {
 				session: 'supported', streaming: 'supported', resume: 'supported', fork: 'supported', interrupt: 'supported', steer: 'supported',
 				approvals: 'supported', questions: 'experimental', commandOutput: 'supported', mcp: 'supported', usage: 'supported'
@@ -116,7 +168,21 @@ export class CodexAdapter implements AgentAdapter {
 	}
 }
 
-interface ActiveTurn { id?: string; clientTurnId: string; output: string; resolve(result: TurnResult): void; usage?: TurnResult['usage'] }
+interface ActiveTurn {
+	id?: string; clientTurnId: string; output: string; resolve(result: TurnResult): void; usage?: TurnResult['usage'];
+	startedAt: number; firstTokenAt?: number;
+	/** Usage receipts of child threads, keyed by thread id (last report per thread, like the parent's `last`). */
+	children: Map<string, { inputTokens: number; outputTokens: number }>;
+}
+
+/** Child thread ids a collaboration or subagent item names; the parent's own id is never one of them. */
+function childThreadIds(item: Record<string, unknown> | undefined, parent: string): string[] {
+	if (!item) { return []; }
+	const ids: unknown[] = [];
+	if (item.type === 'collabAgentToolCall') { ids.push(...(Array.isArray(item.receiverThreadIds) ? item.receiverThreadIds : []), ...Object.keys(item.agentsStates && typeof item.agentsStates === 'object' ? item.agentsStates : {})); }
+	if (item.type === 'subAgentActivity') { ids.push(item.agentThreadId); }
+	return ids.filter((id): id is string => typeof id === 'string' && !!id && id !== parent);
+}
 
 class CodexConnection implements AgentConnection {
 	nativeSessionId = '';
@@ -132,6 +198,8 @@ class CodexConnection implements AgentConnection {
 	private readonly changePaths = new Map<string, string[]>();
 	private readonly messages = new Map<string, string>();
 	private readonly childGuard: CodexChildGuard;
+	/** Threads this session's items named as children; only their usage receipts are accounted to the turn. */
+	private readonly childThreads = new Set<string>();
 
 	constructor(child: ProviderProcess, options: SessionOpenOptions, host: AdapterHost, fullAccess: boolean) {
 		this.child = child; this.options = options; this.host = host; this.fullAccess = fullAccess;
@@ -180,7 +248,9 @@ class CodexConnection implements AgentConnection {
 		if (this.turn) { return Promise.reject(new RuntimeError('RUNTIME_TURN_ALREADY_RUNNING')); }
 		return new Promise<TurnResult>((resolve, reject) => {
 			this.childGuard.beginTurn();
-			this.turn = { clientTurnId: input.clientTurnId, output: '', resolve };
+			// Children are named per turn: a late receipt from an earlier turn's child is never charged to this one.
+			this.childThreads.clear();
+			this.turn = { clientTurnId: input.clientTurnId, output: '', resolve, startedAt: Date.now(), children: new Map() };
 			const params: TurnStartParams = {
 				threadId: this.nativeSessionId, input: [...textInput(input.text), ...(input.images ?? []).map(image => ({ type: 'image' as const, url: 'data:' + image.mime + ';base64,' + image.data }))], clientUserMessageId: input.clientTurnId,
 				approvalPolicy: approvalPolicy(input.role), sandboxPolicy: sandboxPolicy(input.role, [this.options.identity.root, ...(this.options.writableRoots ?? [])], this.fullAccess)
@@ -229,13 +299,34 @@ class CodexConnection implements AgentConnection {
 		this.turn = undefined;
 		// An exhausted plan or throttling is reported as such, so the chat can say when to retry or suggest the other provider.
 		const limited = result.error && /usage limit|rate limit|too many requests/i.test(result.error);
-		turn.resolve({ turnId: turn.id ?? turn.clientTurnId, output: result.output ?? turn.output, ...(turn.usage ? { usage: turn.usage } : {}), ...result, ...(limited ? { output: result.error, error: 'RUNTIME_RATE_LIMITED' } : {}) });
+		// Child receipts are added to the parent's own report, never invented: without receipts the fields stay absent.
+		const children = [...turn.children.values()];
+		const usage = turn.usage || children.length ? {
+			...(turn.usage ?? { inputTokens: 0, outputTokens: 0 }),
+			...(children.length ? { childThreads: children.length, childInputTokens: children.reduce((sum, child) => sum + child.inputTokens, 0), childOutputTokens: children.reduce((sum, child) => sum + child.outputTokens, 0) } : {})
+		} : undefined;
+		turn.resolve({
+			turnId: turn.id ?? turn.clientTurnId, output: result.output ?? turn.output, ...(usage ? { usage } : {}), ...(turn.firstTokenAt ? { firstTokenMs: turn.firstTokenAt - turn.startedAt } : {}),
+			...result, ...(limited ? { output: result.error, error: 'RUNTIME_RATE_LIMITED' } : {})
+		});
+	}
+
+	/** The first visible output of the turn (text or a tool) marks its time to first token. */
+	private firstOutput(): void {
+		if (this.turn && !this.turn.firstTokenAt) { this.turn.firstTokenAt = Date.now(); }
 	}
 
 	private notification(method: string, params: unknown): void {
 		const value = (params ?? {}) as Record<string, unknown>;
 		const turnId = typeof value.turnId === 'string' ? value.turnId : this.turn?.id;
 		if ((method === 'item/started' || method === 'item/completed') && this.childViolation(value)) { return; }
+		if (method === 'item/started' || method === 'item/completed') { for (const id of childThreadIds(value.item as Record<string, unknown> | undefined, this.nativeSessionId)) { this.childThreads.add(id); } }
+		// A child thread's usage is the only traffic of another thread this session accounts for (aggregate budget receipts).
+		if (method === 'thread/tokenUsage/updated' && typeof value.threadId === 'string' && this.childThreads.has(value.threadId)) {
+			const usage = (value as unknown as ThreadTokenUsageUpdatedNotification).tokenUsage.last;
+			this.turn?.children.set(value.threadId, { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens });
+			return;
+		}
 		// Another thread's traffic (a shared server) is never mixed into this session.
 		if (typeof value.threadId === 'string' && this.nativeSessionId && value.threadId !== this.nativeSessionId) { return; }
 		switch (method) {
@@ -248,6 +339,7 @@ class CodexConnection implements AgentConnection {
 				const { itemId, delta } = value as { itemId: string; delta: string };
 				// A runaway stream stops growing at the event bound (like the Claude adapter) and says so once.
 				const before = this.messages.get(itemId) ?? '';
+				this.firstOutput();
 				if (before.length >= MAX_TEXT_CHARS) { return; }
 				const text = (before + delta).slice(0, MAX_TEXT_CHARS);
 				this.messages.set(itemId, text);
@@ -278,8 +370,9 @@ class CodexConnection implements AgentConnection {
 				const { turn } = value as unknown as TurnCompletedNotification;
 				if (this.turn?.id && turn.id !== this.turn.id) { return; }
 				const status = turn.status === 'completed' ? 'completed' as const : turn.status === 'interrupted' ? 'interrupted' as const : 'failed' as const;
-				this.host.emit({ turnId: turn.id, nativeKey: 'turn/completed:' + turn.id, payload: { type: 'turn.completed', status, output: this.turn?.output ?? '', ...(turn.error ? { error: turn.error.message } : {}) } });
-				this.finishTurn({ status, ...(turn.error ? { error: turn.error.message } : {}) });
+				const error = turn.error ? codexTurnError(turn.error) : undefined;
+				this.host.emit({ turnId: turn.id, nativeKey: 'turn/completed:' + turn.id, payload: { type: 'turn.completed', status, output: this.turn?.output ?? '', ...(error ? { error } : {}) } });
+				this.finishTurn({ status, ...(error ? { error } : {}) });
 				return;
 			}
 			default:
@@ -305,7 +398,7 @@ class CodexConnection implements AgentConnection {
 
 	private itemStarted({ item, turnId }: ItemStartedNotification): void {
 		const call = this.callOf(item as unknown as Record<string, unknown>);
-		if (call) { this.host.emit({ turnId, toolCallId: item.id, nativeKey: 'item/started:' + item.id, payload: { type: 'tool.started', call } }); }
+		if (call) { this.firstOutput(); this.host.emit({ turnId, toolCallId: item.id, nativeKey: 'item/started:' + item.id, payload: { type: 'tool.started', call } }); }
 	}
 
 	private itemCompleted({ item, turnId }: ItemCompletedNotification): void {
@@ -347,7 +440,10 @@ class CodexConnection implements AgentConnection {
 				const request = params as CommandExecutionRequestApprovalParams;
 				const verdict = await this.host.approve({ kind: 'command', name: 'commandExecution', command: request.command ?? '', ...(request.cwd ? { cwd: request.cwd } : {}), ...(request.reason ? { reason: request.reason } : {}) }, request.turnId);
 				// "This session" maps to Codex's own session grant; task and always stay in the IDE (Codex has no equivalent).
-				const response: CommandExecutionRequestApprovalResponse = { decision: !verdict.allowed ? 'decline' : verdict.scope === 'session' ? 'acceptForSession' : 'accept' };
+				// A `humanCommand` (0.169+) must be answered by a person with a one-time decision: a remembered scope never
+				// widens it, so an IDE-side "session" verdict is narrowed to this one command.
+				const oneTime = request.kind === 'humanCommand';
+				const response: CommandExecutionRequestApprovalResponse = { decision: !verdict.allowed ? 'decline' : verdict.scope === 'session' && !oneTime ? 'acceptForSession' : 'accept' };
 				return response;
 			}
 			case 'item/fileChange/requestApproval': {

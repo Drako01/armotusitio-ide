@@ -131,6 +131,34 @@ export async function listChatToolCheckpoints(root: string, storage: string): Pr
 	return (await storedCheckpoints(root, storage)).filter(record => record.state === 'ready').slice(0, MAX_CHECKPOINTS);
 }
 
+/** What a file of a checkpoint did and whether restoring it now would succeed. */
+export interface ToolCheckpointFile {
+	path: string;
+	change: 'added' | 'modified' | 'deleted';
+	/** False when the file changed after the tool (usually a later human edit): a restore would leave everything untouched. */
+	restorable: boolean;
+}
+export type ToolCheckpointView = Pick<ToolCheckpoint, 'id' | 'at' | 'turnId' | 'sequence' | 'stepId' | 'kind'> & { files: ToolCheckpointFile[] };
+
+/** Read-only preview with the same fingerprint rule as the restore; never writes, never returns file contents. */
+export async function inspectChatToolCheckpoints(root: string, storage: string): Promise<ToolCheckpointView[]> {
+	return Promise.all((await listChatToolCheckpoints(root, storage)).map(async record => ({
+		id: record.id, at: record.at, turnId: record.turnId, sequence: record.sequence, stepId: record.stepId, kind: record.kind,
+		files: await Promise.all(record.files.map(async file => ({
+			path: file.path,
+			change: file.before === null ? 'added' as const : file.after === 'missing' ? 'deleted' as const : 'modified' as const,
+			restorable: hashOf(await bytesOf(root, file.path)) === file.after
+		})))
+	})));
+}
+
+/** The exact bytes a file had before its tool, for a read-only diff; null when the tool created it. */
+export async function toolCheckpointBefore(root: string, storage: string, id: string, file: string): Promise<Buffer | null> {
+	const entry = (await load(root, storage, id)).files.find(item => item.path === file);
+	if (!entry) { throw Error('HARNESS_TOOL_CHECKPOINT_INVALID'); }
+	return entry.before === null ? null : Buffer.from(entry.before, 'base64');
+}
+
 /**
  * An explicit writer-fenced restore. If a file changed after its tool, nothing is overwritten.
  * A restore interrupted half-way leaves its intent on disk; a new, freshly confirmed call resumes it: files that

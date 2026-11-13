@@ -13,12 +13,17 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { harnessErrorCode, type ChatMode } from './native-chat.ts';
 import type { HarnessChatSession } from './native-chat-session.ts';
+import type { ToolCheckpoint } from './native-chat-tool-checkpoints.ts';
+import type { GoalIntegration, LiveGoalListing } from './native-goal-integration.ts';
 import type { EngineLease, EngineLeaseState } from './native-hybrid-writer.ts';
 import { listUserRules, loadPermissions, projectKey, removeUserRule } from './native-permissions.ts';
 import type { PermissionPreset } from './native-permissions-types.ts';
 import type { ProviderQuota } from './native-quota.ts';
+import type { BudgetStatus, BudgetWarning } from './native-provider-quota.ts';
 import { redactSecrets } from './native-redact.ts';
 import { skillsListing } from './native-chat-skills.ts';
+import { runProjectMemoryCommand } from './native-project-memory-command.ts';
+import type { ClaudeIntegrationBridge } from './native-claude-integrations.ts';
 
 export type CommandTranslator = (text: string, ...args: string[]) => string;
 export interface ChatCommand {
@@ -47,6 +52,24 @@ export function quotaLines(quotas: readonly ProviderQuota[], t: CommandTranslato
 	]);
 }
 
+/** Configured 24 h limits with recorded use; without limits it says how to set them instead of inventing a figure. */
+export function budgetLines(status: BudgetStatus, t: CommandTranslator): string[] {
+	const limits: Array<[BudgetWarning['kind'], number, string, (usage: BudgetStatus['budget']['providers']['codex'], calls: BudgetStatus['quota']['providers']['codex']) => string]> = [
+		['calls', status.quota.maxCallsPer24h ?? 0, t('llamadas'), (_usage, calls) => String(calls.used)],
+		['tokens', status.budget.policy.maxTokensPer24h, t('tokens'), usage => String(usage.tokens)],
+		['cost', status.budget.policy.maxCostUsdPer24h, t('US$'), usage => usage.costUsd.toFixed(4)]
+	];
+	const enabled = limits.filter(([, limit]) => limit > 0);
+	if (!enabled.length) { return [t('Presupuestos de 24 h: sin l\u00edmites configurados (atsHarness.providerCallsPer24h, providerTokensPer24h, providerCostUsdPer24h).')]; }
+	return [t('Presupuestos de 24 h (uso registrado, nunca estimado):'), ...(['codex', 'claude'] as const).flatMap(provider => [
+		'  ' + providerName(provider) + ': ' + enabled.map(([kind, limit, label, used]) => {
+			const warning = status.warnings.find(item => item.provider === provider && item.kind === kind);
+			return used(status.budget.providers[provider], status.quota.providers[provider]) + ' / ' + limit + ' ' + label + (warning ? ' ' + t('(\u00a1{0}%!)', String(warning.usedPercent)) : '');
+		}).join(' \u00b7 '),
+		...(status.budget.providers[provider].unmeteredCalls ? ['    ' + t('{0} llamadas sin consumo informado: con presupuesto de tokens o costo el pr\u00f3ximo lanzamiento se rechaza.', String(status.budget.providers[provider].unmeteredCalls))] : [])
+	])];
+}
+
 export function chatCommands(t: CommandTranslator): ChatCommand[] {
 	return [
 		{ name: 'ayuda', description: t('Lista los comandos disponibles.'), session: false },
@@ -54,9 +77,13 @@ export function chatCommands(t: CommandTranslator): ChatCommand[] {
 		{ name: 'bifurcar', description: t('Contin\u00faa en una copia de la sesi\u00f3n nativa del proveedor; la original queda guardada sin cambios.'), session: true },
 		{ name: 'modo', usage: '[actuar|preguntar]', description: t('Muestra o cambia el modo del chat.'), session: true },
 		{ name: 'deshacer', description: t('Descarta los cambios de la \u00faltima ejecuci\u00f3n.'), session: true },
+		{ name: 'checkpoints', usage: '[restaurar ID]', description: t('Lista los checkpoints granulares que dejaron las herramientas del agente (por turno y herramienta); "restaurar ID" vuelve esos archivos a su estado anterior solo si nadie los edit\u00f3 despu\u00e9s.'), session: true },
+		{ name: 'objetivos', usage: '[pausar|detener ID]', description: t('Muestra los objetivos aut\u00f3nomos en curso en esta ventana, con su etapa y preguntas pendientes; "pausar" o "detener" act\u00faan en el pr\u00f3ximo punto seguro.'), session: true },
 		{ name: 'lease', usage: '[liberar]', description: t('Estado del lease de escritura del Harness propio del proyecto; "liberar" lo retira cuando el IDE muri\u00f3 con \u00e9l.'), session: true },
 		{ name: 'motor', usage: 'COMANDO [ARGUMENTOS]', description: t('Corre un comando del Harness propio del proyecto (por ejemplo pnpm harness:preflight) en la terminal del IDE, donde pod\u00e9s contestar sus preguntas; el resultado queda en la conversaci\u00f3n.'), session: true },
 		{ name: 'skills', description: t('Lista las skills nativas y del proyecto (carpetas .agents, .codex o .claude).'), session: true },
+		{ name: 'integraciones', usage: '[ver|habilitar|deshabilitar ID]', description: t('Inspecciona las integraciones locales de Claude y habilita hooks compatibles con aprobaci\u00f3n por ejecuci\u00f3n.'), session: true },
+		{ name: 'memoria', usage: '[guardar decision|convencion|solucion TEXTO | corregir ID TEXTO | quitar ID]', description: t('Inspecciona y corrige la memoria confirmada del proyecto.'), session: true },
 		{ name: 'skill', usage: 'NOMBRE [pedido]', description: t('Aplica una skill nativa o del proyecto a tu pedido: su contenido llega a la IA como convenciones, nunca como permisos.'), session: true },
 		{ name: 'doctor', description: t('Revisa la m\u00e1quina y el proyecto (Node, gestor de paquetes, git, Docker, disco) y dice c\u00f3mo arreglar cada problema.'), session: true },
 		{ name: 'debug', usage: 'COMANDO | ERROR', description: t('Analiza un fallo reproducible y propone un plan de diagn\u00f3stico. Los cambios y las pruebas requieren aprobar el plan.'), session: true },
@@ -65,7 +92,7 @@ export function chatCommands(t: CommandTranslator): ChatCommand[] {
 		{ name: 'sesiones', usage: '[b\u00fasqueda]', description: t('Busca las conversaciones guardadas de este proyecto.'), session: true },
 		{ name: 'sesion', usage: 'ID', description: t('Retoma una conversaci\u00f3n guardada del proyecto sin repetir operaciones interrumpidas.'), session: true },
 		{ name: 'auditoria', description: t('\u00daltimas acciones de las herramientas del agente en este proyecto (comandos, git, archivos) y su resultado.'), session: true },
-		{ name: 'costo', description: t('Muestra los tokens que inform\u00f3 el proveedor en el \u00faltimo turno.'), session: true },
+		{ name: 'costo', description: t('Muestra los tokens que inform\u00f3 el proveedor en el \u00faltimo turno y el uso de los presupuestos de 24 h.'), session: true },
 		{ name: 'estado', description: t('Progreso de las tareas del Harness.'), session: false },
 		{ name: 'comandos', description: t('Acciones disponibles por proyecto.'), session: false },
 		{ name: 'check', usage: '[proyecto]', description: t('Corre las verificaciones r\u00e1pidas del proyecto.'), session: false },
@@ -132,6 +159,9 @@ export async function auditLines(runsDirectory: string, limit = 30): Promise<str
 const exists = (file: string): Promise<boolean> => fs.lstat(file).then(() => true, () => false);
 
 export interface SessionCommandDeps {
+	/** Recorded 24 h use against the configured limits; absent when the window has no Harness controller. */
+	budget?(root: string): Promise<BudgetStatus>;
+	integrations?: ClaudeIntegrationBridge;
 	nativeSkillsDirectory?: string;
 	t: CommandTranslator;
 	chatMode(): ChatMode;
@@ -154,6 +184,56 @@ export interface SessionCommandDeps {
 	motor?: (command: string, args: string[]) => Promise<string>;
 	image?: (request: string, root: string, session: HarnessChatSession) => Promise<string>;
 	document?: (request: string, root: string, session: HarnessChatSession) => Promise<string>;
+	/** Granular tool checkpoints of the project (`/checkpoints`); `restore` confirms with the user and returns `undefined` when they decline. */
+	checkpoints?: { list(root: string): Promise<ToolCheckpoint[]>; restore(root: string, id: string): Promise<{ restored: string[]; skipped: string[] } | undefined> };
+	/** Autonomous goals running in this window (`/objetivos`). */
+	goals?: Pick<GoalIntegration, 'list' | 'control'>;
+}
+
+const GOAL_STATUS: Record<LiveGoalListing['status'], (t: CommandTranslator) => string> = {
+	running: t => t('en ejecuci\u00f3n'), pausing: t => t('pausa pedida'), stopping: t => t('detenci\u00f3n pedida'), 'waiting-answers': t => t('espera tus respuestas')
+};
+
+/** `/checkpoints` lists what can be restored; `/checkpoints restaurar ID` restores one after the shared confirmation. */
+async function runCheckpointsCommand(deps: SessionCommandDeps, words: string[], root: string, session: HarnessChatSession): Promise<string> {
+	const { t, checkpoints } = deps;
+	if (!checkpoints) { return t('Los checkpoints granulares no est\u00e1n disponibles en esta ventana.'); }
+	if (words.length === 0) {
+		const items = await checkpoints.list(root);
+		if (!items.length) { return t('No hay checkpoints granulares seguros en este proyecto. Se crean cuando el agente edita archivos en una ejecuci\u00f3n del chat.'); }
+		return [
+			t('Checkpoints granulares (m\u00e1s reciente primero). Restaur\u00e1 uno con /checkpoints restaurar ID:'),
+			...items.slice(0, 20).map(item => '  ' + item.id.slice(0, 8) + ' \u00b7 ' + item.at + ' \u00b7 ' + item.kind + ' \u00b7 ' + t('{0} archivos', String(item.files.length)) + (item.turnId ? ' \u00b7 ' + t('turno {0} #{1}', item.turnId.slice(0, 8), String(item.sequence ?? 1)) : '') + ' \u00b7 ' + item.files.slice(0, 3).map(file => file.path).join(', ') + (item.files.length > 3 ? ' +' + String(item.files.length - 3) : '')),
+			...(items.length > 20 ? [t('  \u2026 y {0} m\u00e1s', String(items.length - 20))] : [])
+		].join('\n');
+	}
+	if (words[0] !== 'restaurar' || words.length !== 2) { return t('Uso: /checkpoints [restaurar ID]'); }
+	if (session.snapshot().activity) { return t('Hay una tarea en curso: esper\u00e1 a que termine o detenela antes de restaurar.'); }
+	const wanted = words[1].toLowerCase();
+	const matches = (await checkpoints.list(root)).filter(item => item.id.toLowerCase().startsWith(wanted));
+	if (matches.length !== 1) { return matches.length ? t('El ID coincide con varios checkpoints; escrib\u00ed m\u00e1s caracteres.') : t('No encontr\u00e9 ese checkpoint. Consult\u00e1 /checkpoints.'); }
+	const outcome = await checkpoints.restore(root, matches[0].id);
+	if (!outcome) { return t('Restauraci\u00f3n cancelada.'); }
+	await session.refreshContext();
+	return t('Checkpoint {0}: {1} archivos restaurados; {2} preservados porque cambiaron despu\u00e9s.', matches[0].id.slice(0, 8), String(outcome.restored.length), String(outcome.skipped.length));
+}
+
+/** `/objetivos` lists the goals of this window; `/objetivos pausar|detener ID` asks one to stop at its next safe point. */
+function runGoalsCommand(deps: SessionCommandDeps, words: string[]): string {
+	const { t, goals } = deps;
+	if (!goals) { return t('Los objetivos aut\u00f3nomos no est\u00e1n disponibles en esta ventana.'); }
+	if (words.length === 0) {
+		const items = goals.list();
+		if (!items.length) { return t('No hay objetivos aut\u00f3nomos en curso en esta ventana. Cre\u00e1 uno con \u00abArmoTuSitio: Nuevo objetivo aut\u00f3nomo\u00bb.'); }
+		return [
+			t('Objetivos en curso:'),
+			...items.map(item => '  ' + item.id + ' \u00b7 ' + item.project + ' \u00b7 ' + GOAL_STATUS[item.status](t) + ' \u00b7 ' + item.objective + (item.questions.length ? '\n    ' + t('Preguntas pendientes: {0}', item.questions.slice(0, 3).join(' | ')) : ''))
+		].join('\n');
+	}
+	const action = words[0] === 'pausar' ? 'pause' : words[0] === 'detener' ? 'stop' : undefined;
+	if (!action || words.length !== 2) { return t('Uso: /objetivos [pausar|detener ID]'); }
+	if (!goals.control(words[1], action)) { return t('No hay un objetivo en curso con ese ID. Consult\u00e1 /objetivos.'); }
+	return action === 'pause' ? t('Ped\u00ed pausar el objetivo {0}; se detiene en su pr\u00f3ximo punto seguro.', words[1]) : t('Ped\u00ed detener el objetivo {0}; se detiene en su pr\u00f3ximo punto seguro.', words[1]);
 }
 
 const LEASE_TEXT: Record<EngineLeaseState, (t: CommandTranslator, until?: string) => string> = {
@@ -184,6 +264,8 @@ async function runLeaseCommand(deps: SessionCommandDeps, words: string[]): Promi
 
 /** Runs a command that needs the conversation; `undefined` when `action` is not one of them. */
 export async function runSessionCommand(deps: SessionCommandDeps, action: string, words: string[], root: string, session: HarnessChatSession): Promise<string | undefined> {
+	if (action === 'memoria') { return runProjectMemoryCommand(words, root, session, deps.t); }
+	if (action === 'integraciones') { return deps.integrations?.command(root, words, deps.t) ?? deps.t('Las integraciones no est\u00e1n disponibles en esta ventana.'); }
 	const { t } = deps;
 	const home = deps.home ?? os.homedir();
 	if (action === 'mcp' && deps.mcp) { return await runMcpCommand(deps.mcp, words); }
@@ -276,6 +358,8 @@ export async function runSessionCommand(deps: SessionCommandDeps, action: string
 		await session.discardRun(status.messageId);
 		return t('Listo: descart\u00e9 los cambios de la \u00faltima ejecuci\u00f3n.');
 	}
+	if (action === 'checkpoints') { return runCheckpointsCommand(deps, words, root, session); }
+	if (action === 'objetivos') { return runGoalsCommand(deps, words); }
 	if (action === 'auditoria') {
 		const directory = deps.runsDirectory?.(root);
 		const lines = directory ? await auditLines(directory) : [];
@@ -288,15 +372,20 @@ export async function runSessionCommand(deps: SessionCommandDeps, action: string
 		const last = session.lastUsage();
 		const usage = last?.usage;
 		const quota = quotaLines(Object.values(session.quotaStatus()), t);
+		const budget = deps.budget ? budgetLines(await deps.budget(root), t) : [];
 		return [
 			...(usage ? [
 				t('\u00daltimo turno ({0}):', providerName(last.provider)),
 				t('  Entrada: {0} tokens', String(usage.inputTokens)),
 				t('  Salida: {0} tokens', String(usage.outputTokens)),
 				...(usage.cachedInputTokens !== undefined ? [t('  Entrada desde cach\u00e9: {0} tokens', String(usage.cachedInputTokens))] : []),
-				...(usage.estimatedCostUsd !== undefined ? [t('  Costo estimado por el proveedor: US$ {0}', usage.estimatedCostUsd.toFixed(4))] : [])
+				...(usage.estimatedCostUsd !== undefined ? [t('  Costo estimado por el proveedor: US$ {0}', usage.estimatedCostUsd.toFixed(4))] : []),
+				// Child receipts and latency appear only when the provider reported them: never an estimate.
+				...(usage.childThreads ? [t('  Subagentes: {0} hilos, {1} tokens de entrada y {2} de salida informados por el proveedor', String(usage.childThreads), String(usage.childInputTokens ?? 0), String(usage.childOutputTokens ?? 0))] : []),
+				...(last.firstTokenMs !== undefined ? [t('  Primer token: {0} ms', String(last.firstTokenMs))] : [])
 			] : [t('El proveedor no inform\u00f3 el uso del \u00faltimo turno (o todav\u00eda no hubo turnos desde que abriste esta ventana).')]),
-			...(quota.length ? ['', ...quota] : [])
+			...(quota.length ? ['', ...quota] : []),
+			...(budget.length ? ['', ...budget] : [])
 		].join('\n');
 	}
 	return undefined;

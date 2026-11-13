@@ -18,10 +18,10 @@ import { ZipFile } from 'yazl';
 import { fromVsix } from '../extensions.ts';
 import type File from 'vinyl';
 
-test('six exact official release pins compose additively with upstream builtins and stable auto updates', () => {
+test('seven exact official release pins compose additively with upstream builtins and stable auto updates', () => {
 	assert.deepEqual(officialExtensions.map(extension => [extension.name, extension.version]), [
 		['armotusitio.orquestivo', '0.2.0'], ['armotusitio.probato-pr', '1.0.1'], ['armotusitio.indizivo', '0.3.0'],
-		['armotusitio.saturivo', '0.3.1'], ['armotusitio.noditrivo', '0.1.1'], ['armotusitio.vestigivo', '0.2.0']
+		['armotusitio.saturivo', '0.3.1'], ['armotusitio.noditrivo', '0.1.1'], ['armotusitio.vestigivo', '0.2.0'], ['armotusitio.vinculivo', '0.2.1']
 	]);
 	assert.deepEqual(armotusitioProduct.builtInExtensions, [...base.builtInExtensions, ...officialExtensions]);
 	assert.deepEqual(armotusitioProduct.builtInExtensions.slice(0, base.builtInExtensions.length), base.builtInExtensions);
@@ -63,7 +63,7 @@ test('official pin validation fails closed for wrong identity, duplicate, count,
 test('upstream identity collisions fail closed rather than replacing an independently supplied extension', () => {
 	assert.throws(() => withOfficialExtensions([officialExtensions[0]]), /upstream identity collision/);
 	assert.throws(() => withOfficialExtensions([{ ...officialExtensions[0], name: officialExtensions[0].name.toUpperCase() }]), /upstream identity collision/);
-	assert.equal(withOfficialExtensions([]).length, 6);
+	assert.equal(withOfficialExtensions([]).length, 7);
 });
 
 test('the existing offline VSIX packaging stream includes executable contents, license and publisher metadata', async () => {

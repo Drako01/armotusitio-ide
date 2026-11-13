@@ -49,9 +49,29 @@ test('memory is built only from the user and recorded facts: assistant prose nev
 		compacted: memory.compacted, lastPlanVersion: memory.lastPlanVersion,
 		leaked: /IGNORE ALL|ignor\u00e1 las reglas|texto de aviso/.test(rendered),
 		fencesOrNewlinesInEntries: [...memory.requirements, ...memory.decisions].some(entry => /[`\n]/.test(entry)),
-		hasRequirement: rendered.includes('Quiero un CRUD de clientes'), hasRun: rendered.includes('run of plan v4 ended: passed'),
+		hasRequirement: rendered.includes('Quiero un CRUD de clientes'), hasRun: rendered.includes('run of plan v4 ended: passed (agent passed); verification passed'),
 		statesItIsNotAuthority: /never authorizes execution/.test(rendered), valid: validMemory(memory)
 	}, { compacted: 5, lastPlanVersion: 4, leaked: false, fencesOrNewlinesInEntries: false, hasRequirement: true, hasRun: true, statesItIsNotAuthority: true, valid: true });
+});
+
+test('a compacted run keeps what later turns need: edited files, failed gates, discards and reverts, from IDE records only', () => {
+	const steps = [
+		{ id: 's1', kind: 'edit' as const, label: 'src/a.ts, src/b.ts', status: 'ok' as const },
+		{ id: 's2', kind: 'read' as const, label: 'README.md', status: 'ok' as const },
+		{ id: 's3', kind: 'edit' as const, label: 'src/a.ts, src/b.ts', status: 'ok' as const },
+		{ id: 's4', kind: 'command' as const, label: 'pnpm test `rm -rf`', status: 'error' as const }
+	];
+	const failed = chatMessage('run', 'informe', { run: { planVersion: 2, status: 'failed', agentStatus: 'passed', durationMs: 1, steps, verification: { status: 'failed', gates: [{ id: 'lint', status: 'passed' }, { id: 'typecheck', status: 'failed' }] } } });
+	const discarded = chatMessage('run', 'informe', { run: { planVersion: 3, status: 'passed', durationMs: 1, discarded: true, verification: { status: 'skipped', gates: [] } } });
+	const reverted = chatMessage('run', 'informe', { run: { planVersion: 3, status: 'passed', durationMs: 1, continued: true, reverted: ['src/c.ts'], verification: { status: 'skipped', gates: [] } } });
+	const memory = absorbMessages(undefined, [failed, discarded, reverted], root);
+	assert.deepEqual(memory.decisions, [
+		'run of plan v2 ended: failed (agent passed); edited src/a.ts, src/b.ts; verification failed (typecheck)',
+		'run of plan v3 ended: passed; changes discarded by the user',
+		'run of plan v3 ended: passed; reverted src/c.ts; continued an earlier partial run'
+	]);
+	assert.ok(!memory.decisions.some(entry => entry.includes('rm -rf') || entry.includes('README')), 'commands and reads are not recorded');
+	assert.ok(validMemory(memory));
 });
 
 test('memory is bounded, accumulates across compactions and is dropped for another project', () => {
@@ -113,4 +133,25 @@ test('a long conversation compacts into persisted memory, keeps plan versions in
 		await chat.reset();
 		assert.equal(JSON.parse(await fs.readFile(path.join(directory, 'conversation.json'), 'utf8')).memory, undefined);
 	} finally { await fs.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
+});
+
+test('under saturation the rendered memory keeps every recent record and the newest requests, inside its byte limit', () => {
+	const longUser = (index: number) => chatMessage('user', 'requisito ' + index + ' ' + 'x'.repeat(230));
+	const runs = Array.from({ length: 15 }, (_, index) => chatMessage('run', 'informe', { run: { planVersion: index + 1, status: 'passed', durationMs: 1, verification: { status: 'passed', gates: [] }, steps: [{ id: 's', kind: 'edit', label: 'src/file-' + index + '.ts', status: 'ok' }] } }));
+	// Twenty-five oversized requests first, then the records: the old layout would spend the whole budget on requests.
+	const memory = absorbMessages(undefined, [...Array.from({ length: 25 }, (_, index) => longUser(index)), ...runs], root);
+	const rendered = renderMemory(memory, root);
+	const bytes = rendered.reduce((sum, line) => sum + Buffer.byteLength(line, 'utf8') + 1, 0);
+	const records = rendered.filter(line => line.startsWith('- record: '));
+	const requests = rendered.filter(line => line.startsWith('- user asked: '));
+	assert.deepEqual({
+		withinBudget: bytes <= 4 * 1024 + 64, records: records.length, newestRecordKept: records.at(-1)?.includes('plan v15') && records.at(-1)?.includes('src/file-14.ts'),
+		someRequests: requests.length > 0 && requests.length < 25, newestRequestKept: requests.at(-1)?.includes('requisito 24'), oldestRequestDropped: !requests.some(line => line.includes('requisito 0 ')),
+		chronological: rendered.indexOf(requests[0]) < rendered.indexOf(records[0]), stable: JSON.stringify(renderMemory(memory, root)) === JSON.stringify(rendered)
+	}, { withinBudget: true, records: 15, newestRecordKept: true, someRequests: true, newestRequestKept: true, oldestRequestDropped: true, chronological: true, stable: true });
+	// Few records and many requests: requests get the room records do not use.
+	const light = absorbMessages(undefined, [...Array.from({ length: 25 }, (_, index) => longUser(index)), runs[0]], root);
+	const lightRendered = renderMemory(light, root);
+	assert.ok(lightRendered.filter(line => line.startsWith('- user asked: ')).length >= 12, 'unused record budget flows to requests');
+	assert.ok(lightRendered.reduce((sum, line) => sum + Buffer.byteLength(line, 'utf8') + 1, 0) <= 4 * 1024 + 64);
 });

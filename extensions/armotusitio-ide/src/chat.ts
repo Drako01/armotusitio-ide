@@ -27,12 +27,14 @@ const { chooseChatDocument } = require('./native-chat-attachments.ts');
 const { redactSecrets } = require('./native-redact.ts');
 const { captureTerminalOutput } = require('./native-terminal-capture.ts');
 const { resolveSkillInvocation } = require('./native-chat-skills.ts');
+const { ClaudeIntegrationBridge } = require('./native-claude-integrations.ts');
+const { DecisionLog } = require('./native-decisions.ts');
 const { configuredPreset } = require('./native-permissions.ts');
 const { APPROVAL_ANSWERS } = require('./native-approval.ts');
 const { IncrementalContextIndex, IGNORED } = require('./context.ts');
 const { buildSetupItems, setupIcon } = require('./native-setup-check.ts');
 const { doctorReport } = require('./native-machine-doctor.ts');
-const { registerRunDiffView, validRunPath, RUN_DIFF_COMMAND } = require('./native-run-diff-view.ts');
+const { registerRunDiffView, validRunPath, RUN_DIFF_COMMAND, CHECKPOINT_DIFF_COMMAND } = require('./native-run-diff-view.ts');
 
 interface ParticipantTurn { token: { isCancellationRequested: boolean }; started: boolean; queued?: string; observe(): void }
 
@@ -203,6 +205,11 @@ function labels(t: any) {
 		change: { added: t('nuevo'), modified: t('modificado'), deleted: t('borrado') },
 		continueRun: t('Continuar'), retry: t('Reintentar'), continuedRun: t('Continuaci\u00f3n'), maxMessageChars: MAX_USER_MESSAGE_CHARS,
 		discardRun: t('Deshacer esta ejecuci\u00f3n'), openHome: t('Ver en Inicio'),
+		checkpoints: t('Historial de checkpoints'), checkpointTurn: t('Turno {0}', '{0}'), checkpointEmpty: t('No hay checkpoints granulares seguros en este proyecto. Se crean cuando el agente edita archivos en una ejecuci\u00f3n del chat.'),
+		checkpointRestorable: t('se puede restaurar'), checkpointConflict: t('cambi\u00f3 despu\u00e9s: se preserva'), checkpointRestore: t('Restaurar'), checkpointDiff: t('Ver diff'), close: t('Cerrar'),
+		checkpointBlocked: t('Un archivo cambi\u00f3 despu\u00e9s de la herramienta: restaurar no tocar\u00eda nada. Revis\u00e1 el diff.'), checkpointKind: { edit: t('edici\u00f3n'), command: t('comando') },
+		goals: t('Objetivos aut\u00f3nomos en curso'), goalPause: t('Pausar'), goalStop: t('Detener'), goalQuestions: t('Preguntas pendientes'), goalSince: t('desde {0}', '{0}'),
+		goalStatus: { running: t('en ejecuci\u00f3n'), pausing: t('pausa pedida'), stopping: t('detenci\u00f3n pedida'), 'waiting-answers': t('espera tus respuestas') },
 		approvals: t('Aprobaciones pendientes'), allowOnce: t('Permitir una vez'), allowTask: t('Esta tarea'), allowSession: t('Esta sesi\u00f3n'), account: t('Cuenta de {0}', '{0}'), accountIde: t('Cuenta del IDE'), accountManage: t('Administrar cuentas\u2026'), accountSplit: t('Esta conversaci\u00f3n sigue con {0}; el pr\u00f3ximo mensaje usar\u00e1 {1}.', '{0}', '{1}'), authState: { authenticated: t('Autenticada'), 'not-authenticated': t('Sin sesi\u00f3n'), unknown: t('Estado desconocido'), 'cli-unavailable': t('CLI no disponible') }, allowAlways: t('Siempre en este proyecto'), allowGlobal: t('En todos mis proyectos'), globalRule: t('\u00abEn todos mis proyectos\u00bb se ofrece solo para comandos de inspecci\u00f3n y vale en cualquier proyecto.'), denyApproval: t('Denegar'),
 		alwaysRule: t('\u00abSiempre en este proyecto\u00bb guarda la regla \u00ab{0}\u00bb en {1}; \u00abEsta tarea\u00bb y \u00abEsta sesi\u00f3n\u00bb no guardan nada.', '{0}', '{1}'), permissionsFile: '~/.armotusitio/permissions.json',
 		noRemember: {
@@ -281,7 +288,9 @@ function registerChat(context: any, controller: any, projects: any, mcp: any, vs
 	}
 
 	const folders = () => vscode.workspace.workspaceFolders || [];
-	if (vscode.workspace.registerTextDocumentContentProvider) { registerRunDiffView(vscode, context, folders, t); }
+	if (vscode.workspace.registerTextDocumentContentProvider) {
+		registerRunDiffView(vscode, context, folders, t, (folder: any, id: string, file: string) => controller.toolCheckpoints?.before ? controller.toolCheckpoints.before(folder, folder.uri.fsPath, id, file) : Promise.resolve(null));
+	}
 	/** Short, colon-free key of a folder for feed item ids (`chat:<key>:<suffix>`). */
 	const feedKeyOf = (uri: string): string => createHash('sha256').update(uri).digest('hex').slice(0, 16);
 	const selectedFolder = () => {
@@ -303,6 +312,8 @@ function registerChat(context: any, controller: any, projects: any, mcp: any, vs
 				type: 'state', trusted: !!vscode.workspace.isTrusted, providers, models: chosenModels(), accounts, ranWith, efforts: chosenEfforts(), chatMode: chatMode(), codexFullAccess: codexFullAccess(), mcp: { ...mcpStatus, endpoint: new URL(endpoint).host, enabled: !!mcp.enabled?.() },
 				project: folder ? { name: folder.name, id: key } : null,
 				projects: folders().map((item: any) => ({ name: item.name, id: item.uri.toString() })),
+				// Live autonomous goals of this window: names and states only, the same listing `/objetivos` reads.
+				goals: controller.goals?.list?.() ?? [],
 				chat: outgoing, draft: key ? drafts.get(key) : undefined
 			}, surface);
 		}
@@ -331,7 +342,7 @@ function registerChat(context: any, controller: any, projects: any, mcp: any, vs
 						options.feed.retain(item => !item.id.startsWith('chat:' + feedKey + ':') || ids.has(item.id));
 						for (const item of items) { options.feed.publish(item); }
 					}
-				}, t, preferred);
+				}, t, preferred, undefined, new DecisionLog(path.dirname(directory)));
 				await entry.session.open();
 				entry.loaded = true;
 				return entry;
@@ -417,7 +428,20 @@ function registerChat(context: any, controller: any, projects: any, mcp: any, vs
 		const confirm = t('Descartar cambios');
 		return await vscode.window.showWarningMessage(t('\u00bfDescartar los archivos que cambi\u00f3 esta ejecuci\u00f3n? Los que ten\u00edan cambios tuyos no se tocan.'), { modal: true }, confirm) === confirm;
 	};
+	const integrations = new ClaudeIntegrationBridge({
+		confirm: async (summary: string) => {
+			const accept = t('Confirmar hook');
+			return await vscode.window.showWarningMessage(summary, { modal: true }, accept) === accept;
+		},
+		valid: (root: string) => !!vscode.workspace.isTrusted && selectedFolder()?.uri.fsPath === root && !sessions.get(selectedFolder()?.uri.toString())?.session?.busy,
+		run: async (root: string, command: string, args: string[]) => {
+			const folder = selectedFolder();
+			if (!controller.runProjectCommand || folder?.uri.fsPath !== root || !vscode.workspace.isTrusted) { throw Error('HARNESS_CLAUDE_INTEGRATION_CONTEXT_CHANGED'); }
+			return controller.runProjectCommand(folder, command, args);
+		}
+	});
 	const sessionCommands = {
+		integrations,
 		image: async (request: string, root: string, session: ChatSession, turn?: ParticipantTurn) => {
 			if (turn?.token.isCancellationRequested) { return t('Env\u00edo de imagen cancelado.'); }
 			if (!vscode.workspace.getConfiguration('atsHarness').get('imageInput', false)) { return t('Para adjuntar im\u00e1genes, activ\u00e1 atsHarness.imageInput. Requiere transporte nativo y un modelo con visi\u00f3n.'); }
@@ -486,6 +510,12 @@ function registerChat(context: any, controller: any, projects: any, mcp: any, vs
 		runsDirectory: (root: string) => controller.runsDirectory?.(root),
 		doctor: async (root: string) => doctorReport(controller.doctorFor ? await controller.doctorFor(root) : []),
 		motor: controller.runProjectCommand && ((command: string, args: string[]) => controller.runProjectCommand(selectedFolder(), command, args)),
+		budget: controller.providerBudgetStatus && ((root: string) => controller.providerBudgetStatus(selectedFolder(), root)),
+		checkpoints: controller.toolCheckpoints && {
+			list: (root: string) => controller.toolCheckpoints.list(selectedFolder(), root),
+			restore: (root: string, id: string) => controller.toolCheckpoints.restore(selectedFolder(), root, id)
+		},
+		goals: controller.goals,
 		lease: controller.writerLeaseStatus && {
 			status: () => controller.writerLeaseStatus(selectedFolder()), clear: () => controller.clearWriterLease(selectedFolder()),
 			confirmClear: async () => { const confirm = t('Liberar lease'); return await vscode.window.showWarningMessage(t('\u00bfLiberar el lease de escritura del Harness del proyecto? Hacelo solo si el IDE ya no est\u00e1 ejecutando nada en este proyecto.'), { modal: true }, confirm) === confirm; }
@@ -582,6 +612,17 @@ function registerChat(context: any, controller: any, projects: any, mcp: any, vs
 		const entry = await sessionFor(folder).catch((error: any) => { report(folder, error); return undefined; });
 		if (!entry) { return; }
 		const { session } = entry;
+		// The checkpoint timeline is read on demand (it fingerprints files); restoring goes through /checkpoints restaurar.
+		if (action === 'checkpoints') {
+			post({ type: 'checkpoints', project: folder.uri.toString(), items: controller.toolCheckpoints?.inspect ? await controller.toolCheckpoints.inspect(folder, folder.uri.fsPath) : [] }, source);
+			return;
+		}
+		if (action === 'checkpointDiff') {
+			if (typeof message.id === 'string' && message.id.length === 36 && validRunPath(message.path) && ['added', 'modified', 'deleted'].includes(message.change)) {
+				await vscode.commands.executeCommand(CHECKPOINT_DIFF_COMMAND, folder.uri.toString(), message.id, message.path, message.change);
+			}
+			return;
+		}
 		if (action === 'sessions') {
 			if (session.busy) { await session.note(t('Esper\u00e1 a que termine la tarea antes de cambiar de conversaci\u00f3n.')); return; }
 			const currentProject = folder.uri.toString();
@@ -591,6 +632,8 @@ function registerChat(context: any, controller: any, projects: any, mcp: any, vs
 			return;
 		}
 		const sendTurn = async (body: string, attachments: { context?: string; notice?: string; images?: readonly import('./native-chat-images.ts').ChatImage[] }, mode: 'ask' | 'act' = chatMode()) => {
+			if (participantTurn?.token.isCancellationRequested) { return; }
+			await integrations.beforePrompt(folder.uri.fsPath, t);
 			if (participantTurn?.token.isCancellationRequested) { return; }
 			const queued = session.busy;
 			const queuedBefore = new Set(session.snapshot().queue?.map((item: { id: string }) => item.id));
@@ -686,6 +729,11 @@ function registerChat(context: any, controller: any, projects: any, mcp: any, vs
 			if (action === 'continue' && typeof message.messageId === 'string' && message.messageId.length <= 64) { await session.continueRun(message.messageId); }
 			if (action === 'discard' && typeof message.messageId === 'string' && message.messageId.length <= 64) {
 				if (await confirmDiscard()) { await session.discardRun(message.messageId); }
+			}
+			// Goal controls take effect at the goal's next safe point; an unknown id or control is ignored.
+			if (action === 'goal' && typeof message.id === 'string' && message.id.length <= 64 && (message.control === 'pause' || message.control === 'stop')) {
+				controller.goals?.control(message.id, message.control);
+				publish();
 			}
 			if (action === 'approval' && typeof message.id === 'string' && message.id.length <= 64 && APPROVAL_ANSWERS.includes(message.answer)) { await session.resolveApproval(message.id, message.answer); }
 			// The session validates every answer against the question it asked; anything else is ignored.

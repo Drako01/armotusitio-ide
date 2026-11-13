@@ -106,7 +106,8 @@ export function outcomeOf(result: TurnResult & { nativeSessionId: string }, dura
 	return {
 		status, exitCode: result.status === 'completed' ? 0 : null, durationMs, output: redact(result.output || (result.error ?? '')), truncated: false, structuredOutput: true,
 		...(result.usage ? { usage: result.usage } : {}), ...(result.quota ? { quota: result.quota } : {}), ...(result.stopReason ? { stopReason: result.stopReason } : {}),
-		...(result.error === 'RUNTIME_RATE_LIMITED' ? { rateLimited: true as const } : {}), ...(result.nativeSessionId ? { sessionId: result.nativeSessionId } : {})
+		...(result.error === 'RUNTIME_RATE_LIMITED' ? { rateLimited: true as const } : {}), ...(result.error && /^RUNTIME_[A-Z_]+$/.test(result.error) ? { errorCode: result.error } : {}),
+		...(result.firstTokenMs !== undefined ? { firstTokenMs: result.firstTokenMs } : {}), ...(result.nativeSessionId ? { sessionId: result.nativeSessionId } : {})
 	};
 }
 
