@@ -190,7 +190,7 @@ async function runCheckpointsCommand(deps: SessionCommandDeps, words: string[], 
 	if (session.snapshot().activity) { return t('Hay una tarea en curso: esper\u00e1 a que termine o detenela antes de restaurar.'); }
 	const wanted = words[1].toLowerCase();
 	const matches = (await checkpoints.list(root)).filter(item => item.id.toLowerCase().startsWith(wanted));
-	if (matches.length !== 1) { return matches.length ? t('El ID coincide con varios checkpoints; escrib00ed m\u00e1s caracteres.') : t('No encontr\u00e9 ese checkpoint. Consult\u00e1 /checkpoints.'); }
+	if (matches.length !== 1) { return matches.length ? t('El ID coincide con varios checkpoints; escrib\u00ed m\u00e1s caracteres.') : t('No encontr\u00e9 ese checkpoint. Consult\u00e1 /checkpoints.'); }
 	const outcome = await checkpoints.restore(root, matches[0].id);
 	if (!outcome) { return t('Restauraci\u00f3n cancelada.'); }
 	await session.refreshContext();
@@ -203,7 +203,7 @@ function runGoalsCommand(deps: SessionCommandDeps, words: string[]): string {
 	if (!goals) { return t('Los objetivos aut\u00f3nomos no est\u00e1n disponibles en esta ventana.'); }
 	if (words.length === 0) {
 		const items = goals.list();
-		if (!items.length) { return t('No hay objetivos aut\u00f3nomos en curso en esta ventana. Cre00e1 uno con 00abArmoTuSitio: Nuevo objetivo aut\u00f3nomo\u00bb.'); }
+		if (!items.length) { return t('No hay objetivos aut\u00f3nomos en curso en esta ventana. Cre\u00e1 uno con \u00abArmoTuSitio: Nuevo objetivo aut\u00f3nomo\u00bb.'); }
 		return [
 			t('Objetivos en curso:'),
 			...items.map(item => '  ' + item.id + ' \u00b7 ' + item.project + ' \u00b7 ' + GOAL_STATUS[item.status](t) + ' \u00b7 ' + item.objective + (item.questions.length ? '\n    ' + t('Preguntas pendientes: {0}', item.questions.slice(0, 3).join(' | ')) : ''))
@@ -212,7 +212,7 @@ function runGoalsCommand(deps: SessionCommandDeps, words: string[]): string {
 	const action = words[0] === 'pausar' ? 'pause' : words[0] === 'detener' ? 'stop' : undefined;
 	if (!action || words.length !== 2) { return t('Uso: /objetivos [pausar|detener ID]'); }
 	if (!goals.control(words[1], action)) { return t('No hay un objetivo en curso con ese ID. Consult\u00e1 /objetivos.'); }
-	return action === 'pause' ? t('Ped00ed pausar el objetivo {0}; se detiene en su pr\u00f3ximo punto seguro.', words[1]) : t('Ped00ed detener el objetivo {0}; se detiene en su pr\u00f3ximo punto seguro.', words[1]);
+	return action === 'pause' ? t('Ped\u00ed pausar el objetivo {0}; se detiene en su pr\u00f3ximo punto seguro.', words[1]) : t('Ped\u00ed detener el objetivo {0}; se detiene en su pr\u00f3ximo punto seguro.', words[1]);
 }
 
 const LEASE_TEXT: Record<EngineLeaseState, (t: CommandTranslator, until?: string) => string> = {

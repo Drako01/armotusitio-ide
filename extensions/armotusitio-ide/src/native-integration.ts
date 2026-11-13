@@ -1351,7 +1351,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 	const restoreToolCheckpoint = async (folder: Host, root: string, checkpointId: string): Promise<{ restored: string[]; skipped: string[] } | undefined> => {
 		if (!ensureTrust()) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
 		const approval = await vscode.window.showWarningMessage(
-			'Restaurar \u00fanicamente archivos con huella id00e9ntica a la salida de esa herramienta. Cualquier edici\u00f3n posterior bloquear\u00e1 la restauraci\u00f3n completa. No modifica commits ni la rama. 00bfConfirmar?',
+			'Restaurar \u00fanicamente archivos con huella id\u00e9ntica a la salida de esa herramienta. Cualquier edici\u00f3n posterior bloquear\u00e1 la restauraci\u00f3n completa. No modifica commits ni la rama. \u00bfConfirmar?',
 			{ modal: true }, 'Restaurar checkpoint');
 		if (approval !== 'Restaurar checkpoint' || !authorized(folder)) { return undefined; }
 		assertIdle(root, folder);
