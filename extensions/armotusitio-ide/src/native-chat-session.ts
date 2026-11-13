@@ -17,6 +17,7 @@ import type { ProviderUsage } from './native-provider-output.ts';
 import { liveQuota, mergeQuota, type ProviderQuota } from './native-quota.ts';
 import { redactSecrets } from './native-redact.ts';
 import { absorbMessages, compactionSplit } from './native-chat-memory.ts';
+import { DecisionLog, decisionsPrompt, type Decision } from './native-decisions.ts';
 import { classifyRun } from './native-run-outcome.ts';
 import { hasRecoveryHint, recoveryHint } from './native-error-catalog.ts';
 import type { ActivityActionId, ActivityItem } from './native-activity-feed.ts';
@@ -265,13 +266,26 @@ export class HarnessChatSession {
 	private readonly store: ChatStore;
 	private readonly runtime: ChatRuntime;
 	private readonly deliveredSkills = new Map<string, string>();
+	private readonly deliveredDecisions = new Map<string, string>();
+	private readonly decisions?: DecisionLog;
 	private skillSelection: SkillSelection['trace'] = [];
 	private readonly listener: (snapshot: ChatSnapshot) => void;
 	private readonly t: Translate;
 	private readonly defaultProvider: NativeProvider;
 
-	constructor(store: ChatStore, runtime: ChatRuntime, listener: (snapshot: ChatSnapshot) => void, t: Translate, defaultProvider: NativeProvider = 'claude', broker = new ApprovalBroker()) {
+	constructor(store: ChatStore, runtime: ChatRuntime, listener: (snapshot: ChatSnapshot) => void, t: Translate, defaultProvider: NativeProvider = 'claude', broker = new ApprovalBroker(), decisions?: DecisionLog) {
 		this.store = store; this.runtime = runtime; this.listener = listener; this.t = t; this.defaultProvider = defaultProvider; this.broker = broker;
+		this.decisions = decisions;
+	}
+
+	/** User-operated project memory; model output is never automatically recorded here. */
+	async projectMemory(action: 'list' | 'save' | 'correct' | 'remove', text = '', id = '', kind = 'decision'): Promise<Decision[]> {
+		if (!this.decisions) { throw Error('HARNESS_DECISIONS_UNAVAILABLE'); }
+		if (this.activity && action !== 'list') { throw Error('HARNESS_CHAT_BUSY'); }
+		if (action === 'save') { await this.decisions.record({ title: kind + ': ' + text.slice(0, 100), context: 'Confirmed by user command', decision: text, alternatives: [], scope: [], source: 'user' }); }
+		if (action === 'correct') { await this.decisions.correct(id, text); }
+		if (action === 'remove') { await this.decisions.remove(id); }
+		return this.decisions.list();
 	}
 
 	open(): Promise<void> {
@@ -610,19 +624,22 @@ export class HarnessChatSession {
 		// after the instruction exists because the instruction builders require the user message to be the last one.
 		let engineering = '';
 		let delivered = '';
+		let projectMemory = '';
 		this.skillSelection = [];
-		const attached = (instruction: string, selected: string): string => {
-			delivered = fitEngineeringContext(selected, promptBudget(this.context ?? {}) - Buffer.byteLength(instruction) - Buffer.byteLength(attachments.context ?? '') - 4);
+		const attached = (instruction: string, selected: string, memory = projectMemory): string => {
+			const remaining = promptBudget(this.context ?? {}) - Buffer.byteLength(instruction) - Buffer.byteLength(attachments.context ?? '') - 8;
+			const fittedMemory = Buffer.byteLength(memory) <= remaining ? memory : '';
+			delivered = fitEngineeringContext(selected, remaining - Buffer.byteLength(fittedMemory));
 			for (const match of selected.matchAll(/<skill name=\"([^\"]+)\"/g)) {
 				if (!delivered.includes('<skill name=\"' + match[1] + '\"') && !this.skillSelection.some(entry => entry.name === match[1] && entry.reason === 'omitted: prompt budget')) {
 					this.skillSelection.push({ name: match[1], reason: 'omitted: prompt budget' });
 				}
 			}
-			return [instruction, delivered, attachments.context].filter(Boolean).join('\n\n');
+			return [instruction, fittedMemory, delivered, attachments.context].filter(Boolean).join('\n\n');
 		};
-		const withAttachments = (instruction: string, selected = engineering): string => {
+		const withAttachments = (instruction: string, selected = engineering, memory = projectMemory): string => {
 			if (attachments.notice) { this.conversation.messages.push(chatMessage('notice', attachments.notice, { tone: 'info' })); }
-			return attached(instruction, selected);
+			return attached(instruction, selected, memory);
 		};
 		this.activity = { kind: 'thinking', provider, startedAt: new Date().toISOString(), observedBytes: 0 };
 		this.conversation.pending = [{ kind: 'thinking', startedAt: this.activity.startedAt, pid: process.pid }];
@@ -633,6 +650,7 @@ export class HarnessChatSession {
 			await this.persist();
 			await this.refreshContext();
 			if (!this.context) { throw Error('HARNESS_CHAT_CONTEXT_UNAVAILABLE'); }
+			if (this.decisions) { projectMemory = decisionsPrompt(await this.decisions.relevant(body.match(/(?:[\w.-]+[\/\\])+[\w.-]+/g) ?? [], body)); }
 			if (!attachments.context?.includes('<skill ')) {
 				const selection = await this.runtime.skills?.({ request: body, files: body.match(/(?:[\w.-]+[\/\\])+[\w.-]+/g) ?? [] });
 				engineering = selection?.context ?? '';
@@ -654,10 +672,12 @@ export class HarnessChatSession {
 			const native = await this.transportState(provider);
 			const delta = native?.native && native.lastInputRef ? buildConversationDelta(this.conversation.messages, this.context, native.lastInputRef, current) : undefined;
 			const skillKey = provider + ':' + this.conversation.conversationId;
+			const previousMemory = this.deliveredDecisions.get(skillKey);
+			const memoryDelta = delta && previousMemory === projectMemory ? '' : projectMemory || (previousMemory ? '\nProject memory snapshot is now empty. Earlier project memory snapshots are no longer current.\n' : '');
 			const fitted = fitEngineeringContext(engineering, promptBudget(this.context) - Buffer.byteLength(delta ?? full) - Buffer.byteLength(attachments.context ?? '') - 4);
 			const freshInstruction = attached(full, engineering);
 			const reused = !!delta && this.deliveredSkills.get(skillKey) === fitted;
-			const instruction = withAttachments(delta ?? full, reused ? '' : fitted);
+			const instruction = withAttachments(delta ?? full, reused ? '' : fitted, memoryDelta);
 			const transport: TurnTransport | undefined = native?.native
 				? { conversationId: this.conversation.conversationId!, inputRef: userMessageId, ...(delta ? { fresh: freshInstruction } : {}), ...(attachments.images?.length ? { images: attachments.images } : {}) }
 				: undefined;
@@ -667,6 +687,7 @@ export class HarnessChatSession {
 			await this.noteQuota(provider, outcome.quota);
 			this.turnOk = outcome.status === 'passed' && !!outcome.output.trim();
 			if (this.turnOk && native?.native) { this.deliveredSkills.set(skillKey, reused ? fitted : delivered); }
+			if (this.turnOk && native?.native && (!memoryDelta || instruction.includes(memoryDelta))) { this.deliveredDecisions.set(skillKey, projectMemory); }
 			if (outcome.status !== 'passed' || !outcome.output.trim()) {
 				this.conversation.messages.push(chatMessage('notice', failureNotice(this.t, outcome), { tone: outcome.status === 'cancelled' ? 'info' : 'error', provider }));
 				return;
