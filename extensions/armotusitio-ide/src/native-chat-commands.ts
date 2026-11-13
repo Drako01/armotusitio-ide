@@ -21,6 +21,8 @@ import type { PermissionPreset } from './native-permissions-types.ts';
 import type { ProviderQuota } from './native-quota.ts';
 import { redactSecrets } from './native-redact.ts';
 import { skillsListing } from './native-chat-skills.ts';
+import { runProjectMemoryCommand } from './native-project-memory-command.ts';
+import type { ClaudeIntegrationBridge } from './native-claude-integrations.ts';
 
 export type CommandTranslator = (text: string, ...args: string[]) => string;
 export interface ChatCommand {
@@ -61,6 +63,8 @@ export function chatCommands(t: CommandTranslator): ChatCommand[] {
 		{ name: 'lease', usage: '[liberar]', description: t('Estado del lease de escritura del Harness propio del proyecto; "liberar" lo retira cuando el IDE muri\u00f3 con \u00e9l.'), session: true },
 		{ name: 'motor', usage: 'COMANDO [ARGUMENTOS]', description: t('Corre un comando del Harness propio del proyecto (por ejemplo pnpm harness:preflight) en la terminal del IDE, donde pod\u00e9s contestar sus preguntas; el resultado queda en la conversaci\u00f3n.'), session: true },
 		{ name: 'skills', description: t('Lista las skills nativas y del proyecto (carpetas .agents, .codex o .claude).'), session: true },
+		{ name: 'integraciones', usage: '[ver|habilitar|deshabilitar ID]', description: t('Inspecciona las integraciones locales de Claude y habilita hooks compatibles con aprobaci\u00f3n por ejecuci\u00f3n.'), session: true },
+		{ name: 'memoria', usage: '[guardar decision|convencion|solucion TEXTO | corregir ID TEXTO | quitar ID]', description: t('Inspecciona y corrige la memoria confirmada del proyecto.'), session: true },
 		{ name: 'skill', usage: 'NOMBRE [pedido]', description: t('Aplica una skill nativa o del proyecto a tu pedido: su contenido llega a la IA como convenciones, nunca como permisos.'), session: true },
 		{ name: 'doctor', description: t('Revisa la m\u00e1quina y el proyecto (Node, gestor de paquetes, git, Docker, disco) y dice c\u00f3mo arreglar cada problema.'), session: true },
 		{ name: 'debug', usage: 'COMANDO | ERROR', description: t('Analiza un fallo reproducible y propone un plan de diagn\u00f3stico. Los cambios y las pruebas requieren aprobar el plan.'), session: true },
@@ -136,6 +140,7 @@ export async function auditLines(runsDirectory: string, limit = 30): Promise<str
 const exists = (file: string): Promise<boolean> => fs.lstat(file).then(() => true, () => false);
 
 export interface SessionCommandDeps {
+	integrations?: ClaudeIntegrationBridge;
 	nativeSkillsDirectory?: string;
 	t: CommandTranslator;
 	chatMode(): ChatMode;
@@ -238,6 +243,8 @@ async function runLeaseCommand(deps: SessionCommandDeps, words: string[]): Promi
 
 /** Runs a command that needs the conversation; `undefined` when `action` is not one of them. */
 export async function runSessionCommand(deps: SessionCommandDeps, action: string, words: string[], root: string, session: HarnessChatSession): Promise<string | undefined> {
+	if (action === 'memoria') { return runProjectMemoryCommand(words, root, session, deps.t); }
+	if (action === 'integraciones') { return deps.integrations?.command(root, words, deps.t) ?? deps.t('Las integraciones no est\u00e1n disponibles en esta ventana.'); }
 	const { t } = deps;
 	const home = deps.home ?? os.homedir();
 	if (action === 'mcp' && deps.mcp) { return await runMcpCommand(deps.mcp, words); }

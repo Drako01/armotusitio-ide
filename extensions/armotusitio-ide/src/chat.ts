@@ -27,6 +27,8 @@ const { chooseChatDocument } = require('./native-chat-attachments.ts');
 const { redactSecrets } = require('./native-redact.ts');
 const { captureTerminalOutput } = require('./native-terminal-capture.ts');
 const { resolveSkillInvocation } = require('./native-chat-skills.ts');
+const { ClaudeIntegrationBridge } = require('./native-claude-integrations.ts');
+const { DecisionLog } = require('./native-decisions.ts');
 const { configuredPreset } = require('./native-permissions.ts');
 const { APPROVAL_ANSWERS } = require('./native-approval.ts');
 const { IncrementalContextIndex, IGNORED } = require('./context.ts');
@@ -335,7 +337,7 @@ function registerChat(context: any, controller: any, projects: any, mcp: any, vs
 						options.feed.retain(item => !item.id.startsWith('chat:' + feedKey + ':') || ids.has(item.id));
 						for (const item of items) { options.feed.publish(item); }
 					}
-				}, t, preferred);
+				}, t, preferred, undefined, new DecisionLog(path.dirname(directory)));
 				await entry.session.open();
 				entry.loaded = true;
 				return entry;
@@ -421,7 +423,20 @@ function registerChat(context: any, controller: any, projects: any, mcp: any, vs
 		const confirm = t('Descartar cambios');
 		return await vscode.window.showWarningMessage(t('\u00bfDescartar los archivos que cambi\u00f3 esta ejecuci\u00f3n? Los que ten\u00edan cambios tuyos no se tocan.'), { modal: true }, confirm) === confirm;
 	};
+	const integrations = new ClaudeIntegrationBridge({
+		confirm: async (summary: string) => {
+			const accept = t('Confirmar hook');
+			return await vscode.window.showWarningMessage(summary, { modal: true }, accept) === accept;
+		},
+		valid: (root: string) => !!vscode.workspace.isTrusted && selectedFolder()?.uri.fsPath === root && !sessions.get(selectedFolder()?.uri.toString())?.session?.busy,
+		run: async (root: string, command: string, args: string[]) => {
+			const folder = selectedFolder();
+			if (!controller.runProjectCommand || folder?.uri.fsPath !== root || !vscode.workspace.isTrusted) { throw Error('HARNESS_CLAUDE_INTEGRATION_CONTEXT_CHANGED'); }
+			return controller.runProjectCommand(folder, command, args);
+		}
+	});
 	const sessionCommands = {
+		integrations,
 		image: async (request: string, root: string, session: ChatSession, turn?: ParticipantTurn) => {
 			if (turn?.token.isCancellationRequested) { return t('Env\u00edo de imagen cancelado.'); }
 			if (!vscode.workspace.getConfiguration('atsHarness').get('imageInput', false)) { return t('Para adjuntar im\u00e1genes, activ\u00e1 atsHarness.imageInput. Requiere transporte nativo y un modelo con visi\u00f3n.'); }
@@ -600,6 +615,8 @@ function registerChat(context: any, controller: any, projects: any, mcp: any, vs
 			return;
 		}
 		const sendTurn = async (body: string, attachments: { context?: string; notice?: string; images?: readonly import('./native-chat-images.ts').ChatImage[] }, mode: 'ask' | 'act' = chatMode()) => {
+			if (participantTurn?.token.isCancellationRequested) { return; }
+			await integrations.beforePrompt(folder.uri.fsPath, t);
 			if (participantTurn?.token.isCancellationRequested) { return; }
 			const queued = session.busy;
 			const queuedBefore = new Set(session.snapshot().queue?.map((item: { id: string }) => item.id));
