@@ -28,7 +28,7 @@ async function sources(directory: string): Promise<string[]> {
 
 test('no source carries a unicode escape that lost its backslash', async () => {
 	const findings: string[] = [];
-	for (const file of await sources(SOURCE)) {
+	for (const file of [...await sources(SOURCE), path.resolve(SOURCE, '../package.json')]) {
 		const text = await fs.readFile(file, 'utf8');
 		text.split('\n').forEach((line, index) => {
 			for (const match of line.matchAll(BROKEN)) {

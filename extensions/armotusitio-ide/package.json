@@ -152,7 +152,15 @@
 					},
 					{
 						"name": "objetivos",
-						"description": "Ver, pausar o detener los objetivos aut00f3nomos en curso"
+						"description": "Ver, pausar o detener los objetivos aut\u00f3nomos en curso"
+					},
+					{
+						"name": "integraciones",
+						"description": "Inspeccionar integraciones locales de Claude y habilitar hooks compatibles"
+					},
+					{
+						"name": "memoria",
+						"description": "Ver y corregir la memoria confirmada del proyecto"
 					}
 				]
 			}
