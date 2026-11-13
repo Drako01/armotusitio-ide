@@ -184,6 +184,23 @@ Codex quedó sin cuota a las 15:55 con los cuatro paquetes sin commitear; Claude
 | `521f7da1270` | Memoria de proyecto controlada por el usuario | project-memory/operations PASS |
 | `ddbc0154bcc` | Puente de integraciones Claude y pistas de error | integrations, error-catalog PASS |
 | `86f9e7299ac` | Comandos en el manifiesto; literal roto reparado | encoding rojo→verde |
+| `1991b433e72` | Checklist: paquetes de Codex registrados | — |
+| `d6982707266` | Seis escapes pegados a palabras reparados; guard cubre palabras con letras no hex, `resources/` y manifiestos | encoding rojo→verde; commands PASS |
+| `cfe6e2abba4` | Historial visual de checkpoints: menú → listado por turno, estado por archivo (restaurable / cambió después), "Ver diff" antes↔ahora por proveedor de contenido en memoria, "Restaurar" vía `/checkpoints restaurar` | check PASS; tool-checkpoints 6/6 PASS; encoding/commands/goals PASS |
+
+### Pendientes al cierre de la sesión Claude (2026-11-13, 16:30)
+
+| Ítem | Estado | Próximo paso concreto |
+|---|---|---|
+| Test de navegador del historial de checkpoints | TODO | Copiar `test/chat-goals-card.test.cts`: montar, enviar `{type:'checkpoints', project, items}` (uno restaurable, uno con `restorable:false`, path con `<b>`), verificar botón bloqueado + `aria-describedby`, `window.sent` con `checkpointDiff`, Escape cierra y vuelve el foco a `#menu-button` |
+| Agent Teams / comunicación entre agentes | BLOCKED (proveedor) | Codex no expone `multi_agent` estable y Claude CLI no ofrece equipos persistentes sin cuota; se entrega perfiles + mapa + presupuestos. Documentar en matriz de paridad |
+| Más eventos de hooks (PreToolUse, Stop…) | PARTIAL | Requieren mediar stdin/JSON del hook; hoy solo `UserPromptSubmit` de comando simple |
+| Panel de tokens: presupuestos configurables y alertas | TODO | Reutilizar `reserveProviderInvocation` (cap existente) y `agentMetrics.recommendations`; setting `atsHarness.tokenBudget` por operación |
+| Browser / sesiones remotas | BLOCKED | Sin servicio ni autorización; mantener ADR existente |
+| Docs: matriz Claude Code vs IDE, uso de `.armotusitio/agents.json`, `/integraciones`, `/memoria`, historial | TODO | Actualizar `README`, `docs/guia/04-chat-harness.md`, `NATIVE_CHAT_PARITY_MATRIX.md`, PR body |
+| `npm test` completo sobre el SHA final + CI tras push autorizado | TODO | Una sola vez antes del push; no se hizo push en esta sesión |
+
+Reglas aprendidas: la herramienta de edición colapsa `\` → escribir barras con `String.fromCharCode(92)`; formatear con `build/lib/formatter.ts` antes de commitear; el guard de codificación ahora cubre palabras tipo `id00e9ntica`.
 
 ### Continuidad y reglas aprendidas
 
