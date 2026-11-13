@@ -59,7 +59,7 @@ directorio temporal), más la referencia oficial de configuración.
 |---|---|---|---|
 | P1-7 | `/checkpoints` lista los checkpoints granulares (turno, herramienta, archivos) y `/checkpoints restaurar ID` restaura por el **mismo** camino que el comando de la paleta: confirmación modal, fence compartido y lease del proyecto | DONE | `runCheckpointsCommand`; `restoreToolCheckpoint` extraído en `native-integration.ts`; test de comandos |
 | P1-8 | `/objetivos` lista los objetivos autónomos de la ventana con estado y preguntas pendientes; `/objetivos pausar ID` y `/objetivos detener ID` actúan en el próximo punto seguro | DONE | `GoalIntegration.list` y `control`; test de comandos |
-| P1-9 | Vista unificada en el webview del chat (progreso, responsables, etapas) | PARTIAL | Expuesta por comandos y por la actividad existente; el rediseño del webview exige un candidato instalado para validar visual y accesibilidad |
+| P1-9 | Objetivos en el webview del chat: tarjetas con proyecto, objetivo, estado, preguntas pendientes y Pausar/Detener (misma gramática visual que las aprobaciones) | DONE (visual en IDE instalado: BLOCKED) | `renderGoals` en `resources/chat.ts`, `goals` en el estado y acción `goal` en `src/chat.ts`; test de navegador `chat-goals-card.test.cts` (texto del modelo inerte, botones deshabilitados según estado) |
 
 ### P1: UX, MCP y multimodalidad
 
@@ -128,3 +128,26 @@ en 0.166.0 y 0.169.0 (ambos aceptan las tres). Llamadas reales al modelo: **0**.
 - Los recibos de hilos hijos se implementaron según el contrato del protocolo; que el servidor los emita
   al cliente padre debe confirmarse con una corrida autenticada antes de relajar el gate de presupuesto.
 - `cargo` no está en PATH: pruebas Rust no ejecutadas.
+
+## 6. Cierre de hallazgos de la auditoría (2026-11-13, tarde)
+
+Commit `091de302c12` sobre `1b109072b56` (commit del propietario con los literales de `native-chat-commands.ts` y la latencia del camino de implementación).
+
+| Hallazgo | Estado | Evidencia |
+|---|---|---|
+| Literales con escape roto (`versi00f3n`, `2026 y`, …) en adapter, comandos e integración | DONE | 29 literales corregidos; test `native-source-encoding.test.mts` recorre `src/**` y falla ante cualquier escape sin barra (2 PASS) |
+| Latencia al primer token en ambos modos | DONE | Camino one-shot mide el primer byte de salida (`firstTokenMs`); `noteUsage` recibe la métrica en conversación e implementación; tests: `native-agent-execution` (one-shot) y `native-chat-session` «latency of the last turn… both modes» (321 / 654 / ausente) |
+| Memoria compactada: las solicitudes históricas desplazaban registros | DONE | `renderMemory` reserva 2 KiB para registros y 1 KiB para solicitudes, más nuevos primero, render cronológico, determinista; test de saturación (25 solicitudes largas + 15 corridas: 15 registros conservados, ≤ 4 KiB) |
+| Recibos tardíos de hijos de turnos anteriores | DONE (defecto reproducido y corregido) | El fake emite un recibo tardío (`LATE_CHILD`); antes se atribuía al turno actual. `childThreads` se vacía por turno; test de guard: turno sin hijos → `childThreads` ausente, `inputTokens` 10 |
+| Integración visual Goals y Chat | DONE (certificación instalada BLOCKED) | Ver P1-9 |
+| Rendimiento/observabilidad | DONE en lo acotado | Test de saturación de memoria y test de aislamiento de recibos son deterministas y reproducibles; sin llamadas a proveedores |
+
+Pruebas focalizadas ejecutadas tras los cambios: `native-chat-memory`, `native-codex-subagents-guard`, `native-source-encoding`, `native-agent-execution`, `native-chat-session`, `native-chat-commands`, `chat-goals-card` y `chat-approval-card` (navegador real): **todas PASS**; `tsc` estricto PASS; hygiene PASS en el commit. La suite completa no se repitió: los 881 PASS previos siguen vigentes para los módulos no tocados.
+
+## 7. Pendientes para otra sesión
+
+- BLOCKED por cuota: E2E autenticado Claude/Codex (un turno mínimo por proveedor bastaría para confirmar `humanCommand`, errores tipados y recibos de hijos; sin eso el gate `HARNESS_DELEGATION_BUDGET_UNVERIFIED` se mantiene).
+- BLOCKED por binario: capturas, accesibilidad con lector de pantalla y revisión visual de las tarjetas de objetivos en un IDE instalado del SHA final.
+- BLOCKED por toolchain: tests Rust (`cargo`).
+- Opcional: refrescar la lista de objetivos en el webview cuando un objetivo termina sin otra publicación de estado (hoy se actualiza con cualquier publicación o al pulsar un control).
+- Antes del PR: correr `npm test` completo sobre el SHA final una sola vez y revisar el CI de Linux/Windows.

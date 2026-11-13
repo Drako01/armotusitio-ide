@@ -104,7 +104,7 @@ official configuration reference. Findings and closure are tracked in `CHAT_HARN
 | 19 Fine checkpoints | `/checkpoints` lists and restores through the same confirmation, fence and lease as the command | IMPLEMENTED_VERIFIED (fake) |
 | 23 Governance/trust | Typed provider errors map to stable `RUNTIME_*` codes with recovery hints; raw provider text is never an error code | IMPLEMENTED_VERIFIED (fake) |
 | 24 Cost/quota | Child receipts and first-token latency only when reported; no estimates | IMPLEMENTED_VERIFIED (fake) |
-| Goals in chat | `/objetivos` lists, pauses and stops the window's live goals | IMPLEMENTED_VERIFIED (fake) |
+| Goals in chat | `/objetivos` and goal cards in the chat webview list, pause and stop the window's live goals | IMPLEMENTED_VERIFIED (fake + browser test) |
 
 Memory: compacted runs keep edited files, failed gates, discards, reverts and continuations from IDE records only.
 Still BLOCKED: authenticated provider runs, installed-candidate screenshots and accessibility, Rust tests (no cargo).
