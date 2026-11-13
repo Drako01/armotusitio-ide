@@ -201,6 +201,15 @@ Codex quedó sin cuota a las 15:55 con los cuatro paquetes sin commitear; Claude
 | Docs: matriz Claude Code vs IDE, uso de `.armotusitio/agents.json`, `/integraciones`, `/memoria`, historial | DONE | `docs/CLAUDE_CODE_PARITY_MATRIX.md` nuevo; README (tabla Chat Harness y guías), `docs/guia/04` (comandos, historial, especialistas), `docs/guia/05` (alerta 80 %), cuerpo del PR, evidencia competitiva | — |
 | `npm test` completo sobre el SHA final + CI tras push autorizado | DONE local / BLOCKED CI | Sobre `0957c72153b`: 917 tests, 905 PASS, 0 FAIL, 12 SKIP (102,9 s); `check`, `compile`, `check:native-package` PASS; build `armotusitioOfficialExtensions` 4/4 | CI Linux/Windows requiere push autorizado |
 
+### Pendientes acordados para una próxima iteración (2026-11-13)
+
+| Ítem | Camino propuesto | Requisito |
+|---|---|---|
+| Equipo de agentes orquestado por el IDE | Buzón de equipo como herramienta MCP propia (`team_send`/`team_read`, mensajes acotados y redactados tratados como datos), tablero que asigna tareas del DAG existente a agentes con rol y perfil, un worktree por escritor con merge mediado por el usuario, presupuesto por agente con los límites de 24 h | Solo trabajo local; verificable con fakes. Ningún proveedor expone equipos estables |
+| Métrica local de contexto evitado | Registrar por turno los bytes de prompt que el IDE no reenvía (snapshot de memoria sin cambios, skills omitidas, delta de conversación) y mostrarlos en `/costo` y el Control Center como bytes, nunca como tokens ni dinero | Sin cuota |
+| Benchmark real de ahorro de tokens | Script versionado: mismo pedido con y sin memoria, directo y delegado; lee el consumo informado del ledger y calcula diferencias | Cuota autorizada (pocas llamadas por caso) |
+| E2E autenticado E01–E10 | Un turno por proveedor confirma `humanCommand`, errores tipados y recibos de hijos; libera `HARNESS_DELEGATION_BUDGET_UNVERIFIED` | Cuota autorizada (Codex se libera 2026-11-13 20:49) |
+
 Reglas aprendidas: la herramienta de edición colapsa `\` → escribir barras con `String.fromCharCode(92)`; formatear con `build/lib/formatter.ts` antes de commitear; el guard de codificación ahora cubre palabras tipo `id00e9ntica`.
 
 ### Continuidad y reglas aprendidas
