@@ -48,6 +48,14 @@
 			"downloadUrl": "https://open-vsx.org/api/armotusitio/vestigivo/0.2.0/file/armotusitio.vestigivo-0.2.0.vsix",
 			"repo": "https://github.com/Drako01/vestigivo.git",
 			"license": "MIT"
+		},
+		{
+			"name": "armotusitio.vinculivo",
+			"version": "0.2.1",
+			"sha256": "6086fbddb9fc717708c3098d64511f7a5d381d3ce19aec22aa7ed8f549dcb727",
+			"downloadUrl": "https://open-vsx.org/api/armotusitio/vinculivo/0.2.1/file/armotusitio.vinculivo-0.2.1.vsix",
+			"repo": "https://github.com/Drako01/vinculivo.git",
+			"license": "MIT"
 		}
 	]
 }

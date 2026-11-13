@@ -42,7 +42,7 @@ incorpora el upgrade de Code - OSS a 1.146.0 y el alcance resumido abajo.
 | MCP | Stdio, HTTP JSON/SSE y legacy SSE; credenciales en host | Contratos y ciclo completo |
 | Subagentes | Roles Claude aislados y subagentes Codex opt-in: apagados explícitamente por defecto, dos simultáneos, cuatro por turno, profundidad uno, solo lectura | Proveedor autenticado (requiere cuota) e IDE instalado |
 | Checkpoints | Deshacer por corrida/archivo y checkpoints por turno y herramienta, con restauración reanudable; `/checkpoints` los lista y restaura desde el chat | Recuperación en IDE instalado |
-| Extensiones | Sección ArmoTuSitio con seis extensiones del ecosistema | Activación real de las seis en IDE instalado |
+| Extensiones | Sección ArmoTuSitio con siete extensiones del ecosistema | Activación real de las siete en IDE instalado |
 | Codex CLI | Compatibilidad por rango (0.166.0 a 0.169.0 validados; versiones más nuevas siguen en transporte nativo con aviso), política `on-request`, aprobaciones `humanCommand` de decisión única y errores tipados con próximo paso | Proveedor autenticado (requiere cuota) |
 | Objetivos | `/objetivos` muestra los objetivos autónomos de la ventana y permite pausarlos o detenerlos | IDE instalado |
 
@@ -153,7 +153,7 @@ No se incorporaron capturas sintéticas ni mockups. Al 2026-11-10 los únicos
 binarios disponibles en el equipo de desarrollo corresponden a la versión
 anterior (IDE 1.145.2, commit `45d7e83`), por lo que **no hay capturas de este PR**.
 Las capturas definitivas de interfaz, consentimientos, accesibilidad, MCP y las
-seis extensiones deben provenir de un **IDE instalado y construido desde el SHA
+siete extensiones deben provenir de un **IDE instalado y construido desde el SHA
 final**, conforme al [protocolo de capturas](docs/PR86_SCREENSHOT_CAPTURE.md).
 Se agregarán a esta sección únicamente tras inspeccionar su procedencia
 y anonimizar credenciales y rutas.
