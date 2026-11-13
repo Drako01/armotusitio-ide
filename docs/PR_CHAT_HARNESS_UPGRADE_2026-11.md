@@ -11,6 +11,11 @@ documentación oficial ya retiró. Este PR audita el protocolo real (0.166.0 y 0
 modelo), regenera los tipos, pasa a compatibilidad por rango y cierra las brechas de experiencia que esa
 auditoría dejó a la vista.
 
+La segunda tanda (2026-11-13) cierra la paridad con Claude Code: perfiles de especialistas por proyecto, puente
+opt-in para hooks, agentes, skills y plugins de `.claude`, memoria del proyecto controlada por el usuario, historial
+visual de checkpoints con diff, alertas de presupuesto, y Vinculivo 0.2.1 como séptima extensión oficial. La
+comparación capacidad por capacidad está en `docs/CLAUDE_CODE_PARITY_MATRIX.md`.
+
 ## Cambios
 
 ### Runtime Codex (P0)
