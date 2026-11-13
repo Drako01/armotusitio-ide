@@ -34,6 +34,7 @@ import type { PermissionPreset } from './native-permissions-types.ts';
 import { runEditorTool, type EditorBackend } from './native-editor-tools.ts';
 import { McpServerStore } from './native-mcp-servers.ts';
 import { createUserMcpBridge } from './native-user-mcp.ts';
+import { loadAgentProfiles } from './native-agent-profiles.ts';
 import { createDelegationBroker } from './native-agent-delegation.ts';
 import { KeychainDevSecrets } from './native-dev-secrets.ts';
 import { doctorReport, runDoctor, type DoctorCheck, type Exec } from './native-machine-doctor.ts';
@@ -378,6 +379,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 		if (provider === 'claude' && writerTools && approve && (!session || session.profileEnvironment)) {
 			config.delegation = true;
 			delegation = createDelegationBroker({
+				profiles: () => loadAgentProfiles(root),
 				enabled: () => ensureTrust() && delegationParents.has(root) && !delegationParents.get(root)!.stopping,
 				step: session?.step ?? onStep, redact: text => devSecrets.redact(redactSecrets(text)),
 				authorize: async request => {
@@ -389,7 +391,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 					return await approve({
 						kind: 'mcp', title: vscode.l10n.t('Delegar a un agente de solo lectura'), rule: '', noRemember: 'inexact',
 						detail: [vscode.l10n.t('Esta acci\u00f3n consume una llamada adicional al modelo con la misma cuenta del agente principal.'),
-						'role: ' + request.role, devSecrets.redact(redactSecrets(request.instruction)).slice(0, 1000)]
+						'role: ' + request.role, 'profile: ' + (request.profile ?? 'default') + '; model: ' + (request.model ?? parent.draft.model ?? 'provider default') + '; tools: none; maxTurns: ' + (request.maxTurns ?? 6), devSecrets.redact(redactSecrets(request.instruction)).slice(0, 1000)]
 					}) === 'once';
 				},
 				launch: async request => {
@@ -409,9 +411,10 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 						if (cap > 0) { await reserveProviderInvocation(metricsDirectory(root), provider, parent.fence, cap); }
 						await parent.fence.assertCurrent();
 						if (!authorized(parent.folder) || parent.stopping) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
+						if (request.profileDigest && (await loadAgentProfiles(root)).digest !== request.profileDigest) { throw Error('HARNESS_DELEGATION_PROFILE_CHANGED'); }
 						const child: AgentDraft = {
 							schemaVersion: 1, provider, role: request.role, projectRoot: root, instruction: request.instruction,
-							readOnly: true, maxTurns: 6, ...modelOption(parent.draft.model), ...effortOption(parent.draft.effort)
+							readOnly: true, maxTurns: request.maxTurns ?? 6, ...modelOption(request.model ?? parent.draft.model), ...effortOption(parent.draft.effort)
 						};
 						const pinned = { ...(session?.profileEnvironment ?? parent.environment) };
 						// No child tool server: there is no recursion, MCP, git or write tool grant to inherit.
@@ -1043,7 +1046,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 				const workflows = ensureTrust() ? await new NativeAgentWorkflow(folder.uri.fsPath, path.join(metricsDirectory(folder.uri.fsPath), 'workflows')).history().catch(() => []) : [];
 				const agentMetrics = ensureTrust() ? await readAgentStatistics(metricsDirectory(folder.uri.fsPath)).catch(() => null) : null;
 				const engineContract = await describeEngine(folder.uri.fsPath);
-				rows.push({ root: folder.uri.fsPath, name: folder.name, engine: 'ide-native', configured, lock: diagnostic?.lock, engineContract: { version: engineContract.schemaVersion, supported: engineContract.supported, unavailable: engineContract.unavailable }, workflows: workflows.slice(0, 5).map(w => ({ id: w.id, status: w.status, verification: w.verification, steps: w.steps.map(step => ({ id: step.id, status: step.status })) })), agentMetrics: agentMetrics ? { count: agentMetrics.count, successRate: agentMetrics.successRate, p95DurationMs: agentMetrics.p95DurationMs, usageSamples: agentMetrics.usageSamples, measuredInputTokens: agentMetrics.measuredInputTokens, measuredOutputTokens: agentMetrics.measuredOutputTokens, estimatedCostUsd: agentMetrics.estimatedCostUsd } : null, gatePerformance: summarizeGatePerformance(tasks), agentActive: runningAgents.has(folder.uri.fsPath) || runningWorkflows.has(folder.uri.fsPath), tasks: tasks.sort((a, b) => Number(b.attempts.at(-1)?.status === 'running') - Number(a.attempts.at(-1)?.status === 'running')).slice(0, 100).map(task => ({ id: task.id, title: task.title, status: task.attempts.at(-1)?.status || 'pending', attempts: task.attempts.length, gates: task.plan.gates.map(gate => ({ id: gate.id, dependsOn: gate.dependsOn || [], status: task.attempts.at(-1)?.results.find(result => result.id === gate.id)?.status || 'pending' })), reconciliationRequired: task.attempts.at(-1)?.status === 'running' && (diagnostic?.lock !== 'active' || diagnostic?.lockTask !== task.id || diagnostic?.lockAttempt !== task.attempts.at(-1)?.id) })) });
+				rows.push({ root: folder.uri.fsPath, name: folder.name, engine: 'ide-native', configured, lock: diagnostic?.lock, engineContract: { version: engineContract.schemaVersion, supported: engineContract.supported, unavailable: engineContract.unavailable }, workflows: workflows.slice(0, 5).map(w => ({ id: w.id, status: w.status, verification: w.verification, steps: w.steps.map(step => ({ id: step.id, status: step.status, role: step.role, provider: step.provider, durationMs: step.durationMs })) })), agentMetrics: agentMetrics ? { count: agentMetrics.count, successRate: agentMetrics.successRate, p95DurationMs: agentMetrics.p95DurationMs, usageSamples: agentMetrics.usageSamples, measuredInputTokens: agentMetrics.measuredInputTokens, measuredOutputTokens: agentMetrics.measuredOutputTokens, estimatedCostUsd: agentMetrics.estimatedCostUsd, measuredCachedInputTokens: agentMetrics.measuredCachedInputTokens, providerBreakdown: agentMetrics.providerBreakdown, unmeteredSamples: agentMetrics.unmeteredSamples, recommendations: agentMetrics.recommendations } : null, gatePerformance: summarizeGatePerformance(tasks), agentActive: runningAgents.has(folder.uri.fsPath) || runningWorkflows.has(folder.uri.fsPath), tasks: tasks.sort((a, b) => Number(b.attempts.at(-1)?.status === 'running') - Number(a.attempts.at(-1)?.status === 'running')).slice(0, 100).map(task => ({ id: task.id, title: task.title, status: task.attempts.at(-1)?.status || 'pending', attempts: task.attempts.length, gates: task.plan.gates.map(gate => ({ id: gate.id, dependsOn: gate.dependsOn || [], status: task.attempts.at(-1)?.results.find(result => result.id === gate.id)?.status || 'pending' })), reconciliationRequired: task.attempts.at(-1)?.status === 'running' && (diagnostic?.lock !== 'active' || diagnostic?.lockTask !== task.id || diagnostic?.lockAttempt !== task.attempts.at(-1)?.id) })) });
 			} catch { rows.push({ root: folder.uri.fsPath, name: folder.name, engine: 'ide-native', error: true, tasks: [] }); }
 		}
 		return rows;
