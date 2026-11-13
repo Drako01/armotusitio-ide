@@ -186,13 +186,14 @@ Codex quedó sin cuota a las 15:55 con los cuatro paquetes sin commitear; Claude
 | `86f9e7299ac` | Comandos en el manifiesto; literal roto reparado | encoding rojo→verde |
 | `1991b433e72` | Checklist: paquetes de Codex registrados | — |
 | `d6982707266` | Seis escapes pegados a palabras reparados; guard cubre palabras con letras no hex, `resources/` y manifiestos | encoding rojo→verde; commands PASS |
+| `2f7ae87c4b4` | Vinculivo 0.2.1 como séptima extensión oficial: pin SHA-256 verificado contra registro y bytes; 7/7 VSIX PASS en `check-official-extensions.ts`; docs y README a "siete"; `preview=true` documentado | build test 4/4 PASS |
 | `cfe6e2abba4` | Historial visual de checkpoints: menú → listado por turno, estado por archivo (restaurable / cambió después), "Ver diff" antes↔ahora por proveedor de contenido en memoria, "Restaurar" vía `/checkpoints restaurar` | check PASS; tool-checkpoints 6/6 PASS; encoding/commands/goals PASS |
 
 ### Pendientes al cierre de la sesión Claude (2026-11-13, 16:30)
 
 | Ítem | Estado | Próximo paso concreto |
 |---|---|---|
-| Test de navegador del historial de checkpoints | TODO | Copiar `test/chat-goals-card.test.cts`: montar, enviar `{type:'checkpoints', project, items}` (uno restaurable, uno con `restorable:false`, path con `<b>`), verificar botón bloqueado + `aria-describedby`, `window.sent` con `checkpointDiff`, Escape cierra y vuelve el foco a `#menu-button` |
+| Test de navegador del historial de checkpoints | DONE | `test/chat-checkpoints-history.test.cts` (`72f34c29af6`): menú → acción, listado de otro proyecto ignorado, agrupación por turno, inyección HTML, botón bloqueado con motivo, `checkpointDiff`, `/checkpoints restaurar`, Escape devuelve el foco. 1/1 PASS |
 | Agent Teams / comunicación entre agentes | BLOCKED (proveedor) | Codex no expone `multi_agent` estable y Claude CLI no ofrece equipos persistentes sin cuota; se entrega perfiles + mapa + presupuestos. Documentar en matriz de paridad |
 | Más eventos de hooks (PreToolUse, Stop…) | PARTIAL | Requieren mediar stdin/JSON del hook; hoy solo `UserPromptSubmit` de comando simple |
 | Panel de tokens: presupuestos configurables y alertas | TODO | Reutilizar `reserveProviderInvocation` (cap existente) y `agentMetrics.recommendations`; setting `atsHarness.tokenBudget` por operación |
