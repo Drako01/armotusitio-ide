@@ -799,7 +799,7 @@ export class HarnessChatSession {
 			const native = !options.resumeSession && (await this.transportState(provider))?.native;
 			const transport: TurnTransport | undefined = native ? { conversationId: this.conversation.conversationId!, inputRef: this.conversation.messages.at(-1)?.id } : undefined;
 			const result = await this.runtime.implement({ provider, instruction, plan, verificationRevision: context.verification?.revision, ...(options.resumeSession ? { resumeSession: options.resumeSession } : {}), ...(transport ? { transport } : {}) }, hooks, controller.signal);
-			this.noteUsage(provider, result.agent.usage);
+			this.noteUsage(provider, result.agent.usage, result.agent.firstTokenMs);
 			await this.noteQuota(provider, result.agent.quota);
 			// The agent result decides first; a passing agent is only as good as its verification.
 			let status: RunStatus = result.agent.status;

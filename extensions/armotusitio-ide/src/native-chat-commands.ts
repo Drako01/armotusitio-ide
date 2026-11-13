@@ -171,34 +171,34 @@ const GOAL_STATUS: Record<LiveGoalListing['status'], (t: CommandTranslator) => s
 /** `/checkpoints` lists what can be restored; `/checkpoints restaurar ID` restores one after the shared confirmation. */
 async function runCheckpointsCommand(deps: SessionCommandDeps, words: string[], root: string, session: HarnessChatSession): Promise<string> {
 	const { t, checkpoints } = deps;
-	if (!checkpoints) { return t('Los checkpoints granulares no est00e1n disponibles en esta ventana.'); }
+	if (!checkpoints) { return t('Los checkpoints granulares no est\u00e1n disponibles en esta ventana.'); }
 	if (words.length === 0) {
 		const items = await checkpoints.list(root);
-		if (!items.length) { return t('No hay checkpoints granulares seguros en este proyecto. Se crean cuando el agente edita archivos en una ejecuci00f3n del chat.'); }
+		if (!items.length) { return t('No hay checkpoints granulares seguros en este proyecto. Se crean cuando el agente edita archivos en una ejecuci\u00f3n del chat.'); }
 		return [
-			t('Checkpoints granulares (m00e1s reciente primero). Restaur00e1 uno con /checkpoints restaurar ID:'),
+			t('Checkpoints granulares (m\u00e1s reciente primero). Restaur\u00e1 uno con /checkpoints restaurar ID:'),
 			...items.slice(0, 20).map(item => '  ' + item.id.slice(0, 8) + ' \u00b7 ' + item.at + ' \u00b7 ' + item.kind + ' \u00b7 ' + t('{0} archivos', String(item.files.length)) + (item.turnId ? ' \u00b7 ' + t('turno {0} #{1}', item.turnId.slice(0, 8), String(item.sequence ?? 1)) : '') + ' \u00b7 ' + item.files.slice(0, 3).map(file => file.path).join(', ') + (item.files.length > 3 ? ' +' + String(item.files.length - 3) : '')),
-			...(items.length > 20 ? [t('  2026 y {0} m00e1s', String(items.length - 20))] : [])
+			...(items.length > 20 ? [t('  \u2026 y {0} m\u00e1s', String(items.length - 20))] : [])
 		].join('\n');
 	}
 	if (words[0] !== 'restaurar' || words.length !== 2) { return t('Uso: /checkpoints [restaurar ID]'); }
-	if (session.snapshot().activity) { return t('Hay una tarea en curso: esper00e1 a que termine o detenela antes de restaurar.'); }
+	if (session.snapshot().activity) { return t('Hay una tarea en curso: esper\u00e1 a que termine o detenela antes de restaurar.'); }
 	const wanted = words[1].toLowerCase();
 	const matches = (await checkpoints.list(root)).filter(item => item.id.toLowerCase().startsWith(wanted));
-	if (matches.length !== 1) { return matches.length ? t('El ID coincide con varios checkpoints; escrib00ed m00e1s caracteres.') : t('No encontr00e9 ese checkpoint. Consult00e1 /checkpoints.'); }
+	if (matches.length !== 1) { return matches.length ? t('El ID coincide con varios checkpoints; escrib00ed m\u00e1s caracteres.') : t('No encontr\u00e9 ese checkpoint. Consult\u00e1 /checkpoints.'); }
 	const outcome = await checkpoints.restore(root, matches[0].id);
-	if (!outcome) { return t('Restauraci00f3n cancelada.'); }
+	if (!outcome) { return t('Restauraci\u00f3n cancelada.'); }
 	await session.refreshContext();
-	return t('Checkpoint {0}: {1} archivos restaurados; {2} preservados porque cambiaron despu00e9s.', matches[0].id.slice(0, 8), String(outcome.restored.length), String(outcome.skipped.length));
+	return t('Checkpoint {0}: {1} archivos restaurados; {2} preservados porque cambiaron despu\u00e9s.', matches[0].id.slice(0, 8), String(outcome.restored.length), String(outcome.skipped.length));
 }
 
 /** `/objetivos` lists the goals of this window; `/objetivos pausar|detener ID` asks one to stop at its next safe point. */
 function runGoalsCommand(deps: SessionCommandDeps, words: string[]): string {
 	const { t, goals } = deps;
-	if (!goals) { return t('Los objetivos aut00f3nomos no est00e1n disponibles en esta ventana.'); }
+	if (!goals) { return t('Los objetivos aut\u00f3nomos no est\u00e1n disponibles en esta ventana.'); }
 	if (words.length === 0) {
 		const items = goals.list();
-		if (!items.length) { return t('No hay objetivos aut00f3nomos en curso en esta ventana. Cre00e1 uno con 00abArmoTuSitio: Nuevo objetivo aut00f3nomo00bb.'); }
+		if (!items.length) { return t('No hay objetivos aut\u00f3nomos en curso en esta ventana. Cre00e1 uno con 00abArmoTuSitio: Nuevo objetivo aut\u00f3nomo\u00bb.'); }
 		return [
 			t('Objetivos en curso:'),
 			...items.map(item => '  ' + item.id + ' \u00b7 ' + item.project + ' \u00b7 ' + GOAL_STATUS[item.status](t) + ' \u00b7 ' + item.objective + (item.questions.length ? '\n    ' + t('Preguntas pendientes: {0}', item.questions.slice(0, 3).join(' | ')) : ''))
@@ -206,8 +206,8 @@ function runGoalsCommand(deps: SessionCommandDeps, words: string[]): string {
 	}
 	const action = words[0] === 'pausar' ? 'pause' : words[0] === 'detener' ? 'stop' : undefined;
 	if (!action || words.length !== 2) { return t('Uso: /objetivos [pausar|detener ID]'); }
-	if (!goals.control(words[1], action)) { return t('No hay un objetivo en curso con ese ID. Consult00e1 /objetivos.'); }
-	return action === 'pause' ? t('Ped00ed pausar el objetivo {0}; se detiene en su pr00f3ximo punto seguro.', words[1]) : t('Ped00ed detener el objetivo {0}; se detiene en su pr00f3ximo punto seguro.', words[1]);
+	if (!goals.control(words[1], action)) { return t('No hay un objetivo en curso con ese ID. Consult\u00e1 /objetivos.'); }
+	return action === 'pause' ? t('Ped00ed pausar el objetivo {0}; se detiene en su pr\u00f3ximo punto seguro.', words[1]) : t('Ped00ed detener el objetivo {0}; se detiene en su pr\u00f3ximo punto seguro.', words[1]);
 }
 
 const LEASE_TEXT: Record<EngineLeaseState, (t: CommandTranslator, until?: string) => string> = {
