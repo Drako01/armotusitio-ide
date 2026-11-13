@@ -50,7 +50,7 @@ import { harnessErrorCode, promptBudget, type GateSummary } from './native-chat.
 import { proposeProjectConfig, loadProjectConfig, writeProjectConfig, generatedConfigDigest, removeGeneratedProjectConfig } from './native-project.ts';
 import { reviewAgentDraft, inspectAgentWorkspace, modelOption, effortOption, validModel, validEffort, MAX_AGENT_TURNS, type NativeProvider, type NativeEffort, type AgentRole, type AgentDraft } from './native-providers.ts';
 import { captureWorkingTree, diffWorkingTree, discardRunChanges, fingerprintFiles, type RunDiffSummary, type WorkingTreeSnapshot } from './native-run-diff.ts';
-import { ChatToolCheckpointRecorder, listChatToolCheckpoints, restoreChatToolCheckpoint } from './native-chat-tool-checkpoints.ts';
+import { ChatToolCheckpointRecorder, listChatToolCheckpoints, inspectChatToolCheckpoints, toolCheckpointBefore, restoreChatToolCheckpoint } from './native-chat-tool-checkpoints.ts';
 import { buildSupportReport, exportSupportReport } from './native-support.ts';
 import { inspectHarnessAuthority } from './native-authority.ts';
 import { fitEngineeringContext, engineeringContext, engineeringSkillContext, listEngineeringSkills, readEngineeringSkill } from './native-engineering-skills.ts';
@@ -1343,8 +1343,9 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 		} catch (error) { showError(error); } finally { controller.refresh(); }
 	}));
 	const toolCheckpointStorage = (root: string): string => path.join(metricsDirectory(root), 'chat-tool-checkpoints');
+	const assertCheckpointReader = (folder: Host): void => { if (!ensureTrust() || !authorized(folder)) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); } };
 	const listToolCheckpoints = async (folder: Host, root: string) => {
-		if (!ensureTrust() || !authorized(folder)) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
+		assertCheckpointReader(folder);
 		return listChatToolCheckpoints(root, toolCheckpointStorage(root));
 	};
 	/** Confirms, then restores one tool checkpoint under the shared fence (and the project's writer lease when it has its own Harness). */
@@ -1385,7 +1386,12 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 		} catch (error) { showError(error); } finally { controller.refresh(); }
 	}));
 	// The chat's `/checkpoints` shares the command's listing, confirmation, fence and lease: one restore path.
-	controller.toolCheckpoints = { list: listToolCheckpoints, restore: restoreToolCheckpoint };
+	controller.toolCheckpoints = {
+		list: listToolCheckpoints, restore: restoreToolCheckpoint,
+		/** Read-only views for the chat timeline and its diffs; same trust gate as the listing. */
+		inspect: async (folder: Host, root: string) => { assertCheckpointReader(folder); return inspectChatToolCheckpoints(root, toolCheckpointStorage(root)); },
+		before: async (folder: Host, root: string, id: string, file: string) => { assertCheckpointReader(folder); return toolCheckpointBefore(root, toolCheckpointStorage(root), id, file); }
+	};
 	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.nativeWorktreeRollback', async (requested?: string) => {
 		try {
 			if (!ensureTrust()) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }

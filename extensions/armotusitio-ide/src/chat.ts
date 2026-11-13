@@ -34,7 +34,7 @@ const { APPROVAL_ANSWERS } = require('./native-approval.ts');
 const { IncrementalContextIndex, IGNORED } = require('./context.ts');
 const { buildSetupItems, setupIcon } = require('./native-setup-check.ts');
 const { doctorReport } = require('./native-machine-doctor.ts');
-const { registerRunDiffView, validRunPath, RUN_DIFF_COMMAND } = require('./native-run-diff-view.ts');
+const { registerRunDiffView, validRunPath, RUN_DIFF_COMMAND, CHECKPOINT_DIFF_COMMAND } = require('./native-run-diff-view.ts');
 
 interface ParticipantTurn { token: { isCancellationRequested: boolean }; started: boolean; queued?: string; observe(): void }
 
@@ -205,6 +205,9 @@ function labels(t: any) {
 		change: { added: t('nuevo'), modified: t('modificado'), deleted: t('borrado') },
 		continueRun: t('Continuar'), retry: t('Reintentar'), continuedRun: t('Continuaci\u00f3n'), maxMessageChars: MAX_USER_MESSAGE_CHARS,
 		discardRun: t('Deshacer esta ejecuci\u00f3n'), openHome: t('Ver en Inicio'),
+		checkpoints: t('Historial de checkpoints'), checkpointTurn: t('Turno {0}', '{0}'), checkpointEmpty: t('No hay checkpoints granulares seguros en este proyecto. Se crean cuando el agente edita archivos en una ejecuci\u00f3n del chat.'),
+		checkpointRestorable: t('se puede restaurar'), checkpointConflict: t('cambi\u00f3 despu\u00e9s: se preserva'), checkpointRestore: t('Restaurar'), checkpointDiff: t('Ver diff'), close: t('Cerrar'),
+		checkpointBlocked: t('Un archivo cambi\u00f3 despu\u00e9s de la herramienta: restaurar no tocar\u00eda nada. Revis\u00e1 el diff.'), checkpointKind: { edit: t('edici\u00f3n'), command: t('comando') },
 		goals: t('Objetivos aut\u00f3nomos en curso'), goalPause: t('Pausar'), goalStop: t('Detener'), goalQuestions: t('Preguntas pendientes'), goalSince: t('desde {0}', '{0}'),
 		goalStatus: { running: t('en ejecuci\u00f3n'), pausing: t('pausa pedida'), stopping: t('detenci\u00f3n pedida'), 'waiting-answers': t('espera tus respuestas') },
 		approvals: t('Aprobaciones pendientes'), allowOnce: t('Permitir una vez'), allowTask: t('Esta tarea'), allowSession: t('Esta sesi\u00f3n'), account: t('Cuenta de {0}', '{0}'), accountIde: t('Cuenta del IDE'), accountManage: t('Administrar cuentas\u2026'), accountSplit: t('Esta conversaci\u00f3n sigue con {0}; el pr\u00f3ximo mensaje usar\u00e1 {1}.', '{0}', '{1}'), authState: { authenticated: t('Autenticada'), 'not-authenticated': t('Sin sesi\u00f3n'), unknown: t('Estado desconocido'), 'cli-unavailable': t('CLI no disponible') }, allowAlways: t('Siempre en este proyecto'), allowGlobal: t('En todos mis proyectos'), globalRule: t('\u00abEn todos mis proyectos\u00bb se ofrece solo para comandos de inspecci\u00f3n y vale en cualquier proyecto.'), denyApproval: t('Denegar'),
@@ -285,7 +288,9 @@ function registerChat(context: any, controller: any, projects: any, mcp: any, vs
 	}
 
 	const folders = () => vscode.workspace.workspaceFolders || [];
-	if (vscode.workspace.registerTextDocumentContentProvider) { registerRunDiffView(vscode, context, folders, t); }
+	if (vscode.workspace.registerTextDocumentContentProvider) {
+		registerRunDiffView(vscode, context, folders, t, (folder: any, id: string, file: string) => controller.toolCheckpoints?.before ? controller.toolCheckpoints.before(folder, folder.uri.fsPath, id, file) : Promise.resolve(null));
+	}
 	/** Short, colon-free key of a folder for feed item ids (`chat:<key>:<suffix>`). */
 	const feedKeyOf = (uri: string): string => createHash('sha256').update(uri).digest('hex').slice(0, 16);
 	const selectedFolder = () => {
@@ -606,6 +611,17 @@ function registerChat(context: any, controller: any, projects: any, mcp: any, vs
 		const entry = await sessionFor(folder).catch((error: any) => { report(folder, error); return undefined; });
 		if (!entry) { return; }
 		const { session } = entry;
+		// The checkpoint timeline is read on demand (it fingerprints files); restoring goes through /checkpoints restaurar.
+		if (action === 'checkpoints') {
+			post({ type: 'checkpoints', project: folder.uri.toString(), items: controller.toolCheckpoints?.inspect ? await controller.toolCheckpoints.inspect(folder, folder.uri.fsPath) : [] }, source);
+			return;
+		}
+		if (action === 'checkpointDiff') {
+			if (typeof message.id === 'string' && message.id.length === 36 && validRunPath(message.path) && ['added', 'modified', 'deleted'].includes(message.change)) {
+				await vscode.commands.executeCommand(CHECKPOINT_DIFF_COMMAND, folder.uri.toString(), message.id, message.path, message.change);
+			}
+			return;
+		}
 		if (action === 'sessions') {
 			if (session.busy) { await session.note(t('Esper\u00e1 a que termine la tarea antes de cambiar de conversaci\u00f3n.')); return; }
 			const currentProject = folder.uri.toString();

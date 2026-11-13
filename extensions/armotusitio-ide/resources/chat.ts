@@ -137,7 +137,7 @@ function shell(): void {
 
 	const details = el('section', 'popover mcp-details'); details.id = 'mcp-details'; details.hidden = true; details.setAttribute('aria-label', L.mcp);
 	const menu = el('div', 'popover menu'); menu.id = 'menu'; menu.hidden = true; menu.setAttribute('role', 'group'); menu.setAttribute('aria-label', L.menu);
-	for (const [action, label] of [['expandChat', L.expandChat], ['sidebarChat', L.sidebarChat], ['sessions', L.sessions], ['reset', L.newChat], ['commands', L.commands], ['providerCheck', L.refreshProviders], ['setupCheck', L.setupCheck], ['openTasks', L.openTasks]]) {
+	for (const [action, label] of [['expandChat', L.expandChat], ['sidebarChat', L.sidebarChat], ['sessions', L.sessions], ['checkpoints', L.checkpoints], ['reset', L.newChat], ['commands', L.commands], ['providerCheck', L.refreshProviders], ['setupCheck', L.setupCheck], ['openTasks', L.openTasks]]) {
 		const item = el('button', 'menu-item', label) as HTMLButtonElement; item.type = 'button';
 		item.addEventListener('click', () => {
 			closePopovers();
@@ -211,7 +211,10 @@ function shell(): void {
 	input.addEventListener('blur', () => suggest.close());
 	// Autonomous goals of the window share the approvals' card language: what runs, its state, open questions and controls.
 	const goals = el('section', 'goals'); goals.id = 'goals'; goals.setAttribute('aria-label', L.goals); goals.hidden = true;
-	app.append(header, details, menu, banner, log, approvals, goals, activity, announcer, form);
+	// Opened from the menu: the host answers with a read-only listing; nothing here writes files.
+	const checkpoints = el('section', 'goals checkpoints'); checkpoints.id = 'checkpoints'; checkpoints.setAttribute('aria-labelledby', 'checkpoints-title'); checkpoints.hidden = true;
+	checkpoints.addEventListener('keydown', event => { if (event.key === 'Escape') { event.stopPropagation(); closeCheckpoints(); } });
+	app.append(header, details, menu, banner, log, approvals, goals, checkpoints, activity, announcer, form);
 	drawStagedImage();
 }
 // Registered once: `shell()` runs again whenever the host re-sends labels.
@@ -781,6 +784,56 @@ function renderGoals(): void {
 		card.append(actions); box.append(card);
 	}
 }
+function closeCheckpoints(): void {
+	const box = document.getElementById('checkpoints');
+	if (box && !box.hidden) { box.hidden = true; document.getElementById('menu-button')?.focus(); }
+}
+/** Tool checkpoints grouped by turn, oldest tool first: what each file did, whether it can be restored, its diff. */
+function renderCheckpoints(items: any[]): void {
+	const box = document.getElementById('checkpoints');
+	box.textContent = ''; box.hidden = false;
+	const head = el('div', 'approval-actions');
+	const title = el('h2', 'approval-title', L.checkpoints); title.id = 'checkpoints-title'; title.tabIndex = -1;
+	const close = el('button', 'secondary', L.close) as HTMLButtonElement; close.type = 'button';
+	close.addEventListener('click', closeCheckpoints);
+	head.append(title, close); box.append(head);
+	if (!items.length) { box.append(el('p', 'muted', L.checkpointEmpty)); }
+	const turns = new Map<string, any[]>();
+	for (const item of items) { turns.set(item.turnId ?? '', [...(turns.get(item.turnId ?? '') ?? []), item]); }
+	for (const [turn, group] of turns) {
+		const section = el('section', 'checkpoint-turn');
+		const heading = el('h3', 'muted', format(L.checkpointTurn, turn ? turn.slice(0, 8) : '\u2014')); heading.id = 'checkpoint-turn-' + (turn || 'legacy');
+		section.setAttribute('aria-labelledby', heading.id);
+		const list = el('ol', 'checkpoint-list');
+		for (const item of [...group].sort((a, b) => (a.sequence ?? 0) - (b.sequence ?? 0))) {
+			const card = el('li', 'approval goal'); card.setAttribute('aria-labelledby', 'checkpoint-' + item.id);
+			const name = el('strong', 'approval-title', '#' + (item.sequence ?? 1) + ' \u00b7 ' + (L.checkpointKind[item.kind] ?? item.kind) + ' \u00b7 ' + item.stepId); name.id = 'checkpoint-' + item.id;
+			card.append(name, el('p', 'muted approval-rule', new Date(item.at).toLocaleString()));
+			const files = el('ul', 'approval-detail');
+			for (const file of item.files) {
+				const row = el('li', file.restorable ? undefined : 'checkpoint-conflict', file.path + ' \u00b7 ' + (L.change[file.change] ?? file.change) + ' \u00b7 ' + (file.restorable ? L.checkpointRestorable : L.checkpointConflict) + ' ');
+				const diff = el('button', 'secondary', L.checkpointDiff) as HTMLButtonElement; diff.type = 'button';
+				diff.setAttribute('aria-label', L.checkpointDiff + ': ' + file.path);
+				diff.addEventListener('click', () => api.postMessage({ action: 'checkpointDiff', id: item.id, path: file.path, change: file.change }));
+				row.append(diff); files.append(row);
+			}
+			const actions = el('div', 'approval-actions');
+			const restore = el('button', undefined, L.checkpointRestore) as HTMLButtonElement; restore.type = 'button';
+			restore.setAttribute('aria-label', L.checkpointRestore + ': ' + item.stepId);
+			// The host would refuse the whole restore anyway; saying why beats a button that does nothing.
+			if (item.files.some((file: any) => !file.restorable)) {
+				restore.disabled = true;
+				const why = el('p', 'muted', L.checkpointBlocked); why.id = 'checkpoint-why-' + item.id; restore.setAttribute('aria-describedby', why.id); actions.append(why);
+			}
+			// One restore path: the chat command confirms, checks the running task and reports in the conversation.
+			restore.addEventListener('click', () => { closeCheckpoints(); submit('/checkpoints restaurar ' + item.id); });
+			actions.append(restore);
+			card.append(files, actions); list.append(card);
+		}
+		section.append(heading, list); box.append(section);
+	}
+	title.focus();
+}
 /** One card per agent question set: options as radio buttons or checkboxes, an optional free answer, answer or skip. */
 function questionCard(item: { id: string; questions: any[] }): HTMLElement {
 	const card = el('form', 'approval question'); card.setAttribute('aria-label', L.questions);
@@ -849,6 +902,7 @@ window.addEventListener('message', event => {
 		const input = document.getElementById('prompt') as HTMLTextAreaElement;
 		input.value = safeChatDraft(data.text, L.maxMessageChars); retainDraft(input.value, false); autosize(); return;
 	}
+	if (data?.type === 'checkpoints' && data.project === state?.project?.id && Array.isArray(data.items) && L) { renderCheckpoints(data.items); return; }
 	if (data?.type === 'init') { L = data.labels; shell(); if (state) { render(); } return; }
 	if (data?.type === 'state') {
 		if (data.chat && data.chat.messages === undefined) { data.chat.messages = state?.chat?.messages ?? []; }

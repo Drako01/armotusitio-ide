@@ -9,7 +9,7 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { ChatToolCheckpointRecorder, listChatToolCheckpoints, restoreChatToolCheckpoint } from '../src/native-chat-tool-checkpoints.ts';
+import { ChatToolCheckpointRecorder, inspectChatToolCheckpoints, listChatToolCheckpoints, restoreChatToolCheckpoint, toolCheckpointBefore } from '../src/native-chat-tool-checkpoints.ts';
 
 async function withRepo(run: (root: string, storage: string) => Promise<void>): Promise<void> {
 	// Like the IDE's global storage, the checkpoint store lives outside the workspace it describes.
@@ -43,6 +43,33 @@ test('sequential chat tool snapshots restore only exact agent output', async () 
 			{ restored: ['owned.txt'], skipped: [] });
 		assert.equal(await fs.readFile(path.join(root, 'owned.txt'), 'utf8'), 'original');
 		assert.equal((await listChatToolCheckpoints(root, storage)).length, 0);
+	});
+});
+test('the timeline preview reports each file change and later edits without writing anything', async () => {
+	await withRepo(async (root, storage) => {
+		const tool = new ChatToolCheckpointRecorder(root, storage);
+		await tool.begin();
+		tool.observe({ id: 'file-a', kind: 'edit', label: 'owned.txt', status: 'running' });
+		await fs.writeFile(path.join(root, 'owned.txt'), 'agent change');
+		await fs.writeFile(path.join(root, 'created.txt'), 'new file');
+		tool.observe({ id: 'file-a', kind: 'edit', label: 'owned.txt', status: 'ok' });
+		assert.equal(await tool.finish(), 1);
+		const [view] = await inspectChatToolCheckpoints(root, storage);
+		assert.deepEqual(view.files.sort((a, b) => a.path.localeCompare(b.path)), [
+			{ path: 'created.txt', change: 'added', restorable: true },
+			{ path: 'owned.txt', change: 'modified', restorable: true }
+		]);
+		assert.equal(Object.hasOwn(view, 'rootDigest'), false);
+		assert.equal((await toolCheckpointBefore(root, storage, view.id, 'owned.txt'))?.toString('utf8'), 'original');
+		assert.equal(await toolCheckpointBefore(root, storage, view.id, 'created.txt'), null);
+		await assert.rejects(toolCheckpointBefore(root, storage, view.id, 'other.txt'), /HARNESS_TOOL_CHECKPOINT_INVALID/);
+		await assert.rejects(toolCheckpointBefore(root, storage, '../escape', 'owned.txt'), /HARNESS_TOOL_CHECKPOINT_INVALID/);
+		// A human edit after the tool shows as a conflict; the preview itself leaves both files as they are.
+		await fs.writeFile(path.join(root, 'owned.txt'), 'human changed later');
+		const [after] = await inspectChatToolCheckpoints(root, storage);
+		assert.deepEqual(after.files.map(file => [file.path, file.restorable]).sort(), [['created.txt', true], ['owned.txt', false]]);
+		assert.equal(await fs.readFile(path.join(root, 'owned.txt'), 'utf8'), 'human changed later');
+		assert.equal(await fs.readFile(path.join(root, 'created.txt'), 'utf8'), 'new file');
 	});
 });
 test('concurrent tools cannot be falsely attributed to a single checkpoint', async () => {
