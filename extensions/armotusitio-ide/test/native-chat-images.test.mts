@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { chatImageFromData, chooseChatImage, readChatImage, validateChatImages, MAX_IMAGE_BYTES } from '../src/native-chat-images.ts';
+import { chatImageFromData, readChatImage, validateChatImages, MAX_IMAGE_BYTES } from '../src/native-chat-images.ts';
 import { harness } from './native-runtime-harness.mts';
 
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64');
@@ -28,19 +28,6 @@ test('images are bounded workspace bytes with expiry and integrity, never a path
 		await assert.rejects(readChatImage(root, path.join(root, 'fake.png')), /HARNESS_IMAGE_INVALID/);
 		await fs.writeFile(path.join(root, 'large.png'), Buffer.alloc(MAX_IMAGE_BYTES + 1));
 		await assert.rejects(readChatImage(root, path.join(root, 'large.png')), /HARNESS_IMAGE_LIMIT/);
-	} finally { await fs.rm(root, { recursive: true, force: true }); }
-});
-
-test('image preview cancellation sends nothing and a changed file invalidates consent', async () => {
-	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-image-consent-'));
-	try {
-		const file = path.join(root, 'image.png');
-		await fs.writeFile(file, PNG);
-		const events: string[] = [];
-		const host = { pick: async () => file, preview: async () => { events.push('preview'); }, confirm: async () => { events.push('confirm'); return false; } };
-		assert.equal(await chooseChatImage(root, host), undefined);
-		assert.deepEqual(events, ['preview', 'confirm']);
-		await assert.rejects(chooseChatImage(root, { ...host, confirm: async () => { await fs.writeFile(file, Buffer.alloc(64)); return true; } }), /HARNESS_IMAGE_INVALID|HARNESS_IMAGE_CHANGED/);
 	} finally { await fs.rm(root, { recursive: true, force: true }); }
 });
 

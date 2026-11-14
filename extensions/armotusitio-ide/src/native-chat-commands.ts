@@ -16,7 +16,7 @@ import type { HarnessChatSession } from './native-chat-session.ts';
 import type { ToolCheckpoint } from './native-chat-tool-checkpoints.ts';
 import type { GoalIntegration, LiveGoalListing } from './native-goal-integration.ts';
 import type { EngineLease, EngineLeaseState } from './native-hybrid-writer.ts';
-import { listUserRules, loadPermissions, projectKey, removeUserRule } from './native-permissions.ts';
+import { gitRuleScope, globMatches, listUserRules, loadPermissions, projectKey, removeUserRule } from './native-permissions.ts';
 import type { PermissionPreset } from './native-permissions-types.ts';
 import type { ProviderQuota } from './native-quota.ts';
 import type { BudgetStatus, BudgetWarning } from './native-provider-quota.ts';
@@ -323,7 +323,13 @@ export async function runSessionCommand(deps: SessionCommandDeps, action: string
 		// Only the rules that apply here: global ones and this project's own section.
 		const key = projectKey(root);
 		const saved = (await listUserRules(home).catch(() => [])).filter(entry => !entry.project || entry.project === key);
-		const savedLines = saved.map(entry => '  ' + entry.decision + '  ' + entry.rule + '  (' + (entry.project ? t('este proyecto') : t('todos los proyectos')) + ')');
+		// Where a rule applies, not where it is stored: a git rule written with a path outside `projects` still covers only that path.
+		const appliesTo = (entry: { rule: string; project?: string }): string => {
+			const scope = gitRuleScope(entry.rule);
+			if (scope) { return globMatches(scope, key) ? t('este proyecto') : t('solo {0}; no aplica en este proyecto', scope); }
+			return entry.project ? t('este proyecto') : t('todos los proyectos');
+		};
+		const savedLines = saved.map(entry => '  ' + entry.decision + '  ' + entry.rule + '  (' + appliesTo(entry) + ')');
 		const files = [[USER_FILE_LABEL, path.join(home, '.armotusitio', 'permissions.json')], [PROJECT_FILE_LABEL, path.join(root, '.armotusitio', 'permissions.json')]] as const;
 		const grants = (session.broker?.list() ?? []).map(grant => '  ' + grant.rule + '  (' + (grant.scope === 'task' ? t('esta tarea') : t('esta sesi\u00f3n, hasta {0}', new Date(grant.expiresAt ?? 0).toLocaleTimeString())) + ')');
 		return [

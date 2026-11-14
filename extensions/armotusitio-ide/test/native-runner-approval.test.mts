@@ -9,7 +9,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { handleGit, handleRun, type RunnerConfig } from '../src/ats-runner.ts';
-import { channelApprover, parseApprovalDraft, requestApproval, type ApprovalDraft } from '../src/native-approval.ts';
+import { channelApprover, MAX_PR_BODY_LENGTH, parseApprovalDraft, requestApproval, type ApprovalDraft } from '../src/native-approval.ts';
 import { openToolChannel } from '../src/native-tool-server.ts';
 import type { PermissionSet } from '../src/native-permissions.ts';
 import type { ApprovalAnswer, PermissionDecision } from '../src/native-permissions-types.ts';
@@ -160,6 +160,8 @@ test('PR approval cards reconstruct the concrete repository, head, base and comp
 	assert.deepEqual(parsed?.detail, ['repository: Drako01/redevent', 'head: feat/fix', 'base: qa', 'action: create', 'title: Fix integration', 'body 1: Summary\n- detail']);
 	assert.equal(parsed?.rule, '');
 	assert.equal(parseApprovalDraft({ ...draft, action: 'merge' }), undefined);
-	assert.equal(parseApprovalDraft({ ...draft, prBody: 'x'.repeat(2001) }), undefined);
+	assert.equal(parseApprovalDraft({ ...draft, prBody: 'x'.repeat(MAX_PR_BODY_LENGTH + 1) }), undefined);
+	// Inside a project the card offers "always in this project" for PRs, like the other git tools.
+	assert.equal(parseApprovalDraft(draft, path.join(os.tmpdir(), 'app'))?.rule.startsWith('git_pr_upsert:'), true);
 	assert.equal(parseApprovalDraft({ kind: 'git_branch_create', title: 'Branch', detail: ['wrong'], rule: 'git_branch_create', repo: 'Drako01/redevent', branch: 'feat/fix', from: 'origin/qa' })?.detail.join(', '), 'repository: Drako01/redevent, new branch: feat/fix, from: origin/qa');
 });

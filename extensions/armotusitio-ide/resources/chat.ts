@@ -15,8 +15,9 @@ let state: any = null;
 const rendered = new Map<string, HTMLElement>();
 let ticker: number | undefined;
 let suggest: ReturnType<typeof createSuggest> | undefined;
-/** Paste/drop stays memory-only: never persisted into chat drafts or provider history. */
-let stagedImage: { name: string; mime: 'image/png' | 'image/jpeg'; data: string } | undefined;
+/** Files pasted, dropped or picked for the next message; memory-only until sent, never part of a saved draft. */
+let stagedFiles: Array<{ id: number; name: string; mime: string; data: string; size: number }> = [];
+let stagedSequence = 0;
 
 function el(tag: string, className?: string, text?: string): HTMLElement {
 	const node = document.createElement(tag);
@@ -167,34 +168,25 @@ function shell(): void {
 	const media = el('div', 'pending-media'); media.id = 'pending-media'; media.setAttribute('aria-live', 'polite'); media.hidden = true;
 	box.append(input, stop, send);
 	form.append(media, box, el('p', 'hint', L.keyboard));
-	const capture = (file: File | undefined): void => {
-		if (!file || !state?.trusted) { return; }
-		if (file.type !== 'image/png' && file.type !== 'image/jpeg') { return; }
-		if (!file.size || file.size > 4 * 1024 * 1024) { announceMediaError('PNG/JPEG: 4 MiB max'); return; }
-		const reader = new FileReader();
-		reader.addEventListener('load', () => {
-			if (typeof reader.result !== 'string' || !reader.result.startsWith('data:' + file.type + ';base64,')) { return; }
-			const data = reader.result.slice(reader.result.indexOf(',') + 1);
-			if (data.length > Math.ceil(4 * 1024 * 1024 / 3) * 4) { return; }
-			stagedImage = { name: file.name.slice(0, 100), mime: file.type as 'image/png' | 'image/jpeg', data };
-			drawStagedImage();
-		});
-		reader.readAsDataURL(file);
-	};
+	// Any file type, like a chat with Claude Code or Codex: the host validates and saves it; nothing here asks for confirmation.
+	const picker = el('input') as HTMLInputElement; picker.type = 'file'; picker.multiple = true; picker.hidden = true;
+	const attach = el('button', 'secondary attach', '+') as HTMLButtonElement; attach.type = 'button'; attach.id = 'attach';
+	attach.title = L.attach; attach.setAttribute('aria-label', L.attach);
+	attach.addEventListener('click', () => picker.click());
+	picker.addEventListener('change', () => { capture([...(picker.files ?? [])]); picker.value = ''; });
+	box.prepend(attach, picker);
 	input.addEventListener('paste', event => {
-		const image = [...(event.clipboardData?.files ?? [])].find(file => file.type === 'image/png' || file.type === 'image/jpeg');
-		if (!image) { return; }
+		const files = [...(event.clipboardData?.files ?? [])];
+		if (!files.length) { return; }
 		event.preventDefault();
-		capture(image);
+		capture(files);
 	});
-	form.addEventListener('dragover', event => {
-		if ([...(event.dataTransfer?.items ?? [])].some(item => item.type === 'image/png' || item.type === 'image/jpeg')) { event.preventDefault(); }
-	});
+	form.addEventListener('dragover', event => { if (event.dataTransfer?.types.includes('Files')) { event.preventDefault(); } });
 	form.addEventListener('drop', event => {
-		const image = [...(event.dataTransfer?.files ?? [])].find(file => file.type === 'image/png' || file.type === 'image/jpeg');
-		if (!image) { return; }
+		const files = [...(event.dataTransfer?.files ?? [])];
+		if (!files.length) { return; }
 		event.preventDefault();
-		capture(image);
+		capture(files);
 	});
 	(form.lastElementChild as HTMLElement).id = 'composer-hint';
 	form.addEventListener('submit', event => { event.preventDefault(); submit(input.value); });
@@ -215,7 +207,7 @@ function shell(): void {
 	const checkpoints = el('section', 'goals checkpoints'); checkpoints.id = 'checkpoints'; checkpoints.setAttribute('aria-labelledby', 'checkpoints-title'); checkpoints.hidden = true;
 	checkpoints.addEventListener('keydown', event => { if (event.key === 'Escape') { event.stopPropagation(); closeCheckpoints(); } });
 	app.append(header, details, menu, banner, log, approvals, goals, checkpoints, activity, announcer, form);
-	drawStagedImage();
+	drawStagedFiles();
 }
 // Registered once: `shell()` runs again whenever the host re-sends labels.
 document.addEventListener('keydown', event => {
@@ -233,21 +225,47 @@ function announceMediaError(text: string): void {
 	const announcer = document.getElementById('announcer');
 	if (announcer) { announcer.textContent = text; }
 }
-function drawStagedImage(): void {
+/** Reads each file as base64 within the limits the host enforces again; a file over a limit is announced, not sent. */
+function capture(files: File[]): void {
+	if (!state?.trusted) { announceMediaError(L.attachUntrusted); return; }
+	const limit = format(L.attachLimit, String(L.maxUploads), String(L.maxUploadBytes / (1024 * 1024)), String(L.maxUploadTotalBytes / (1024 * 1024)));
+	let total = stagedFiles.reduce((sum, staged) => sum + staged.size, 0);
+	for (const file of files) {
+		if (!file.size) { continue; }
+		if (stagedFiles.length >= L.maxUploads || file.size > L.maxUploadBytes || total + file.size > L.maxUploadTotalBytes) { announceMediaError(limit); return; }
+		total += file.size;
+		const id = ++stagedSequence;
+		const reader = new FileReader();
+		reader.addEventListener('load', () => {
+			if (typeof reader.result !== 'string' || !reader.result.startsWith('data:')) { return; }
+			stagedFiles = [...stagedFiles, { id, name: file.name.slice(0, 200), mime: file.type, data: reader.result.slice(reader.result.indexOf(',') + 1), size: file.size }];
+			drawStagedFiles();
+		});
+		reader.readAsDataURL(file);
+	}
+}
+function drawStagedFiles(): void {
 	const container = document.getElementById('pending-media');
 	if (!container) { return; }
 	container.textContent = '';
-	container.hidden = !stagedImage;
-	if (!stagedImage) { return; }
-	const image = el('img') as HTMLImageElement;
-	image.alt = 'Imagen para revisar antes del envio: ' + stagedImage.name;
-	image.src = 'data:' + stagedImage.mime + ';base64,' + stagedImage.data;
-	image.width = 72; image.height = 72;
-	const description = el('span', 'muted', stagedImage.name + ' - vista previa; requiere confirmacion del IDE');
-	const remove = el('button', 'secondary', 'Quitar') as HTMLButtonElement;
-	remove.type = 'button';
-	remove.addEventListener('click', () => { stagedImage = undefined; drawStagedImage(); document.getElementById('prompt')?.focus(); });
-	container.append(image, description, remove);
+	container.hidden = !stagedFiles.length;
+	for (const staged of stagedFiles) {
+		const item = el('span', 'pending-file');
+		if (staged.mime === 'image/png' || staged.mime === 'image/jpeg' || staged.mime === 'image/gif' || staged.mime === 'image/webp') {
+			const image = el('img') as HTMLImageElement;
+			image.alt = staged.name;
+			image.src = 'data:' + staged.mime + ';base64,' + staged.data;
+			image.width = 48; image.height = 48;
+			item.append(image);
+		}
+		item.append(el('span', 'muted', staged.name + ' (' + (staged.size < 1024 * 1024 ? Math.max(1, Math.round(staged.size / 1024)) + ' KB' : (staged.size / (1024 * 1024)).toFixed(1) + ' MB') + ')'));
+		const remove = el('button', 'secondary', 'x') as HTMLButtonElement;
+		remove.type = 'button';
+		remove.setAttribute('aria-label', format(L.attachRemove, staged.name));
+		remove.addEventListener('click', () => { stagedFiles = stagedFiles.filter(entry => entry.id !== staged.id); drawStagedFiles(); document.getElementById('prompt')?.focus(); });
+		item.append(remove);
+		container.append(item);
+	}
 }
 function autosize(): void { const input = document.getElementById('prompt') as HTMLTextAreaElement; input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 240) + 'px'; }
 function toggle(id: string, trigger: HTMLElement): void {
@@ -279,12 +297,13 @@ function retainDraft(value: string, notify = true): void {
 function busy(): boolean { return !!state?.chat?.activity; }
 function submit(value: string): void {
 	const text = value.trim();
-	if ((!text && !stagedImage) || !state?.chat) { return; }
+	if ((!text && !stagedFiles.length) || !state?.chat) { return; }
 	// An oversized message is answered with how many characters to remove; the text stays so it can be trimmed.
 	if (text.length > L.maxMessageChars) { api.postMessage({ action: 'send', text }); return; }
 	const input = document.getElementById('prompt') as HTMLTextAreaElement; input.value = ''; retainDraft(''); autosize(); suggest?.close();
-	api.postMessage({ action: 'send', text: text || 'Describe esta imagen.', ...(stagedImage ? { image: stagedImage } : {}) });
-	stagedImage = undefined; drawStagedImage();
+	const files = stagedFiles.map(({ name, mime, data }) => ({ name, mime, data }));
+	api.postMessage({ action: 'send', text: text || L.attachPrompt, ...(files.length ? { files } : {}) });
+	stagedFiles = []; drawStagedFiles();
 }
 
 // ---------------------------------------------------------------- provider quota
@@ -907,7 +926,7 @@ window.addEventListener('message', event => {
 	if (data?.type === 'state') {
 		if (data.chat && data.chat.messages === undefined) { data.chat.messages = state?.chat?.messages ?? []; }
 		const changedProject = state?.project?.id !== data.project?.id;
-		if (changedProject) { stagedImage = undefined; drawStagedImage(); }
+		if (changedProject) { stagedFiles = []; drawStagedFiles(); }
 		state = data;
 		if (L) {
 			if (changedProject) {

@@ -20,5 +20,7 @@ test('Claude offers published model versions without calling the provider or pre
 		assert.equal(models.options.some(item => item.id === 'sonnet'), true);
 		assert.equal(models.options.some(item => item.id === 'claude-sonnet-5-5'), true);
 		assert.equal(models.options.some(item => item.id === 'claude-haiku-5-5'), true);
+		// Every family the CLI accepts, Fable included, by alias and by each published version.
+		assert.deepEqual(models.options.filter(item => /fable/.test(item.id)).map(item => item.id), ['fable', 'claude-fable-5-2', 'claude-fable-5-1', 'claude-fable-5']);
 	} finally { await fs.rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });

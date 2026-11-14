@@ -36,7 +36,13 @@ Cuando la IA quiere correr un comando, editar un archivo protegido o usar git, a
 
 Hay un **piso de seguridad** que ninguna regla puede saltear: nada fuera de la carpeta del proyecto, nada dentro de `.git` ni `.armotusitio`, y ningún push a ramas protegidas.
 
-Las reglas permanentes viven en `~/.armotusitio/permissions.json` (tuyas) y `.armotusitio/permissions.json` (del proyecto). Las administrás con `/permisos` o con **ArmoTuSitio: Gestionar permisos**.
+Las reglas permanentes viven en `~/.armotusitio/permissions.json` (tuyas) y `.armotusitio/permissions.json` (del proyecto). Las administrás con `/permisos` o con **ArmoTuSitio: Gestionar permisos**. Para dejar de confirmar git, pull requests o `gh` en tus proyectos, seguí [Configurar permisos](09-permisos.md).
+
+## Adjuntos
+
+Pegá, arrastrá o elegí con el botón **+** cualquier archivo: imágenes, PDF, texto, código, CSV o logs. Entran hasta 5 por mensaje, de hasta 10 MB cada uno y 20 MB en total. Se envían sin confirmación, en Preguntar o en Actuar, con Claude Code o con Codex.
+
+Cada adjunto se guarda en `.chat-attachments/` dentro del proyecto, una carpeta que git ignora localmente, y se borra a los 7 días. El agente recibe la ruta y lo abre con sus herramientas: Claude ve imágenes y PDF; Codex ve imágenes PNG y JPEG. Un binario que el agente no sabe leer, como un `.docx`, se adjunta igual, pero hace falta una herramienta del proyecto para convertirlo.
 
 ## Comandos del chat
 

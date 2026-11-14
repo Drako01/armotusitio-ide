@@ -607,7 +607,8 @@ export class HarnessChatSession {
 	 * it goes through the same guarded writer pipeline (fence, lease, diff, verification) as an approved plan.
 	 */
 	async send(input: string, mode: ChatMode = 'ask', attachments: SendAttachments = {}): Promise<void> {
-		if (attachments.images?.length && (mode !== 'ask' || !(await this.transportState(this.conversation.provider))?.native)) { throw Error('HARNESS_IMAGE_TRANSPORT_UNAVAILABLE'); }
+		// In-memory images ride along only where a native conversation can take them; every attachment is also a project file
+		// named in `attachments.context`, so Act runs and other transports open it with their own file tools.
 		const body = typeof input === 'string' ? input.trim() : '';
 		if (!body || body.length > MAX_USER_MESSAGE_CHARS) { throw Error('HARNESS_CHAT_MESSAGE_INVALID'); }
 		if (this.activity) {

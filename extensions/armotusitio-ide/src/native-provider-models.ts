@@ -16,10 +16,16 @@ export interface ProviderModels {
 
 const MAX_CONFIG_BYTES = 512 * 1024;
 const MAX_OPTIONS = 20;
-/** Claude Code resolves these aliases to the latest model of each family. */
-const CLAUDE_ALIASES = [{ id: 'opus', label: 'Opus (\u00faltima versi\u00f3n disponible)' }, { id: 'sonnet', label: 'Sonnet (\u00faltima versi\u00f3n disponible)' }, { id: 'haiku', label: 'Haiku (\u00faltima versi\u00f3n disponible)' }];
+/**
+ * Claude Code resolves these aliases to the newest model of each family that the installed CLI knows: an older CLI may map
+ * `fable` to an earlier Fable version than the newest one listed below, which stays selectable by its full ID.
+ */
+const CLAUDE_ALIASES = [{ id: 'fable', label: 'Fable (la versi\u00f3n que elija tu Claude Code)' }, { id: 'opus', label: 'Opus (\u00faltima versi\u00f3n disponible)' }, { id: 'sonnet', label: 'Sonnet (\u00faltima versi\u00f3n disponible)' }, { id: 'haiku', label: 'Haiku (\u00faltima versi\u00f3n disponible)' }];
 /** Published versioned model IDs; availability still depends on the installed CLI and account. */
 const CLAUDE_VERSIONS = [
+	{ id: 'claude-fable-5-2', label: 'Fable 5.2' },
+	{ id: 'claude-fable-5-1', label: 'Fable 5.1' },
+	{ id: 'claude-fable-5', label: 'Fable 5' },
 	{ id: 'claude-opus-5-5', label: 'Opus 5.5' },
 	{ id: 'claude-opus-5', label: 'Opus 5' },
 	{ id: 'claude-opus-4-8', label: 'Opus 4.8' },

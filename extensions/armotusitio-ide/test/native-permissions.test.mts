@@ -45,11 +45,14 @@ test('"always in this project" rules apply only to that project, can be listed a
 		assert.deepEqual({
 			here: here.decide(run('mytool', 'x')).decision, there: there.decide(run('mytool', 'x')).decision, projectFileRejected: (await loadPermissions(forged.root, forged.home)).decide(run('mytool', 'x')).decision,
 			listed: listed.map(entry => entry.rule + (entry.project === projectKey(space.root) ? ' @here' : '')), removed, after: after.decide(run('mytool', 'x')).decision,
-			why: [whyNotRemembered(run('mytool', 'x'), space.root), whyNotRemembered(edit('a.ts'), space.root), whyNotRemembered(pr, space.root), whyNotRemembered(run('pnpm', 'add', 'x'), space.root)]
+			why: [whyNotRemembered(run('mytool', 'x'), space.root), whyNotRemembered(edit('a.ts'), space.root), whyNotRemembered(pr), whyNotRemembered(run('pnpm', 'add', 'x'), space.root),
+				whyNotRemembered(run('pnpm', 'install', '--frozen-lockfile'), space.root), whyNotRemembered(run('npm', 'ci'), space.root), whyNotRemembered(run('npm', 'install', 'left-pad'), space.root)]
 		}, {
 			here: 'deny', there: 'allow', projectFileRejected: 'deny',
 			listed: ['run:mytool x @here', 'git_fetch @here'], removed: true, after: 'allow',
-			why: [undefined, 'irreversible', 'publication', 'dependency']
+			// A PR is remembered per project like the other git tools (without a project it cannot be); a lockfile install is
+			// repeatable and may be remembered, while naming a package stays a per-action question.
+			why: [undefined, 'irreversible', 'publication', 'dependency', undefined, undefined, 'dependency']
 		});
 	} finally { await space.cleanup(); await forged.cleanup(); }
 });
@@ -184,7 +187,7 @@ test('new structured delivery permissions are opt-in and project denials win', a
 	} finally { await w.cleanup(); }
 });
 
-test('"always" for commit, push and branch creation is remembered only for the approving project; PRs are never remembered', async () => {
+test('"always" for commit, push, branch creation and PRs is remembered only for the approving project', async () => {
 	const space = await workspace();
 	try {
 		const other = path.join(space.base, 'other');
@@ -199,9 +202,9 @@ test('"always" for commit, push and branch creation is remembered only for the a
 			there: [commit, push, branch, pr].map(request => there.decide(request).decision),
 			windowsKey: projectKey(['C:', 'Work', 'App', ''].join('\\'), 'win32'), posixKey: projectKey('/Work/App/', 'linux')
 		}, {
-			suggestions: ['git_commit:<root>', 'git_push:<root>', 'git_branch_create:<root>', ''],
+			suggestions: ['git_commit:<root>', 'git_push:<root>', 'git_branch_create:<root>', 'git_pr_upsert:<root>'],
 			starRoot: '',
-			here: ['allow', 'allow', 'allow', 'ask'],
+			here: ['allow', 'allow', 'allow', 'allow'],
 			there: ['ask', 'ask', 'ask', 'ask'],
 			windowsKey: 'c:/work/app', posixKey: '/Work/App'
 		});

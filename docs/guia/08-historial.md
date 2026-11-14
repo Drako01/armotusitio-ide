@@ -1,6 +1,6 @@
 # 8. Historial del proyecto
 
-[← Anterior: Releases](07-releases.md) · [Índice](../../README.md#índice)
+[← Anterior: Releases](07-releases.md) · [Índice](../../README.md#índice) · [Siguiente: Configurar permisos →](09-permisos.md)
 
 Resumen de las etapas principales. El detalle de cada una está en su PR y en los documentos enlazados.
 

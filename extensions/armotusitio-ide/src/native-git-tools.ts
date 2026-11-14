@@ -15,7 +15,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { gitOutput } from './native-git.ts';
 import { runCommand } from './native-command-runner.ts';
-import { requestApproval, type ApprovalAsk, type ApprovalSubject } from './native-approval.ts';
+import { MAX_PR_BODY_LENGTH, requestApproval, type ApprovalAsk, type ApprovalSubject } from './native-approval.ts';
 import { globMatches, suggestRule, type PermissionSet } from './native-permissions.ts';
 import type { PermissionRequest } from './native-permissions-types.ts';
 import { SECRET_NAME } from './native-sensitive-scope.ts';
@@ -44,6 +44,12 @@ export interface GitToolResult { isError: boolean; text: string; /** New trusted
 const MAX_PATHS = 100;
 const MAX_PATH_LENGTH = 1024;
 const MAX_MESSAGE_LENGTH = 2000;
+const MAX_PR_TITLE_LENGTH = 160;
+/**
+ * Per-branch bookkeeping that editor extensions write on their own while the agent works (VS Code's Git extension and
+ * GitHub Pull Requests). Git ignores these keys: they never change what git runs, where it fetches or where it pushes.
+ */
+const EDITOR_BRANCH_KEY = /^branch\..+\.(?:vscode-merge-base|github-pr-[a-z0-9-]+)$/i;
 /** Branches nobody pushes to from an agent, whatever the remote says its default is. */
 const PROTECTED_BRANCHES = new Set(['main', 'master', 'develop', 'trunk']);
 const REF_NAME = /^[A-Za-z0-9._/-]{1,200}$/;
@@ -56,13 +62,14 @@ export const GIT_BASE = ['--literal-pathspecs', '-c', 'core.fsmonitor=false', '-
 const PUSH_TIMEOUT_SEC = 180;
 
 /** Retry rule shared by the git tool descriptions; it matches `endsGitDelivery`. */
-const RETRY_RULE = 'A `DENIED:` answer (the user said no) is final. A `POLICY_DENIED:` about your own input (path, branch name, protected branch, message, local changes) may be corrected and called again; any other `POLICY_DENIED:` is final: do not retry the same action in another form.';
+const RETRY_RULE = 'A `DENIED:` answer (the user said no) is final. A `POLICY_DENIED:` about your own input (argument names, path, branch name, protected branch, message, PR content, local changes) may be corrected and called again; any other `POLICY_DENIED:` is final: do not retry the same action in another form.';
 
 export const GIT_TOOLS = [
 	{
 		name: 'git_commit',
 		description: 'Commit specific files of the project. Pass each project-relative file in `paths` (never a directory, ".", a wildcard or an absolute path) and the commit `message`. ' +
-			'Repository hooks always run (they are the project\'s own and cannot be skipped); if the hooks or the git config change during the run the tool refuses with `repo-config-changed` or `hooks-modified`. Credential files (.env, keys) are refused. The user may be asked to approve. ' +
+			'Repository hooks always run (they are the project\'s own and cannot be skipped); if the hooks or the git config change during the run the tool refuses with `repo-config-changed` or `hooks-modified`. Credential files (.env, keys) are refused. ' +
+			'Commits on main, master, develop, trunk, the remote default branch or a protected branch are refused: create a feature branch with git_branch_create first (your local changes travel with it). The user may be asked to approve. ' +
 			RETRY_RULE + ' If a hook fails, fix the cause and call again; never try to bypass it.',
 		inputSchema: {
 			type: 'object',
@@ -113,8 +120,8 @@ export const GIT_TOOLS = [
 			type: 'object',
 			properties: {
 				base: { type: 'string', minLength: 1, maxLength: 200 },
-				title: { type: 'string', minLength: 1, maxLength: 160 },
-				body: { type: 'string', minLength: 1, maxLength: 2000 }
+				title: { type: 'string', minLength: 1, maxLength: MAX_PR_TITLE_LENGTH },
+				body: { type: 'string', minLength: 1, maxLength: MAX_PR_BODY_LENGTH }
 			},
 			required: ['base', 'title', 'body'],
 			additionalProperties: false
@@ -173,7 +180,9 @@ async function hookFingerprint(root: string): Promise<string> {
 export async function repoFingerprint(root: string): Promise<string> {
 	const hash = createHash('sha256');
 	const config = await gitPath(root, 'config');
-	hash.update('config\0').update(config ? await fs.readFile(config).catch(() => '') : 'no-repo');
+	// Parsed entries, so editor bookkeeping is left out; a file git cannot parse is hashed as is (any change still counts).
+	const listed = config ? await git(root, ['config', '--file', config, '--list', '-z']) : undefined;
+	hash.update('config\0').update(listed !== undefined ? trackedConfig(listed).join('\0') : config ? await fs.readFile(config).catch(() => '') : 'no-repo');
 	hash.update('\0hooks\0').update(await hookFingerprint(root));
 	return hash.digest('hex');
 }
@@ -267,6 +276,9 @@ async function commit(context: GitToolsContext, input: { paths?: unknown; messag
 	const paths = requested.filter(file => !ignored.has(file));
 	if (!paths.length) { return refuse('all-paths-ignored'); }
 	const branch = await currentBranch(root);
+	// A commit on a branch that can never be pushed strands the work there: the agent must create a feature branch first
+	// (git_branch_create keeps the local changes), so the commit lands where git_push and git_pr_upsert can deliver it.
+	await assertUnprotected(root, branch, context.protectedBranches, 'origin');
 	await assertHooksUntouched(context, paths);
 	const denial = await authorize(context, { kind: 'git_commit', branch, files: paths, message }, 'Commit',
 		['branch: ' + branch, 'files: ' + clip(paths.join(', '), 300), 'message: ' + clip(message.replace(/\s+/g, ' '), 300)]);
@@ -292,11 +304,18 @@ async function assertKnownRemote(root: string, remote: unknown): Promise<string>
 	return remote;
 }
 
-/** Where `branch` would be pushed; throws when the target is anything but the same-named branch of a plain remote. */
-async function pushTarget(root: string, branch: string, protectedBranches: readonly string[] = []): Promise<{ remote: string; setUpstream: boolean }> {
+/** Throws `protected-branch` for main/master/develop/trunk, `init.defaultBranch`, the user's patterns and, given a remote, its default branch. */
+async function assertUnprotected(root: string, branch: string, protectedBranches: readonly string[] = [], remote?: string): Promise<void> {
 	const lower = branch.toLowerCase();
 	const defaultBranch = (await git(root, ['config', '--get', 'init.defaultBranch']))?.toLowerCase();
 	if (PROTECTED_BRANCHES.has(lower) || lower === defaultBranch || protectedBranches.some(pattern => globMatches(pattern.toLowerCase(), lower))) { return refuse('protected-branch'); }
+	// The remote's own default branch (origin/HEAD) is protected even when it is not called main.
+	if (remote && await git(root, ['symbolic-ref', '--short', '-q', 'refs/remotes/' + remote + '/HEAD']) === remote + '/' + branch) { return refuse('protected-branch'); }
+}
+
+/** Where `branch` would be pushed; throws when the target is anything but the same-named branch of a plain remote. */
+async function pushTarget(root: string, branch: string, protectedBranches: readonly string[] = []): Promise<{ remote: string; setUpstream: boolean }> {
+	await assertUnprotected(root, branch, protectedBranches);
 	const configured = await git(root, ['config', '--get', 'branch.' + branch + '.remote']);
 	const merge = await git(root, ['config', '--get', 'branch.' + branch + '.merge']);
 	let remote = 'origin', setUpstream = true;
@@ -306,9 +325,7 @@ async function pushTarget(root: string, branch: string, protectedBranches: reado
 		remote = configured; setUpstream = false;
 	}
 	await assertKnownRemote(root, remote);
-	// The remote's own default branch (origin/HEAD) is protected even when it is not called main.
-	const head = await git(root, ['symbolic-ref', '--short', '-q', 'refs/remotes/' + remote + '/HEAD']);
-	if (head === remote + '/' + branch) { return refuse('protected-branch'); }
+	await assertUnprotected(root, branch, protectedBranches, remote);
 	return { remote, setUpstream };
 }
 
@@ -323,13 +340,27 @@ async function repository(root: string): Promise<string> {
 
 const validName = async (root: string, raw: unknown): Promise<string> => {
 	if (typeof raw !== 'string' || !REF_NAME.test(raw) || raw.startsWith('-') || raw.startsWith('/') || raw.endsWith('/') || raw.includes('..')) { return refuse('invalid-branch'); }
-	return await git(root, ['check-ref-format', '--branch', raw]) === raw ? raw : refuse('invalid-branch');
+	// Only git's own "not a valid name" answer (a non-zero exit) means the name is wrong; a git that cannot start propagates its own error.
+	const checked = await gitOutput(root, [...GIT_BASE, 'check-ref-format', '--branch', raw])
+		.then(buffer => buffer.toString('utf8').trim(), (error: Error) => { if (error.message === 'HARNESS_SCOPE_GIT_FAILED') { return undefined; } throw error; });
+	return checked === raw ? raw : refuse('invalid-branch');
 };
+
+/** `git config --list -z` entries (`key\nvalue`), sorted, without the editor bookkeeping of `EDITOR_BRANCH_KEY`. */
+function trackedConfig(entries: string): string[] {
+	return entries.split('\0').filter(entry => entry && !EDITOR_BRANCH_KEY.test(entry.split('\n', 1)[0])).sort();
+}
+
+/** The local config as tracked entries, comparable with `!==`; `undefined` when git cannot read it. */
+async function localConfig(root: string): Promise<string | undefined> {
+	const entries = await git(root, ['config', '--local', '--list', '-z']);
+	return entries === undefined ? undefined : trackedConfig(entries).join('\0');
+}
 
 /** Current config entries, excluding the exact upstream pair that git_push is allowed to install. */
 function otherConfig(entries: string | undefined, branch: string): string[] {
 	if (entries === undefined) { return refuse('repo-config-unavailable'); }
-	return entries.split('\0').filter(entry => entry && !entry.startsWith('branch.' + branch + '.remote\n') && !entry.startsWith('branch.' + branch + '.merge\n')).sort();
+	return trackedConfig(entries).filter(entry => !entry.startsWith('branch.' + branch + '.remote\n') && !entry.startsWith('branch.' + branch + '.merge\n'));
 }
 
 /** Paths with local changes, including untracked files and both sides of a rename. */
@@ -397,11 +428,11 @@ async function branchCreate(context: GitToolsContext, input: Record<string, unkn
 	if (context.checkPermissions && !await context.checkPermissions()) { return refuse('project-permissions-changed'); }
 	if (exists && current === branch) { return { isError: false, text: 'BRANCH_REUSED ' + branch + ' in ' + repo }; }
 	const hooks = await hookFingerprint(root);
-	const beforeConfig = await git(root, ['config', '--local', '--list', '-z']);
+	const beforeConfig = await localConfig(root);
 	const switched = await runGit(context, exists ? ['switch', branch] : ['switch', '--no-track', '--create', branch, from]);
 	if (switched.exitCode !== 0 || switched.cancelled || switched.timedOut) { return failure('git switch', switched); }
 	if (await currentBranch(root) !== branch || await hookFingerprint(root) !== hooks ||
-		await git(root, ['config', '--local', '--list', '-z']) !== beforeConfig) { return refuse('repo-config-changed'); }
+		await localConfig(root) !== beforeConfig) { return refuse('repo-config-changed'); }
 	if (context.checkPermissions && !await context.checkPermissions()) { return refuse('project-permissions-changed'); }
 	return { isError: false, text: (exists ? 'BRANCH_REUSED ' : 'BRANCH_CREATED ') + branch + ' from ' + actualFrom + ' in ' + repo, repoBaseline: await repoFingerprint(root) };
 }
@@ -435,15 +466,26 @@ async function existingPr(context: GitToolsContext, repo: string, branch: string
 	return prs[0];
 }
 
+/** What is wrong with a PR title and body, in words the agent can act on; `undefined` when both are acceptable. */
+function prContentProblem(title: unknown, body: unknown): string | undefined {
+	if (typeof title !== 'string' || !title.trim()) { return 'title is empty'; }
+	if (title.length > MAX_PR_TITLE_LENGTH) { return 'title has ' + title.length + ' characters; the maximum is ' + MAX_PR_TITLE_LENGTH; }
+	if (typeof body !== 'string' || !body.trim()) { return 'body is empty'; }
+	if (body.length > MAX_PR_BODY_LENGTH) { return 'body has ' + body.length + ' characters; the maximum is ' + MAX_PR_BODY_LENGTH + ': summarize it'; }
+	if ((title + body).includes('\0')) { return 'title or body contains a NUL character'; }
+	if (redactSecrets(title + body) !== title + body) { return 'title or body contains something that looks like a credential or token: remove it'; }
+	return undefined;
+}
+
 async function prUpsert(context: GitToolsContext, input: Record<string, unknown>): Promise<GitToolResult> {
 	const { root } = context;
 	const repo = await repository(root);
 	const branch = await currentBranch(root);
 	const base = await validName(root, input.base);
 	if (base === branch) { return refuse('pr-base-is-head'); }
-	if (typeof input.title !== 'string' || !input.title.trim() || input.title.length > 160 ||
-		typeof input.body !== 'string' || !input.body.trim() || input.body.length > 2000 || /[\0]/.test(input.title + input.body) ||
-		redactSecrets(input.title + input.body) !== input.title + input.body) { return refuse('invalid-pr-content'); }
+	const problem = prContentProblem(input.title, input.body);
+	// The first line stays the stable reason (`endsGitDelivery` reads only that); the second tells the agent what to fix.
+	if (problem || typeof input.title !== 'string' || typeof input.body !== 'string') { throw new GitToolError('POLICY_DENIED: invalid-pr-content\n' + problem); }
 	const title = input.title.trim(), body = input.body;
 	await assertHooksUntouched(context, []);
 	const old = await existingPr(context, repo, branch, base);
@@ -519,7 +561,7 @@ async function push(context: GitToolsContext): Promise<GitToolResult> {
  * Refusals about the agent's own input (a wrong path, a protected branch name, an empty message): the agent may correct
  * them and call again. Any other refusal, and every user denial, ends git delivery for the rest of the run.
  */
-const CORRECTABLE_REFUSALS = new Set(['absolute-path', 'directory-not-allowed', 'invalid-branch', 'invalid-message', 'invalid-path', 'invalid-paths',
+const CORRECTABLE_REFUSALS = new Set(['invalid-arguments', 'absolute-path', 'directory-not-allowed', 'invalid-branch', 'invalid-message', 'invalid-path', 'invalid-paths',
 	'invalid-pr-content', 'invalid-start-point', 'path-not-found', 'path-outside-project', 'pr-base-is-head', 'protected-branch', 'sensitive-file',
 	'local-changes-on-base-switch', 'local-changes-on-branch-reuse', 'base-ref-missing', 'all-paths-ignored', 'invalid-remote', 'no-remote']);
 
@@ -531,10 +573,31 @@ export function endsGitDelivery(text: string): boolean {
 	return !!refusal && !CORRECTABLE_REFUSALS.has(refusal[1]);
 }
 
+/**
+ * Checks argument names against the tool's declared schema. Providers do not always enforce it: a call such as
+ * `git_branch_create {"name": ...}` must say which argument is wrong, not that the (missing) branch name is invalid.
+ */
+function assertArguments(name: string, value: Record<string, unknown>): void {
+	const tool = GIT_TOOLS.find(candidate => candidate.name === name);
+	if (!tool) { return; }
+	const schema: { properties: object; required?: readonly string[] } = tool.inputSchema;
+	const expected = Object.keys(schema.properties);
+	const required = schema.required ?? [];
+	const unknown = Object.keys(value).filter(key => !expected.includes(key));
+	const missing = required.filter(key => value[key] === undefined);
+	if (!unknown.length && !missing.length) { return; }
+	throw new GitToolError('POLICY_DENIED: invalid-arguments\n' + [
+		missing.length ? 'missing: ' + missing.join(', ') : '',
+		unknown.length ? 'unknown: ' + clip(unknown.join(', '), 200) : '',
+		'expected: ' + (expected.length ? expected.map(key => required.includes(key) ? key : key + ' (optional)').join(', ') : 'no arguments')
+	].filter(Boolean).join('\n'));
+}
+
 /** Run one git tool call; every refusal is a short `POLICY_DENIED: <reason>`; `endsGitDelivery` says whether it may be corrected. */
 export async function handleGitTool(context: GitToolsContext, name: string, input: unknown): Promise<GitToolResult> {
 	try {
 		const value = (input && typeof input === 'object' && !Array.isArray(input) ? input : {}) as Record<string, unknown>;
+		assertArguments(name, value);
 		if (name === 'git_commit') { return await commit(context, value); }
 		if (name === 'git_push') { return await push(context); }
 		if (name === 'git_branch_create') { return await branchCreate(context, value); }
@@ -543,6 +606,7 @@ export async function handleGitTool(context: GitToolsContext, name: string, inpu
 		return { isError: true, text: 'Unknown tool' };
 	} catch (error) {
 		if (error instanceof GitToolError) { return { isError: true, text: error.message }; }
-		return { isError: true, text: /^HARNESS_[A-Z_]+$/.test((error as Error).message) ? (error as Error).message : 'HARNESS_EXECUTABLE_UNAVAILABLE' };
+		// A missing git reports its own HARNESS_EXECUTABLE_UNAVAILABLE; anything unexpected must not be blamed on the PATH.
+		return { isError: true, text: /^HARNESS_[A-Z_]+$/.test((error as Error).message) ? (error as Error).message : 'HARNESS_OPERATION_FAILED' };
 	}
 }

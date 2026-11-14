@@ -2,7 +2,7 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
-/** In-memory image input: no temporary files, paths in prompts or implicit uploads. */
+/** Validated PNG/JPEG bytes a native session can see directly; the attached file itself is saved by `native-chat-uploads.ts`. */
 import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
 import * as fs from 'node:fs/promises';
@@ -12,22 +12,6 @@ import { SECRET_NAME } from './native-sensitive-scope.ts';
 export const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 const IMAGE_TTL_MS = 10 * 60 * 1000;
 export interface ChatImage { mime: 'image/png' | 'image/jpeg'; data: string; digest: string; expiresAt: number }
-
-/** Preview and consent are mandatory and injectable; the caller alone decides whether to send the returned bytes. */
-export async function chooseChatImage(root: string, host: {
-	pick(): Promise<string | undefined>;
-	preview(file: string): Promise<void>;
-	confirm(image: { mime: string; bytes: number; digest: string }): Promise<boolean>;
-}): Promise<ChatImage | undefined> {
-	const file = await host.pick();
-	if (!file) { return undefined; }
-	const image = await readChatImage(root, file);
-	await host.preview(file);
-	if (!await host.confirm({ mime: image.mime, bytes: Buffer.from(image.data, 'base64').length, digest: image.digest })) { return undefined; }
-	if ((await readChatImage(root, file)).digest !== image.digest) { throw Error('HARNESS_IMAGE_CHANGED'); }
-	validateChatImages([image]);
-	return image;
-}
 
 function imageType(bytes: Buffer): ChatImage['mime'] {
 	let width = 0, height = 0;
