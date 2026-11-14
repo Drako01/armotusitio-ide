@@ -105,7 +105,8 @@ Está desactivado hasta configurarlo. No usa servicios pagos: solo la API de Par
 2. En la misma sección copiar el **Tenant ID** y el **Client ID** de la aplicación. El **Seller ID** está en **Configuración de la cuenta → Configuración de la organización → Información legal**.
 3. En GitHub → **Settings → Environments**, crear el environment `microsoft-store` y cargar los secretos `ATS_STORE_TENANT_ID`, `ATS_STORE_SELLER_ID`, `ATS_STORE_CLIENT_ID` y `ATS_STORE_CLIENT_SECRET`.
 4. En **Settings → Secrets and variables → Actions → Variables**, crear la variable de repositorio `ATS_STORE_PRODUCT_ID` con el Store ID de 12 caracteres (`9NP24V6QFNTP`). Esta variable es la que activa el envío.
-5. Probar con **Run workflow** y `store_release_tag` apuntando a una release cuya versión MSIX sea mayor que la publicada en Store.
+5. Verificar las credenciales con **Run workflow** marcando `store_check_only`: inicia sesión en Partner Center y muestra el estado de la app y del último envío, sin compilar ni enviar nada. Repetirlo después de rotar el client secret.
+6. El primer envío real ocurre con la próxima release estable. Para reenviar una release existente, usar `store_release_tag`; su versión MSIX tiene que ser mayor que la publicada en Store o Partner Center la rechaza.
 
 Si faltan secretos con la variable definida, el job falla e indica cuál falta. Rotar el client secret antes de su vencimiento.
 
