@@ -37,8 +37,11 @@ const INFO_FLAGS = new Set(['--version', '-v', '-V', '--help', '-h']);
 /** `glob` is empty for a bare git rule, which applies in every project. */
 interface Rule { readonly text: string; readonly kind: PermissionRequest['kind']; readonly glob: string }
 const GIT_KINDS = new Set<string>(['git_commit', 'git_push', 'git_branch_create', 'git_pr_upsert', 'git_fetch']);
-/** Git tools whose "always" answer is remembered (per project); a PR publishes new content each time, so it is asked every time. */
-const REMEMBERED_GIT_KINDS = new Set<string>(['git_commit', 'git_push', 'git_branch_create', 'git_fetch']);
+/**
+ * Git tools whose "always" answer is remembered, per project. A PR is included: the user who opts in for a project accepts
+ * that the agent opens and updates its PRs there without a card; the tool still refuses secrets, other bases and closed PRs.
+ */
+const REMEMBERED_GIT_KINDS = new Set<string>(['git_commit', 'git_push', 'git_branch_create', 'git_fetch', 'git_pr_upsert']);
 type Layer = Record<PermissionDecision, Rule[]>;
 
 const defaultTranslator: Translator = (text, ...args) => text.replace(/\{(\d+)\}/g, (_, index) => args[Number(index)] ?? '');
@@ -66,6 +69,12 @@ function parseRule(text: unknown): Rule | undefined {
 	const match = /^(run|edit|mcp|web|git_commit|git_push|git_branch_create|git_pr_upsert|git_fetch):(.+)$/.exec(text);
 	if (!match) { return undefined; }
 	return { text, kind: match[1] as PermissionRequest['kind'], glob: GIT_KINDS.has(match[1]) ? projectKey(match[2]) : match[2] };
+}
+
+/** The project glob a scoped git rule (`git_push:c:/work/app`) is limited to; `undefined` for every other rule. */
+export function gitRuleScope(text: string): string | undefined {
+	const rule = parseRule(text);
+	return rule && GIT_KINDS.has(rule.kind) && rule.glob ? rule.glob : undefined;
 }
 
 /** How a project root is written in a scoped git rule: `/` separators, no trailing slash, lowercase on Windows (case-insensitive paths). */
@@ -333,10 +342,23 @@ export async function removeUserRule(rule: string, home: string = os.homedir(), 
 	});
 }
 
+/** Install subcommands that only restore what the project's lockfile already pins when no package is named. */
+const LOCKFILE_INSTALLS = new Map<string, readonly string[]>([['npm', ['ci', 'install', 'i']], ['pnpm', ['install', 'i']], ['yarn', ['install']],
+['bun', ['install', 'i']], ['composer', ['install']], ['uv', ['sync']], ['poetry', ['install']]]);
+
+/**
+ * `pnpm install`, `npm ci`, `composer install`...: options only, no package. It installs nothing the project did not
+ * already choose, so the user may remember it per project; naming a package (`pnpm add zod`) is still asked each time.
+ */
+function lockfileInstall(name: string, args: readonly string[]): boolean {
+	return !!LOCKFILE_INSTALLS.get(name)?.includes(args[0]?.toLowerCase() ?? '') && args.slice(1).every(arg => arg.startsWith('-'));
+}
+
 /** Package managers and launchers that can install dependencies or run another executable: their approvals are per action. */
 function installsOrLaunches(request: Extract<PermissionRequest, { kind: 'run' }>): boolean {
 	const name = commandName(request.command);
 	const sub = request.args[0]?.toLowerCase() ?? '';
+	if (lockfileInstall(name, request.args)) { return false; }
 	if (['npm', 'pnpm', 'yarn', 'bun', 'npx', 'pnpx', 'bunx', 'pip', 'pip3', 'pipx', 'uv', 'poetry', 'conda', 'composer', 'gem', 'bundle'].includes(name) &&
 		!(['npm', 'pnpm', 'yarn', 'bun'].includes(name) && ['test', 'run', 'lint', 'typecheck'].includes(sub))) { return true; }
 	if (['python', 'python3', 'py'].includes(name) && sub === '-m' && ['pip', 'twine', 'ensurepip', 'http.server', 'venv'].includes(request.args[1])) { return true; }
