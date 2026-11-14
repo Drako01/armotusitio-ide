@@ -116,3 +116,5 @@ La firma permite identificar al editor; no garantiza que SmartScreen omita inmed
 Regla operativa: usar PowerShell 7 (`pwsh.exe`) igual que el runner; Windows PowerShell 5.1 puede bloquear scripts con su política local. No cambiar la política del equipo ni usar bypass para ejecutar las verificaciones.
 
 Validación del PR: 100 tests únicos PASS entre `ats-authenticode`, `ats-autoupdate`, `ats-release-ci`, `ats-release-script`, `ats-release-state`, `ats-build-all`, `ats-release-retry`, `ats-release-check`, `ats-ci-changes` y `ats-linux-build-script`. Typecheck focalizado del módulo nuevo, ESLint de los TypeScript afectados, formatter y parseo YAML PASS. El checker Markdown solo informa LEN001: se respeta la regla del repositorio de no cortar párrafos a un ancho fijo. No se compiló ni firmó un instalador real.
+
+Commit de implementación: `650576f00f5` (`feat(release): require verified Windows Authenticode signatures`), con revisión del diff y hook hygiene PASS. Rama: `feat/windows-authenticode-release`. Próximo paso externo: activar identidad/servicio y autorizar el ensayo; no mergear antes de completar esa configuración.
