@@ -22,7 +22,8 @@ const { TtlCache } = require('./native-ttl-cache.ts');
 const { chatCommands, commandHelp, runSessionCommand } = require('./native-chat-commands.ts');
 const { resolveMentions, mentionNotice } = require('./native-chat-mentions.ts');
 const { safeChatDraft } = require('./native-chat-draft.ts');
-const { chooseChatImage, chatImageFromData } = require('./native-chat-images.ts');
+const { readChatImage } = require('./native-chat-images.ts');
+const { formatUploadSize, saveUploads, uploadsContext, MAX_UPLOADS, MAX_UPLOAD_BYTES, MAX_UPLOAD_TOTAL_BYTES } = require('./native-chat-uploads.ts');
 const { chooseChatDocument } = require('./native-chat-attachments.ts');
 const { redactSecrets } = require('./native-redact.ts');
 const { captureTerminalOutput } = require('./native-terminal-capture.ts');
@@ -173,7 +174,9 @@ function labels(t: any) {
 		mcpCheck: t('Verificar ahora'), mcpConfigure: t('Configurar clave'), mcpEnable: t('Habilitar en este workspace'), mcpChangeKey: t('Cambiar clave'), mcpSettings: t('Abrir configuraci\u00f3n'),
 		emptyTitle: t('\u00bfEn qu\u00e9 trabajamos hoy?'), emptyBody: t('Convers\u00e1 con la IA sobre tu proyecto. Cuando haya un plan concreto, vas a poder revisarlo y aprobarlo ac\u00e1 mismo. Enviar nunca modifica c\u00f3digo.'),
 		suggestions: [t('Quiero agregar un CRUD de clientes'), t('Explicame la arquitectura de este proyecto'), t('\u00bfQu\u00e9 pruebas faltan?')],
-		placeholder: t('Escrib\u00ed tu mensaje\u2026 (/ para comandos)'), keyboard: t('Enter env\u00eda \u00b7 Shift+Enter nueva l\u00ednea '), send: t('Enviar'), cancel: t('Detener'),
+		placeholder: t('Escrib\u00ed tu mensaje\u2026 (/ para comandos)'), keyboard: t('Enter env\u00eda \u00b7 Shift+Enter nueva l\u00ednea '), send: t('Enviar'), cancel: t('Detener'), attach: t('Adjuntar archivos'), attachRemove: t('Quitar {0}'), attachPrompt: t('Revis\u00e1 los archivos adjuntos.'),
+		attachLimit: t('Hasta {0} archivos por mensaje, de hasta {1} MB cada uno y {2} MB en total.'), attachUntrusted: t('Confi\u00e1 en esta carpeta para adjuntar archivos.'),
+		maxUploads: MAX_UPLOADS, maxUploadBytes: MAX_UPLOAD_BYTES, maxUploadTotalBytes: MAX_UPLOAD_TOTAL_BYTES,
 		you: t('Vos'), notice: t('Harness'), thinking: t('{0} est\u00e1 pensando\u2026', '{0}'), executing: t('Ejecutando plan v{0} con {1}', '{0}', '{1}'),
 		stage: { preparing: t('Preparando ejecuci\u00f3n segura'), agent: t('Agente implementador trabajando'), verifying: t('Ejecutando verificaciones') },
 		observed: t('{0} KB de actividad', '{0}'), elapsed: t('Tiempo'),
@@ -442,26 +445,20 @@ function registerChat(context: any, controller: any, projects: any, mcp: any, vs
 	});
 	const sessionCommands = {
 		integrations,
+		// A project image, sent like a pasted one: no extra setting or confirmation, in the current mode, also named by its path.
 		image: async (request: string, root: string, session: ChatSession, turn?: ParticipantTurn) => {
 			if (turn?.token.isCancellationRequested) { return t('Env\u00edo de imagen cancelado.'); }
-			if (!vscode.workspace.getConfiguration('atsHarness').get('imageInput', false)) { return t('Para adjuntar im\u00e1genes, activ\u00e1 atsHarness.imageInput. Requiere transporte nativo y un modelo con visi\u00f3n.'); }
-			if (session.snapshot().activity) { return t('Esper\u00e1 a que termine la tarea antes de adjuntar una imagen.'); }
-			const folderId = selectedFolder()?.uri.toString();
-			const imageProvider = session.snapshot().provider;
-			const profileId = accounts[imageProvider]?.selected;
-			const image = await chooseChatImage(root, {
-				pick: async () => (await vscode.window.showOpenDialog({ canSelectMany: false, filters: { Images: ['png', 'jpg', 'jpeg'] }, defaultUri: vscode.Uri.file(root) }))?.[0]?.fsPath,
-				preview: async (file: string) => { await vscode.commands.executeCommand('vscode.open', vscode.Uri.file(file)); },
-				confirm: async (info: { mime: string; bytes: number }) => {
-					const accept = t('Enviar imagen');
-					return await vscode.window.showWarningMessage(t('\u00bfEnviar la imagen que revisaste a {0}? Puede contener informaci\u00f3n privada. Se enviar\u00e1n {1} bytes y el proveedor puede conservarlos en su sesi\u00f3n.', imageProvider, String(info.bytes)), { modal: true }, accept) === accept;
-				}
-			});
-			if (!image || turn?.token.isCancellationRequested) { return t('Env\u00edo de imagen cancelado.'); }
-			if (!vscode.workspace.isTrusted || selectedFolder()?.uri.toString() !== folderId || session.snapshot().provider !== imageProvider || accounts[imageProvider]?.selected !== profileId || session.snapshot().activity) { throw Error('HARNESS_IMAGE_CONTEXT_CHANGED'); }
+			const file = (await vscode.window.showOpenDialog({ canSelectMany: false, filters: { Images: ['png', 'jpg', 'jpeg'] }, defaultUri: vscode.Uri.file(root) }))?.[0]?.fsPath;
+			if (!file || turn?.token.isCancellationRequested) { return t('Env\u00edo de imagen cancelado.'); }
+			const image = await readChatImage(root, file);
+			const relative = path.relative(root, file).split(path.sep).join('/');
+			const bytes = Buffer.from(image.data, 'base64').length;
 			if (turn) { turn.started = true; turn.observe(); }
-			await session.send(request || t('Describ\u00ed esta imagen y su relaci\u00f3n con el proyecto.'), 'ask', { images: [image], notice: t('Imagen adjunta con confirmaci\u00f3n: {0}.', image.digest.slice(0, 12)) });
-			return t('Revis\u00e1 el resultado del turno de imagen en la conversaci\u00f3n.');
+			await session.send(request || t('Describ\u00ed esta imagen y su relaci\u00f3n con el proyecto.'), chatMode(), {
+				images: [image], notice: t('Adjunto: {0} ({1}).', relative, formatUploadSize(bytes)),
+				context: uploadsContext([{ path: relative, name: path.basename(file), mime: image.mime, bytes, digest: image.digest }])
+			});
+			return t('Revis\u00e1 la respuesta en la conversaci\u00f3n.');
 		},
 		document: async (request: string, root: string, session: ChatSession, turn?: ParticipantTurn) => {
 			if (turn?.token.isCancellationRequested) { return t('Lectura de documento cancelada.'); }
@@ -650,25 +647,14 @@ function registerChat(context: any, controller: any, projects: any, mcp: any, vs
 					await session.note(t('El mensaje tiene {0} caracteres y el m\u00e1ximo es {1}: sobran {2}. Guard\u00e1 el detalle en un archivo del proyecto y mencion\u00e1 su ruta.', String(text.length), String(MAX_USER_MESSAGE_CHARS), String(text.length - MAX_USER_MESSAGE_CHARS)), 'error');
 					return;
 				}
-				// Pasted/dropped image bytes are untrusted IPC input: validate on the host and require a new modal approval.
-				if (message.image !== undefined) {
-					if (!vscode.workspace.getConfiguration('atsHarness').get('imageInput', false)) { throw Error('HARNESS_IMAGE_TRANSPORT_UNAVAILABLE'); }
-					if (session.busy) { throw Error('HARNESS_ALREADY_RUNNING'); }
-					if (!message.image || typeof message.image !== 'object' || Array.isArray(message.image)
-						|| Object.keys(message.image).some(key => !['data', 'mime', 'name'].includes(key))) { throw Error('HARNESS_IMAGE_INVALID'); }
-					const image = chatImageFromData(message.image.mime, message.image.data);
-					const folderId = folder.uri.toString(), provider = session.snapshot().provider, profile = accounts[provider]?.selected;
-					const accept = t('Enviar imagen');
-					const answer = await vscode.window.showWarningMessage(
-						t('\u00bfEnviar la imagen previsualizada a {0}? Se transmitir\u00e1n {1} bytes y el proveedor podr\u00eda retenerlos. Si no la revisaste, cancel\u00e1.', provider, String(Buffer.from(image.data, 'base64').length)),
-						{ modal: true }, accept
-					);
-					if (answer !== accept) { await session.note(t('El env\u00edo de la imagen fue cancelado.')); return; }
-					if (!vscode.workspace.isTrusted || selectedFolder()?.uri.toString() !== folderId
-						|| session.snapshot().provider !== provider || accounts[provider]?.selected !== profile || session.busy) {
-						throw Error('HARNESS_IMAGE_CONTEXT_CHANGED');
-					}
-					await sendTurn(text, { images: [image], notice: t('Imagen enviada con confirmaci\u00f3n: {0}.', image.digest.slice(0, 12)) }, 'ask');
+				// Pasted, dropped or picked files are untrusted IPC input: validated and saved on the host, then sent like any message,
+				// in the current mode. Images a native session can see directly also travel in memory.
+				if (message.files !== undefined) {
+					if (!vscode.workspace.isTrusted) { throw Error('HARNESS_UPLOAD_UNTRUSTED'); }
+					const uploads: import('./native-chat-uploads.ts').SavedUpload[] = await saveUploads(folder.uri.fsPath, message.files);
+					const images = uploads.flatMap(upload => upload.image ? [upload.image] : []);
+					const notice = t('Adjuntos: {0}.', uploads.map(upload => upload.name + ' (' + formatUploadSize(upload.bytes) + ')').join(', '));
+					await sendTurn(text, { context: uploadsContext(uploads), notice, ...(images.length ? { images } : {}) });
 					return;
 				}
 				if (text.startsWith('/')) {

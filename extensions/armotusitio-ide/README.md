@@ -373,11 +373,13 @@ Al escribir `@` el compositor sugiere archivos del proyecto (hasta 50, los que c
 - se rechazan, con un aviso en el chat, las rutas con `..` o absolutas, los enlaces simbólicos que salen del proyecto, los archivos sensibles (`.env*`, claves, `id_rsa`, `.npmrc`…), las carpetas ignoradas (`node_modules`, `dist`, `.git`…), los binarios, los directorios y los archivos inexistentes;
 - el historial guarda el texto con `@ruta`, no el contenido del archivo: en un turno posterior hay que volver a mencionarlo.
 
-**Imágenes**: activá `atsHarness.imageInput` y usá `/imagen [pedido]` para elegir un PNG o JPEG del proyecto.
-El IDE valida formato, tamaño y dimensiones, abre una vista previa y pide confirmación antes de enviar los bytes.
-Requiere transporte nativo y modelo con visión. No guarda archivos temporales ni imágenes en el journal local.
-El proveedor puede conservar la imagen en su propia sesión.
-También podés **pegar o arrastrar** un PNG/JPEG al chat: el IDE valida los bytes por contenido (no confía en el tipo que declara la vista), muestra la vista previa y pide una confirmación modal nueva para cada imagen.
+**Adjuntos**: pegá, arrastrá o elegí con el botón **+** cualquier archivo (imágenes, PDF, texto, código, CSV, logs…): hasta 5 por mensaje, 10 MB cada uno y 20 MB en total.
+Se envían sin confirmación, en el modo actual (Preguntar o Actuar), con Claude Code o con Codex.
+El IDE valida cada archivo y lo guarda en `.chat-attachments/` dentro del proyecto; esa carpeta se agrega a `.git/info/exclude`, así que nunca aparece en `git status` ni en un commit, y los adjuntos de más de 7 días se borran solos.
+El agente recibe la ruta de cada archivo y lo abre con sus propias herramientas: Claude ve imágenes y PDF; Codex ve imágenes PNG y JPEG.
+Los binarios que el agente no sabe leer (por ejemplo `.docx` o `.zip`) se adjuntan igual, pero necesita una herramienta del proyecto para convertirlos.
+Con el transporte nativo, en modo Preguntar, las imágenes PNG y JPEG de hasta 4 MiB también llegan directo al modelo.
+`/imagen [pedido]` hace lo mismo con una imagen que ya está en el proyecto.
 
 **Documentos**: activá `atsHarness.documentInput` y usá `/documento` para elegir un PDF o un notebook `.ipynb` del proyecto (4 MiB como máximo).
 El texto se extrae en un worker aislado con 5 segundos y memoria acotada; se envían hasta 32 000 caracteres y 20 páginas.
