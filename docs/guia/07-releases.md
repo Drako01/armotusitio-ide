@@ -81,7 +81,7 @@ Requisitos y detalle: [Distribución local](../armotusitio-ide/DISTRIBUTION.md),
 
 ## ¿Cuesta algo?
 
-La firma Authenticode usa un servicio externo con facturación y requiere aprobación de costos antes de activarlo. La facturación de runners y almacenamiento es independiente; revisar las condiciones de [GitHub Actions](https://docs.github.com/en/billing/concepts/product-billing/github-actions) y de la cuenta Azure.
+El flujo por defecto no usa servicios pagos: el instalador directo de Windows se publica sin Authenticode y la versión firmada para Windows es la de Microsoft Store, que firma el paquete sin costo. La firma Authenticode es opcional y usa un servicio externo con facturación; activarla requiere aprobación de costos. La facturación de runners y almacenamiento es independiente; revisar las condiciones de [GitHub Actions](https://docs.github.com/en/billing/concepts/product-billing/github-actions) y de la cuenta Azure.
 
 Para minimizar el almacenamiento, los artefactos intermedios de Linux se borran al día siguiente (`retention-days: 1`).
 
@@ -91,9 +91,23 @@ Configurar presupuestos y alertas en ambos servicios. Un presupuesto de GitHub n
 
 El workflow **ArmotuSitio Release** genera un MSIX x64 como artefacto después de publicar una release estable. También responde a la publicación manual de una release. No lo genera durante ensayos con `probar-release`.
 
-Para empaquetar una release existente, abrir **Actions → ArmotuSitio Release → Run workflow** y completar `store_release_tag`, por ejemplo `ats-v1.146.0-r2`. Con ese campo completo solo se ejecuta el empaquetado para Store: no se compila otra release ni se necesitan credenciales de Azure. Dejarlo vacío conserva el flujo completo de release, que exige la configuración de firma indicada abajo.
+Para empaquetar una release existente, abrir **Actions → ArmotuSitio Release → Run workflow** y completar `store_release_tag`, por ejemplo `ats-v1.146.0-r2`. Con ese campo completo solo se ejecuta el empaquetado para Store (y su envío, si está activado): no se compila otra release. Dejarlo vacío conserva el flujo completo de release.
 
-Descargar el artefacto `ats-store-msix-<run-id>` del job `store-msix` y cargar su `.msix` en Partner Center. El artefacto se conserva 14 días e incluye los hashes y la procedencia. La subida y certificación de Store siguen siendo manuales; este flujo no configura ni consume credenciales de publicación de Store.
+El artefacto `ats-store-msix-<run-id>` del job `store-msix` se conserva 14 días e incluye los hashes y la procedencia.
+
+### Envío automático a Microsoft Store
+
+El job `store-submit` toma ese MSIX, comprueba su SHA256 contra el recibo de empaquetado y lo envía a certificación con la [Microsoft Store Developer CLI](https://learn.microsoft.com/en-us/windows/apps/publish/msstore-dev-cli/commands) (versión fijada). Si existe un borrador pendiente en Partner Center, lo reemplaza con este paquete. La aprobación de la certificación la decide Microsoft y puede demorar; el job termina al confirmar el envío.
+
+Está desactivado hasta configurarlo. No usa servicios pagos: solo la API de Partner Center con una aplicación de Microsoft Entra ID.
+
+1. En [Partner Center](https://partner.microsoft.com/dashboard) → **Configuración de la cuenta → Administración de usuarios → Aplicaciones de Microsoft Entra**, agregar o crear una aplicación y darle el rol **Manager**. Generar una clave (client secret) y copiarla al momento: no se vuelve a mostrar.
+2. En la misma sección copiar el **Tenant ID** y el **Client ID** de la aplicación. El **Seller ID** está en **Configuración de la cuenta → Configuración de la organización → Información legal**.
+3. En GitHub → **Settings → Environments**, crear el environment `microsoft-store` y cargar los secretos `ATS_STORE_TENANT_ID`, `ATS_STORE_SELLER_ID`, `ATS_STORE_CLIENT_ID` y `ATS_STORE_CLIENT_SECRET`.
+4. En **Settings → Secrets and variables → Actions → Variables**, crear la variable de repositorio `ATS_STORE_PRODUCT_ID` con el Store ID de 12 caracteres (`9NP24V6QFNTP`). Esta variable es la que activa el envío.
+5. Probar con **Run workflow** y `store_release_tag` apuntando a una release cuya versión MSIX sea mayor que la publicada en Store.
+
+Si faltan secretos con la variable definida, el job falla e indica cuál falta. Rotar el client secret antes de su vencimiento.
 
 El empaquetado comprueba el SHA256 y tamaño del ZIP contra la API de GitHub antes de ejecutarlo con MakeAppx. Usa la identidad reservada de ArmotuSitio IDE, idiomas español e inglés, Windows Desktop y `runFullTrust`. Deshabilita el actualizador propio únicamente en la copia empaquetada para que las actualizaciones de esa instalación correspondan a Store. La versión se calcula como `MAJOR.MINOR.(PATCH × 1000 + REVISION).0`; rechaza revisiones de 1000 o más y componentes fuera del rango de MSIX.
 
@@ -103,13 +117,19 @@ Para generar el mismo candidato localmente, con Node de `.nvmrc`, PowerShell 7 y
 node scripts/ats-store-release.mts ats-v1.146.0-r2
 ```
 
-El MSIX no se firma localmente: es un candidato para envío a Store, que aplica su firma en su proceso de distribución. Crear el paquete no demuestra instalación correcta ni certificación aprobada. Las releases EXE y su firma Authenticode siguen siendo un flujo independiente.
+El MSIX no se firma localmente: es un candidato para envío a Store, que aplica su firma en su proceso de distribución. Crear el paquete no demuestra instalación correcta ni certificación aprobada. Las releases EXE y su firma Authenticode opcional son un flujo independiente.
 
-## Firma del editor en Windows
+## Firma del editor en Windows (opcional)
 
-La firma Ed25519 de `ATS_RELEASE_SIGNING_KEY` protege el manifiesto de actualización; no identifica al editor ante Windows. La distribución Windows ahora exige además Authenticode con sello de tiempo y el Subject exacto del editor esperado. Sin configuración, el release se detiene: no hay fallback a ejecutables sin firma.
+La firma Ed25519 de `ATS_RELEASE_SIGNING_KEY` protege el manifiesto de actualización; no identifica al editor ante Windows. Authenticode identifica al editor y es opcional porque requiere un servicio pago.
 
-### Activación pendiente del propietario
+- **Sin configurar** (por defecto): el instalador y el ZIP de Windows se publican sin Authenticode. El job `prepare` deja un aviso, las notas de la release lo indican y SmartScreen puede advertir al usuario. La alternativa firmada es Microsoft Store.
+- **Configurado**: se exige firma con sello de tiempo y el Subject exacto del editor antes de registrar hashes, crear artefactos y publicar.
+- **Configuración parcial**: el release se detiene. Se definen las cuatro variables o ninguna; nunca se degrada en silencio.
+
+El recibo de compilación registra si el build se firmó, y la publicación se niega a continuar si la configuración cambió entre la compilación y la publicación.
+
+### Activación (solo si se decide pagar el servicio)
 
 1. Contratar o habilitar Azure Artifact Signing únicamente después de aprobar el costo y verificar la elegibilidad de la identidad y región. Crear un perfil de confianza pública con identidad validada; un certificado autofirmado o un perfil de confianza privada no sirve para distribución pública.
 2. Crear una identidad de aplicación con permiso de firmante limitado a ese perfil. Configurar el environment `windows-signing` en GitHub con aprobación humana obligatoria. Revisar siempre el SHA antes de aprobar un ensayo de PR: ejecuta código de esa rama con acceso a la identidad de firma.
@@ -123,16 +143,4 @@ Para el flujo manual se requiere PowerShell 7, .NET 8 y las herramientas oficial
 
 La firma permite identificar al editor; no garantiza que SmartScreen omita inmediatamente sus avisos de reputación. Ver [reputación de SmartScreen](https://learn.microsoft.com/windows/apps/package-and-deploy/smartscreen-reputation). No pedir a los usuarios que desactiven Defender. El error anterior de `new_ArmotuSitio IDE.exe` ausente no queda demostrado ni resuelto por agregar firma.
 
-### Checklist de incorporación
-
-- DONE: integración de firma, verificación obligatoria de editor y sello de tiempo; sin fallback inseguro.
-- VERIFIED local: pruebas de configuración, selección de archivos, rechazo de enlaces y rechazo real de archivo sin firma en Windows; contratos de orden de empaquetado y publicación.
-- BLOCKED externo: cuenta, identidad verificada, permisos, variables, secretos y aprobación de costos.
-- BLOCKED externo: firma positiva real y ensayo de instalación/actualización/desinstalación del candidato firmado.
-- Sin recursos contratados, secretos configurados ni release ejecutada durante la preparación del PR.
-
 Regla operativa: usar PowerShell 7 (`pwsh.exe`) igual que el runner; Windows PowerShell 5.1 puede bloquear scripts con su política local. No cambiar la política del equipo ni usar bypass para ejecutar las verificaciones.
-
-Validación del PR: 100 tests únicos PASS entre `ats-authenticode`, `ats-autoupdate`, `ats-release-ci`, `ats-release-script`, `ats-release-state`, `ats-build-all`, `ats-release-retry`, `ats-release-check`, `ats-ci-changes` y `ats-linux-build-script`. Typecheck focalizado del módulo nuevo, ESLint de los TypeScript afectados, formatter y parseo YAML PASS. El checker Markdown solo informa LEN001: se respeta la regla del repositorio de no cortar párrafos a un ancho fijo. No se compiló ni firmó un instalador real.
-
-Commit de implementación: `650576f00f5` (`feat(release): require verified Windows Authenticode signatures`), con revisión del diff y hook hygiene PASS. Rama: `feat/windows-authenticode-release`. Próximo paso externo: activar identidad/servicio y autorizar el ensayo; no mergear antes de completar esa configuración.

@@ -46,16 +46,23 @@ jobs:
           HAS_SIGNING_KEY: ${{ secrets.ATS_RELEASE_SIGNING_KEY != '' }}
         run: |
           if [ "$HAS_SIGNING_KEY" != 'true' ]; then echo '::error::Configure the ATS_RELEASE_SIGNING_KEY secret (docs/guia/07-releases.md).'; exit 1; fi
-      - name: Require Windows publisher configuration
+      # Authenticode is optional (paid service): all four settings or none. The Store package is signed by the Store.
+      - name: Check optional Windows Authenticode configuration
         env:
           ATS_WINDOWS_PUBLISHER: ${{ vars.ATS_WINDOWS_PUBLISHER }}
           ATS_SIGNING_ENDPOINT: ${{ vars.ATS_SIGNING_ENDPOINT }}
           ATS_SIGNING_ACCOUNT: ${{ vars.ATS_SIGNING_ACCOUNT }}
           ATS_SIGNING_PROFILE: ${{ vars.ATS_SIGNING_PROFILE }}
         run: |
+          missing=()
           for name in ATS_WINDOWS_PUBLISHER ATS_SIGNING_ENDPOINT ATS_SIGNING_ACCOUNT ATS_SIGNING_PROFILE; do
-            if [ -z "${!name}" ]; then echo "::error::Configure $name (docs/guia/07-releases.md)."; exit 1; fi
+            if [ -z "${!name}" ]; then missing+=("$name"); fi
           done
+          if [ "${#missing[@]}" -eq 4 ]; then
+            echo '::warning::Authenticode not configured: the direct Windows installer will be published unsigned (docs/guia/07-releases.md).'
+          elif [ "${#missing[@]}" -ne 0 ]; then
+            echo "::error::Partial Authenticode configuration, missing: ${missing[*]} (docs/guia/07-releases.md)."; exit 1
+          fi
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           ref: ${{ env.REHEARSAL == 'true' && github.event.pull_request.head.sha || 'main' }}
@@ -119,6 +126,7 @@ jobs:
       ATS_WINDOWS_PUBLISHER: ${{ vars.ATS_WINDOWS_PUBLISHER }}
     steps:
       - name: Require signing credentials before building
+        if: vars.ATS_WINDOWS_PUBLISHER != ''
         shell: pwsh
         env:
           AZURE_TENANT_ID: ${{ secrets.ATS_SIGNING_TENANT_ID }}
@@ -171,6 +179,7 @@ jobs:
           path: .build/releases
           merge-multiple: true
       - name: Install pinned Authenticode tools
+        if: vars.ATS_WINDOWS_PUBLISHER != ''
         shell: pwsh
         run: |
           $toolsPath = Join-Path $env:RUNNER_TEMP 'ats-signing-tools'
@@ -271,3 +280,56 @@ jobs:
             .build/msix/ci-release.json
           if-no-files-found: error
           retention-days: 14
+  store-submit:
+    needs: store-msix
+    # Opt-in: the repository variable ATS_STORE_PRODUCT_ID enables it; Partner Center credentials live in the
+    # microsoft-store environment. Free Partner Center API access only; no paid service is involved.
+    if: always() && !cancelled() && needs.store-msix.result == 'success' && vars.ATS_STORE_PRODUCT_ID != ''
+    runs-on: windows-2022
+    environment: microsoft-store
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      ATS_STORE_PRODUCT_ID: ${{ vars.ATS_STORE_PRODUCT_ID }}
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ats-store-msix-${{ github.run_id }}
+          path: ${{ runner.temp }}/ats-store-msix
+      - name: Verify the MSIX against its packaging receipt
+        shell: pwsh
+        run: |
+          $directory = Join-Path $env:RUNNER_TEMP 'ats-store-msix'
+          $packages = @(Get-ChildItem -LiteralPath $directory -Filter '*.msix' -File)
+          if ($packages.Count -ne 1) { throw "Expected exactly one MSIX, found $($packages.Count)" }
+          $receipt = Get-Content -LiteralPath ($packages[0].FullName + '.json') -Raw | ConvertFrom-Json
+          $actual = (Get-FileHash -LiteralPath $packages[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $receipt.packageSha256) { throw 'MSIX SHA256 does not match its packaging receipt' }
+          if ($env:ATS_STORE_PRODUCT_ID -notmatch '^[0-9A-Z]{12}$') { throw 'ATS_STORE_PRODUCT_ID must be the 12-character Store ID' }
+          "ATS_MSIX_DIRECTORY=$directory" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "ATS_MSIX=$($packages[0].FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "Submitting $($packages[0].Name) (version $($receipt.version), sha256 $actual)"
+      - uses: microsoft/microsoft-store-apppublisher@cc9910a8d59f2eb55cbb83df0a3800cf3b5300e0 # v1.4
+        with:
+          version: v0.4.3
+      - name: Submit the MSIX to Microsoft Store certification
+        shell: pwsh
+        env:
+          ATS_STORE_TENANT_ID: ${{ secrets.ATS_STORE_TENANT_ID }}
+          ATS_STORE_SELLER_ID: ${{ secrets.ATS_STORE_SELLER_ID }}
+          ATS_STORE_CLIENT_ID: ${{ secrets.ATS_STORE_CLIENT_ID }}
+          ATS_STORE_CLIENT_SECRET: ${{ secrets.ATS_STORE_CLIENT_SECRET }}
+        run: |
+          foreach ($name in @('ATS_STORE_TENANT_ID', 'ATS_STORE_SELLER_ID', 'ATS_STORE_CLIENT_ID', 'ATS_STORE_CLIENT_SECRET')) {
+            if (-not [Environment]::GetEnvironmentVariable($name)) { throw "Missing $name in the microsoft-store environment (docs/guia/07-releases.md)" }
+          }
+          msstore settings --enableTelemetry false
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          msstore reconfigure --tenantId $env:ATS_STORE_TENANT_ID --sellerId $env:ATS_STORE_SELLER_ID --clientId $env:ATS_STORE_CLIENT_ID --clientSecret $env:ATS_STORE_CLIENT_SECRET
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # Replaces any pending draft with this package and commits it to certification.
+          msstore publish $env:ATS_MSIX_DIRECTORY --inputFile $env:ATS_MSIX --appId $env:ATS_STORE_PRODUCT_ID
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          msstore submission status $env:ATS_STORE_PRODUCT_ID
+          exit $LASTEXITCODE
