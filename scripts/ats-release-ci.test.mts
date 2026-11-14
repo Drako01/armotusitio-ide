@@ -50,7 +50,11 @@ test('optional Authenticode is all-or-nothing and Store submission is opt-in, pi
 	const submit = workflow.split('  store-submit:')[1];
 	assert.ok(submit, 'store-submit job is missing');
 	assert.match(submit, /needs: store-msix/);
-	assert.match(submit, /needs\.store-msix\.result == 'success' && vars\.ATS_STORE_PRODUCT_ID != ''/);
+	assert.match(submit, /vars\.ATS_STORE_PRODUCT_ID != '' && \(needs\.store-msix\.result == 'success'\n\s+\|\| \(github\.event_name == 'workflow_dispatch' && inputs\.store_check_only\)\)/);
+	assert.match(prepare, /inputs\.store_release_tag == '' && !inputs\.store_check_only/, 'a credential check must never build a release');
+	for (const step of ['actions/download-artifact', 'Verify the MSIX against its packaging receipt', 'Submit the MSIX to Microsoft Store certification']) {
+		assert.match(submit, new RegExp(`${step.replaceAll('/', '\\/')}[^\\n]*\\n\\s+if: env\\.STORE_CHECK_ONLY != 'true'`), `${step} must be skipped in check-only mode`);
+	}
 	assert.match(submit, /environment: microsoft-store/);
 	assert.match(submit, /permissions:\s+contents: read/);
 	assert.doesNotMatch(submit, /contents: write/);

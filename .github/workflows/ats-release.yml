@@ -14,6 +14,11 @@ on:
         required: false
         type: string
         default: ''
+      store_check_only:
+        description: 'Only sign in to Partner Center and show the Store status (no build, no submission)'
+        required: false
+        type: boolean
+        default: false
   release:
     types: [published]
 permissions:
@@ -30,7 +35,7 @@ jobs:
   prepare:
     # PRs from this repository only; fork PRs never build. The label sin-release opts a merged PR out.
     if: >-
-      (github.event_name == 'workflow_dispatch' && inputs.store_release_tag == '') || (github.event.pull_request.head.repo.full_name == github.repository && (
+      (github.event_name == 'workflow_dispatch' && inputs.store_release_tag == '' && !inputs.store_check_only) || (github.event.pull_request.head.repo.full_name == github.repository && (
       (github.event.action == 'closed' && github.event.pull_request.merged == true && !contains(github.event.pull_request.labels.*.name, 'sin-release'))
       || (github.event.action == 'labeled' && github.event.label.name == 'probar-release')))
     runs-on: ubuntu-24.04
@@ -284,7 +289,10 @@ jobs:
     needs: store-msix
     # Opt-in: the repository variable ATS_STORE_PRODUCT_ID enables it; Partner Center credentials live in the
     # microsoft-store environment. Free Partner Center API access only; no paid service is involved.
-    if: always() && !cancelled() && needs.store-msix.result == 'success' && vars.ATS_STORE_PRODUCT_ID != ''
+    # store_check_only signs in and reports the Store status without packaging or submitting (credential check).
+    if: >-
+      always() && !cancelled() && vars.ATS_STORE_PRODUCT_ID != '' && (needs.store-msix.result == 'success'
+      || (github.event_name == 'workflow_dispatch' && inputs.store_check_only))
     runs-on: windows-2022
     environment: microsoft-store
     timeout-minutes: 30
@@ -292,12 +300,19 @@ jobs:
       contents: read
     env:
       ATS_STORE_PRODUCT_ID: ${{ vars.ATS_STORE_PRODUCT_ID }}
+      STORE_CHECK_ONLY: ${{ github.event_name == 'workflow_dispatch' && inputs.store_check_only }}
     steps:
+      - name: Validate the Store product ID
+        shell: pwsh
+        run: |
+          if ($env:ATS_STORE_PRODUCT_ID -cnotmatch '^[0-9A-Z]{12}$') { throw 'ATS_STORE_PRODUCT_ID must be the 12-character Store ID' }
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        if: env.STORE_CHECK_ONLY != 'true'
         with:
           name: ats-store-msix-${{ github.run_id }}
           path: ${{ runner.temp }}/ats-store-msix
       - name: Verify the MSIX against its packaging receipt
+        if: env.STORE_CHECK_ONLY != 'true'
         shell: pwsh
         run: |
           $directory = Join-Path $env:RUNNER_TEMP 'ats-store-msix'
@@ -306,14 +321,13 @@ jobs:
           $receipt = Get-Content -LiteralPath ($packages[0].FullName + '.json') -Raw | ConvertFrom-Json
           $actual = (Get-FileHash -LiteralPath $packages[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant()
           if ($actual -ne $receipt.packageSha256) { throw 'MSIX SHA256 does not match its packaging receipt' }
-          if ($env:ATS_STORE_PRODUCT_ID -notmatch '^[0-9A-Z]{12}$') { throw 'ATS_STORE_PRODUCT_ID must be the 12-character Store ID' }
           "ATS_MSIX_DIRECTORY=$directory" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "ATS_MSIX=$($packages[0].FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           Write-Host "Submitting $($packages[0].Name) (version $($receipt.version), sha256 $actual)"
       - uses: microsoft/microsoft-store-apppublisher@cc9910a8d59f2eb55cbb83df0a3800cf3b5300e0 # v1.4
         with:
           version: v0.4.3
-      - name: Submit the MSIX to Microsoft Store certification
+      - name: Sign in to Partner Center
         shell: pwsh
         env:
           ATS_STORE_TENANT_ID: ${{ secrets.ATS_STORE_TENANT_ID }}
@@ -327,9 +341,18 @@ jobs:
           msstore settings --enableTelemetry false
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           msstore reconfigure --tenantId $env:ATS_STORE_TENANT_ID --sellerId $env:ATS_STORE_SELLER_ID --clientId $env:ATS_STORE_CLIENT_ID --clientSecret $env:ATS_STORE_CLIENT_SECRET
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          exit $LASTEXITCODE
+      - name: Submit the MSIX to Microsoft Store certification
+        if: env.STORE_CHECK_ONLY != 'true'
+        shell: pwsh
+        run: |
           # Replaces any pending draft with this package and commits it to certification.
           msstore publish $env:ATS_MSIX_DIRECTORY --inputFile $env:ATS_MSIX --appId $env:ATS_STORE_PRODUCT_ID
+          exit $LASTEXITCODE
+      - name: Report the Store submission status
+        shell: pwsh
+        run: |
+          msstore apps get $env:ATS_STORE_PRODUCT_ID
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           msstore submission status $env:ATS_STORE_PRODUCT_ID
           exit $LASTEXITCODE
