@@ -29,7 +29,8 @@ function packageInnoSetup(iss: string, options: { definitions?: Record<string, u
 		definitions['Debug'] = 'true';
 	}
 
-	if (process.argv.some(arg => arg === '--sign')) {
+	const atsSign = process.argv.includes('--ats-sign');
+	if (atsSign || process.argv.some(arg => arg === '--sign')) {
 		definitions['Sign'] = 'true';
 	}
 
@@ -41,7 +42,7 @@ function packageInnoSetup(iss: string, options: { definitions?: Record<string, u
 	const args = [
 		iss,
 		...defs,
-		`/sesrp=node ${signWin32Path} $f`
+		atsSign ? `/sesrp=$q${process.execPath}$q $q${path.join(repoPath, 'scripts', 'ats-authenticode.mts')}$q sign $f` : `/sesrp=node ${signWin32Path} $f`
 	];
 
 	ensureInnoSetup(repoPath).then(innoSetupPath => cp.spawn(innoSetupPath, args, { stdio: ['ignore', 'inherit', 'inherit'] })

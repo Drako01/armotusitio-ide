@@ -8,6 +8,7 @@ import { access, mkdir, readdir, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { extensionDependencyInstallArgs, fileDigest, npmCLI, run, withLock } from './ats-autoupdate.mts';
 import { ensureInnoSetup } from '../build/lib/innoSetup.ts';
+import { authenticode, signingConfiguration } from './ats-authenticode.mts';
 
 const root = path.resolve(import.meta.dirname, '..');
 
@@ -48,6 +49,7 @@ async function main(): Promise<void> {
 		throw new Error('This packaging command requires Windows x64.');
 	}
 	const require = createRequire(import.meta.url);
+	signingConfiguration();
 	if (await run('git', ['status', '--porcelain', '--untracked-files=no'])) {
 		throw new Error('Release builds require clean tracked sources. Commit changes before packaging.');
 	}
@@ -67,7 +69,12 @@ async function main(): Promise<void> {
 	const gulp = ['--experimental-strip-types', '--max-old-space-size=8192', path.join(root, 'node_modules', 'gulp', 'bin', 'gulp.js')];
 	await execute([...gulp, 'vscode-win32-x64']);
 	await execute([...gulp, 'vscode-win32-x64-inno-updater']);
-	await execute([...gulp, 'vscode-win32-x64-user-setup']);
+	const application = path.resolve(root, '..', 'ArmotuSitio-IDE-win32-x64');
+	await authenticode('sign', application);
+	// Inno signs the embedded uninstaller as well as the outer installer through its SignTool callback.
+	await execute([...gulp, 'vscode-win32-x64-user-setup', '--ats-sign']);
+	await authenticode('verify', application);
+	await authenticode('verify', path.join(root, '.build', 'win32-x64', 'user-setup', 'VSCodeSetup.exe'));
 	if (sourceCommit !== await run('git', ['rev-parse', 'HEAD']) || await run('git', ['status', '--porcelain', '--untracked-files=no'])) {
 		throw new Error('Source changed during packaging. Rebuild from a fixed clean commit.');
 	}

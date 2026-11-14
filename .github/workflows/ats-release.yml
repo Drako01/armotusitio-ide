@@ -38,6 +38,16 @@ jobs:
           HAS_SIGNING_KEY: ${{ secrets.ATS_RELEASE_SIGNING_KEY != '' }}
         run: |
           if [ "$HAS_SIGNING_KEY" != 'true' ]; then echo '::error::Configure the ATS_RELEASE_SIGNING_KEY secret (docs/guia/07-releases.md).'; exit 1; fi
+      - name: Require Windows publisher configuration
+        env:
+          ATS_WINDOWS_PUBLISHER: ${{ vars.ATS_WINDOWS_PUBLISHER }}
+          ATS_SIGNING_ENDPOINT: ${{ vars.ATS_SIGNING_ENDPOINT }}
+          ATS_SIGNING_ACCOUNT: ${{ vars.ATS_SIGNING_ACCOUNT }}
+          ATS_SIGNING_PROFILE: ${{ vars.ATS_SIGNING_PROFILE }}
+        run: |
+          for name in ATS_WINDOWS_PUBLISHER ATS_SIGNING_ENDPOINT ATS_SIGNING_ACCOUNT ATS_SIGNING_PROFILE; do
+            if [ -z "${!name}" ]; then echo "::error::Configure $name (docs/guia/07-releases.md)."; exit 1; fi
+          done
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           ref: ${{ env.REHEARSAL == 'true' && github.event.pull_request.head.sha || 'main' }}
@@ -91,13 +101,25 @@ jobs:
   windows-and-publish:
     needs: [prepare, linux]
     runs-on: windows-2022
+    environment: windows-signing
     timeout-minutes: 360
     permissions:
       contents: write
       actions: read
     env:
       ATS_RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+      ATS_WINDOWS_PUBLISHER: ${{ vars.ATS_WINDOWS_PUBLISHER }}
     steps:
+      - name: Require signing credentials before building
+        shell: pwsh
+        env:
+          AZURE_TENANT_ID: ${{ secrets.ATS_SIGNING_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.ATS_SIGNING_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.ATS_SIGNING_CLIENT_SECRET }}
+        run: |
+          foreach ($name in @('AZURE_TENANT_ID', 'AZURE_CLIENT_ID', 'AZURE_CLIENT_SECRET')) {
+            if (-not [Environment]::GetEnvironmentVariable($name)) { throw "Missing $name in windows-signing environment" }
+          }
       - name: Git identity for validation fixtures
         run: |
           git config --global user.name 'github-actions[bot]'
@@ -140,9 +162,28 @@ jobs:
           pattern: ats-linux-*
           path: .build/releases
           merge-multiple: true
+      - name: Install pinned Authenticode tools
+        shell: pwsh
+        run: |
+          $toolsPath = Join-Path $env:RUNNER_TEMP 'ats-signing-tools'
+          nuget install Microsoft.Windows.SDK.BuildTools -Version 10.0.26100.4188 -OutputDirectory $toolsPath -Source https://api.nuget.org/v3/index.json -NonInteractive
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          nuget install Microsoft.ArtifactSigning.Client -Version 1.0.128 -OutputDirectory $toolsPath -Source https://api.nuget.org/v3/index.json -NonInteractive
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $signTools = @(Get-ChildItem -LiteralPath $toolsPath -Recurse -Filter signtool.exe | Where-Object FullName -Match '[\\/]x64[\\/]')
+          $signLibraries = @(Get-ChildItem -LiteralPath $toolsPath -Recurse -Filter Azure.CodeSigning.Dlib.dll | Where-Object FullName -Match '[\\/]x64[\\/]')
+          if ($signTools.Count -ne 1 -or $signLibraries.Count -ne 1) { throw 'Ambiguous or missing x64 signing tools' }
+          "ATS_SIGNTOOL=$($signTools[0].FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "ATS_SIGNING_DLIB=$($signLibraries[0].FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: Build Windows client
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          AZURE_TENANT_ID: ${{ secrets.ATS_SIGNING_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.ATS_SIGNING_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.ATS_SIGNING_CLIENT_SECRET }}
+          ATS_SIGNING_ENDPOINT: ${{ vars.ATS_SIGNING_ENDPOINT }}
+          ATS_SIGNING_ACCOUNT: ${{ vars.ATS_SIGNING_ACCOUNT }}
+          ATS_SIGNING_PROFILE: ${{ vars.ATS_SIGNING_PROFILE }}
         run: node scripts/ats-package-windows.mts
       - name: Prepare release signing key
         shell: pwsh
