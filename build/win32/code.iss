@@ -42,6 +42,7 @@ CloseApplications=force
 
 #ifdef Sign
 SignTool=esrp
+SignedUninstaller=yes
 #endif
 
 #if "user" == InstallTarget

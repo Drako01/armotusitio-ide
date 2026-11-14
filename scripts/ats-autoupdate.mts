@@ -13,6 +13,7 @@ import { pipeline } from 'node:stream/promises';
 import { createHash, createPublicKey, generateKeyPairSync, randomUUID, sign, verify } from 'node:crypto';
 import { armotusitioManifestName, armotusitioReleaseTag, armotusitioRepository, compareArmotusitioVersions, isUpdateRecord, parseArmotusitioManifest, type ArmotusitioAsset } from '../src/vs/platform/update/common/armotusitioUpdate.ts';
 import { releaseMetadataPath } from './ats-release-revision.mts';
+import { authenticode } from './ats-authenticode.mts';
 
 const execute = promisify(execFile);
 export const repositoryRoot = path.resolve(import.meta.dirname, '..');
@@ -336,6 +337,8 @@ async function applicationInfo(): Promise<any> {
 
 async function artifacts(): Promise<unknown> {
 	const { application, version, revision, product } = await applicationInfo();
+	await authenticode('verify', application);
+	await authenticode('verify', path.join(repositoryRoot, '.build', 'win32-x64', 'user-setup', 'VSCodeSetup.exe'));
 	const output = path.join(repositoryRoot, '.build', 'releases');
 	await mkdir(output, { recursive: true });
 	const installerName = `ArmotuSitio-IDE-Setup-${version}-r${revision}-x64.exe`;
@@ -416,7 +419,7 @@ async function validate(): Promise<unknown> {
 		}
 	}
 	await run(process.execPath, [path.join(repositoryRoot, 'node_modules', '@typescript', 'native', 'bin', 'tsc'), '--project', 'extensions/armotusitio-ide/tsconfig.json', '--noEmit', '--pretty', 'false']);
-	await run(process.execPath, ['--test', 'scripts/ats-autoupdate.test.mts', 'scripts/ats-release-script.test.mts', 'scripts/ats-release-state.test.mts', 'scripts/ats-build-all.test.mts', 'scripts/ats-release-retry.test.mts', 'scripts/ats-release-check.test.mts', 'scripts/ats-release-ci.test.mts'], repositoryRoot, 120000);
+	await run(process.execPath, ['--test', 'scripts/ats-autoupdate.test.mts', 'scripts/ats-release-script.test.mts', 'scripts/ats-release-state.test.mts', 'scripts/ats-build-all.test.mts', 'scripts/ats-release-retry.test.mts', 'scripts/ats-release-check.test.mts', 'scripts/ats-authenticode.test.mts', 'scripts/ats-release-ci.test.mts'], repositoryRoot, 120000);
 	const result = { status: 'validated', commit: await run('git', ['rev-parse', 'HEAD']), checkedAt: new Date().toISOString(), buildExecuted: false };
 	await saveJSON(path.join(stateRoot, 'validation.json'), result);
 	return result;
@@ -481,6 +484,9 @@ async function publish(approved: boolean): Promise<unknown> {
 		}
 	}
 	const files = Object.values(manifest.assets).map(asset => path.join(directory, asset.name));
+	for (const asset of Object.values(manifest.assets)) {
+		if (asset.name.toLowerCase().endsWith('.exe')) { await authenticode('verify', path.join(directory, asset.name)); }
+	}
 	for (const platform of Object.keys(manifest.assets)) {
 		const asset = manifest.assets[platform];
 		if (await fileDigest(path.join(directory, asset.name)) !== asset.sha256 || (await stat(path.join(directory, asset.name))).size !== asset.size) {
@@ -494,7 +500,7 @@ async function publish(approved: boolean): Promise<unknown> {
 	}
 	if (!existing) {
 		await requireIsolatedActions();
-		await run('gh', ['release', 'create', tag, '--repo', armotusitioRepository, '--target', manifest.commit, '--draft', '--title', `ArmotuSitio IDE ${manifest.baseVersion} r${manifest.revision}`, '--notes', `Windows x64, Linux x64 (.deb/.rpm/archive), Linux x64/arm64 remote servers. Source: ${manifest.commit}. Signed update manifest; Windows executables may be unsigned.`]);
+		await run('gh', ['release', 'create', tag, '--repo', armotusitioRepository, '--target', manifest.commit, '--draft', '--title', `ArmotuSitio IDE ${manifest.baseVersion} r${manifest.revision}`, '--notes', `Windows x64, Linux x64 (.deb/.rpm/archive), Linux x64/arm64 remote servers. Source: ${manifest.commit}. Signed update manifest and Authenticode-signed Windows installer. SmartScreen reputation may still require time.`]);
 		existing = await waitForReleaseByTag(tag);
 	}
 	if (!existing) { throw new Error('Created draft release could not be found.'); }

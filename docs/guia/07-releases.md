@@ -14,11 +14,11 @@ Hay dos formas de publicar una versión. Las dos producen exactamente lo mismo: 
 
 El workflow [`ats-release.yml`](../../.github/workflows/ats-release.yml) hace esto:
 
-1. **Prepara** (`prepare`): calcula la próxima revisión (`ats-v<versión>-r<N+1>`) a partir de las releases publicadas. Si hace falta, commitea en `main` solo el cambio de revisión en `build/armotusitio/product-overrides.json`, como `github-actions[bot]`.
+1. **Prepara** (`prepare`): calcula la próxima revisión (`ats-v<versión>-r<N+1>`) y exige que coincida con los metadatos ya revisados en `main`. Si falta actualizarla, se requiere un PR de metadatos; este paso no escribe en `main`.
 2. **Linux** (`linux`): compila x64 y arm64 en paralelo, cada uno en su runner nativo. Un fallo de una arquitectura no cancela la otra. El arm64 se compila con el compilador de la imagen (Ubuntu 22.04), así que sus módulos nativos exigen como mínimo glibc 2.35; el x64 sigue usando el sysroot de glibc 2.28.
 3. **Windows y publicación** (`windows-and-publish`): compila el cliente de Windows, corre las validaciones (higiene, typecheck, tests), firma el manifiesto y publica la release como **Latest**.
 
-La versión base (por ejemplo `1.145.2`) sale de `package.json`. La revisión sube sola en cada release.
+La versión base sale de `package.json`. La revisión de cada release debe estar aprobada en los metadatos del repositorio.
 
 **No se publica nada cuando:**
 
@@ -56,7 +56,7 @@ Para repetir el ensayo, sacá la etiqueta y volvé a ponerla.
    gh workflow disable "<nombre>" -R Drako01/armotusitio-ide
    ```
 
-3. **Protección de `main` (si la activás).** El paso de preparación hace push a `main`. Si protegés la rama, permití que GitHub Actions la saltee o el release va a fallar en ese paso.
+3. **Protección de `main`.** El paso de preparación es de solo lectura. No necesita una excepción para saltarse la protección de rama.
 
 ### Si un release falla
 
@@ -81,8 +81,38 @@ Requisitos y detalle: [Distribución local](../armotusitio-ide/DISTRIBUTION.md),
 
 ## ¿Cuesta algo?
 
-No. Según la [documentación de facturación de GitHub](https://docs.github.com/en/billing/concepts/product-billing/github-actions), los minutos de los **runners estándar** son gratis en repositorios **públicos**, y este workflow usa solo runners estándar (`ubuntu-22.04`, `ubuntu-24.04`, `windows-2022`). Los únicos runners que GitHub cobra en repos públicos son los "larger runners", y esta cuenta no tiene ninguno.
+La firma Authenticode usa un servicio externo con facturación y requiere aprobación de costos antes de activarlo. La facturación de runners y almacenamiento es independiente; revisar las condiciones de [GitHub Actions](https://docs.github.com/en/billing/concepts/product-billing/github-actions) y de la cuenta Azure.
 
 Para minimizar el almacenamiento, los artefactos intermedios de Linux se borran al día siguiente (`retention-days: 1`).
 
-Para tener la garantía total, revisá en **Settings → Billing and licensing → Budgets and alerts** que el presupuesto de Actions esté en `$0` con **Stop usage** activado. Así GitHub frena el uso en lugar de cobrarlo, aunque cambien las condiciones.
+Configurar presupuestos y alertas en ambos servicios. Un presupuesto de GitHub no limita el consumo de Azure Artifact Signing.
+
+## Firma del editor en Windows
+
+La firma Ed25519 de `ATS_RELEASE_SIGNING_KEY` protege el manifiesto de actualización; no identifica al editor ante Windows. La distribución Windows ahora exige además Authenticode con sello de tiempo y el Subject exacto del editor esperado. Sin configuración, el release se detiene: no hay fallback a ejecutables sin firma.
+
+### Activación pendiente del propietario
+
+1. Contratar o habilitar Azure Artifact Signing únicamente después de aprobar el costo y verificar la elegibilidad de la identidad y región. Crear un perfil de confianza pública con identidad validada; un certificado autofirmado o un perfil de confianza privada no sirve para distribución pública.
+2. Crear una identidad de aplicación con permiso de firmante limitado a ese perfil. Configurar el environment `windows-signing` en GitHub con aprobación humana obligatoria. Revisar siempre el SHA antes de aprobar un ensayo de PR: ejecuta código de esa rama con acceso a la identidad de firma.
+3. Definir las variables de repositorio `ATS_WINDOWS_PUBLISHER` (Subject completo y exacto del certificado, no el nombre comercial inventado), `ATS_SIGNING_ENDPOINT`, `ATS_SIGNING_ACCOUNT` y `ATS_SIGNING_PROFILE`.
+4. Guardar en el environment los secretos `ATS_SIGNING_TENANT_ID`, `ATS_SIGNING_CLIENT_ID` y `ATS_SIGNING_CLIENT_SECRET`. No son la clave Ed25519. Rotar el secreto de aplicación y no imprimirlo en logs.
+5. Autorizar un ensayo con `probar-release`, revisar las firmas y probar instalación, actualización y desinstalación en Windows. Ese ensayo consume servicio de firma y recursos de build: no forma parte de las pruebas locales de este PR.
+
+El workflow instala versiones fijadas de Windows SDK BuildTools y Artifact Signing Client. El script firma los `.exe`, `.dll` y `.node` del payload después de modificar los recursos; Inno Setup firma su desinstalador embebido y el instalador exterior. Las verificaciones exigen firma embebida válida, sello de tiempo y editor exacto antes de registrar hashes, crear artefactos y publicar el instalador.
+
+Para el flujo manual se requiere PowerShell 7, .NET 8 y las herramientas oficiales de firma x64. Exportar `ATS_SIGNTOOL` y `ATS_SIGNING_DLIB` con sus rutas, las cuatro variables públicas anteriores y las credenciales `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`. No se descarga software ni se crea una cuenta desde el script local. Las versiones fijadas y los requisitos del proveedor están en el workflow y en la [integración oficial de Artifact Signing](https://learn.microsoft.com/en-us/azure/artifact-signing/how-to-signing-integrations).
+
+La firma permite identificar al editor; no garantiza que SmartScreen omita inmediatamente sus avisos de reputación. Ver [reputación de SmartScreen](https://learn.microsoft.com/windows/apps/package-and-deploy/smartscreen-reputation). No pedir a los usuarios que desactiven Defender. El error anterior de `new_ArmotuSitio IDE.exe` ausente no queda demostrado ni resuelto por agregar firma.
+
+### Checklist de incorporación
+
+- DONE: integración de firma, verificación obligatoria de editor y sello de tiempo; sin fallback inseguro.
+- VERIFIED local: pruebas de configuración, selección de archivos, rechazo de enlaces y rechazo real de archivo sin firma en Windows; contratos de orden de empaquetado y publicación.
+- BLOCKED externo: cuenta, identidad verificada, permisos, variables, secretos y aprobación de costos.
+- BLOCKED externo: firma positiva real y ensayo de instalación/actualización/desinstalación del candidato firmado.
+- Sin recursos contratados, secretos configurados ni release ejecutada durante la preparación del PR.
+
+Regla operativa: usar PowerShell 7 (`pwsh.exe`) igual que el runner; Windows PowerShell 5.1 puede bloquear scripts con su política local. No cambiar la política del equipo ni usar bypass para ejecutar las verificaciones.
+
+Validación del PR: 100 tests únicos PASS entre `ats-authenticode`, `ats-autoupdate`, `ats-release-ci`, `ats-release-script`, `ats-release-state`, `ats-build-all`, `ats-release-retry`, `ats-release-check`, `ats-ci-changes` y `ats-linux-build-script`. Typecheck focalizado del módulo nuevo, ESLint de los TypeScript afectados, formatter y parseo YAML PASS. El checker Markdown solo informa LEN001: se respeta la regla del repositorio de no cortar párrafos a un ancho fijo. No se compiló ni firmó un instalador real.
