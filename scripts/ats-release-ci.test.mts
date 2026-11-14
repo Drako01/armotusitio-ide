@@ -38,3 +38,23 @@ test('protected-main release prepare has no source mutation and uses a read-only
 	assert.match(workflow.split('  linux:')[0], /permissions:\s+contents: read/);
 	assert.doesNotMatch(workflow.split('  linux:')[0], /contents: write/);
 });
+
+test('optional Authenticode is all-or-nothing and Store submission is opt-in, pinned and isolated', async () => {
+	const workflow = (await readFile(new URL('../.github/workflows/ats-release.yml', import.meta.url), 'utf8')).replaceAll('\r\n', '\n');
+	const prepare = workflow.split('  linux:')[0];
+	assert.match(prepare, /Partial Authenticode configuration/);
+	assert.doesNotMatch(prepare, /Require Windows publisher configuration/);
+	for (const step of ['Require signing credentials before building', 'Install pinned Authenticode tools']) {
+		assert.match(workflow, new RegExp(`- name: ${step}\\n\\s+if: vars\\.ATS_WINDOWS_PUBLISHER != ''`));
+	}
+	const submit = workflow.split('  store-submit:')[1];
+	assert.ok(submit, 'store-submit job is missing');
+	assert.match(submit, /needs: store-msix/);
+	assert.match(submit, /needs\.store-msix\.result == 'success' && vars\.ATS_STORE_PRODUCT_ID != ''/);
+	assert.match(submit, /environment: microsoft-store/);
+	assert.match(submit, /permissions:\s+contents: read/);
+	assert.doesNotMatch(submit, /contents: write/);
+	assert.match(submit, /microsoft\/microsoft-store-apppublisher@[a-f0-9]{40} /);
+	assert.ok(submit.indexOf('packageSha256') < submit.indexOf('msstore publish'), 'MSIX integrity must be checked before submission');
+	assert.doesNotMatch(submit, /\$\{\{ secrets\.[A-Z_]+ \}\}.*msstore/, 'secrets reach msstore only through env');
+});

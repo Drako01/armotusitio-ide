@@ -9,6 +9,29 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 
 const execute = promisify(execFile);
+const ownerSigningSettings = ['ATS_SIGNING_ENDPOINT', 'ATS_SIGNING_ACCOUNT', 'ATS_SIGNING_PROFILE'];
+
+/**
+ * Authenticode is opt-in through ATS_WINDOWS_PUBLISHER: without a paid signing identity the direct download ships
+ * unsigned and the Microsoft Store package is the signed Windows channel. A partial setup is a mistake, never a
+ * silent downgrade.
+ */
+export function authenticodeEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+	if (env.ATS_WINDOWS_PUBLISHER?.trim()) { return true; }
+	const stray = ownerSigningSettings.filter(key => env[key]?.trim());
+	if (stray.length) { throw new Error(`Partial Authenticode configuration: set ATS_WINDOWS_PUBLISHER or remove ${stray.join(', ')}.`); }
+	return false;
+}
+
+/** Verify the pinned publisher when Authenticode is enabled; unsigned releases skip it on purpose and say so. */
+export async function verifyPublisher(target: string): Promise<void> {
+	if (!authenticodeEnabled()) {
+		console.warn(`Authenticode disabled (no ATS_WINDOWS_PUBLISHER): ${path.basename(target)} is not signature-verified.`);
+		return;
+	}
+	await authenticode('verify', target);
+}
+
 /** Public identity is mandatory even when only verifying; never accept any trusted publisher. */
 export function signingConfiguration(env: NodeJS.ProcessEnv = process.env, signing = true): void {
 	const required = ['ATS_WINDOWS_PUBLISHER'];

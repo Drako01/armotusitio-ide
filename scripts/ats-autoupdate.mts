@@ -13,7 +13,7 @@ import { pipeline } from 'node:stream/promises';
 import { createHash, createPublicKey, generateKeyPairSync, randomUUID, sign, verify } from 'node:crypto';
 import { armotusitioManifestName, armotusitioReleaseTag, armotusitioRepository, compareArmotusitioVersions, isUpdateRecord, parseArmotusitioManifest, type ArmotusitioAsset } from '../src/vs/platform/update/common/armotusitioUpdate.ts';
 import { releaseMetadataPath } from './ats-release-revision.mts';
-import { authenticode } from './ats-authenticode.mts';
+import { authenticodeEnabled, verifyPublisher } from './ats-authenticode.mts';
 
 const execute = promisify(execFile);
 export const repositoryRoot = path.resolve(import.meta.dirname, '..');
@@ -304,6 +304,13 @@ async function initializeSigning(): Promise<unknown> {
 	return { status: 'signing-ready', privateKeyPath, publicKeyFingerprint: createHash('sha256').update(publicKey).digest('hex'), instruction: 'Back up the private key securely. Commit the public configuration before building.' };
 }
 
+/** Release notes state the real Windows signing status instead of a fixed claim. */
+export function windowsSigningNote(signed: boolean): string {
+	return signed
+		? 'Signed update manifest and Authenticode-signed Windows installer. SmartScreen reputation may still require time.'
+		: 'Signed update manifest. The direct Windows installer is not Authenticode-signed and SmartScreen may warn; the Microsoft Store package is signed by the Store.';
+}
+
 /** Stream hashes so large installers are not held in memory. */
 export async function fileDigest(file: string): Promise<string> {
 	const hash = createHash('sha256');
@@ -322,7 +329,7 @@ async function applicationInfo(): Promise<any> {
 		|| product.armotusitioUpdate?.publicKey !== configuration.armotusitioUpdate?.publicKey
 		|| product.armotusitioUpdate?.revision !== configuration.armotusitioUpdate?.revision
 		|| !/^[a-f0-9]{40}$/.test(product.commit) || product.commit !== await run('git', ['rev-parse', 'HEAD'])
-		|| receipt.commit !== product.commit || receipt.installerSha256 !== await fileDigest(path.join(repositoryRoot, '.build', 'win32-x64', 'user-setup', 'VSCodeSetup.exe'))
+		|| receipt.commit !== product.commit || receipt.authenticode !== authenticodeEnabled() || receipt.installerSha256 !== await fileDigest(path.join(repositoryRoot, '.build', 'win32-x64', 'user-setup', 'VSCodeSetup.exe'))
 		|| receipt.productSha256 !== await fileDigest(path.join(application, 'resources', 'app', 'product.json'))) {
 		throw new Error('Build metadata does not match this clean source revision and trusted update configuration. Rebuild first.');
 	}
@@ -337,8 +344,8 @@ async function applicationInfo(): Promise<any> {
 
 async function artifacts(): Promise<unknown> {
 	const { application, version, revision, product } = await applicationInfo();
-	await authenticode('verify', application);
-	await authenticode('verify', path.join(repositoryRoot, '.build', 'win32-x64', 'user-setup', 'VSCodeSetup.exe'));
+	await verifyPublisher(application);
+	await verifyPublisher(path.join(repositoryRoot, '.build', 'win32-x64', 'user-setup', 'VSCodeSetup.exe'));
 	const output = path.join(repositoryRoot, '.build', 'releases');
 	await mkdir(output, { recursive: true });
 	const installerName = `ArmotuSitio-IDE-Setup-${version}-r${revision}-x64.exe`;
@@ -485,7 +492,7 @@ async function publish(approved: boolean): Promise<unknown> {
 	}
 	const files = Object.values(manifest.assets).map(asset => path.join(directory, asset.name));
 	for (const asset of Object.values(manifest.assets)) {
-		if (asset.name.toLowerCase().endsWith('.exe')) { await authenticode('verify', path.join(directory, asset.name)); }
+		if (asset.name.toLowerCase().endsWith('.exe')) { await verifyPublisher(path.join(directory, asset.name)); }
 	}
 	for (const platform of Object.keys(manifest.assets)) {
 		const asset = manifest.assets[platform];
@@ -500,7 +507,7 @@ async function publish(approved: boolean): Promise<unknown> {
 	}
 	if (!existing) {
 		await requireIsolatedActions();
-		await run('gh', ['release', 'create', tag, '--repo', armotusitioRepository, '--target', manifest.commit, '--draft', '--title', `ArmotuSitio IDE ${manifest.baseVersion} r${manifest.revision}`, '--notes', `Windows x64, Linux x64 (.deb/.rpm/archive), Linux x64/arm64 remote servers. Source: ${manifest.commit}. Signed update manifest and Authenticode-signed Windows installer. SmartScreen reputation may still require time.`]);
+		await run('gh', ['release', 'create', tag, '--repo', armotusitioRepository, '--target', manifest.commit, '--draft', '--title', `ArmotuSitio IDE ${manifest.baseVersion} r${manifest.revision}`, '--notes', `Windows x64, Linux x64 (.deb/.rpm/archive), Linux x64/arm64 remote servers. Source: ${manifest.commit}. ${windowsSigningNote(authenticodeEnabled())}`]);
 		existing = await waitForReleaseByTag(tag);
 	}
 	if (!existing) { throw new Error('Created draft release could not be found.'); }

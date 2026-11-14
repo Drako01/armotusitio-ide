@@ -9,7 +9,19 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { signingConfiguration, signingTargets } from './ats-authenticode.mts';
+import { authenticodeEnabled, signingConfiguration, signingTargets } from './ats-authenticode.mts';
+import { windowsSigningNote } from './ats-autoupdate.mts';
+
+test('Authenticode is opt-in by publisher and a partial setup fails instead of downgrading', () => {
+	assert.equal(authenticodeEnabled({}), false);
+	assert.equal(authenticodeEnabled({ ATS_WINDOWS_PUBLISHER: '  ' }), false);
+	assert.equal(authenticodeEnabled({ ATS_WINDOWS_PUBLISHER: 'CN=Example' }), true);
+	assert.throws(() => authenticodeEnabled({ ATS_SIGNING_ENDPOINT: 'https://eus.codesigning.azure.net' }), /Partial Authenticode configuration.*ATS_SIGNING_ENDPOINT/);
+	assert.throws(() => authenticodeEnabled({ ATS_SIGNING_ACCOUNT: 'a', ATS_SIGNING_PROFILE: 'p' }), /ATS_SIGNING_ACCOUNT, ATS_SIGNING_PROFILE/);
+	assert.match(windowsSigningNote(true), /Authenticode-signed Windows installer/);
+	assert.match(windowsSigningNote(false), /not Authenticode-signed/);
+	assert.doesNotMatch(windowsSigningNote(false), /Authenticode-signed Windows installer/);
+});
 
 test('release signing configuration fails closed and verification pins a publisher', () => {
 	assert.throws(() => signingConfiguration({}), /ATS_WINDOWS_PUBLISHER/);
@@ -46,9 +58,12 @@ test('packaging signs payload before Inno, signs uninstaller and verifies before
 	const read = (file: string) => fs.readFile(new URL(file, import.meta.url), 'utf8');
 	const packaging = await read('./ats-package-windows.mts');
 	assert.ok(packaging.indexOf(`authenticode('sign', application)`) < packaging.indexOf(`'--ats-sign'`));
-	assert.ok(packaging.indexOf(`authenticode('verify', application)`) < packaging.indexOf(`'build-receipt.json'`));
+	assert.ok(packaging.indexOf(`verifyPublisher(application)`) < packaging.indexOf(`'build-receipt.json'`));
+	assert.match(packaging, /if \(signed\) \{ await authenticode\('sign', application\); \}/);
+	assert.match(packaging, /authenticode: signed,/);
 	assert.match(await read('../build/win32/code.iss'), /#ifdef Sign\s+SignTool=esrp\s+SignedUninstaller=yes/);
 	const publishing = await read('./ats-autoupdate.mts');
-	assert.ok(publishing.indexOf(`authenticode('verify', path.join(directory, asset.name))`) < publishing.indexOf(`['release', 'create'`));
+	assert.ok(publishing.indexOf(`verifyPublisher(path.join(directory, asset.name))`) < publishing.indexOf(`['release', 'create'`));
+	assert.match(publishing, /receipt\.authenticode !== authenticodeEnabled\(\)/);
 	assert.match(await read('../.github/workflows/ats-release.yml'), /environment: windows-signing/);
 });
