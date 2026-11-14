@@ -8,6 +8,14 @@ on:
     types: [closed, labeled]
     branches: [main]
   workflow_dispatch:
+    inputs:
+      store_release_tag:
+        description: 'MSIX only: published stable tag (empty builds a full release)'
+        required: false
+        type: string
+        default: ''
+  release:
+    types: [published]
 permissions:
   contents: read
 concurrency:
@@ -22,7 +30,7 @@ jobs:
   prepare:
     # PRs from this repository only; fork PRs never build. The label sin-release opts a merged PR out.
     if: >-
-      github.event_name == 'workflow_dispatch' || (github.event.pull_request.head.repo.full_name == github.repository && (
+      (github.event_name == 'workflow_dispatch' && inputs.store_release_tag == '') || (github.event.pull_request.head.repo.full_name == github.repository && (
       (github.event.action == 'closed' && github.event.pull_request.merged == true && !contains(github.event.pull_request.labels.*.name, 'sin-release'))
       || (github.event.action == 'labeled' && github.event.label.name == 'probar-release')))
     runs-on: ubuntu-24.04
@@ -227,3 +235,39 @@ jobs:
         run: |
           $keyPath = Join-Path $env:RUNNER_TEMP 'ats-release-private.pem'
           if (Test-Path -LiteralPath $keyPath) { Remove-Item -LiteralPath $keyPath -Force }
+  store-msix:
+    needs: [prepare, windows-and-publish]
+    # A GITHUB_TOKEN-created release does not emit another workflow run: use the dependency path too.
+    if: >-
+      always() && !cancelled() && (
+      (github.event_name == 'workflow_dispatch' && inputs.store_release_tag != '') ||
+      (github.event_name == 'release' && github.event.release.prerelease == false) ||
+      (needs.windows-and-publish.result == 'success' && github.event.action != 'labeled'))
+    runs-on: windows-2022
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      ATS_STORE_RELEASE_TAG: ${{ inputs.store_release_tag || github.event.release.tag_name || needs.prepare.outputs.tag }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event_name == 'release' && 'main' || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .nvmrc
+      - name: Package the verified published ZIP for Microsoft Store
+        shell: pwsh
+        run: |
+          node scripts/ats-store-release.mts "$env:ATS_STORE_RELEASE_TAG"
+          exit $LASTEXITCODE
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ats-store-msix-${{ github.run_id }}
+          path: |
+            .build/msix/*.msix
+            .build/msix/*.msix.json
+            .build/msix/ci-release.json
+          if-no-files-found: error
+          retention-days: 14

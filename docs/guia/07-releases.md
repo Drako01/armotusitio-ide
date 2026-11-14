@@ -87,6 +87,24 @@ Para minimizar el almacenamiento, los artefactos intermedios de Linux se borran 
 
 Configurar presupuestos y alertas en ambos servicios. Un presupuesto de GitHub no limita el consumo de Azure Artifact Signing.
 
+## Paquete para Microsoft Store
+
+El workflow **ArmotuSitio Release** genera un MSIX x64 como artefacto después de publicar una release estable. También responde a la publicación manual de una release. No lo genera durante ensayos con `probar-release`.
+
+Para empaquetar una release existente, abrir **Actions → ArmotuSitio Release → Run workflow** y completar `store_release_tag`, por ejemplo `ats-v1.146.0-r2`. Con ese campo completo solo se ejecuta el empaquetado para Store: no se compila otra release ni se necesitan credenciales de Azure. Dejarlo vacío conserva el flujo completo de release, que exige la configuración de firma indicada abajo.
+
+Descargar el artefacto `ats-store-msix-<run-id>` del job `store-msix` y cargar su `.msix` en Partner Center. El artefacto se conserva 14 días e incluye los hashes y la procedencia. La subida y certificación de Store siguen siendo manuales; este flujo no configura ni consume credenciales de publicación de Store.
+
+El empaquetado comprueba el SHA256 y tamaño del ZIP contra la API de GitHub antes de ejecutarlo con MakeAppx. Usa la identidad reservada de ArmotuSitio IDE, idiomas español e inglés, Windows Desktop y `runFullTrust`. Deshabilita el actualizador propio únicamente en la copia empaquetada para que las actualizaciones de esa instalación correspondan a Store. La versión se calcula como `MAJOR.MINOR.(PATCH × 1000 + REVISION).0`; rechaza revisiones de 1000 o más y componentes fuera del rango de MSIX.
+
+Para generar el mismo candidato localmente, con Node de `.nvmrc`, PowerShell 7 y Windows SDK instalados:
+
+```powershell
+node scripts/ats-store-release.mts ats-v1.146.0-r2
+```
+
+El MSIX no se firma localmente: es un candidato para envío a Store, que aplica su firma en su proceso de distribución. Crear el paquete no demuestra instalación correcta ni certificación aprobada. Las releases EXE y su firma Authenticode siguen siendo un flujo independiente.
+
 ## Firma del editor en Windows
 
 La firma Ed25519 de `ATS_RELEASE_SIGNING_KEY` protege el manifiesto de actualización; no identifica al editor ante Windows. La distribución Windows ahora exige además Authenticode con sello de tiempo y el Subject exacto del editor esperado. Sin configuración, el release se detiene: no hay fallback a ejecutables sin firma.
