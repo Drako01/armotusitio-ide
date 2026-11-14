@@ -11,7 +11,7 @@ import type { Subproject } from './native-ecosystems.ts';
 import { commandName, dependencyDecision, suggestRule, type PermissionSet } from './native-permissions.ts';
 
 /** Machine-readable denial returned to the agent as `POLICY_DENIED: <category>`. */
-export type PolicyDenial = 'shell-operator' | 'inline-code' | 'git-mutation' | 'publish' | 'network' | 'destructive' | 'privilege' | 'global-config' | 'dependency-change' | 'external-cli' | 'credential-access' | 'unusual-form' | 'not-allowed' | 'cwd-outside-project' | 'invalid' | 'needs-approval';
+export type PolicyDenial = 'shell-operator' | 'inline-code' | 'git-mutation' | 'publish' | 'network' | 'destructive' | 'privilege' | 'global-config' | 'dependency-change' | 'external-cli' | 'script-file' | 'credential-access' | 'unusual-form' | 'not-allowed' | 'cwd-outside-project' | 'invalid' | 'needs-approval';
 /** `needs-approval` is a permission `ask`: still `allowed: false`, so a consumer that only reads `allowed` treats it as denied. */
 export type PolicyDecision = { allowed: true; executable: string; cwd: string; delegate: boolean }
 	| { allowed: false; reason: Exclude<PolicyDenial, 'needs-approval'> }
@@ -64,10 +64,12 @@ const CREDENTIAL_COMMANDS: Record<string, readonly string[][]> = {
 /** Read-only GitHub queries an agent needs to follow CI and reviews; they run without a question. `--web` opens a browser, so it asks. */
 const GH_READ: Record<string, readonly string[]> = {
 	pr: ['view', 'list', 'status', 'diff', 'checks'], issue: ['view', 'list', 'status'], run: ['view', 'list'], workflow: ['view', 'list'],
-	repo: ['view'], release: ['view', 'list'], label: ['list'], search: ['issues', 'prs', 'repos', 'commits', 'code']
+	repo: ['view'], release: ['view', 'list'], label: ['list'], search: ['issues', 'prs', 'repos', 'commits', 'code'],
+	// "Am I signed in?" prints the account and scopes, never the token (`--show-token` / `-t` are refused below).
+	auth: ['status']
 };
 const ghReadOnly = (name: string, args: readonly string[]): boolean =>
-	name === 'gh' && !!GH_READ[args[0]]?.includes(args[1]) && !args.some(arg => arg === '--web' || arg === '-w');
+	name === 'gh' && !!GH_READ[args[0]]?.includes(args[1]) && !args.some(arg => arg === '--web' || arg === '-w' || arg === '-t' || arg.startsWith('--show-token'));
 
 /** `words` appear in `args` in this order (case-insensitive); flags and values between them do not matter. */
 function inOrder(args: readonly string[], words: readonly string[]): boolean {
@@ -80,9 +82,11 @@ function inOrder(args: readonly string[], words: readonly string[]): boolean {
 
 /** Floor verdict for an external CLI: credentials never, read-only gh always, anything else is the user's call. */
 function externalCli(name: string, args: readonly string[]): PolicyDenial | undefined {
+	// Read-only gh queries first: `gh auth status` is the one auth subcommand that never prints a credential.
+	if (ghReadOnly(name, args)) { return undefined; }
 	// Every CLI's own login/logout/auth subcommands (`vercel login`, `heroku auth:token`, `docker logout`, `terraform login`).
 	if (/^(login|logout|auth)(:|$)/i.test(args[0] ?? '') || CREDENTIAL_COMMANDS[name]?.some(words => inOrder(args, words))) { return 'credential-access'; }
-	return ghReadOnly(name, args) ? undefined : 'external-cli';
+	return 'external-cli';
 }
 const GIT_READ = new Set(['status', 'diff', 'log', 'show', 'rev-parse', 'ls-files', 'blame', 'grep', 'describe', 'shortlog', 'cat-file', 'merge-base', 'name-rev', 'ls-tree']);
 const PACKAGE_MANAGERS = new Set(['npm', 'pnpm', 'yarn', 'bun']);
@@ -141,6 +145,7 @@ const DENIAL_HINTS: Record<Exclude<PolicyDenial, 'needs-approval'>, string> = {
 	'global-config': 'Change only project-local configuration, or report the global change for the user to make.',
 	'dependency-change': 'Installing or changing dependencies needs the user\'s approval; if it was refused, report the missing dependency.',
 	'external-cli': 'External CLIs need the user\'s approval for each call; if it was refused, report what you needed.',
+	'script-file': 'Running a project script needs approval from the user or a rule naming that script; if it was refused, report what the script would do.',
 	'credential-access': 'Logins and credential output are never available: ask the user to authenticate in their own terminal (for example `aws sso login`, `gh auth login`) and then run the original command.',
 	'unusual-form': 'Use the `cwd` parameter (for example cwd "apps/web") and a plain subcommand instead of leading flags; the user may still approve this exact form.',
 	'not-allowed': 'This executable is not available to agents here; use a project script or another available tool.',
@@ -155,7 +160,7 @@ export function denialText(reason: Exclude<PolicyDenial, 'needs-approval'>): str
 
 /** Floor results that are about safety, not shape: an unusual form may never hide one of them. */
 const SECURITY_DENIALS: ReadonlySet<PolicyDenial> = new Set(['shell-operator', 'inline-code', 'privilege', 'destructive', 'publish', 'network',
-	'credential-access', 'global-config', 'git-mutation', 'external-cli', 'dependency-change']);
+	'credential-access', 'global-config', 'git-mutation', 'external-cli', 'script-file', 'dependency-change']);
 
 /**
  * Verdict for a launcher or package manager written with flags the IDE cannot parse. An unknown flag may take a value, so
@@ -170,13 +175,40 @@ function unusualForm(args: readonly string[], depth: number): PolicyDenial {
 	return 'unusual-form';
 }
 
+/** PowerShell switches that only set up the host; `-ExecutionPolicy` takes the value that follows it. */
+const POWERSHELL_SETUP = new Set(['-noprofile', '-noninteractive', '-nologo']);
+const POWERSHELL_POLICIES = new Set(['bypass', 'remotesigned']);
+
+/** A project-relative script path with the expected extension: no drive, root, `..`, home or option look-alike. */
+const scriptPath = (value: string | undefined, extension: RegExp): boolean => !!value && extension.test(value) && !value.startsWith('-') &&
+	!/^([a-zA-Z]:|[\\/]|~)/.test(value) && !value.replace(/\\/g, '/').split('/').includes('..');
+
+/**
+ * Whether a shell call only runs one script file of the project: `powershell|pwsh [-NoProfile] [-NonInteractive] [-NoLogo]
+ * [-ExecutionPolicy Bypass|RemoteSigned] -File <script>.ps1 [args]` or `bash|sh <script>.sh [args]`. Inline code (`-Command`,
+ * `-EncodedCommand`, `-c`), interactive shells and scripts outside the project stay shell operators. The user still approves
+ * each script (or writes a rule naming it), so this opens a reviewed path, not a shell.
+ */
+function projectScript(name: string, args: readonly string[]): boolean {
+	if (name === 'bash' || name === 'sh') { return scriptPath(args[0], /\.sh$/i); }
+	if (name !== 'powershell' && name !== 'pwsh') { return false; }
+	let index = 0;
+	while (index < args.length) {
+		const flag = args[index].toLowerCase();
+		if (POWERSHELL_SETUP.has(flag)) { index++; continue; }
+		if (flag === '-executionpolicy' && POWERSHELL_POLICIES.has(args[index + 1]?.toLowerCase() ?? '')) { index += 2; continue; }
+		break;
+	}
+	return args[index]?.toLowerCase() === '-file' && scriptPath(args[index + 1], /\.ps1$/i);
+}
+
 /** The immovable floor: what no project, preset or user setting can allow. */
 function floor(command: string, args: readonly string[], depth = 0): PolicyDenial | undefined {
 	const name = base(command);
 	const sub = args[0]?.toLowerCase();
 	if (depth > 8 || !command || command.includes('\0') || args.some(arg => arg.includes('\0')) || args.length > 64) { return 'invalid'; }
 	if (OPERATOR.test(command) || args.some(arg => OPERATOR.test(arg))) { return 'shell-operator'; }
-	if (SHELLS.has(name)) { return 'shell-operator'; }
+	if (SHELLS.has(name)) { return projectScript(name, args) ? 'script-file' : 'shell-operator'; }
 	if (INLINE[name] && args.some(arg => INLINE[name].some(flag => flag.startsWith('--')
 		? arg === flag || arg.startsWith(flag + '=')
 		: flag.startsWith('-') ? /^-[^-]/.test(arg) && arg.slice(1).includes(flag.slice(1)) : arg === flag))) { return 'inline-code'; }
@@ -295,7 +327,7 @@ function permit(permissions: PermissionSet | undefined, command: string, args: r
 }
 
 /** Floor categories that become a question to the user (instead of a denial) when the run can ask. */
-const APPROVABLE: ReadonlySet<PolicyDenial> = new Set(['dependency-change', 'external-cli', 'unusual-form']);
+const APPROVABLE: ReadonlySet<PolicyDenial> = new Set(['dependency-change', 'external-cli', 'script-file', 'unusual-form']);
 
 /** Whether the project's Harness, the ecosystem presets or the user extras let this command through (after the floor). */
 function allowlisted(config: CommandPolicyConfig, extras: string[][], command: string, args: readonly string[], folder: string): Extract<PolicyDecision, { allowed: true }> | { allowed: false; reason: 'not-allowed' } {

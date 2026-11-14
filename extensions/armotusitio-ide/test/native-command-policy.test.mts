@@ -263,6 +263,30 @@ test('external CLIs ask the user, read-only gh runs directly, credentials never,
 });
 
 
+test('a shell may run one project script file with approval; inline code, interactive shells and outside scripts stay denied', async () => {
+	const loaded = await permissionsFor('dev', { user: { version: 1, allow: ['run:powershell -NoProfile -File scripts/approved.ps1'] } });
+	try {
+		const policy = createCommandPolicy({ subprojects: monorepo, delegate: false, extras: [], permissions: loaded.set });
+		const plain = createCommandPolicy({ subprojects: monorepo, delegate: false, extras: [] });
+		const verdict = (target: typeof policy, line: string) => { const [command, ...args] = line.split(' '); const decision = target.decide(command, args, '.'); return decision.allowed ? 'allowed' : decision.reason; };
+		assert.deepEqual({
+			asks: ['powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup.ps1', 'pwsh -File scripts\\setup.ps1 -Verbose', 'bash scripts/setup.sh --dry-run', 'sh tools/build.sh'].map(line => verdict(policy, line)),
+			remembered: verdict(policy, 'powershell -NoProfile -File scripts/approved.ps1'),
+			shells: ['powershell -Command Get-ChildItem', 'powershell -EncodedCommand ZQBjAGgAbwA=', 'pwsh', 'bash -c ls', 'bash', 'powershell -File ../outside.ps1', 'powershell -File C:/x.ps1',
+				'bash /etc/x.sh', 'powershell -File scripts/setup.bat', 'powershell -ExecutionPolicy Unrestricted -File scripts/setup.ps1', 'cmd /c scripts\\setup.cmd'].map(line => verdict(policy, line)),
+			ghStatus: [verdict(policy, 'gh auth status'), verdict(policy, 'gh auth status --show-token'), verdict(policy, 'gh auth status -t'), verdict(policy, 'gh auth token')],
+			noChannel: verdict(plain, 'bash scripts/setup.sh')
+		}, {
+			asks: Array(4).fill('needs-approval'),
+			remembered: 'allowed',
+			shells: Array(11).fill('shell-operator'),
+			ghStatus: ['allowed', 'credential-access', 'credential-access', 'credential-access'],
+			noChannel: 'script-file'
+		});
+		assert.match(denialText('script-file'), /^POLICY_DENIED: script-file\nNext: /);
+	} finally { await loaded.cleanup(); }
+});
+
 test('package-manager workspace flags are judged on their subcommand and folder; unknown forms ask, or go to the project Harness', async () => {
 	const loaded = await permissionsFor('dev');
 	try {
