@@ -60,5 +60,9 @@ test('optional Authenticode is all-or-nothing and Store submission is opt-in, pi
 	assert.doesNotMatch(submit, /contents: write/);
 	assert.match(submit, /microsoft\/microsoft-store-apppublisher@[a-f0-9]{40} /);
 	assert.ok(submit.indexOf('packageSha256') < submit.indexOf('msstore publish'), 'MSIX integrity must be checked before submission');
+	const reconfigure = submit.indexOf('msstore reconfigure');
+	for (const command of ['msstore settings', 'msstore publish', 'msstore apps get', 'msstore submission status']) {
+		assert.ok(reconfigure !== -1 && reconfigure < submit.indexOf(command), `${command} fails with "SellerId is not set" before reconfigure`);
+	}
 	assert.doesNotMatch(submit, /\$\{\{ secrets\.[A-Z_]+ \}\}.*msstore/, 'secrets reach msstore only through env');
 });

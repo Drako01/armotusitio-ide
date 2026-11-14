@@ -338,9 +338,10 @@ jobs:
           foreach ($name in @('ATS_STORE_TENANT_ID', 'ATS_STORE_SELLER_ID', 'ATS_STORE_CLIENT_ID', 'ATS_STORE_CLIENT_SECRET')) {
             if (-not [Environment]::GetEnvironmentVariable($name)) { throw "Missing $name in the microsoft-store environment (docs/guia/07-releases.md)" }
           }
-          msstore settings --enableTelemetry false
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # Every other msstore command, settings included, refuses to run before reconfigure stores the credentials.
           msstore reconfigure --tenantId $env:ATS_STORE_TENANT_ID --sellerId $env:ATS_STORE_SELLER_ID --clientId $env:ATS_STORE_CLIENT_ID --clientSecret $env:ATS_STORE_CLIENT_SECRET
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          msstore settings --enableTelemetry false
           exit $LASTEXITCODE
       - name: Submit the MSIX to Microsoft Store certification
         if: env.STORE_CHECK_ONLY != 'true'
