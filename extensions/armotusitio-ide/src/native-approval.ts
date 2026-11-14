@@ -25,6 +25,8 @@ export interface ApprovalSubject { host?: string; server?: string; tool?: string
 export type ApprovalAsk = (request: ApprovalDraft & ApprovalSubject) => Promise<ApprovalAnswer>;
 
 const MAX_PENDING_ARGS = 100;
+/** Longest PR description the git tool accepts and an approval card carries; long enough for a summary, test plan and checklist. */
+export const MAX_PR_BODY_LENGTH = 8000;
 
 /** The permission request an approval is about, rebuilt from structured fields; `undefined` when they are missing or malformed. */
 function subjectRequest(draft: Partial<ApprovalDraft> & ApprovalSubject): PermissionRequest | undefined {
@@ -47,7 +49,7 @@ function subjectRequest(draft: Partial<ApprovalDraft> & ApprovalSubject): Permis
 		}
 		case 'git_pr_upsert': {
 			if (![draft.repo, draft.branch, draft.base, draft.prTitle].every(value => typeof value === 'string' && value.length > 0 && value.length <= 250) ||
-				typeof draft.prBody !== 'string' || draft.prBody.length > 2000 || !/^(?:create|update #[1-9][0-9]*)$/.test(draft.action ?? '')) { return undefined; }
+				typeof draft.prBody !== 'string' || draft.prBody.length > MAX_PR_BODY_LENGTH || !/^(?:create|update #[1-9][0-9]*)$/.test(draft.action ?? '')) { return undefined; }
 			return { kind: 'git_pr_upsert', repo: draft.repo!, branch: draft.branch!, base: draft.base!, title: draft.prTitle!, body: draft.prBody };
 		}
 		default: return undefined;

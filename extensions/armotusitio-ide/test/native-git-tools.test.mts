@@ -226,7 +226,21 @@ test('git_push honours deny and denied approvals without touching the remote', a
 test('unknown tools and malformed input are rejected', async () => {
 	await withRepo(async ({ context }) => {
 		assert.equal((await handleGitTool(context, 'git_reset', {})).text, 'Unknown tool');
-		assert.match((await handleGitTool(context, 'git_commit', null)).text, /^POLICY_DENIED: invalid-paths/);
+		assert.equal((await handleGitTool(context, 'git_commit', null)).text, 'POLICY_DENIED: invalid-arguments\nmissing: paths, message\nexpected: paths, message');
+	});
+});
+
+test('a misnamed argument says which one is wrong instead of blaming its value, and the agent may correct it', async () => {
+	await withRepo(async ({ root, context }) => {
+		git(root, 'remote', 'set-url', 'origin', 'https://github.com/Owner/repo.git');
+		const misnamed = (await handleGitTool(context, 'git_branch_create', { name: 'feat/x' })).text;
+		const extra = (await handleGitTool(context, 'git_push', { force: true })).text;
+		const created = (await handleGitTool(context, 'git_branch_create', { branch: 'feat/x' })).text;
+		assert.deepEqual({ misnamed, extra, endsDelivery: endsGitDelivery(misnamed), created: created.split(' ')[0] }, {
+			misnamed: 'POLICY_DENIED: invalid-arguments\nmissing: branch\nunknown: name\nexpected: branch, from (optional)',
+			extra: 'POLICY_DENIED: invalid-arguments\nunknown: force\nexpected: no arguments',
+			endsDelivery: false, created: 'BRANCH_CREATED'
+		});
 	});
 });
 
@@ -242,6 +256,48 @@ test('git tools refuse modified hooks and config, including changes while approv
 		guarded.ask = async () => { git(root, 'config', 'core.hooksPath', '.githooks'); return 'once'; };
 		assert.equal((await handleGitTool(guarded, 'git_commit', { paths: ['a.txt'], message: 'm' })).text, 'POLICY_DENIED: repo-config-changed');
 		assert.equal(git(root, 'log', '-1', '--format=%s'), 'seed');
+	});
+});
+
+test('per-branch bookkeeping written by editor extensions does not count as a config change; anything else still does', async () => {
+	await withRepo(async ({ root, context }) => {
+		await fs.writeFile(path.join(root, 'a.txt'), 'a\n');
+		await fs.writeFile(path.join(root, 'b.txt'), 'b\n');
+		const guarded = { ...context, repoBaseline: await repoFingerprint(root) };
+		git(root, 'config', 'branch.feat/work.vscode-merge-base', 'origin/main');
+		git(root, 'config', 'branch.feat/work.github-pr-owner-number', 'Owner#repo#12');
+		const committed = (await handleGitTool(guarded, 'git_commit', { paths: ['a.txt'], message: 'm' })).text;
+		git(root, 'config', 'branch.feat/work.pushRemote', 'elsewhere');
+		const redirected = (await handleGitTool(guarded, 'git_commit', { paths: ['b.txt'], message: 'm' })).text;
+		assert.deepEqual({ committed: committed.split(' ')[0], redirected }, { committed: 'COMMITTED', redirected: 'POLICY_DENIED: repo-config-changed' });
+	});
+});
+
+test('commits on protected branches are refused before anything is staged, so the agent creates a feature branch first', async () => {
+	await withRepo(async ({ root, context }) => {
+		await fs.writeFile(path.join(root, 'a.txt'), 'a\n');
+		git(root, 'remote', 'set-url', 'origin', 'https://github.com/Owner/repo.git');
+		git(root, 'checkout', '-q', '-b', 'main');
+		const onMain = (await handleGitTool(context, 'git_commit', { paths: ['a.txt'], message: 'm' })).text;
+		git(root, 'checkout', '-q', '-b', 'release/1.0');
+		const onPattern = (await handleGitTool({ ...context, protectedBranches: ['release/*'] }, 'git_commit', { paths: ['a.txt'], message: 'm' })).text;
+		await handleGitTool(context, 'git_branch_create', { branch: 'feat/a' });
+		const onFeature = (await handleGitTool(context, 'git_commit', { paths: ['a.txt'], message: 'm' })).text;
+		assert.deepEqual({ onMain, onPattern, endsDelivery: endsGitDelivery(onMain), staged: git(root, 'diff', '--cached', '--name-only'), onFeature: onFeature.split(' ').slice(0, 1).concat(onFeature.split(' ').slice(2, 4)).join(' ') }, {
+			onMain: 'POLICY_DENIED: protected-branch', onPattern: 'POLICY_DENIED: protected-branch', endsDelivery: false, staged: '', onFeature: 'COMMITTED on feat/a:'
+		});
+	});
+});
+
+test('a rejected PR title or body says what to fix', async () => {
+	await withRepo(async ({ root, context }) => {
+		git(root, 'remote', 'set-url', 'origin', 'https://github.com/Owner/repo.git');
+		const tooLong = (await handleGitTool(context, 'git_pr_upsert', { base: 'main', title: 'T', body: 'x'.repeat(8001) })).text;
+		const empty = (await handleGitTool(context, 'git_pr_upsert', { base: 'main', title: ' ', body: 'b' })).text;
+		assert.deepEqual({ tooLong, empty, endsDelivery: endsGitDelivery(tooLong) }, {
+			tooLong: 'POLICY_DENIED: invalid-pr-content\nbody has 8001 characters; the maximum is 8000: summarize it',
+			empty: 'POLICY_DENIED: invalid-pr-content\ntitle is empty', endsDelivery: false
+		});
 	});
 });
 
