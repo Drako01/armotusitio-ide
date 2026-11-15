@@ -59,6 +59,20 @@ test('project capability handshake is explicit, nonce-bound and never grants exe
 	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
+test('handshake waits for a project engine that verifies its runtime before answering', async () => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-handshake-slow-'));
+	try {
+		const canonical = await fs.realpath(root);
+		await fs.mkdir(path.join(root, '.harness', 'manifests'), { recursive: true });
+		await fs.writeFile(path.join(root, '.harness', 'manifests', 'ide-capabilities.json'),
+			JSON.stringify({ schemaVersion: 2, engine: 'project', capabilities: ['parallel-gates'] }));
+		// Slower than the former 5 s deadline, as a cold managed-runtime check is.
+		await fs.writeFile(path.join(root, '.harness', 'core.mjs'),
+			'setTimeout(() => console.log(JSON.stringify({schemaVersion:2,nonce:process.argv[process.argv.indexOf("--nonce")+1],capabilities:["parallel-gates"]})), 5500);');
+		assert.deepEqual(await probeProjectHandshake(canonical, () => true), { protocol: 2, reported: ['parallel-gates'] });
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
+});
+
 test('handshake rejects undeclared response fields even with a valid nonce', async () => {
 	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-handshake-fields-'));
 	try {

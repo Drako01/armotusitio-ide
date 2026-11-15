@@ -12,7 +12,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { inspectHarnessAuthority } from './native-authority.ts';
-import { entryDigest, probeProjectHandshake, readProjectCapabilities, runProjectEntry, type Capability } from './native-engine-contract.ts';
+import { entryDigest, probeProjectHandshake, PROJECT_ENTRY_TIMEOUT_MS, readProjectCapabilities, runProjectEntry, type Capability } from './native-engine-contract.ts';
 import { readProjectGateCatalog, validateProjectGateCatalog } from './native-project-gates.ts';
 import type { SharedExecutionFence } from './native-shared-fence.ts';
 
@@ -67,7 +67,7 @@ export async function queryProjectEngineStatus(root: string, consent: boolean, t
 	const entry = path.join(canonical, authority.entry);
 	const digest = await entryDigest(entry, 'HARNESS_PROJECT_STATUS_ENTRY_UNSAFE');
 	const nonce = randomBytes(16).toString('hex');
-	const { output } = await runProjectEntry(canonical, entry, ['ide-status', '--ide-protocol', '2', '--nonce', nonce], 5000, 'HARNESS_PROJECT_STATUS');
+	const { output } = await runProjectEntry(canonical, entry, ['ide-status', '--ide-protocol', '2', '--nonce', nonce], PROJECT_ENTRY_TIMEOUT_MS, 'HARNESS_PROJECT_STATUS');
 	if (!trusted()) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
 	if (await entryDigest(entry, 'HARNESS_PROJECT_STATUS_ENTRY_CHANGED').catch(() => '') !== digest) {
 		throw Error('HARNESS_PROJECT_STATUS_ENTRY_CHANGED');

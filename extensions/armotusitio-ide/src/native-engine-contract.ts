@@ -151,7 +151,7 @@ export async function probeProjectHandshake(root: string, trusted: () => boolean
 	const originalEntryDigest = await entryDigest(target, 'HARNESS_HANDSHAKE_ENTRY_UNSAFE');
 	const declared = await readProjectCapabilities(canonical);
 	const nonce = randomBytes(16).toString('hex');
-	const { output } = await runProjectEntry(canonical, target, ['capabilities', '--ide-protocol', '2', '--nonce', nonce], 5000, 'HARNESS_HANDSHAKE');
+	const { output } = await runProjectEntry(canonical, target, ['capabilities', '--ide-protocol', '2', '--nonce', nonce], PROJECT_ENTRY_TIMEOUT_MS, 'HARNESS_HANDSHAKE');
 	if (!trusted()) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
 	let parsed: unknown;
 	try { parsed = JSON.parse(output); } catch { throw Error('HARNESS_HANDSHAKE_INVALID'); }
@@ -175,6 +175,12 @@ export async function probeProjectHandshake(root: string, trusted: () => boolean
 	return { protocol: 2, reported: result.capabilities as Capability[] };
 }
 
+/**
+ * Deadline for every call into a project Harness entrypoint. Project engines may
+ * verify their own runtime before answering (armotusitio2.0 hashes its managed
+ * Python: ~11 s on a cold disk), so a short probe deadline fails on first use.
+ */
+export const PROJECT_ENTRY_TIMEOUT_MS = 30_000;
 const MAX_ENTRY_OUTPUT_BYTES = 16 * 1024;
 /** SHA-256 of a regular, canonical, non-linked project entrypoint (max 16 MiB). */
 export async function entryDigest(entry: string, unsafe: string): Promise<string> {

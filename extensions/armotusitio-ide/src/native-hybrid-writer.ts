@@ -14,7 +14,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { inspectHarnessAuthority } from './native-authority.ts';
-import { entryDigest, probeProjectHandshake, ProjectEngineError, readProjectCapabilities, runProjectEntry } from './native-engine-contract.ts';
+import { entryDigest, probeProjectHandshake, PROJECT_ENTRY_TIMEOUT_MS, ProjectEngineError, readProjectCapabilities, runProjectEntry } from './native-engine-contract.ts';
 import { queryProjectEngineStatus, type ProjectEngineObservation } from './native-engine-interop.ts';
 import { readProjectGateCatalog } from './native-project-gates.ts';
 import type { SharedExecutionFence } from './native-shared-fence.ts';
@@ -36,8 +36,6 @@ export interface WriterLease {
 	release(): Promise<WriterLeaseEvidence>;
 }
 
-const LEASE_TIMEOUT_MS = 15_000;
-const LEASE_QUERY_TIMEOUT_MS = 10_000;
 const LEASE_ID = /^[a-f0-9]{32}$/;
 
 function parseEcho(raw: string, nonce: string, action: 'lease' | 'release', epoch: number, leaseId?: string): { leaseId: string } {
@@ -77,7 +75,7 @@ export interface EngineLease { state: EngineLeaseState; /** Local time the engin
 
 /** `ide-lease` is the engine's operator command: it reports (or, with `clear`, removes) this clone's lease. */
 async function leaseOperator(canonical: string, entry: string, args: string[]): Promise<Record<string, unknown>> {
-	const { output } = await runProjectEntry(canonical, entry, ['ide-lease', ...args], LEASE_QUERY_TIMEOUT_MS, 'HARNESS_HYBRID_WRITER');
+	const { output } = await runProjectEntry(canonical, entry, ['ide-lease', ...args], PROJECT_ENTRY_TIMEOUT_MS, 'HARNESS_HYBRID_WRITER');
 	let value: unknown;
 	try { value = JSON.parse(output); } catch { throw Error('HARNESS_HYBRID_WRITER_RESPONSE_INVALID'); }
 	if (!value || typeof value !== 'object' || Array.isArray(value) || typeof Reflect.get(value, 'state') !== 'string') { throw Error('HARNESS_HYBRID_WRITER_RESPONSE_INVALID'); }
@@ -123,7 +121,7 @@ export async function acquireWriterLease(
 	const tasksBefore = quiescent(await queryProjectEngineStatus(canonical, true, trusted));
 	const nonce = randomBytes(16).toString('hex');
 	await fence.assertCurrent();
-	const { output, cancelled } = await runProjectEntry(canonical, entry, ['ide-writer-lease', '--ide-protocol', '2', '--nonce', nonce, '--fence-epoch', String(fence.epoch)], LEASE_TIMEOUT_MS, 'HARNESS_HYBRID_WRITER', signal);
+	const { output, cancelled } = await runProjectEntry(canonical, entry, ['ide-writer-lease', '--ide-protocol', '2', '--nonce', nonce, '--fence-epoch', String(fence.epoch)], PROJECT_ENTRY_TIMEOUT_MS, 'HARNESS_HYBRID_WRITER', signal);
 	if (cancelled) { throw Error('HARNESS_CANCELLED_BEFORE_START'); }
 	const { leaseId } = parseEcho(output, nonce, 'lease', fence.epoch);
 
@@ -151,7 +149,7 @@ export async function acquireWriterLease(
 			const releaseNonce = randomBytes(16).toString('hex');
 			let leaseLost = false;
 			try {
-				const result = await runProjectEntry(canonical, entry, ['ide-writer-release', '--ide-protocol', '2', '--nonce', releaseNonce, '--lease-id', leaseId, '--fence-epoch', String(fence.epoch)], LEASE_TIMEOUT_MS, 'HARNESS_HYBRID_WRITER');
+				const result = await runProjectEntry(canonical, entry, ['ide-writer-release', '--ide-protocol', '2', '--nonce', releaseNonce, '--lease-id', leaseId, '--fence-epoch', String(fence.epoch)], PROJECT_ENTRY_TIMEOUT_MS, 'HARNESS_HYBRID_WRITER');
 				parseEcho(result.output, releaseNonce, 'release', fence.epoch, leaseId);
 			} catch (error) {
 				// The engine refuses to release a lease it no longer has (it outlived its time-to-live, or the engine removed it when a command
