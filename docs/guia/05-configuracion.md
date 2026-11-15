@@ -9,6 +9,8 @@ Abrí los ajustes con `Ctrl+,` y buscá `atsHarness`. Los ajustes de IA y permis
 | Ajuste | Valor predeterminado | Para qué sirve |
 |---|---|---|
 | `atsHarness.chatMode` | `act` | `act` (Actuar) o `ask` (Preguntar). |
+| `atsHarness.actRouting` | `auto` | En Actuar, `auto` responde las preguntas sin editar, ejecuta directo los cambios simples, usa el motor de objetivos para pedidos con varias partes y propone un plan para lo riesgoso. `direct` manda todo al agente, como antes. |
+| `atsHarness.verifyE2e` | `false` | Suma el script E2E del proyecto a las verificaciones cuando su runner ya está instalado en `node_modules`. |
 | `atsHarness.agentTransport` | `structured` | `native` mantiene una sesión persistente del proveedor; `auto` la usa cuando la versión instalada es compatible. |
 | `atsHarness.permissionsPreset` | `dev` | Perfil base de permisos: `readonly`, `dev` o `trusted`. |
 | `atsHarness.claudeModel` / `atsHarness.codexModel` | vacío | Modelo de cada proveedor. Vacío usa el predeterminado del CLI. |
