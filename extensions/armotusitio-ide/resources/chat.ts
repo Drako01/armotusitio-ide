@@ -206,7 +206,9 @@ function shell(): void {
 	// Opened from the menu: the host answers with a read-only listing; nothing here writes files.
 	const checkpoints = el('section', 'goals checkpoints'); checkpoints.id = 'checkpoints'; checkpoints.setAttribute('aria-labelledby', 'checkpoints-title'); checkpoints.hidden = true;
 	checkpoints.addEventListener('keydown', event => { if (event.key === 'Escape') { event.stopPropagation(); closeCheckpoints(); } });
-	app.append(header, details, menu, banner, log, approvals, goals, checkpoints, activity, announcer, form);
+	// Requests kept after a failure or an interruption: they never run by themselves, the user decides (JUN-011).
+	const suspended = el('section', 'goals suspended'); suspended.id = 'suspended'; suspended.setAttribute('aria-label', L.suspendedHint); suspended.hidden = true;
+	app.append(header, details, menu, banner, log, approvals, goals, suspended, checkpoints, activity, announcer, form);
 	drawStagedFiles();
 }
 // Registered once: `shell()` runs again whenever the host re-sends labels.
@@ -543,16 +545,37 @@ function stepList(steps: any[]): HTMLElement {
 	}
 	return list;
 }
+/** "Ver evidencia": what the IDE executed, with command, exit code and source; text only, never markup. */
+function evidenceList(evidence: any[]): HTMLElement {
+	const box = el('details', 'run-files');
+	box.append(el('summary', undefined, format(L.evidence, String(evidence.length))));
+	const list = el('ul', 'commands');
+	for (const entry of evidence) {
+		const item = el('li');
+		item.append(el('code', undefined, entry.command || entry.gate), el('span', 'muted', ' ' + entry.gate + ' \u00b7 ' + (L.evidenceStatus[entry.status] || entry.status) +
+			(typeof entry.exitCode === 'number' ? ' \u00b7 exit ' + entry.exitCode : '') + (entry.source === 'cache' ? ' \u00b7 ' + L.evidenceCache : '') + (entry.reason ? ' \u00b7 ' + entry.reason : '')));
+		list.append(item);
+	}
+	box.append(list);
+	return box;
+}
 function runSummary(run: any, messageId: string): HTMLElement {
 	const box = el('div', 'run-summary');
 	box.dataset.messageId = messageId;
 	const head = el('div', 'run-head');
 	const kind = run.outcome?.kind;
-	const badge = kind ? el('span', 'status-badge ' + kind, L.outcome[kind] || kind) : el('span', 'status-badge ' + run.status, L.run[run.status] || run.status);
-	head.append(badge, el('span', 'muted', (run.planVersion === 0 ? L.directRun : format(L.plan, String(run.planVersion))) + (run.continued ? ' \u00b7 ' + L.continuedRun : '') + ' \u00b7 ' + providerName(run.provider) + ' \u00b7 ' + L.duration + ' ' + duration(run.durationMs)));
+	// A completed run says whether the IDE verified it; runs stored before assurance existed keep the plain label.
+	const assurance = kind === 'completed' ? run.outcome.assurance : undefined;
+	const badge = assurance ? el('span', 'status-badge ' + (assurance === 'verified' ? 'completed' : 'partial'), L.assurance[assurance]) : kind ? el('span', 'status-badge ' + kind, L.outcome[kind] || kind) : el('span', 'status-badge ' + run.status, L.run[run.status] || run.status);
+	head.append(badge, el('span', 'muted', (run.planVersion === 0 ? L.directRun : format(L.plan, String(run.planVersion))) + (run.continued ? ' \u00b7 ' + L.continuedRun : '') + (run.repair ? ' \u00b7 ' + format(L.repairAttempt, String(run.repair.attempt), String(run.repair.max)) : '') + ' \u00b7 ' + providerName(run.provider) + ' \u00b7 ' + L.duration + ' ' + duration(run.durationMs)));
 	box.append(head);
-	const hint = outcomeHint(run.outcome);
+	const hint = assurance ? L.assuranceHint[assurance] : outcomeHint(run.outcome);
 	if (hint) { box.append(el('p', kind === 'failed' || kind === 'blocked' ? 'error-text' : 'muted', hint)); }
+	if (run.repairStop) {
+		const failures = run.repairStop.failures.map((item: any) => item.gate + ': ' + item.failure).join(', ');
+		box.append(el('p', 'error-text', format(L.repairStop[run.repairStop.reason] || run.repairStop.reason, failures)));
+	}
+	if (assurance && !(run.evidence ?? []).some((entry: any) => (entry.kind === 'e2e' || entry.kind === 'smoke') && entry.status === 'passed')) { box.append(el('p', 'muted', L.acceptanceUnproven)); }
 	box.append(el('div', 'run-files-slot'));
 	if (run.steps?.length) {
 		const summary = el('details', 'run-files');
@@ -573,6 +596,7 @@ function runSummary(run: any, messageId: string): HTMLElement {
 		box.append(gateList(run.verification.gates));
 		if (run.verification.error) { box.append(el('p', 'error-text', run.verification.error)); }
 	}
+	if (run.evidence?.length) { box.append(evidenceList(run.evidence)); }
 	box.append(el('div', 'actions run-actions'));
 	return box;
 }
@@ -707,7 +731,7 @@ function renderActivity(): void {
 	}
 	if (activity.kind === 'executing') {
 		const stages = el('ol', 'stages');
-		const order = ['preparing', 'agent', 'verifying'];
+		const order = activity.stage === 'repairing' ? ['preparing', 'agent', 'verifying', 'repairing'] : ['preparing', 'agent', 'verifying'];
 		const position = order.indexOf(activity.stage);
 		for (const [index, stage] of order.entries()) {
 			const item = el('li', 'stage ' + (index < position ? 'done' : index === position ? 'current' : 'pending'), L.stage[stage]);
@@ -783,8 +807,8 @@ function renderGoals(): void {
 	renderedGoals = key; box.textContent = ''; box.hidden = !goals.length;
 	for (const goal of goals) {
 		const card = el('div', 'approval goal'); card.setAttribute('role', 'group'); card.setAttribute('aria-labelledby', 'goal-title-' + goal.id);
-		const title = el('strong', 'approval-title', goal.project + ' · ' + goal.objective); title.id = 'goal-title-' + goal.id;
-		const status = el('p', 'muted approval-rule', (L.goalStatus[goal.status] ?? goal.status) + (goal.startedAt ? ' · ' + format(L.goalSince, new Date(goal.startedAt).toLocaleTimeString()) : ''));
+		const title = el('strong', 'approval-title', goal.project + ' \u00b7 ' + goal.objective); title.id = 'goal-title-' + goal.id;
+		const status = el('p', 'muted approval-rule', (L.goalStatus[goal.status] ?? goal.status) + (goal.startedAt ? ' \u00b7 ' + format(L.goalSince, new Date(goal.startedAt).toLocaleTimeString()) : ''));
 		card.append(title, status);
 		if (goal.questions?.length) {
 			const questions = el('ul', 'approval-detail'); questions.setAttribute('aria-label', L.goalQuestions);
@@ -798,6 +822,32 @@ function renderGoals(): void {
 			// A requested pause or stop cannot be undone from here; the buttons say so by staying disabled.
 			button.disabled = goal.status === 'stopping' || (control === 'pause' && goal.status === 'pausing');
 			button.addEventListener('click', () => { button.disabled = true; api.postMessage({ action: 'goal', id: goal.id, control }); });
+			actions.append(button);
+		}
+		card.append(actions); box.append(card);
+	}
+}
+let renderedSuspended = '';
+function renderSuspended(): void {
+	const box = document.getElementById('suspended');
+	if (!box) { return; }
+	const items: any[] = Array.isArray(state?.chat?.suspended) ? state.chat.suspended : [];
+	const key = items.map(item => item.id).join(',') + '|' + busy();
+	if (key === renderedSuspended) { return; }
+	renderedSuspended = key; box.textContent = ''; box.hidden = !items.length;
+	if (!items.length) { return; }
+	box.append(el('p', 'muted', format(L.suspended, String(items.length)) + ' \u00b7 ' + L.suspendedHint));
+	for (const item of items) {
+		const card = el('div', 'approval goal'); card.setAttribute('role', 'group'); card.setAttribute('aria-labelledby', 'suspended-' + item.id);
+		const title = el('strong', 'approval-title', item.text); title.id = 'suspended-' + item.id;
+		card.append(title, el('p', 'muted approval-rule', (L.suspendedReason[item.reason] ?? item.reason) + (item.attachments ? ' \u00b7 ' + L.suspendedAttachments : '')));
+		const actions = el('div', 'approval-actions');
+		for (const [action, label, style] of [['resumeSuspended', L.resumeSuspended, 'approve'], ['editSuspended', L.editSuspended, 'secondary'], ['discardSuspended', L.discardSuspended, 'secondary']] as const) {
+			const button = el('button', style, label) as HTMLButtonElement; button.type = 'button';
+			button.setAttribute('aria-label', label + ': ' + item.text.slice(0, 60));
+			// Resuming starts a turn, so it waits like Send does; editing and discarding never run anything.
+			button.disabled = action === 'resumeSuspended' && busy();
+			button.addEventListener('click', () => { button.disabled = true; api.postMessage({ action, id: item.id }); });
 			actions.append(button);
 		}
 		card.append(actions); box.append(card);
@@ -910,7 +960,7 @@ function renderComposer(): void {
 function render(): void {
 	const log = document.getElementById('log');
 	const pinned = log.scrollHeight - log.scrollTop - log.clientHeight < 120;
-	renderHeader(); renderThread(); renderEmpty(); renderApprovals(); renderGoals(); renderActivity(); renderComposer();
+	renderHeader(); renderThread(); renderEmpty(); renderApprovals(); renderGoals(); renderSuspended(); renderActivity(); renderComposer();
 	if (pinned) { log.scrollTop = log.scrollHeight; }
 }
 
