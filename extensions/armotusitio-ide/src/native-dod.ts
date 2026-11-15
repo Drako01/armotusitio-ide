@@ -4,14 +4,17 @@
  *--------------------------------------------------------------------------------------------*/
 /** Definition of Done (block Q): verifiable conditions proposed per project, evaluated point by point with evidence. */
 import type { Subproject } from './native-ecosystems.ts';
+import { gateKind } from './native-task-evidence.ts';
 
-export type DoneItemId = 'acceptance-tests' | 'build-lint' | 'suite-green' | 'changed-coverage' | 'review' | 'security' | 'migrations' | 'contracts' | 'no-duplication' | 'ui-e2e';
+export type DoneItemId = 'acceptance-tests' | 'build-lint' | 'suite-green' | 'stability' | 'changed-coverage' | 'review' | 'security' | 'migrations' | 'contracts' | 'no-duplication' | 'ui-e2e';
 export interface DoneItem { id: DoneItemId; title: string; mandatory: boolean; applies: boolean; reason?: string }
 export interface DoneEvidence {
 	/** Acceptance criteria and the test that proves each one. */
 	criteria?: Array<{ id: string; test?: string; passed?: boolean }>;
 	gates?: Array<{ id: string; status: string }>;
 	flakyTests?: string[];
+	/** Independent full-suite runs that passed on the same revision; never inferred from a single PASS. */
+	stableRuns?: number;
 	changedCoverage?: number;
 	coverageBefore?: number;
 	coverageAfter?: number;
@@ -34,8 +37,10 @@ export function proposeDefinitionOfDone(input: { subprojects: readonly Subprojec
 	const item = (id: DoneItemId, title: string, mandatory: boolean, applies = true, reason?: string): DoneItem => ({ id, title, mandatory, applies, ...(reason ? { reason } : {}) });
 	return [
 		item('acceptance-tests', 'Cada criterio de aceptaci\u00f3n tiene un test que lo verifica y pasa', true),
-		item('build-lint', 'Build, typecheck, lint y formato sin errores nuevos', true, input.subprojects.length > 0, input.subprojects.length ? undefined : 'No se detect\u00f3 ning\u00fan ecosistema con build'),
-		item('suite-green', 'Suite completa verde y tests nuevos estables en 3 corridas', true),
+		item('build-lint', 'Typecheck, lint, formato o build ejecutados por el IDE y sin errores', true, input.subprojects.length > 0, input.subprojects.length ? undefined : 'No se detect\u00f3 ning\u00fan ecosistema con build'),
+		item('suite-green', 'Suite completa verde: cada gate ejecutado y aprobado', true),
+		// Stability needs three independent runs; it is reported honestly instead of being inferred from one PASS (JUN-009).
+		item('stability', 'Tests nuevos estables en 3 corridas independientes', false),
 		item('changed-coverage', 'Cobertura del c\u00f3digo cambiado \u2265 ' + (input.minChangedCoverage ?? 80) + '% y la global no baja', true, !!tool, tool ? undefined : 'No hay herramienta de cobertura para este ecosistema (EC-93)'),
 		item('review', 'Revisi\u00f3n sin hallazgos bloqueantes abiertos', true),
 		item('security', 'Sin secretos en el diff y tests de autorizaci\u00f3n con casos negativos', true),
@@ -55,12 +60,18 @@ export function evaluateDefinitionOfDone(items: readonly DoneItem[], evidence: D
 		switch (item.id) {
 			case 'acceptance-tests': {
 				const criteria = evidence.criteria;
-				return decide(criteria && criteria.length ? criteria.every(criterion => criterion.test && criterion.passed) : undefined, (criteria ?? []).map(criterion => criterion.id + ' → ' + (criterion.test ?? 'sin test') + ' ' + (criterion.passed ? '✓' : '\u2717')).join('; '));
+				return decide(criteria && criteria.length ? criteria.every(criterion => criterion.test && criterion.passed) : undefined, (criteria ?? []).map(criterion => criterion.id + ' \u2192 ' + (criterion.test ?? 'sin test') + ' ' + (criterion.passed ? '\u2713' : '\u2717')).join('; '));
 			}
-			case 'build-lint': return decide(evidence.gates?.length ? evidence.gates.every(gate => gate.status === 'passed') : undefined, (evidence.gates ?? []).map(gate => gate.id + ': ' + gate.status).join(', '));
-			case 'suite-green': return decide(evidence.gates?.length ? evidence.gates.every(gate => gate.status === 'passed') && !evidence.flakyTests?.length : undefined, evidence.flakyTests?.length ? 'Inestables: ' + evidence.flakyTests.join(', ') : 'Sin tests inestables');
+			case 'build-lint': {
+				// Only gates that measure this condition count: a test gate alone proves neither types nor lint.
+				const static_ = (evidence.gates ?? []).filter(gate => ['typecheck', 'lint', 'format', 'build'].includes(gateKind(gate.id)));
+				return decide(static_.length ? static_.every(gate => gate.status === 'passed') : undefined, static_.map(gate => gate.id + ': ' + gate.status).join(', '));
+			}
+			case 'suite-green': return decide(evidence.gates?.length ? evidence.gates.every(gate => gate.status === 'passed') && !evidence.flakyTests?.length : undefined, evidence.flakyTests?.length ? 'Inestables: ' + evidence.flakyTests.join(', ') : (evidence.gates ?? []).map(gate => gate.id + ': ' + gate.status).join(', '));
+			case 'stability': return evidence.flakyTests?.length ? decide(false, 'Inestables: ' + evidence.flakyTests.join(', '))
+				: decide(evidence.stableRuns !== undefined && evidence.stableRuns >= 3 ? true : undefined, evidence.stableRuns + ' corridas independientes verdes');
 			case 'changed-coverage': return decide(evidence.changedCoverage === undefined ? undefined : evidence.changedCoverage >= minChangedCoverage && (evidence.coverageAfter ?? 0) >= (evidence.coverageBefore ?? 0),
-				evidence.changedCoverage + '% del c\u00f3digo cambiado; global ' + (evidence.coverageBefore ?? '?') + '% → ' + (evidence.coverageAfter ?? '?') + '%');
+				evidence.changedCoverage + '% del c\u00f3digo cambiado; global ' + (evidence.coverageBefore ?? '?') + '% \u2192 ' + (evidence.coverageAfter ?? '?') + '%');
 			case 'review': return decide(evidence.blockingFindings === undefined ? undefined : evidence.blockingFindings === 0, evidence.blockingFindings + ' hallazgos bloqueantes');
 			case 'security': return decide(evidence.secretsInDiff === undefined ? undefined : !evidence.secretsInDiff, evidence.secretsInDiff ? 'Hay secretos en el diff' : 'Sin secretos en el diff');
 			case 'migrations': return decide(evidence.migrationsForwardOnly, 'Migraciones hacia adelante');

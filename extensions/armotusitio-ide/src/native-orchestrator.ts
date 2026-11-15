@@ -39,7 +39,8 @@ export interface GoalPorts {
 }
 
 const MAX_AUTO_CONTINUES = 2;
-const MAX_CORRECTIONS = 2;
+/** Corrections per goal step and per chat task (JUN-002 reuses the same bound). */
+export const MAX_CORRECTIONS = 2;
 const REVIEW_EVERY = 3;
 const MIN_REVIEW_SCORE = 6;
 
@@ -139,7 +140,7 @@ export class GoalOrchestrator {
 			if (!answers) { return this.end('cancelled', 'user'); }
 			await this.record({ type: 'answer', at: this.at(), id, text: answers.join('\n') });
 			await this.record({ type: 'state', at: this.at(), status: 'running' });
-			spec = { ...spec, assumptions: [...spec.assumptions, ...spec.questions.map((question, index) => question + ' → ' + (answers[index] ?? ''))] };
+			spec = { ...spec, assumptions: [...spec.assumptions, ...spec.questions.map((question, index) => question + ' \u2192 ' + (answers[index] ?? ''))] };
 		}
 		const context = [charter.objective, spec ? 'Acceptance criteria:\n' + spec.criteria.map(criterion => criterion.id + ': ' + [criterion.given, criterion.when, criterion.then].filter(Boolean).join(' / ')).join('\n') : '', spec?.assumptions.length ? 'Assumptions:\n' + spec.assumptions.join('\n') : ''].filter(Boolean).join('\n\n');
 		// 2. Design: tasks with dependencies; a small request or a metric goal without a design runs as repeated batches.

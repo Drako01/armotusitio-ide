@@ -183,3 +183,19 @@ test('a project with nothing detectable has no verification plan', async () => {
 		assert.equal(detectedVerificationPlan(detected, () => ({ allowed: true, executable: 'x', cwd: '.', delegate: false })), undefined);
 	});
 });
+
+test('J-17/JUN-010: an E2E script becomes a gate only when opted in and its runner is installed locally, and runs last', async () => {
+	const scripts = pkg({ test: 'vitest run', 'test:e2e': 'playwright test' });
+	const policy = createCommandPolicy({ subprojects: [{ path: '.', ecosystem: 'node' }], delegate: false, extras: [] });
+	const decide = (command: string, args: readonly string[], cwd: string) => policy.decide(command, args, cwd);
+	await withProject({ 'package.json': scripts }, async root => {
+		// No runner in node_modules: the IDE never downloads one, so acceptance stays "not verified".
+		assert.deepEqual(summary(await detectProjectCommands(root)), ['test . npm run test']);
+	});
+	await withProject({ 'package.json': scripts, 'node_modules/.bin/playwright': '#!/bin/sh\n' }, async root => {
+		const detected = await detectProjectCommands(root);
+		assert.deepEqual(summary(detected), ['test . npm run test', 'e2e . npm run test:e2e']);
+		assert.deepEqual(detectedVerificationPlan(detected, decide)?.gates.map(gate => gate.id), ['test']);
+		assert.deepEqual(detectedVerificationPlan(detected, decide, { e2e: true })?.gates.map(gate => gate.id), ['test', 'e2e']);
+	});
+});

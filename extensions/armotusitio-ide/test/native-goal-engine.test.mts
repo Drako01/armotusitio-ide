@@ -60,10 +60,10 @@ test('the charter validator checks the real diff: scope globs, denied paths and 
 
 test('Definition of Done shows every point with evidence or a justified not-applicable, and missing evidence is pending', () => {
 	const items = proposeDefinitionOfDone({ subprojects: [{ path: '.', ecosystem: 'go' }], hasMigrations: false, hasApiContract: false, hasUi: false });
-	const passing = evaluateDefinitionOfDone(items, { criteria: [{ id: 'C1', test: 'TestC1', passed: true }], gates: [{ id: 'unit', status: 'passed' }], changedCoverage: 90, coverageBefore: 46, coverageAfter: 60, blockingFindings: 0, secretsInDiff: false, newDuplicates: 0 });
+	const passing = evaluateDefinitionOfDone(items, { criteria: [{ id: 'C1', test: 'TestC1', passed: true }], gates: [{ id: 'unit', status: 'passed' }, { id: 'typecheck', status: 'passed' }], changedCoverage: 90, coverageBefore: 46, coverageAfter: 60, blockingFindings: 0, secretsInDiff: false, newDuplicates: 0 });
 	const missing = evaluateDefinitionOfDone(items, { gates: [{ id: 'unit', status: 'passed' }] });
 	assert.deepEqual({ count: items.length, passing: passing.done, notApplicable: passing.results.filter(item => item.status === 'not-applicable').map(item => item.id), missing: missing.done, pending: missing.results.find(item => item.id === 'review')?.status },
-		{ count: 10, passing: true, notApplicable: ['migrations', 'contracts', 'ui-e2e'], missing: false, pending: 'pending' });
+		{ count: 11, passing: true, notApplicable: ['migrations', 'contracts', 'ui-e2e'], missing: false, pending: 'pending' });
 });
 
 test('role contracts: a design must be a DAG with one owner per file; parallel waves follow dependencies', () => {

@@ -17,7 +17,13 @@ export interface RunOutcome {
 	/** Provider session a continuation can resume. */
 	sessionId?: string;
 	diff: RunDiffSummary;
+	/**
+	 * Only for `completed`: `verified` when the IDE's verification gates ran and passed, `unverified` when none ran (JUN-003).
+	 * Absent in runs stored before it existed, which the renderer shows with the earlier wording.
+	 */
+	assurance?: RunAssurance;
 }
+export type RunAssurance = 'verified' | 'unverified';
 export interface RunBlock { reason: string; needs: RunNeed; detail?: string }
 
 const KINDS: readonly RunOutcomeKind[] = ['completed', 'partial', 'blocked', 'unchanged', 'failed'];
@@ -54,11 +60,13 @@ export function classifyRun(input: { agent: AgentOutcome; verification: 'passed'
 	if (agent.status !== 'passed') { return { ...base, kind: 'failed', reason: 'provider' }; }
 	if (verification === 'failed' || verification === 'timeout') { return { ...base, kind: 'failed', reason: 'verification' }; }
 	if (verification === 'cancelled') { return { ...base, kind: 'partial', reason: 'cancelled' }; }
-	return { ...base, kind: changed ? 'completed' : 'unchanged' };
+	// An applied edit is never "verified" because the agent passed: only gates the IDE ran and saw pass prove it.
+	return changed ? { ...base, kind: 'completed', assurance: verification === 'passed' ? 'verified' : 'unverified' } : { ...base, kind: 'unchanged' };
 }
 
 export function validRunOutcome(value: RunOutcome | undefined): boolean {
 	return value === undefined || (!!value && KINDS.includes(value.kind) && !!value.diff && validRunDiff(value.diff) &&
 		(value.reason === undefined || (typeof value.reason === 'string' && value.reason.length <= 500)) &&
-		(value.needs === undefined || NEEDS.includes(value.needs)) && (value.sessionId === undefined || validSessionId(value.sessionId)));
+		(value.needs === undefined || NEEDS.includes(value.needs)) && (value.sessionId === undefined || validSessionId(value.sessionId)) &&
+		(value.assurance === undefined || (value.kind === 'completed' && ['verified', 'unverified'].includes(value.assurance))));
 }
