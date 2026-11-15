@@ -47,6 +47,7 @@ import { agentContract, RUN_MINUTES } from './native-agent-contract.ts';
 import { codexSandbox } from './native-codex-sandbox.ts';
 import type { ChatStep } from './native-run-steps.ts';
 import { harnessErrorCode, promptBudget, type GateSummary } from './native-chat.ts';
+import { gateKind, type EvidenceEntry, type GateFailure } from './native-task-evidence.ts';
 import { proposeProjectConfig, loadProjectConfig, writeProjectConfig, generatedConfigDigest, removeGeneratedProjectConfig } from './native-project.ts';
 import { reviewAgentDraft, inspectAgentWorkspace, modelOption, effortOption, validModel, validEffort, MAX_AGENT_TURNS, type NativeProvider, type NativeEffort, type AgentRole, type AgentDraft } from './native-providers.ts';
 import { captureWorkingTree, diffWorkingTree, discardRunChanges, fingerprintFiles, type RunDiffSummary, type WorkingTreeSnapshot } from './native-run-diff.ts';
@@ -723,7 +724,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 		const detectedVerification = async (root: string): Promise<Plan | undefined> => {
 			const detected = await detectProjectCommands(root);
 			const policy = createCommandPolicy({ subprojects: detected.subprojects, delegate: false, extras: commandExtras() });
-			return detectedVerificationPlan(detected, (command, args, cwd) => policy.decide(command, args, cwd));
+			return detectedVerificationPlan(detected, (command, args, cwd) => policy.decide(command, args, cwd), { e2e: vscode.workspace.getConfiguration('atsHarness').get('verifyE2e', false) === true });
 		};
 		const verificationOf = async (root: string): Promise<Plan | undefined> => {
 			if ((await inspectHarnessAuthority(root)).engine !== 'ide-native') { return undefined; }
@@ -791,6 +792,11 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			fork: async (provider, conversationId, next) => nativeChat.fork(await rootOf(), provider, conversationId, next),
 			rememberApproval: async (rule, scope) => addUserRule(rule, 'allow', undefined, scope === 'project' ? await rootOf() : undefined),
 			preflight: async () => doctorFor(await rootOf(), true),
+			// Compound Act requests reuse the goal engine (JUN-001); `direct` keeps every Act request on the direct writer.
+			// Read live, so changing the setting applies to the next message without reloading the window.
+			get startGoal() {
+				return vscode.workspace.getConfiguration('atsHarness').get('actRouting', 'auto') === 'direct' ? undefined : (objective: string) => goalIntegration.startFromChat(folder, objective);
+			},
 			readQuota: async provider => provider === 'codex' ? readLatestCodexQuota() : undefined,
 			async discard(diff) {
 				const root = await rootOf();
@@ -824,6 +830,8 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 				let gates: GateSummary[] = verification?.gates.map(gate => ({ id: gate.id, status: 'pending' as const })) ?? [];
 				let verificationStatus: ChatImplementOutcome['verification']['status'] = 'skipped';
 				let verificationError: string | undefined;
+				let evidence: EvidenceEntry[] = [];
+				let failures: GateFailure[] = [];
 				const maxTurns = implementerMaxTurns();
 				if (!await servicePreflight(root)) { throw Error('HARNESS_CANCELLED_BEFORE_START'); }
 				// A native writer uses its session's own tool server; a structured run gets one for this run only.
@@ -881,6 +889,15 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 							const attempt = finished.attempts.at(-1);
 							gates = verification.gates.map(gate => ({ id: gate.id, status: attempt?.results.find(result => result.id === gate.id)?.status ?? 'cancelled' }));
 							verificationStatus = attempt?.status === 'passed' ? 'passed' : attempt?.status === 'cancelled' ? 'cancelled' : 'failed';
+							// The ledger records only what the engine executed (or reused from an identical earlier run); outputs stay in its log.
+							evidence = verification.gates.map(gate => {
+								const result = attempt?.results.find(item => item.id === gate.id);
+								const command = [gate.executable, ...gate.args].join(' ');
+								return result
+									? { gate: gate.id, kind: gateKind(gate.id), command, cwd: gate.cwd ?? '.', status: result.status, exitCode: result.exitCode, startedAt: result.startedAt, finishedAt: result.endedAt, source: result.reusedFrom ? 'cache' as const : 'ide-gate' as const, scope: verificationRevision }
+									: { gate: gate.id, kind: gateKind(gate.id), command, cwd: gate.cwd ?? '.', status: 'not-run' as const, source: 'ide-gate' as const, scope: verificationRevision, reason: 'stopped before this gate' };
+							});
+							failures = (attempt?.results ?? []).filter(result => result.status === 'failed').map(result => ({ id: result.id, exitCode: result.exitCode, output: devSecrets.redact(result.output) }));
 						} catch (error) {
 							// Keep the agent report: a verification that cannot run is reported as failed with its code.
 							verificationStatus = 'failed';
@@ -889,7 +906,9 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 						hooks.gates(gates);
 					}
 				}).finally(() => server?.dispose());
-				return { agent, diff, verification: { status: verificationStatus, gates, ...(verificationError ? { error: verificationError } : {}) } };
+				// No gate configured or detected: the ledger says so explicitly instead of staying silent (J-16).
+				if (!verification && agent.status === 'passed') { evidence = [{ gate: 'verification', kind: 'other', status: 'skipped', source: 'ide-gate', reason: 'no verification gates configured or detected for this project' }]; }
+				return { agent, diff, verification: { status: verificationStatus, gates, evidence, failures, ...(verificationError ? { error: verificationError } : {}) } };
 			}
 		};
 	};

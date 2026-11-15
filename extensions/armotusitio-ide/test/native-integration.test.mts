@@ -465,8 +465,12 @@ test('chat runtime converses read-only, then implements an approved plan and run
 		const result = await runtime.implement({ provider: 'codex', instruction: 'Implement the approved plan v1', plan, verificationRevision: context.verification.revision }, { ...hooks, stage: stage => stages.push(stage) }, new AbortController().signal);
 		const digest = (await import('node:crypto')).createHash('sha256').update(root).digest('hex');
 		const storage = path.join(path.dirname(root), 'private', 'native-harness', digest);
-		assert.deepEqual({ agent: result.agent.status, verification: result.verification, stages, held: (await inspectSharedExecutionFence(root, storage)).held, file: await fs.readFile(path.join(root, 'clients.txt'), 'utf8') },
-			{ agent: 'passed', verification: { status: 'passed', gates: [{ id: 'exists', status: 'passed' }] }, stages: ['agent', 'verifying'], held: false, file: 'crud' });
+		const { evidence, ...verification } = result.verification;
+		assert.deepEqual({ agent: result.agent.status, verification, stages, held: (await inspectSharedExecutionFence(root, storage)).held, file: await fs.readFile(path.join(root, 'clients.txt'), 'utf8') },
+			{ agent: 'passed', verification: { status: 'passed', gates: [{ id: 'exists', status: 'passed' }], failures: [] }, stages: ['agent', 'verifying'], held: false, file: 'crud' });
+		// The ledger records what the engine executed, with its command and exit code, never the agent's own claims (JUN-003).
+		assert.deepEqual(evidence?.map(entry => ({ gate: entry.gate, status: entry.status, exitCode: entry.exitCode, source: entry.source, command: entry.command?.startsWith('node -e'), timed: !!entry.startedAt && !!entry.finishedAt })),
+			[{ gate: 'exists', status: 'passed', exitCode: 0, source: 'ide-gate', command: true, timed: true }]);
 		// A changed verification plan invalidates the approval before any provider starts.
 		await assert.rejects(runtime.implement({ provider: 'codex', instruction: 'Implement the approved plan v1', plan, verificationRevision: 'f'.repeat(64) }, hooks, new AbortController().signal), /HARNESS_CHAT_VERIFICATION_CHANGED/);
 		// Project-owned Harness: conversation remains possible, writers are refused before launching the provider.

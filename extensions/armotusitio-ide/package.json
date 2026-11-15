@@ -291,6 +291,26 @@
 					"scope": "application",
 					"description": "Permite que el Chat Harness modifique proyectos con Harness propio solo mientras el motor del proyecto confirme un lease exclusivo de escritura (protocolo v2). Si el motor no lo declara, lo ignora o crea tareas durante la ejecucion, la escritura se rechaza o se informa como violacion. Desactivado por defecto."
 				},
+				"atsHarness.actRouting": {
+					"type": "string",
+					"enum": [
+						"auto",
+						"direct"
+					],
+					"enumDescriptions": [
+						"Actuar decide solo: una consulta se responde sin editar, un cambio simple va directo, un pedido con varias partes usa el motor de objetivos (una sola aprobacion de carta) y un pedido riesgoso (produccion, borrado de datos, despliegue) propone un plan para revisar.",
+						"Todo pedido de Actuar va directo al agente implementador, como antes. Los objetivos autonomos siguen disponibles con el comando."
+					],
+					"default": "auto",
+					"scope": "application",
+					"description": "Como enruta el Chat Harness los pedidos en modo Actuar. Las reglas son locales y no gastan llamadas al modelo; nunca cambian permisos."
+				},
+				"atsHarness.verifyE2e": {
+					"type": "boolean",
+					"default": false,
+					"scope": "application",
+					"description": "Agrega a las verificaciones automaticas el script E2E del proyecto (test:e2e o e2e) cuando el runner ya esta instalado localmente (por ejemplo Playwright en node_modules). Corre con la politica de comandos del IDE; el IDE no descarga navegadores ni usa tus perfiles. Sin runner, la entrega queda como funcional no verificado."
+				},
 				"atsHarness.detectProjectCommands": {
 					"type": "boolean",
 					"default": true,

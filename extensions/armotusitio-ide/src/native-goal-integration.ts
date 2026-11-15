@@ -86,7 +86,11 @@ export interface LiveGoalListing {
 	questions: string[];
 }
 
+/** Whether a goal started; the reason says why not, so the chat can keep the request instead of losing it. */
+export interface GoalLaunch { started: boolean; reason?: 'declined' | 'busy' | 'untrusted' | 'service' | 'error' }
 export interface GoalIntegration {
+	/** A compound chat request (JUN-001): same engine and charter card, without the advanced command questions. */
+	startFromChat(folder: Host, objective: string): Promise<GoalLaunch>;
 	running(): number;
 	list(): LiveGoalListing[];
 	/** Ask a running goal to pause or stop at its next safe point; `false` when the id is unknown. */
@@ -200,7 +204,7 @@ export function registerGoalIntegration(deps: GoalIntegrationDeps): GoalIntegrat
 		const working = (file: string): boolean => [...goals.values()].some(goal => !!goal.root && !!goal.files?.has(relativeTo(goal.root, file)));
 		context.subscriptions.push(decorationsChanged, vscode.window.registerFileDecorationProvider({
 			onDidChangeFileDecorations: decorationsChanged.event,
-			provideFileDecoration: (uri: Host) => working(uri.fsPath) ? { badge: '●', tooltip: t('El Harness est\u00e1 trabajando en este archivo') } : undefined
+			provideFileDecoration: (uri: Host) => working(uri.fsPath) ? { badge: '\u25cf', tooltip: t('El Harness est\u00e1 trabajando en este archivo') } : undefined
 		}));
 	}
 	const askGoal = async (goalId: string): Promise<void> => {
@@ -378,7 +382,7 @@ export function registerGoalIntegration(deps: GoalIntegrationDeps): GoalIntegrat
 			const decisionLog = new DecisionLog(metricsDirectory(root));
 			const active = await decisionLog.relevant();
 			const exportLabel = t('Exportar al repositorio (docs/adr)');
-			const picked = await vscode.window.showQuickPick([{ label: exportLabel, id: '' }, ...active.map(item => ({ label: item.title, description: item.source + ' · ' + item.at.slice(0, 10), detail: item.decision, id: item.id }))], { title: t('Decisiones vigentes de {0}', folder.name) });
+			const picked = await vscode.window.showQuickPick([{ label: exportLabel, id: '' }, ...active.map(item => ({ label: item.title, description: item.source + ' \u00b7 ' + item.at.slice(0, 10), detail: item.decision, id: item.id }))], { title: t('Decisiones vigentes de {0}', folder.name) });
 			if (!picked) { return; }
 			if (picked.label === exportLabel) { const written = await decisionLog.exportAdrs(path.join(root, 'docs', 'adr')); void vscode.window.showInformationMessage(t('{0} decisiones exportadas a docs/adr.', String(written.length))); return; }
 			const archive = t('Archivar');
@@ -399,10 +403,10 @@ export function registerGoalIntegration(deps: GoalIntegrationDeps): GoalIntegrat
 			charter.delivery === 'local-branch' ? t('Entrega: rama local con commits del orquestador; push y PR quedan para vos.') : t('Entrega: cambios en tu \u00e1rbol de trabajo.'),
 			...(charter.environment ? [t('Entorno ef\u00edmero: {0}, creado y destruido por el IDE.', charter.environment)] : []),
 			t('Estimaci\u00f3n: {0}\u2013{1} llamadas al proveedor ({2}).', String(estimate.low), String(estimate.high), estimate.basis === 'history' ? t('seg\u00fan tu historial') : t('valor inicial')),
-			...(quota.fits ? [] : [t('⚠ La estimaci\u00f3n supera el cupo disponible ({0} llamadas, reservando {1}% para tu trabajo manual). Divid\u00ed el objetivo o us\u00e1 el otro proveedor.', String(quota.available ?? 0), String(reserve))]),
+			...(quota.fits ? [] : [t('\u26a0 La estimaci\u00f3n supera el cupo disponible ({0} llamadas, reservando {1}% para tu trabajo manual). Divid\u00ed el objetivo o us\u00e1 el otro proveedor.', String(quota.available ?? 0), String(reserve))]),
 			...(card ? [t('Card {0}: {1} criterios; {2}.', card.key, String(card.criteria.length), card.canComment ? t('se comentan los hitos') : t('modo lectura'))] : []),
-			...(repositories.length > 1 ? [t('Repositorios en orden: {0}.', repositories.join(' → '))] : []),
-			...problems.map(check => '⚠ ' + check.title + ': ' + check.detail + (check.action ? ' ' + check.action : ''))
+			...(repositories.length > 1 ? [t('Repositorios en orden: {0}.', repositories.join(' \u2192 '))] : []),
+			...problems.map(check => '\u26a0 ' + check.title + ': ' + check.detail + (check.action ? ' ' + check.action : ''))
 		].join('\n');
 	};
 	/** Several repositories (T): integrated in order, each with its own branch; a stop in one part stops the rest. */
@@ -428,6 +432,45 @@ export function registerGoalIntegration(deps: GoalIntegrationDeps): GoalIntegrat
 		controller.quotaDescription = remaining === undefined ? t('Cupo: sin l\u00edmite local configurado') : t('Cupo de {0}: {1} llamadas restantes de {2}', provider, String(remaining), String(cap));
 		return { estimate, reserve, quota: quotaCheck(estimate, remaining, cap > 0 ? cap : undefined, reserve) };
 	};
+	/**
+	 * Shared goal launcher. `quick` (from the chat, JUN-008) infers what is safe to infer: this folder only, the recommended
+	 * delivery and no ephemeral environment. The charter card, the doctor, the quota estimate and the service preflight still run.
+	 */
+	const launchGoal = async (folder: Host, objective: string, quick: boolean): Promise<GoalLaunch> => {
+		const folders = vscode.workspace.workspaceFolders || [];
+		const root = await fs.realpath(folder.uri.fsPath);
+		// A card key in the instruction brings the card's description and criteria (U); without MCP it runs as plain text.
+		const key = cardKeyOf(objective);
+		const card = key && controller.mcp?.enabled?.() ? await bestEffort(readCard(cardClient(), key), 'read card ' + key) : undefined;
+		const goalObjective = card ? cardObjective(objective, card) : objective;
+		const others = folders.filter((item: Host) => item.uri.toString() !== folder.uri.toString());
+		const extra = quick ? [] : others.length ? await vscode.window.showQuickPick(others.map((item: Host) => ({ label: item.name, folder: item })), { canPickMany: true, title: t('\u00bfEl objetivo cruza otros repositorios? Eleg\u00ed en orden de integraci\u00f3n (vac\u00edo: s\u00f3lo {0})', folder.name) }) : [];
+		if (extra === undefined) { return { started: false, reason: 'declined' }; }
+		const inferred = inferGoalOptions(objective, await detectEcosystems(root));
+		const branch = t('Rama local harness/\u2026 (recomendado)'), tree = t('Cambios en mi \u00e1rbol de trabajo');
+		const git = await pathExists(path.join(root, '.git'));
+		// From the chat the recommended delivery is inferred: a local branch keeps the user's uncommitted work untouched.
+		const deliveryChoice = quick ? (git ? branch : tree) : git ? await vscode.window.showQuickPick([branch, tree], { title: t('\u00bfC\u00f3mo quer\u00e9s recibir el trabajo?') }) : tree;
+		if (!deliveryChoice) { return { started: false, reason: 'declined' }; }
+		const provider: NativeProvider = vscode.workspace.getConfiguration('atsHarness').get('goalProvider', 'claude') === 'codex' ? 'codex' : 'claude';
+		const templates = await bestEffort(deps.environmentTemplates(root), 'read environment templates') ?? [];
+		const none = t('Sin entorno ef\u00edmero');
+		const environmentChoice = !quick && templates.length ? await vscode.window.showQuickPick([none, ...templates.map(item => item.name)], { title: t('\u00bfEl objetivo necesita un entorno ef\u00edmero?') }) : none;
+		if (!environmentChoice) { return { started: false, reason: 'declined' }; }
+		const delivery = deliveryChoice === branch || extra.length ? 'local-branch' as const : 'working-tree' as const;
+		const charter: GoalCharter = { ...defaultCharter(goalObjective, provider, provider === 'claude' ? 'codex' : 'claude', { ...inferred, delivery }), ...(environmentChoice !== none ? { environment: environmentChoice } : {}) };
+		const { estimate, reserve, quota } = await estimateGoal(folder, root, provider, charter, 1 + extra.length);
+		// The full doctor runs before approval, so an environment problem shows now and not halfway through (X).
+		const problems = (await bestEffort(deps.doctorFor(root), 'machine doctor') ?? []).filter(check => check.status === 'problem' || (charter.environment && check.id === 'docker' && check.status !== 'ok'));
+		const repositories = [folder.name, ...extra.map((item: Host) => item.label)];
+		const approve = t('Aprobar carta');
+		const detail = charterDetail({ objective, charter, inferred, estimate, quota, reserve, card, repositories, problems });
+		if (await vscode.window.showWarningMessage(t('\u00bfAprob\u00e1s esta carta?'), { modal: true, detail }, approve) !== approve) { return { started: false, reason: 'declined' }; }
+		if (!await deps.servicePreflight(root)) { return { started: false, reason: 'service' }; }
+		if (extra.length) { void runMultiRepo([folder, ...extra.map((item: Host) => item.folder)], charter, objective, goalObjective, card); }
+		else { void runGoal(folder, charter, card ? { card } : {}); }
+		return { started: true };
+	};
 	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.goal', async (requested?: string, objectiveArgument?: string) => {
 		try {
 			if (!deps.ensureTrust()) { void vscode.window.showWarningMessage(t('Marc\u00e1 el workspace como confiable para iniciar un objetivo.')); return; }
@@ -436,38 +479,16 @@ export function registerGoalIntegration(deps: GoalIntegrationDeps): GoalIntegrat
 			if (!folder) { return; }
 			const objective = typeof objectiveArgument === 'string' && objectiveArgument.trim() ? objectiveArgument : await vscode.window.showInputBox({ title: t('Nuevo objetivo'), prompt: t('Una instrucci\u00f3n; el Harness trabaja solo hasta terminarla y s\u00f3lo pregunta lo indispensable.'), ignoreFocusOut: true });
 			if (!objective?.trim()) { return; }
-			const root = await fs.realpath(folder.uri.fsPath);
-			// A card key in the instruction brings the card's description and criteria (U); without MCP it runs as plain text.
-			const key = cardKeyOf(objective);
-			const card = key && controller.mcp?.enabled?.() ? await bestEffort(readCard(cardClient(), key), 'read card ' + key) : undefined;
-			const goalObjective = card ? cardObjective(objective, card) : objective;
-			const others = folders.filter((item: Host) => item.uri.toString() !== folder.uri.toString());
-			const extra = others.length ? await vscode.window.showQuickPick(others.map((item: Host) => ({ label: item.name, folder: item })), { canPickMany: true, title: t('\u00bfEl objetivo cruza otros repositorios? Eleg\u00ed en orden de integraci\u00f3n (vac\u00edo: s\u00f3lo {0})', folder.name) }) : [];
-			if (extra === undefined) { return; }
-			const inferred = inferGoalOptions(objective, await detectEcosystems(root));
-			const branch = t('Rama local harness/… (recomendado)'), tree = t('Cambios en mi \u00e1rbol de trabajo');
-			const deliveryChoice = await pathExists(path.join(root, '.git')) ? await vscode.window.showQuickPick([branch, tree], { title: t('\u00bfC\u00f3mo quer\u00e9s recibir el trabajo?') }) : tree;
-			if (!deliveryChoice) { return; }
-			const provider: NativeProvider = vscode.workspace.getConfiguration('atsHarness').get('goalProvider', 'claude') === 'codex' ? 'codex' : 'claude';
-			const templates = await bestEffort(deps.environmentTemplates(root), 'read environment templates') ?? [];
-			const none = t('Sin entorno ef\u00edmero');
-			const environmentChoice = templates.length ? await vscode.window.showQuickPick([none, ...templates.map(item => item.name)], { title: t('\u00bfEl objetivo necesita un entorno ef\u00edmero?') }) : none;
-			if (!environmentChoice) { return; }
-			const delivery = deliveryChoice === branch || extra.length ? 'local-branch' as const : 'working-tree' as const;
-			const charter: GoalCharter = { ...defaultCharter(goalObjective, provider, provider === 'claude' ? 'codex' : 'claude', { ...inferred, delivery }), ...(environmentChoice !== none ? { environment: environmentChoice } : {}) };
-			const { estimate, reserve, quota } = await estimateGoal(folder, root, provider, charter, 1 + extra.length);
-			// The full doctor runs before approval, so an environment problem shows now and not halfway through (X).
-			const problems = (await bestEffort(deps.doctorFor(root), 'machine doctor') ?? []).filter(check => check.status === 'problem' || (charter.environment && check.id === 'docker' && check.status !== 'ok'));
-			const repositories = [folder.name, ...extra.map((item: Host) => item.label)];
-			const approve = t('Aprobar carta');
-			const detail = charterDetail({ objective, charter, inferred, estimate, quota, reserve, card, repositories, problems });
-			if (await vscode.window.showWarningMessage(t('\u00bfAprob\u00e1s esta carta?'), { modal: true, detail }, approve) !== approve) { return; }
-			if (!await deps.servicePreflight(root)) { return; }
-			if (extra.length) { void runMultiRepo([folder, ...extra.map((item: Host) => item.folder)], charter, objective, goalObjective, card); }
-			else { void runGoal(folder, charter, card ? { card } : {}); }
+			await launchGoal(folder, objective, false);
 		} catch (error) { showError(error); }
 	}));
 	return {
+		startFromChat: async (folder, objective) => {
+			if (!deps.ensureTrust()) { return { started: false, reason: 'untrusted' }; }
+			// A goal already running in this project is the writer: a second one would compete for the same lease.
+			if ([...goals.values()].some(goal => goal.folder.uri.toString() === folder.uri.toString())) { return { started: false, reason: 'busy' }; }
+			try { return await launchGoal(folder, objective, true); } catch (error) { showError(error); return { started: false, reason: 'error' }; }
+		},
 		running: () => goals.size,
 		list: () => [...goals.entries()].map(([id, goal]) => ({
 			id, project: String(goal.folder.name ?? ''), objective: goal.objective, startedAt: goal.startedAt, questions: goal.questions ?? [],
