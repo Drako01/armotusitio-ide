@@ -11,6 +11,52 @@ Elegí el modo en la cabecera del chat o con `/modo`:
 - **Actuar** (predeterminado): la IA cambia el código directamente y corre los comandos permitidos.
 - **Preguntar**: la IA solo conversa y te propone un plan. No ejecuta nada hasta que lo aprobás.
 
+## Un prompt → resultado verificado
+
+En **Actuar** escribís un solo pedido y el IDE decide cómo resolverlo con reglas locales (no gasta una llamada al modelo para clasificarlo y nunca cambia tus permisos):
+
+| Si el pedido es… | El IDE hace |
+|---|---|
+| Una pregunta («¿qué hace esta función?») | Responde sin modificar archivos. |
+| Un cambio puntual («renombrá `total` a `subtotal`») | Lo implementa directo, corre las verificaciones y te entrega el resultado. |
+| Algo con varias partes («una API en Go con su frontend en Next.js, login y base de datos») | Lo ejecuta como **objetivo autónomo** por etapas: análisis, diseño, implementación, revisión y verificación. Te pide **una sola aprobación** con el alcance, el presupuesto y los permisos previstos; el resto lo infiere del proyecto (este repositorio, entrega en una rama local, sin entorno efímero). |
+| Algo riesgoso (producción, despliegue, borrar datos, reescribir historial) | No cambia nada: te propone un plan para revisar y, si falta una decisión importante, te hace una sola pregunta concreta. |
+
+El chat muestra en una línea por qué tomó ese camino. Si preferís que todo pedido de Actuar vaya directo al agente, como antes, configurá `atsHarness.actRouting` en `direct`. El comando **Objetivo autónomo** y `/objetivos` siguen disponibles para casos avanzados (varios repositorios, entorno efímero, elegir la entrega).
+
+### Corrección automática
+
+Después de cada cambio corren las verificaciones del proyecto (test, lint, typecheck y las que configures). Si alguna falla por un error del código, el IDE le pasa al agente **solo los errores observados** y le pide corregirlos, sin otro mensaje tuyo. Mientras tanto ves «Detecté errores y los estoy corrigiendo».
+
+- Se corrige como máximo **2 veces** por pedido; después se detiene y te explica qué quedó.
+- Si el mismo error se repite sin progreso, o la corrección no cambia ningún archivo, se detiene antes.
+- Si la causa está fuera del código (un servicio caído, una dependencia o herramienta que falta, un permiso denegado, el disco lleno) **no lo intenta como código**: te dice qué falta.
+- El agente tiene prohibido saltear o borrar tests, desactivar reglas de lint o tipos, bajar la cobertura o editar las verificaciones para que pasen.
+- Los permisos que diste «para esta tarea» siguen valiendo durante las correcciones; una denegación nunca se convierte en permiso.
+
+### Cómo leer el resultado
+
+Cada ejecución separa tres cosas: si el cambio **se aplicó**, si las verificaciones **lo validaron** y si hay **aceptación funcional** (una prueba E2E o smoke que recorrió la app).
+
+| Estado | Qué significa |
+|---|---|
+| **Verificada** | Los cambios se aplicaron y las verificaciones que corrió el IDE pasaron. |
+| **Aplicada sin verificar** | Los cambios se aplicaron, pero no corrió ninguna verificación (el proyecto no tiene test, lint ni typecheck detectables). No está comprobado que funcione. |
+| **Fallida** | Una verificación falló y quedó sin corregir; la tarjeta dice por qué se detuvo la corrección. |
+| **Bloqueada** | El agente necesita algo que no puede resolver solo (un servicio, una credencial, una decisión). |
+| **Parcial** | Se cortó por tiempo, turnos o porque lo detuviste; podés continuar sin volver a aprobar. |
+| **Sin cambios** | Terminó sin modificar archivos. |
+
+Debajo de una ejecución verificada, «Funcional no verificado» indica que ninguna prueba recorrió la app. **Ver evidencia** lista cada comando que corrió el IDE con su código de salida; un resultado omitido, cancelado o desconocido nunca cuenta como aprobado, y lo que diga el agente en su informe no cuenta como prueba.
+
+### Pruebas E2E locales
+
+Si el proyecto ya tiene un script `test:e2e` o `e2e` y su runner instalado en `node_modules` (Playwright o Cypress), activá `atsHarness.verifyE2e` para sumarlo a las verificaciones. Corre al final, con la política de comandos del IDE; el IDE no descarga navegadores ni usa tus perfiles o cookies. Sin runner, la entrega queda como «Funcional no verificado».
+
+### Pedidos en pausa
+
+Si una tarea falla, la cancelás, el proveedor no responde o el IDE se cierra, los mensajes que estaban en cola y el pedido interrumpido **no se pierden ni se ejecutan solos**: quedan en la sección **En pausa** con tres botones, **Retomar**, **Editar** y **Descartar**. Se guardan con la conversación y sobreviven a un reinicio. Al reabrir el IDE después de un corte, el chat te dice hasta dónde llegó la ejecución (antes de editar, editando o verificando) para que sepas si puede haber cambios parciales.
+
 ## Sesiones persistentes
 
 Con `atsHarness.agentTransport` en `native` o `auto`, el chat mantiene **una sesión viva del proveedor**:
@@ -18,7 +64,7 @@ Con `atsHarness.agentTransport` en `native` o `auto`, el chat mantiene **una ses
 - La conversación sigue entre mensajes y también **después de reiniciar el IDE**.
 - El texto llega en tiempo real y cada herramienta aparece en la línea de tiempo.
 - La IA te puede hacer preguntas con una tarjeta en el chat.
-- Si el IDE se cierra a mitad de un turno, ese turno se marca como perdido y **nunca se repite solo**.
+- Si el IDE se cierra a mitad de un turno, ese turno se marca como perdido y **nunca se repite solo**; tu pedido queda en **En pausa** para que decidas.
 
 Con `structured` (el valor predeterminado), cada mensaje lanza un proceso nuevo con el contexto resumido.
 
@@ -42,7 +88,7 @@ Las reglas permanentes viven en `~/.armotusitio/permissions.json` (tuyas) y `.ar
 
 Pegá, arrastrá o elegí con el botón **+** cualquier archivo: imágenes, PDF, texto, código, CSV o logs. Entran hasta 5 por mensaje, de hasta 10 MB cada uno y 20 MB en total. Se envían sin confirmación, en Preguntar o en Actuar, con Claude Code o con Codex.
 
-Cada adjunto se guarda en `.chat-attachments/` dentro del proyecto, una carpeta que git ignora localmente, y se borra a los 7 días. El agente recibe la ruta y lo abre con sus herramientas: Claude ve imágenes y PDF; Codex ve imágenes PNG y JPEG. Un binario que el agente no sabe leer, como un `.docx`, se adjunta igual, pero hace falta una herramienta del proyecto para convertirlo.
+Cada adjunto se guarda en `.chat-attachments/` dentro del proyecto, una carpeta que git ignora localmente, y se borra a los 7 días. El agente recibe la ruta y lo abre con sus herramientas: Claude ve imágenes y PDF; Codex ve imágenes PNG y JPEG. Un binario que el agente no sabe leer, como un `.docx`, se adjunta igual, pero el chat te avisa que la IA no puede leerlo tal como está y el agente tiene indicado no afirmar que lo analizó: exportalo a PDF o texto si querés que lo use.
 
 ## Comandos del chat
 

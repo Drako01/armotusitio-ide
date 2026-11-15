@@ -12,7 +12,7 @@ import { detectEcosystems, type Subproject } from './native-ecosystems.ts';
 import { validateNativePlan, type Plan } from './native-harness.ts';
 import type { PolicyDecision } from './native-command-policy.ts';
 
-export type CommandKind = 'test' | 'lint' | 'typecheck' | 'build' | 'format';
+export type CommandKind = 'test' | 'lint' | 'typecheck' | 'build' | 'format' | 'e2e';
 export interface DetectedCommand { id: CommandKind; command: string; args: string[]; cwd: string; source: string }
 export interface DetectedProject {
 	manager?: string;
@@ -32,8 +32,10 @@ const SHELL_COMPOUND = /[;&|`<>]|\$\(/;
 const RISKY = /\b(install|publish|unpublish|deploy|release|login|curl|wget|rm|sudo|docker|kubectl|terraform|git\s+(push|commit))\b/i;
 const NODE_SCRIPTS: Record<CommandKind, readonly string[]> = {
 	test: ['test', 'test:unit', 'unit'], lint: ['lint'], typecheck: ['typecheck', 'type-check', 'check-types', 'tsc', 'check'],
-	build: ['build'], format: ['format:check', 'format-check', 'check-format', 'prettier:check']
+	build: ['build'], format: ['format:check', 'format-check', 'check-format', 'prettier:check'], e2e: ['test:e2e', 'e2e']
 };
+/** Browser runners an E2E script may use; the gate is offered only when one is already installed in the project (JUN-010). */
+const E2E_RUNNERS = ['playwright', 'cypress'];
 const COMPOSER_SCRIPTS: Partial<Record<CommandKind, readonly string[]>> = {
 	test: ['test', 'tests', 'phpunit'], lint: ['lint', 'phpcs', 'cs', 'cs-check', 'cs:check'], typecheck: ['phpstan', 'stan', 'analyse', 'analyze', 'psalm']
 };
@@ -85,11 +87,26 @@ async function nodeCommands(root: string, project: Subproject, workspaceRootKind
 	const manager = project.packageManager ?? 'npm';
 	const isRoot = project.path === '.';
 	const workspace = isRoot && (manifest?.workspaces !== undefined || (await readProjectText(root, 'pnpm-workspace.yaml')) !== undefined);
+	// An E2E script counts only when its runner is installed locally: the IDE never downloads a runner or a browser.
+	const runner = await localE2eRunner(root, project.path);
 	const commands = pickScripts(scripts, NODE_SCRIPTS)
 		// A workspace root script already covers its packages, so they do not repeat that kind.
-		.filter(([kind]) => isRoot || !workspaceRootKinds.has(kind))
+		.filter(([kind]) => (isRoot || !workspaceRootKinds.has(kind)) && (kind !== 'e2e' || runner))
 		.map(([kind, name]): DetectedCommand => ({ id: kind, command: manager, args: ['run', name], cwd: project.path, source: file + '#scripts.' + name }));
 	return { commands, workspace };
+}
+
+/** A runner binary inside the project's (or the root's) node_modules/.bin, as a regular file; links and folders do not count. */
+async function localE2eRunner(root: string, folder: string): Promise<string | undefined> {
+	for (const base of new Set([folder, '.'])) {
+		for (const runner of E2E_RUNNERS) {
+			for (const name of [runner, runner + '.cmd']) {
+				const stat = await fs.lstat(path.join(root, base, 'node_modules', '.bin', name)).catch(() => undefined);
+				if (stat?.isFile()) { return runner; }
+			}
+		}
+	}
+	return undefined;
 }
 
 async function pythonCommands(root: string, project: Subproject): Promise<DetectedCommand[]> {
@@ -194,12 +211,14 @@ export async function detectProjectCommands(root: string): Promise<DetectedProje
  * slowest command, it writes artifacts into the tree the writer's diff is measured on, and a test or typecheck already compiles
  * what matters. Every command must also be allowed by the command policy, which is the same one the agent itself runs under.
  */
-export function detectedVerificationPlan(detected: DetectedProject, decide: (command: string, args: readonly string[], cwd: string) => PolicyDecision): Plan | undefined {
+export function detectedVerificationPlan(detected: DetectedProject, decide: (command: string, args: readonly string[], cwd: string) => PolicyDecision, options: { e2e?: boolean } = {}): Plan | undefined {
 	const gates: Plan['gates'] = [];
 	const seen = new Set<string>();
+	// E2E is opt-in (`atsHarness.verifyE2e`) and runs last: it is the slowest gate and proves acceptance, not compilation.
+	const kinds: readonly CommandKind[] = options.e2e ? [...GATE_KINDS, 'e2e'] : GATE_KINDS;
 	const candidates = detected.commands
-		.filter(command => GATE_KINDS.includes(command.id) && decide(command.command, command.args, command.cwd).allowed)
-		.sort((a, b) => GATE_KINDS.indexOf(a.id) - GATE_KINDS.indexOf(b.id));
+		.filter(command => kinds.includes(command.id) && decide(command.command, command.args, command.cwd).allowed)
+		.sort((a, b) => kinds.indexOf(a.id) - kinds.indexOf(b.id));
 	for (const command of candidates) {
 		const slot = command.id + '@' + command.cwd;
 		if (seen.has(slot) || gates.length >= MAX_GATES) { continue; }

@@ -23,7 +23,7 @@ const { chatCommands, commandHelp, runSessionCommand } = require('./native-chat-
 const { resolveMentions, mentionNotice } = require('./native-chat-mentions.ts');
 const { safeChatDraft } = require('./native-chat-draft.ts');
 const { readChatImage } = require('./native-chat-images.ts');
-const { formatUploadSize, saveUploads, uploadsContext, MAX_UPLOADS, MAX_UPLOAD_BYTES, MAX_UPLOAD_TOTAL_BYTES } = require('./native-chat-uploads.ts');
+const { formatUploadSize, saveUploads, uploadSupport, uploadsContext, MAX_UPLOADS, MAX_UPLOAD_BYTES, MAX_UPLOAD_TOTAL_BYTES } = require('./native-chat-uploads.ts');
 const { chooseChatDocument } = require('./native-chat-attachments.ts');
 const { redactSecrets } = require('./native-redact.ts');
 const { captureTerminalOutput } = require('./native-terminal-capture.ts');
@@ -178,7 +178,7 @@ function labels(t: any) {
 		attachLimit: t('Hasta {0} archivos por mensaje, de hasta {1} MB cada uno y {2} MB en total.'), attachUntrusted: t('Confi\u00e1 en esta carpeta para adjuntar archivos.'),
 		maxUploads: MAX_UPLOADS, maxUploadBytes: MAX_UPLOAD_BYTES, maxUploadTotalBytes: MAX_UPLOAD_TOTAL_BYTES,
 		you: t('Vos'), notice: t('Harness'), thinking: t('{0} est\u00e1 pensando\u2026', '{0}'), executing: t('Ejecutando plan v{0} con {1}', '{0}', '{1}'),
-		stage: { preparing: t('Preparando ejecuci\u00f3n segura'), agent: t('Agente implementador trabajando'), verifying: t('Ejecutando verificaciones') },
+		stage: { preparing: t('Preparando ejecuci\u00f3n segura'), agent: t('Agente implementador trabajando'), verifying: t('Ejecutando verificaciones'), repairing: t('Detect\u00e9 errores y los estoy corrigiendo') },
 		observed: t('{0} KB de actividad', '{0}'), elapsed: t('Tiempo'),
 		plan: t('Plan v{0}', '{0}'), planSteps: t('Pasos'), planFiles: t('Archivos'), planRisks: t('Riesgos'), planSkills: t('Skills del proyecto'), planVerification: t('Verificaciones autom\u00e1ticas'), planNoVerification: t('Sin verificaciones configuradas. Pod\u00e9s configurarlas con \u00abConfigurar Harness nativo del proyecto\u00bb.'),
 		approve: t('Aprobar y ejecutar'), requestChanges: t('Pedir cambios'), requestPrefix: t('Cambios al plan: '), superseded: t('Reemplazado por una versi\u00f3n m\u00e1s nueva'), approveHint: t('Al aprobar, el agente modifica archivos del proyecto con permisos de escritura acotados y luego corren las verificaciones.'),
@@ -224,7 +224,7 @@ function labels(t: any) {
 		risk: { low: t('Riesgo bajo'), medium: t('Riesgo medio'), high: t('Riesgo alto: sale del proyecto o del sandbox, publica o no se deshace con git') },
 		questions: t('Preguntas del agente'), questionOther: t('Otra respuesta'), questionSend: t('Responder'), questionSkip: t('No responder'),
 		gate: { pending: t('Pendiente'), running: t('En curso'), passed: t('Pas\u00f3'), failed: t('Fall\u00f3'), cancelled: t('Cancelada') },
-		verification: t('Verificaciones'), verificationSkipped: t('Sin verificaciones configuradas'), duration: t('Duraci\u00f3n'), copy: t('Copiar'), copied: t('Copiado'),
+		verification: t('Verificaciones'), verificationSkipped: t('Sin verificaciones configuradas: los cambios no est\u00e1n comprobados. Configur\u00e1 test, lint o typecheck para que el IDE los verifique.'), duration: t('Duraci\u00f3n'), copy: t('Copiar'), copied: t('Copiado'),
 		copyMessage: t('Copiar respuesta'), partial: t('Respuesta en curso'), copyCode: t('Copiar c\u00f3digo'), activity: t('Actividad en curso'), idle: t('Sin actividad en curso'), cancelling: t('Deteniendo\u2026'),
 		setupCheck: t('Revisar mi entorno'),
 		expandChat: t('Expandir Chat'), sidebarChat: t('Abrir Chat Lateral'), sessions: t('Sesiones guardadas'), menu: t('M\u00e1s opciones'), newChat: t('Nueva conversaci\u00f3n'), openTasks: t('Abrir panel de tareas'), refreshProviders: t('Verificar proveedores'), commands: t('Ver comandos'),
@@ -235,7 +235,21 @@ function labels(t: any) {
 		steps: t('Pasos del agente'), stepsSummary: t('Pasos de la ejecuci\u00f3n ({0})', '{0}'),
 		stepKind: { read: t('Lee'), edit: t('Edita'), command: t('Comando'), search: t('Busca'), tool: t('Herramienta'), message: t('Mensaje') },
 		stepStatus: { running: t('en curso'), ok: t('listo'), error: t('fall\u00f3') },
-		queued: t('En cola ({0})', '{0}'), queueSend: t('Encolar'), unqueue: t('Quitar de la cola'), queueHint: t('Se env\u00eda cuando termine la tarea actual. Si se cancela o falla, la cola se descarta.'),
+		queued: t('En cola ({0})', '{0}'), queueSend: t('Encolar'), unqueue: t('Quitar de la cola'), queueHint: t('Se env\u00eda cuando termine la tarea actual. Si se cancela o falla, queda en pausa hasta que decidas.'),
+		suspended: t('En pausa ({0})', '{0}'), suspendedHint: t('Estos pedidos no se ejecutan solos: el estado del proyecto pudo cambiar. Retomalos, editalos o descartalos.'),
+		suspendedReason: { 'previous-failed': t('la tarea anterior fall\u00f3'), 'previous-cancelled': t('la tarea anterior se cancel\u00f3'), interrupted: t('el IDE se cerr\u00f3'), preflight: t('el objetivo no arranc\u00f3') },
+		suspendedAttachments: t('Adjunt\u00e1 de nuevo los archivos'), resumeSuspended: t('Retomar'), editSuspended: t('Editar'), discardSuspended: t('Descartar'),
+		assurance: { verified: t('Verificada'), unverified: t('Aplicada sin verificar') },
+		assuranceHint: { verified: t('Los cambios se aplicaron y las verificaciones del IDE pasaron.'), unverified: t('Los cambios se aplicaron, pero no corri\u00f3 ninguna verificaci\u00f3n: no est\u00e1 comprobado que funcione.') },
+		acceptanceUnproven: t('Funcional no verificado: ninguna prueba E2E o smoke recorri\u00f3 la app.'),
+		repairAttempt: t('Correcci\u00f3n autom\u00e1tica {0} de {1}', '{0}', '{1}'),
+		repairStop: {
+			'not-repairable': t('No lo correg\u00ed solo: la causa est\u00e1 fuera del c\u00f3digo ({0}). Resolvela y retom\u00e1.', '{0}'),
+			stalled: t('Cort\u00e9 las correcciones: el mismo error se repiti\u00f3 sin progreso ({0}).', '{0}'),
+			budget: t('Us\u00e9 las correcciones autom\u00e1ticas permitidas y quedan errores ({0}).', '{0}'),
+			'no-changes': t('La correcci\u00f3n no cambi\u00f3 ning\u00fan archivo; los errores siguen ({0}).', '{0}')
+		},
+		evidence: t('Ver evidencia ({0})', '{0}'), evidenceStatus: { passed: t('aprobado'), failed: t('fall\u00f3'), cancelled: t('cancelado'), skipped: t('omitido'), 'not-run': t('no corri\u00f3') }, evidenceCache: t('resultado reutilizado'),
 		viewChanges: t('Ver cambios'), revertFile: t('Revertir'), reverted: t('revertido'), stopHint: t('Detiene la tarea de la IA ahora mismo'),
 		commandList: chatCommands(t).map(({ name, usage, description }: any) => ({ name, usage: usage ?? '', description })),
 		commandsLabel: t('Comandos'), filesLabel: t('Archivos del proyecto')
@@ -653,7 +667,10 @@ function registerChat(context: any, controller: any, projects: any, mcp: any, vs
 					if (!vscode.workspace.isTrusted) { throw Error('HARNESS_UPLOAD_UNTRUSTED'); }
 					const uploads: import('./native-chat-uploads.ts').SavedUpload[] = await saveUploads(folder.uri.fsPath, message.files);
 					const images = uploads.flatMap(upload => upload.image ? [upload.image] : []);
-					const notice = t('Adjuntos: {0}.', uploads.map(upload => upload.name + ' (' + formatUploadSize(upload.bytes) + ')').join(', '));
+					// Each file says whether the agent can read it; a binary document is never presented as analyzed (JUN-012).
+					const unreadable = uploads.filter(upload => uploadSupport(upload) === 'unsupported').map(upload => upload.name);
+					const notice = t('Adjuntos: {0}.', uploads.map(upload => upload.name + ' (' + formatUploadSize(upload.bytes) + ')').join(', ')) +
+						(unreadable.length ? ' ' + t('La IA no puede leer {0} tal como est\u00e1 (formato binario): exportalo a PDF o texto si quer\u00e9s que lo analice.', unreadable.join(', ')) : '');
 					await sendTurn(text, { context: uploadsContext(uploads), notice, ...(images.length ? { images } : {}) });
 					return;
 				}
@@ -733,6 +750,16 @@ function registerChat(context: any, controller: any, projects: any, mcp: any, vs
 				if (await vscode.window.showWarningMessage(t('\u00bfRevertir {0} al contenido anterior a esta ejecuci\u00f3n? Si lo editaste despu\u00e9s, no se toca.', runFile.path), { modal: true }, confirm) === confirm) { await session.discardRun(message.messageId, [runFile.path]); }
 			}
 			if (action === 'unqueue' && typeof message.id === 'string' && message.id.length <= 64) { session.unqueue(message.id); }
+			// Suspended requests: only ids the session holds are honored; Edit hands the text back to the composer.
+			if (action === 'resumeSuspended' && typeof message.id === 'string' && message.id.length <= 64) { await session.resumeSuspended(message.id); }
+			if ((action === 'editSuspended' || action === 'discardSuspended') && typeof message.id === 'string' && message.id.length <= 64) {
+				const text = await session.dropSuspended(message.id);
+				if (action === 'editSuspended' && text !== undefined) {
+					const draft = safeChatDraft(text, MAX_USER_MESSAGE_CHARS);
+					drafts.set(folder.uri.toString(), draft);
+					post({ type: 'draft', project: folder.uri.toString(), text: draft }, source);
+				}
+			}
 			if (action === 'openHome') { await vscode.commands.executeCommand('atsIde.home'); }
 			if (action === 'cancel') { session.cancel(); }
 			if (action === 'provider' && ['codex', 'claude'].includes(message.provider)) { await session.selectProvider(message.provider); }

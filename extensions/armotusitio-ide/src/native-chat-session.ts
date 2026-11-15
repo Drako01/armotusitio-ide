@@ -15,20 +15,24 @@ import type { DoctorCheck } from './native-machine-doctor.ts';
 import type { NativeProvider } from './native-providers.ts';
 import type { ProviderUsage } from './native-provider-output.ts';
 import { liveQuota, mergeQuota, type ProviderQuota } from './native-quota.ts';
+import { processAlive } from './native-runtime.ts';
 import { redactSecrets } from './native-redact.ts';
 import { absorbMessages, compactionSplit } from './native-chat-memory.ts';
 import { DecisionLog, decisionsPrompt, type Decision } from './native-decisions.ts';
 import { classifyRun } from './native-run-outcome.ts';
+import { classifyGateFailure, failureSignature, REPAIRABLE, type ClassifiedFailure, type EvidenceEntry, type GateFailure } from './native-task-evidence.ts';
+import { routeTask, type TaskRouting } from './native-task-router.ts';
 import { hasRecoveryHint, recoveryHint } from './native-error-catalog.ts';
 import type { ActivityActionId, ActivityItem } from './native-activity-feed.ts';
 import type { RunDiffSummary, RunFileChange } from './native-run-diff.ts';
 import { summarizeSteps, upsertStep, type ChatStep } from './native-run-steps.ts';
 import {
-	buildContinuationInstruction, buildConversationDelta, buildConversationInstruction, buildDirectInstruction, buildImplementationInstruction, chatMessage, DIRECT_PLAN_VERSION, directPlan, extractChatPlan, harnessErrorCode, harnessErrorDetail, latestPlanMessage, MAX_USER_MESSAGE_CHARS, pendingAlive, promptBudget, samePlanContent,
-	type ChatConversation, type ChatMessage, type ChatMode, type ChatPlan, type ChatProjectContext, type ChatRunSummary, type ChatStore, type GateSummary, type RunStatus
+	buildContinuationInstruction, buildConversationDelta, buildConversationInstruction, buildDirectInstruction, buildImplementationInstruction, buildRepairInstruction, chatMessage, MAX_SUSPENDED, DIRECT_PLAN_VERSION, directPlan, extractChatPlan, harnessErrorCode, harnessErrorDetail, latestPlanMessage, MAX_USER_MESSAGE_CHARS, pendingAlive, promptBudget, samePlanContent,
+	type ChatConversation, type ChatMessage, type ChatMode, type ChatPlan, type ChatProjectContext, type ChatRunSummary, type ChatStore, type GateSummary, type RepairStopReason, type RunStatus, type SuspendedIntent
 } from './native-chat.ts';
+import { MAX_CORRECTIONS } from './native-orchestrator.ts';
 
-export type ImplementStage = 'preparing' | 'agent' | 'verifying';
+export type ImplementStage = 'preparing' | 'agent' | 'verifying' | 'repairing';
 export interface ChatRunHooks {
 	/** Called once the provider process exists, so the session can cancel it. */
 	started(cancel: () => void): void;
@@ -67,7 +71,12 @@ export interface ChatImplementHooks extends ChatRunHooks {
 }
 export interface ChatImplementOutcome {
 	agent: AgentOutcome;
-	verification: ChatRunSummary['verification'];
+	verification: ChatRunSummary['verification'] & {
+		/** Ledger of what the IDE executed (persisted with the run). */
+		evidence?: EvidenceEntry[];
+		/** Exit code and redacted output of each failed gate; memory only, used to correct and never persisted. */
+		failures?: GateFailure[];
+	};
 	/** Files the writer changed, measured under the execution fence before and after it ran. */
 	diff: RunDiffSummary;
 }
@@ -92,6 +101,11 @@ export interface ChatRuntime {
 	readQuota?(provider: NativeProvider): Promise<ProviderQuota | undefined>;
 	/** Local machine checks (Node, package manager, shell, git, gh), run before the first act turn of a session. */
 	preflight?(): Promise<DoctorCheck[]>;
+	/**
+	 * Starts the existing autonomous goal engine for a compound request (JUN-001, JUN-008): defaults inferred from the
+	 * project, one charter card for the user, the goal's own journal, lease and budget. Absent: compound requests run directly.
+	 */
+	startGoal?(objective: string): Promise<{ started: boolean; reason?: 'declined' | 'busy' | 'untrusted' | 'service' | 'error' }>;
 }
 export interface ChatActivity {
 	kind: 'thinking' | 'executing';
@@ -120,6 +134,10 @@ export interface ChatSnapshot {
 	activity?: ChatActivity;
 	/** Messages sent while a turn was running; each starts when the previous turn ends cleanly. */
 	queue?: Array<{ id: string; text: string }>;
+	/** Requests kept after a failure or an interruption; they never run by themselves (JUN-011). */
+	suspended?: Array<{ id: string; text: string; mode: ChatMode; reason: SuspendedIntent['reason']; attachments?: boolean }>;
+	/** How the last Act request was routed and why, shown as the visible assumption (JUN-001). */
+	routing?: TaskRouting;
 	plan?: { messageId: string; version: number; digest: string; approvable: boolean; blockedReason?: string };
 	/** Latest run of the latest plan and what can be done with it right now. */
 	run?: { messageId: string; continuable: boolean; retryable: boolean; discardable: boolean };
@@ -170,6 +188,21 @@ function writerBlockReason(t: Translate, block: ChatProjectContext['writerBlock'
 	return t('Este proyecto tiene su propio Harness. El IDE no aplica cambios sin coordinaci\u00f3n verificable con ese motor.');
 }
 
+/** The visible assumption behind an Act request that did not go to the direct writer. */
+function routingNotice(t: Translate, routing: TaskRouting): string {
+	if (routing.route === 'compound-goal') { return t('Tu pedido tiene varias partes ({0}): lo ejecuto como objetivo aut\u00f3nomo por etapas, con revisi\u00f3n y verificaci\u00f3n. Te pido una sola aprobaci\u00f3n con el alcance, el presupuesto y los permisos.', routing.reasons.join(', ')); }
+	if (routing.route === 'ambiguous-or-risky') { return t('Este pedido toca {0}: no cambi\u00e9 nada todav\u00eda. Revis\u00e1 el plan y aprobalo si es lo que quer\u00e9s.', routing.reasons.join(', ')); }
+	return t('Lo tom\u00e9 como una consulta: respond\u00ed sin modificar archivos. Si quer\u00e9s el cambio, pedilo con un verbo (\u00abagreg\u00e1\u00bb, \u00abcorreg\u00ed\u00bb).');
+}
+
+/** What an interrupted run had reached, so the user knows whether files may have changed and whether gates ran (JUN-011). */
+function interruptedStage(t: Translate, stage: ImplementStage | undefined): string {
+	if (stage === 'preparing') { return ' ' + t('Se cort\u00f3 antes de que el agente empezara: no deber\u00eda haber cambios.'); }
+	if (stage === 'agent' || stage === 'repairing') { return ' ' + t('Se cort\u00f3 mientras el agente editaba: puede haber cambios parciales sin verificar.'); }
+	if (stage === 'verifying') { return ' ' + t('Los cambios ya estaban aplicados; la verificaci\u00f3n qued\u00f3 incompleta y no cuenta como aprobada.'); }
+	return '';
+}
+
 /** Messages that can wait behind the running turn. */
 export const MAX_QUEUED_MESSAGES = 5;
 
@@ -186,6 +219,7 @@ function riskOf(draft: ApprovalDraft): ApprovalRisk {
 /** Turn-only extras of a message (mentioned file content and its notice); a queued message keeps them until it runs. */
 interface SendAttachments { context?: string; notice?: string; images?: readonly import('./native-chat-images.ts').ChatImage[] }
 
+const hasAttachments = (attachments: SendAttachments): boolean => !!(attachments.context || attachments.images?.length);
 
 const cancelledBeforeStart = (error: unknown): boolean => harnessErrorCode(error) === 'HARNESS_CANCELLED_BEFORE_START';
 
@@ -262,6 +296,8 @@ export class HarnessChatSession {
 	private turnOk = false;
 	/** The environment preflight runs once per session, before its first act turn. */
 	private preflighted = false;
+	/** Route of the latest Act request (memory only). */
+	private routing?: TaskRouting;
 
 	private readonly store: ChatStore;
 	private readonly runtime: ChatRuntime;
@@ -296,11 +332,17 @@ export class HarnessChatSession {
 			// Another window's live operation is not ours to report (the store keeps it); only a dead owner means interrupted.
 			const interrupted = (this.conversation.pending ?? []).filter(entry => entry.pid === process.pid || !pendingAlive(entry));
 			this.conversation.pending = undefined;
+			// Requests kept by a window that no longer exists become this window's; a live window keeps its own.
+			const adopted = (this.conversation.suspended ?? []).filter(entry => entry.pid === process.pid || !entry.pid || !processAlive(entry.pid));
+			this.conversation.suspended = adopted.length ? adopted.map(entry => ({ ...entry, pid: process.pid })) : undefined;
 			for (const entry of interrupted) {
-				// The process that owned this operation is gone: say exactly what may be incomplete.
+				// The process that owned this operation is gone: say exactly what may be incomplete, from the last stage it recorded.
 				this.conversation.messages.push(chatMessage('notice', entry.kind === 'executing'
-					? this.t('La ejecuci\u00f3n del plan v{0} se interrumpi\u00f3 porque el IDE se cerr\u00f3. Revis\u00e1 los cambios del workspace (por ejemplo con git status) y, si el lock qued\u00f3 tomado, us\u00e1 \u00abArmoTuSitio: Reconciliar lock compartido obsoleto\u00bb antes de reintentar.', String(entry.planVersion ?? '?'))
-					: this.t('La respuesta anterior se interrumpi\u00f3 porque el IDE se cerr\u00f3. Volv\u00e9 a enviar el mensaje.'), { tone: 'error' }));
+					? this.t('La ejecuci\u00f3n del plan v{0} se interrumpi\u00f3 porque el IDE se cerr\u00f3. Revis\u00e1 los cambios del workspace (por ejemplo con git status) y, si el lock qued\u00f3 tomado, us\u00e1 \u00abArmoTuSitio: Reconciliar lock compartido obsoleto\u00bb antes de reintentar.', String(entry.planVersion ?? '?')) + interruptedStage(this.t, entry.stage)
+					: this.t('La respuesta anterior se interrumpi\u00f3 porque el IDE se cerr\u00f3. Tu mensaje qued\u00f3 en pausa: retomalo, editalo o descartalo.'), { tone: 'error' }));
+				// The request itself is kept (never re-run by itself): a direct run or a reply. An approved plan keeps its own Retry button.
+				const request = [...this.conversation.messages].reverse().find(message => message.role === 'user');
+				if (request && (entry.kind === 'thinking' || entry.planVersion === DIRECT_PLAN_VERSION)) { this.suspend([{ text: request.text, mode: entry.kind === 'executing' ? 'act' : 'ask' }], 'interrupted'); }
 			}
 			// r7 histories get their native-session identity on first load (r8).
 			const identified = !this.conversation.conversationId;
@@ -391,6 +433,8 @@ export class HarnessChatSession {
 				discardable: !this.activity && writer && !!this.runtime.discard && !!run.run.outcome?.diff.available && (run.run.outcome?.diff.count ?? 0) > 0 && !run.run.discarded
 			} : undefined,
 			...(this.queue.length ? { queue: this.queue.map(({ id, text }) => ({ id, text: text.slice(0, 200) })) } : {}),
+			...(this.conversation.suspended?.length ? { suspended: this.conversation.suspended.map(({ id, text, mode, reason, attachments }) => ({ id, text: text.slice(0, 400), mode, reason, ...(attachments ? { attachments } : {}) })) } : {}),
+			...(this.routing ? { routing: { route: this.routing.route, reasons: [...this.routing.reasons] } } : {}),
 			...(this.approvals.size ? { approvals: [...this.approvals.values()].map(pending => pending.request) } : {}),
 			...(this.questionCards.size ? { questions: [...this.questionCards.entries()].map(([id, pending]) => ({ id, questions: pending.questions })) } : {}),
 			...(this.broker.list().length ? { grants: this.broker.list() } : {}),
@@ -448,7 +492,7 @@ export class HarnessChatSession {
 	async reset(): Promise<void> {
 		if (this.activity) { throw Error('HARNESS_ALREADY_RUNNING'); }
 		const previous = this.conversation;
-		this.conversation = { ...previous, messages: [], memory: undefined, conversationId: randomUUID() };
+		this.conversation = { ...previous, messages: [], memory: undefined, suspended: undefined, conversationId: randomUUID() };
 		try { await this.persist({ replace: true }); }
 		catch (error) { this.conversation = previous; throw error; }
 		this.queue.length = 0;
@@ -658,13 +702,27 @@ export class HarnessChatSession {
 				this.skillSelection = selection?.trace ?? [];
 			}
 			if (controller.signal.aborted) { throw Error('HARNESS_CANCELLED_BEFORE_START'); }
-			if (mode === 'act' && !this.writerBlockedReason(this.context.writer)) {
-				// The instruction is built first: it requires the user message to be the latest one, and the preflight adds a notice.
-				const instruction = withAttachments(buildDirectInstruction(this.conversation.messages, this.context));
-				await this.preflightOnce(provider);
-				this.finish();
-				await this.execute(directPlan(body), provider, instruction);
-				return;
+			// Act is routed by stable rules (JUN-001): questions answer read-only, risky work gets a reviewed plan,
+			// a compound goal goes to the existing goal engine, and everything else stays the fast direct writer.
+			const routing = mode === 'act' ? routeTask(body, 'act') : undefined;
+			this.routing = routing;
+			let routeContext = '';
+			if (routing && !this.writerBlockedReason(this.context.writer)) {
+				if (routing.route === 'compound-goal' && this.runtime.startGoal) {
+					await this.startGoal(body, provider, routing);
+					return;
+				}
+				if (routing.route === 'simple-edit' || (routing.route === 'compound-goal' && !this.runtime.startGoal)) {
+					// The instruction is built first: it requires the user message to be the latest one, and the preflight adds a notice.
+					const instruction = withAttachments(buildDirectInstruction(this.conversation.messages, this.context));
+					await this.preflightOnce(provider);
+					this.finish();
+					await this.execute(directPlan(body), provider, instruction);
+					return;
+				}
+				routeContext = routing.route === 'ambiguous-or-risky'
+					? '\n\nRouting: this request touches ' + routing.reasons.join(', ') + '. Do not change anything in this turn. Propose a harness-plan the user reviews and approves; if one decision changes the architecture or the risk, ask exactly one concrete question.'
+					: '\n\nRouting: the user asked a question. Answer it read-only; do not propose edits unless they ask for them.';
 			}
 			const current = latestPlanMessage(this.conversation.messages)?.plan;
 			const userMessageId = this.conversation.messages.at(-1)!.id;
@@ -678,7 +736,7 @@ export class HarnessChatSession {
 			const fitted = fitEngineeringContext(engineering, promptBudget(this.context) - Buffer.byteLength(delta ?? full) - Buffer.byteLength(attachments.context ?? '') - 4);
 			const freshInstruction = attached(full, engineering);
 			const reused = !!delta && this.deliveredSkills.get(skillKey) === fitted;
-			const instruction = withAttachments(delta ?? full, reused ? '' : fitted, memoryDelta);
+			const instruction = withAttachments((delta ?? full) + routeContext, reused ? '' : fitted, memoryDelta);
 			const transport: TurnTransport | undefined = native?.native
 				? { conversationId: this.conversation.conversationId!, inputRef: userMessageId, ...(delta ? { fresh: freshInstruction } : {}), ...(attachments.images?.length ? { images: attachments.images } : {}) }
 				: undefined;
@@ -691,6 +749,8 @@ export class HarnessChatSession {
 			if (this.turnOk && native?.native && (!memoryDelta || instruction.includes(memoryDelta))) { this.deliveredDecisions.set(skillKey, projectMemory); }
 			if (outcome.status !== 'passed' || !outcome.output.trim()) {
 				this.conversation.messages.push(chatMessage('notice', failureNotice(this.t, outcome), { tone: outcome.status === 'cancelled' ? 'info' : 'error', provider }));
+				// A provider that failed (not signed in, limit, timeout) never costs the user their request (J-08).
+				if (outcome.status !== 'cancelled') { this.suspend([{ text: body, mode, attachments: hasAttachments(attachments) }], 'previous-failed'); }
 				return;
 			}
 			const extracted = extractChatPlan(outcome.output, Math.max(current?.version ?? 0, this.conversation.memory?.lastPlanVersion ?? 0) + 1);
@@ -698,13 +758,39 @@ export class HarnessChatSession {
 			const plan = extracted.plan && current && samePlanContent(extracted.plan, current) ? current : extracted.plan;
 			this.conversation.messages.push(chatMessage('assistant', extracted.text || this.t('Plan actualizado.'), { provider, plan }));
 			if (outcome.scopeUnscanned?.length) { this.conversation.messages.push(chatMessage('notice', unscannedNotice(this.t, outcome.scopeUnscanned), { tone: 'info', provider })); }
+			if (routeContext) { this.conversation.messages.push(chatMessage('notice', routingNotice(this.t, routing!), { tone: 'info', provider })); }
 		} catch (error) {
 			this.conversation.messages.push(chatMessage('notice', this.errorNotice(error), { tone: cancelledBeforeStart(error) ? 'info' : 'error', provider }));
 		} finally {
 			this.finish();
 			await this.persist();
-			await this.drainQueue();
+			await this.drainQueue(controller.signal.aborted);
 		}
+	}
+
+	/**
+	 * A compound request in Act goes to the goal engine that already exists (analyst, architect, implementer, reviewer,
+	 * verifier, Definition of Done). The engine asks for the charter once; its journal, lease and budget stay authoritative.
+	 */
+	private async startGoal(body: string, provider: NativeProvider, routing: TaskRouting): Promise<void> {
+		this.conversation.messages.push(chatMessage('notice', routingNotice(this.t, routing), { tone: 'info', provider }));
+		await this.persist();
+		let result: Awaited<ReturnType<NonNullable<ChatRuntime['startGoal']>>>;
+		try { result = await this.runtime.startGoal!(body); }
+		catch { result = { started: false, reason: 'error' }; }
+		if (result.started) {
+			this.turnOk = true;
+			this.conversation.messages.push(chatMessage('notice', this.t('Objetivo iniciado. Lo sigo por etapas (an\u00e1lisis, dise\u00f1o, implementaci\u00f3n, revisi\u00f3n y verificaci\u00f3n); abajo pod\u00e9s pausarlo o detenerlo, y la entrega llega con su evidencia.'), { tone: 'info', provider }));
+			return;
+		}
+		// Not started: the request is kept, never lost and never run by itself.
+		this.suspend([{ text: body, mode: 'act' }], 'preflight');
+		const reasons: Record<string, string> = {
+			declined: this.t('No aprobaste la carta del objetivo.'), busy: this.t('Ya hay un objetivo o una ejecuci\u00f3n escribiendo en este proyecto.'),
+			untrusted: this.t('El workspace no es confiable.'), service: this.t('Falta un servicio que el proyecto necesita.')
+		};
+		const why = reasons[result.reason ?? ''] ?? this.t('El motor de objetivos no pudo arrancar.');
+		this.conversation.messages.push(chatMessage('notice', why + ' ' + this.t('Tu pedido qued\u00f3 en pausa: retomalo cuando quieras o editalo.'), { tone: 'info', provider }));
 	}
 
 	/**
@@ -728,19 +814,52 @@ export class HarnessChatSession {
 	}
 
 	/**
-	 * Start the next queued message once the turn ended cleanly; after a cancellation or a failure the queue is dropped with
-	 * a notice, because those messages were written for a different state of the project.
+	 * Start the next queued message once the turn ended cleanly. After a cancellation or a failure the queue is suspended,
+	 * not run and not lost: those messages were written for a different state of the project, so only the user resumes them.
 	 */
-	private async drainQueue(): Promise<void> {
+	private async drainQueue(cancelled = false): Promise<void> {
 		if (this.activity || !this.queue.length) { return; }
 		if (!this.turnOk) {
-			const dropped = this.queue.splice(0);
-			this.conversation.messages.push(chatMessage('notice', this.t('Se descartaron {0} mensajes en cola porque la tarea anterior no termin\u00f3 bien: {1}', String(dropped.length), dropped.map(item => '\u00ab' + item.text.slice(0, 80) + '\u00bb').join(' ')), { tone: 'info' }));
+			const held = this.queue.splice(0);
+			this.suspend(held.map(item => ({ text: item.text, mode: item.mode, attachments: hasAttachments(item.attachments) })), cancelled ? 'previous-cancelled' : 'previous-failed');
+			this.conversation.messages.push(chatMessage('notice', this.t('{0} mensajes en cola quedaron en pausa porque la tarea anterior no termin\u00f3 bien: {1}. No se ejecutan solos: pod\u00e9s retomarlos, editarlos o descartarlos.', String(held.length), held.map(item => '\u00ab' + item.text.slice(0, 80) + '\u00bb').join(' ')), { tone: 'info' }));
 			await this.persist();
 			return;
 		}
 		const next = this.queue.shift()!;
 		await this.send(next.text, next.mode, next.attachments);
+	}
+
+	/** Keep requests that cannot run now; the oldest are dropped only beyond the persisted cap, never silently below it. */
+	private suspend(items: ReadonlyArray<{ text: string; mode: ChatMode; attachments?: boolean }>, reason: SuspendedIntent['reason']): void {
+		const at = new Date().toISOString();
+		const added = items.map((item): SuspendedIntent => ({ id: randomBytes(6).toString('hex'), text: redactSecrets(item.text), mode: item.mode, at, reason, pid: process.pid, ...(item.attachments ? { attachments: true } : {}) }));
+		this.conversation.suspended = [...(this.conversation.suspended ?? []), ...added].slice(-MAX_SUSPENDED);
+		this.emit();
+	}
+
+	private takeSuspended(id: string): SuspendedIntent | undefined {
+		const list = this.conversation.suspended ?? [];
+		const found = list.find(item => item.id === id);
+		if (!found) { return undefined; }
+		this.conversation.suspended = list.length > 1 ? list.filter(item => item !== found) : undefined;
+		return found;
+	}
+
+	/** Retomar: the user decided the request still applies; it runs now through the normal path (routing, permissions, gates). */
+	async resumeSuspended(id: string): Promise<void> {
+		if (this.activity) { throw Error('HARNESS_ALREADY_RUNNING'); }
+		const intent = this.takeSuspended(id);
+		if (!intent) { throw Error('HARNESS_CHAT_SUSPENDED_MISSING'); }
+		await this.persist();
+		await this.send(intent.text, intent.mode);
+	}
+
+	/** Editar (returns the text for the composer) or Descartar: either way the request leaves the suspended list. */
+	async dropSuspended(id: string): Promise<string | undefined> {
+		const intent = this.takeSuspended(id);
+		if (intent) { await this.persist(); }
+		return intent?.text;
 	}
 
 	/** The listed file of a run, if that run changed it; hosts validate a webview request against it before touching the file. */
@@ -814,32 +933,80 @@ export class HarnessChatSession {
 			await this.persist();
 			const hooks: ChatImplementHooks = {
 				...runHooks,
-				stage: stage => { if (this.activity) { this.activity.stage = stage; this.emit(); } },
+				stage: stage => {
+					if (!this.activity) { return; }
+					this.activity.stage = stage; this.emit();
+					// The stage is recorded with the operation marker, so an interruption can say what may be incomplete.
+					const marker = this.conversation.pending?.[0];
+					if (marker) { marker.stage = stage; void this.persist().catch(() => undefined); }
+				},
 				gates: gates => { if (this.activity) { this.activity.gates = gates; this.emit(); } }
 			};
-			// A native writer turn continues the conversation's session; everything up to the latest message is in its input.
-			const native = !options.resumeSession && (await this.transportState(provider))?.native;
-			const transport: TurnTransport | undefined = native ? { conversationId: this.conversation.conversationId!, inputRef: this.conversation.messages.at(-1)?.id } : undefined;
-			const result = await this.runtime.implement({ provider, instruction, plan, verificationRevision: context.verification?.revision, ...(options.resumeSession ? { resumeSession: options.resumeSession } : {}), ...(transport ? { transport } : {}) }, hooks, controller.signal);
-			this.noteUsage(provider, result.agent.usage, result.agent.firstTokenMs);
-			await this.noteQuota(provider, result.agent.quota);
-			// The agent result decides first; a passing agent is only as good as its verification.
-			let status: RunStatus = result.agent.status;
-			if (status === 'passed' && result.verification.status !== 'skipped') { status = result.verification.status; }
-			const outcome = classifyRun({ agent: result.agent, verification: result.verification.status, diff: result.diff });
-			this.turnOk = status === 'passed' && !controller.signal.aborted;
-			const steps = this.activity?.steps?.length ? summarizeSteps(this.activity.steps) : undefined;
-			this.conversation.messages.push(chatMessage('run', result.agent.output.trim() || this.t('El agente no devolvi\u00f3 un informe.'), {
-				provider, tone: outcome.kind === 'failed' || outcome.kind === 'blocked' ? 'error' : 'info',
-				run: { planVersion: plan.version, provider, status, agentStatus: result.agent.status, durationMs: Date.now() - started, verification: result.verification, outcome, ...(options.continued ? { continued: true } : {}), ...(steps ? { steps } : {}), ...(result.agent.searches?.length ? { searches: result.agent.searches } : {}) }
-			}));
+			// Implement, verify, classify, correct, verify again (JUN-002): bounded by MAX_CORRECTIONS, stopped by a repeated
+			// failure, and only for failures a code change can fix. The task's approvals stay valid across corrections (JUN-005).
+			let request = { instruction, resumeSession: options.resumeSession, continued: options.continued, repair: undefined as { attempt: number; max: number } | undefined };
+			let previousSignature: string | undefined;
+			const passedGates = new Set<string>();
+			const changedFiles = new Set<string>();
+			for (let attempt = 0; ; attempt++) {
+				const runStarted = attempt ? Date.now() : started;
+				// A native writer turn continues the conversation's session; everything up to the latest message is in its input.
+				const native = !request.resumeSession && (await this.transportState(provider))?.native;
+				const transport: TurnTransport | undefined = native ? { conversationId: this.conversation.conversationId!, inputRef: this.conversation.messages.at(-1)?.id } : undefined;
+				const result = await this.runtime.implement({ provider, instruction: request.instruction, plan, verificationRevision: context.verification?.revision, ...(request.resumeSession ? { resumeSession: request.resumeSession } : {}), ...(transport ? { transport } : {}) }, hooks, controller.signal);
+				this.noteUsage(provider, result.agent.usage, result.agent.firstTokenMs);
+				await this.noteQuota(provider, result.agent.quota);
+				// The agent result decides first; a passing agent is only as good as its verification.
+				let status: RunStatus = result.agent.status;
+				if (status === 'passed' && result.verification.status !== 'skipped') { status = result.verification.status; }
+				const outcome = classifyRun({ agent: result.agent, verification: result.verification.status, diff: result.diff });
+				this.turnOk = status === 'passed' && !controller.signal.aborted;
+				for (const file of result.diff.files) { changedFiles.add(file.path); }
+				const failures = status === 'failed' && result.agent.status === 'passed' && outcome.kind === 'failed' ? (result.verification.failures ?? []).map(failure => classifyGateFailure(failure, passedGates.has(failure.id))) : [];
+				const stop = failures.length ? this.repairStop(failures, attempt, previousSignature, result.diff) : undefined;
+				for (const gate of result.verification.gates) { if (gate.status === 'passed') { passedGates.add(gate.id); } }
+				const steps = this.activity?.steps?.length ? summarizeSteps(this.activity.steps) : undefined;
+				// Gate outputs stay in memory for the correction; the history keeps statuses and the evidence ledger only.
+				const { status: verificationStatus, gates, error, evidence } = result.verification;
+				const verification = { status: verificationStatus, gates, ...(error ? { error } : {}) };
+				this.conversation.messages.push(chatMessage('run', result.agent.output.trim() || this.t('El agente no devolvi\u00f3 un informe.'), {
+					provider, tone: outcome.kind === 'failed' || outcome.kind === 'blocked' ? 'error' : 'info',
+					run: {
+						planVersion: plan.version, provider, status, agentStatus: result.agent.status, durationMs: Date.now() - runStarted, verification, outcome,
+						...(request.continued ? { continued: true } : {}), ...(steps ? { steps } : {}), ...(result.agent.searches?.length ? { searches: result.agent.searches } : {}),
+						...(evidence?.length ? { evidence } : {}), ...(request.repair ? { repair: request.repair } : {}),
+						...(stop ? { repairStop: { reason: stop, failures: failures.map(item => ({ gate: item.id, failure: item.failure })) } } : {})
+					}
+				}));
+				if (!failures.length || stop || controller.signal.aborted) { break; }
+				// Correct only what failed, under the same plan, fence, lease and permissions; the gates run again afterwards.
+				previousSignature = failureSignature(failures);
+				const next = { attempt: attempt + 1, max: MAX_CORRECTIONS };
+				this.conversation.messages.push(chatMessage('notice', this.t('Detect\u00e9 {0} verificaciones con errores ({1}) y las estoy corrigiendo: intento {2} de {3}.', String(failures.length), [...new Set(failures.map(item => item.failure))].join(', '), String(next.attempt), String(next.max)), { tone: 'info', provider }));
+				hooks.stage('repairing');
+				if (this.activity) { this.activity.steps = []; this.activity.partial = undefined; }
+				await this.persist();
+				request = { instruction: buildRepairInstruction(plan, failures, next.attempt, next.max, [...changedFiles]), resumeSession: undefined, continued: true, repair: next };
+			}
 		} catch (error) {
 			this.conversation.messages.push(chatMessage('notice', this.errorNotice(error), { tone: cancelledBeforeStart(error) ? 'info' : 'error', provider }));
 		} finally {
 			this.finish();
 			await this.persist();
-			await this.drainQueue();
+			await this.drainQueue(controller.signal.aborted);
 		}
+	}
+
+	/**
+	 * Why automatic correction must stop now, or undefined to correct once more. Environment, permission and provider
+	 * failures are never retried as code; an identical failure after a correction is a stall, not a reason to insist.
+	 */
+	private repairStop(failures: readonly ClassifiedFailure[], attempt: number, previousSignature: string | undefined, diff: RunDiffSummary): RepairStopReason | undefined {
+		if (!failures.every(item => REPAIRABLE.has(item.failure))) { return 'not-repairable'; }
+		if (attempt > 0 && diff.available && diff.count === 0) { return 'no-changes'; }
+		if (previousSignature !== undefined && failureSignature(failures) === previousSignature) { return 'stalled'; }
+		if (attempt >= MAX_CORRECTIONS) { return 'budget'; }
+		return undefined;
 	}
 
 	/** Cancellation requested before the provider process exists is applied as soon as it starts. */

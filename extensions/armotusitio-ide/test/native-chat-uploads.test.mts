@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { formatUploadSize, MAX_UPLOAD_BYTES, saveUploads, uploadFileName, uploadsContext, UPLOAD_FOLDER } from '../src/native-chat-uploads.ts';
+import { formatUploadSize, MAX_UPLOAD_BYTES, saveUploads, uploadFileName, uploadsContext, uploadSupport, UPLOAD_FOLDER } from '../src/native-chat-uploads.ts';
 
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64');
 const upload = (name: string, mime: string, bytes: Buffer) => ({ name, mime, data: bytes.toString('base64') });
@@ -78,4 +78,14 @@ test('a file in place of the folder is refused, and attachments older than a wee
 
 test('sizes read at a glance', () => {
 	assert.deepEqual([formatUploadSize(512), formatUploadSize(34 * 1024), formatUploadSize(1.25 * 1024 * 1024)], ['512 B', '34 KB', '1.3 MB']);
+});
+
+test('J-19/JUN-012: each attachment says whether the agent can read it; a binary document is never presented as read', () => {
+	const file = (name: string, mime: string) => ({ path: UPLOAD_FOLDER + '/x-' + name, name, mime, bytes: 10, digest: 'd' });
+	const uploads = [file('notas.md', 'text/markdown'), file('reporte.pdf', 'application/pdf'), file('contrato.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'), file('datos.csv', '')];
+	assert.deepEqual(uploads.map(uploadSupport), ['text', 'pdf', 'unsupported', 'text']);
+	const context = uploadsContext(uploads);
+	assert.match(context, /contrato\.docx, readable: unsupported\)/);
+	assert.match(context, /never claim to have read them/);
+	assert.doesNotMatch(uploadsContext(uploads.slice(0, 2)), /never claim/);
 });
