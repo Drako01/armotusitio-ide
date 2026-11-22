@@ -23,6 +23,7 @@ import { IMcpService } from '../../../mcp/common/mcpTypes.js';
 import { parseMarketplaceReferences } from '../../common/plugins/marketplaceReference.js';
 import { IChatAgentService } from '../../common/participants/chatAgents.js';
 import { ILanguageModelToolsService } from '../../common/tools/languageModelToolsService.js';
+import { ExtensionIdentifier } from '../../../../../platform/extensions/common/extensions.js';
 import { IProductService } from '../../../../../platform/product/common/productService.js';
 import { isChatExtensionItem } from './aiCustomizationItemSource.js';
 
@@ -83,7 +84,7 @@ export class CustomizationMigrationService extends Disposable implements ICustom
 				return {
 					type,
 					items: this.chatAgentService.getAgents()
-						.filter(agent => !agent.isCore && !agent.isDefault && !agent.isDynamic && agent.extensionId.value && !isChatExtensionItem(agent.extensionId, this.productService))
+						.filter(agent => !agent.isCore && !agent.isDefault && !agent.isDynamic && agent.extensionId.value && !this.isProductChatExtension(agent.extensionId))
 						.map(agent => ({
 							id: agent.id,
 							name: `@${agent.name}`,
@@ -97,7 +98,7 @@ export class CustomizationMigrationService extends Disposable implements ICustom
 					type,
 					items: [...this.toolsService.toolSets.get()]
 						.filter(toolSet => toolSet.source.type === 'user'
-							|| toolSet.source.type === 'extension' && !toolSet.hiddenInToolsPicker && !isChatExtensionItem(toolSet.source.extensionId, this.productService))
+							|| toolSet.source.type === 'extension' && !toolSet.hiddenInToolsPicker && !this.isProductChatExtension(toolSet.source.extensionId))
 						.map(toolSet => ({
 							id: toolSet.id,
 							name: toolSet.referenceName,
@@ -415,6 +416,16 @@ export class CustomizationMigrationService extends Disposable implements ICustom
 		const inspected = this.configurationService.inspect<readonly unknown[]>(ChatConfiguration.PluginMarketplaces);
 		const configuredValue = inspected?.applicationValue ?? inspected?.userValue;
 		return Array.isArray(configuredValue) ? configuredValue : [];
+	}
+
+	/**
+	 * Extensions that ship with the product's own chat experience: the default chat extension and the ArmotuSitio IDE
+	 * extension. Their participants and tool sets are maintained with the product, so users have nothing to migrate.
+	 */
+	private isProductChatExtension(extensionId: ExtensionIdentifier): boolean {
+		const armotusitioChatExtensionId = this.productService.armotusitioChatExtensionId;
+		return isChatExtensionItem(extensionId, this.productService)
+			|| !!armotusitioChatExtensionId && ExtensionIdentifier.equals(extensionId, armotusitioChatExtensionId);
 	}
 
 	private isMigrationEnabled(): boolean {

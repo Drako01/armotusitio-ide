@@ -5,6 +5,7 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { allowedActiveWorkflows } from './ats-autoupdate.mts';
 import { releaseAction } from './ats-release-ci.mts';
 import { planReleaseRevision } from './ats-release-revision.mts';
 
@@ -66,4 +67,15 @@ test('optional Authenticode is all-or-nothing and Store submission is opt-in, pi
 	}
 	assert.match(submit, /msstore publish \$env:ATS_MSIX --appId/, 'msstore publish takes the .msix file itself as its first argument; a folder is not recognized as a project');
 	assert.doesNotMatch(submit, /\$\{\{ secrets\.[A-Z_]+ \}\}.*msstore/, 'secrets reach msstore only through env');
+});
+
+test('allowlisted workflows other than the release one can neither publish nor start a release when their PR merges', async () => {
+	for (const workflowPath of allowedActiveWorkflows.filter(entry => !entry.endsWith('/ats-release.yml'))) {
+		const workflow = await readFile(new URL(`../${workflowPath}`, import.meta.url), 'utf8');
+		assert.doesNotMatch(workflow, /gh release|git tag|git push|softprops\/action-gh-release|node scripts\/ats-autoupdate|release\.sh/, `${workflowPath} must not tag or publish`);
+		assert.doesNotMatch(workflow, /uses: [^@\n]+@v\d/, `${workflowPath} must pin its actions to a commit`);
+		if (/peter-evans\/create-pull-request/.test(workflow)) {
+			assert.match(workflow, /labels: \|[^]*?\bsin-release\b/, `${workflowPath} must label its PR sin-release so merging it never publishes`);
+		}
+	}
 });

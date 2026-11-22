@@ -60,11 +60,11 @@ test('Linux source exports preserve LF despite Windows autocrlf settings', async
 
 test('release CI cannot publish another tag, from another repository, or alongside an active upstream workflow', () => {
 	const env = { GITHUB_ACTIONS: 'true', GITHUB_REPOSITORY: 'Drako01/armotusitio-ide', GITHUB_WORKFLOW: 'ArmotuSitio Release', ATS_RELEASE_TAG: 'ats-v1.143.0-r2' };
-	const workflows = { total_count: 3, workflows: [{ state: 'active', path: '.github/workflows/ats-release.yml' }, { state: 'active', path: '.github/workflows/ats-ide-extension.yml' }, { state: 'disabled_manually', path: '.github/workflows/old.yml' }] };
+	const workflows = { total_count: 4, workflows: [{ state: 'active', path: '.github/workflows/ats-release.yml' }, { state: 'active', path: '.github/workflows/ats-ide-extension.yml' }, { state: 'active', path: '.github/workflows/ats-official-extensions-sync.yml' }, { state: 'disabled_manually', path: '.github/workflows/old.yml' }] };
 	assert.equal(exclusiveReleaseWorkflow(env, workflows), true);
 	for (const changed of [{ GITHUB_ACTIONS: 'false' }, { GITHUB_REPOSITORY: 'other/repo' }, { GITHUB_WORKFLOW: 'Other' }, { ATS_RELEASE_TAG: 'main' }, { ATS_RELEASE_TAG: undefined }]) { assert.equal(exclusiveReleaseWorkflow({ ...env, ...changed }, workflows), false); }
 	assert.equal(exclusiveReleaseWorkflow(env, { ...workflows, total_count: 101 }), false);
-	assert.equal(exclusiveReleaseWorkflow(env, { total_count: 3, workflows: workflows.workflows.map(entry => ({ ...entry, state: 'active' })) }), false);
+	assert.equal(exclusiveReleaseWorkflow(env, { total_count: 4, workflows: workflows.workflows.map(entry => ({ ...entry, state: 'active' })) }), false);
 	assert.equal(exclusiveReleaseWorkflow(env, { total_count: 1, workflows: [{ state: 'disabled_manually', path: '.github/workflows/ats-release.yml' }] }), false);
 });
 

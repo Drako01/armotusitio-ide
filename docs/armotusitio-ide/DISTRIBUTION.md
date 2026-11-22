@@ -5,7 +5,7 @@ El alcance Enterprise AAA continúa pendiente según [el estado de entrega](DELI
 
 ## GitHub Actions
 
-Actions puede estar desactivado o habilitado solo para los workflows propios (`ats-release.yml` y `ats-ide-extension.yml`); todos los workflows heredados de upstream deben quedar desactivados. La activación, el costo y la configuración están en [la guía de releases](../guia/07-releases.md).
+Actions puede estar desactivado o habilitado solo para los workflows propios (`ats-release.yml`, `ats-ide-extension.yml` y `ats-official-extensions-sync.yml`); todos los workflows heredados de upstream deben quedar desactivados. La activación, el costo y la configuración están en [la guía de releases](../guia/07-releases.md).
 
 ## Generar los binarios localmente
 

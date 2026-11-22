@@ -271,6 +271,8 @@ export interface IProductConfiguration {
 	readonly autoUpdateBuiltinExtensionsByDefault?: readonly string[];
 	/** Official ArmotuSitio extensions shown together, including bundled system extensions. */
 	readonly armotusitioOfficialExtensions?: readonly string[];
+	/** The ArmotuSitio IDE extension, which ships the product's own chat participant (`@harness`). */
+	readonly armotusitioChatExtensionId?: string;
 	readonly sessionsWindowAllowedExtensions?: readonly string[];
 
 	readonly msftInternalDomains?: string[];

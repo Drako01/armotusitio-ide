@@ -75,6 +75,7 @@ const migrationProductService = new class extends mock<IProductService>() {
 	override readonly defaultChatAgent = new class extends mock<NonNullable<IProductService['defaultChatAgent']>>() {
 		override readonly chatExtensionId = 'GitHub.copilot-chat';
 	}();
+	override readonly armotusitioChatExtensionId = 'armotusitio.armotusitio-ide';
 }();
 
 class TestPromptsService extends MockPromptsService {
@@ -433,7 +434,7 @@ suite('CustomizationMigrationService', () => {
 		store.add(instantiationService.createInstance(BaseCustomizationMigrationService));
 	});
 
-	test('discovers only third-party participants and explicit user and extension tool sets', async () => {
+	test('discovers only third-party participants and explicit user and extension tool sets, never the product chat extensions', async () => {
 		const agents = new TestMigrationChatAgentService();
 		const participant = (id: string, properties: Partial<IChatAgentData> = {}): IChatAgentData => Object.assign(new class extends mock<IChatAgentData>() {
 			override readonly id = id;
@@ -448,6 +449,7 @@ suite('CustomizationMigrationService', () => {
 			participant('default', { isDefault: true }),
 			participant('dynamic', { isDynamic: true }),
 			participant('copilot', { extensionId: new ExtensionIdentifier('github.Copilot-Chat') }),
+			participant('harness', { extensionId: new ExtensionIdentifier('ArmotuSitio.armotusitio-ide') }),
 		];
 		const tools = new TestMigrationToolsService();
 		const toolSet = (id: string, source: ToolDataSource, options: Partial<Pick<IToolSet, 'deprecated' | 'hiddenInToolsPicker'>> = {}): IToolSet => ({
@@ -462,6 +464,7 @@ suite('CustomizationMigrationService', () => {
 			toolSet('builtin', ToolDataSource.Internal),
 			toolSet('external', ToolDataSource.External),
 			toolSet('copilot', { ...extensionSource, extensionId: new ExtensionIdentifier('github.Copilot-Chat') }),
+			toolSet('harness', { ...extensionSource, extensionId: new ExtensionIdentifier('ArmotuSitio.armotusitio-ide') }),
 			toolSet('mcp', { type: 'mcp', label: 'MCP', serverLabel: undefined, instructions: undefined, collectionId: 'collection', definitionId: 'server' }),
 		], undefined);
 		const harness = new TestCustomizationHarnessService();
