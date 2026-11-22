@@ -142,7 +142,7 @@ export function isSensitiveGitPath(relative: string): boolean {
 }
 
 const git = async (root: string, args: string[]): Promise<string | undefined> =>
-	(await gitOutput(root, [...GIT_BASE, ...args]).then(buffer => buffer.toString('utf8').trim(), () => undefined));
+(await gitOutput(root, [...GIT_BASE, ...args]).then(buffer => buffer.toString('utf8').trim(), () => undefined));
 
 /** Absolute path git itself resolves for `name` (honours `core.hooksPath`, worktrees and `GIT_DIR`); `undefined` outside a repository. */
 async function gitPath(root: string, name: string): Promise<string | undefined> {
@@ -259,7 +259,7 @@ async function runGit(context: GitToolsContext, args: string[], timeoutSec?: num
 }
 
 const failure = (what: string, result: { exitCode: number | null; timedOut: boolean; cancelled?: boolean; output: string }): GitToolResult =>
-	({ isError: true, text: what + ' failed (' + (result.cancelled ? 'cancelled' : result.timedOut ? 'timed out' : 'exit ' + result.exitCode) + '). Fix the cause; do not bypass hooks or checks.\n' + (result.output || '(no output)') });
+({ isError: true, text: what + ' failed (' + (result.cancelled ? 'cancelled' : result.timedOut ? 'timed out' : 'exit ' + result.exitCode) + '). Fix the cause; do not bypass hooks or checks.\n' + (result.output || '(no output)') });
 
 async function commit(context: GitToolsContext, input: { paths?: unknown; message?: unknown }): Promise<GitToolResult> {
 	const { root } = context;
