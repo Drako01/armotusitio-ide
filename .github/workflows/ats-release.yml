@@ -360,7 +360,7 @@ jobs:
         shell: pwsh
         run: |
           # The apps these credentials can manage; an empty list or a missing product points at Partner Center access.
-          msstore apps list
+          msstore apps list --verbose
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           msstore apps get $env:ATS_STORE_PRODUCT_ID
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
