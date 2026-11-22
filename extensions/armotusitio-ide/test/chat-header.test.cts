@@ -87,3 +87,36 @@ test('header controls wrap inside narrow views without clipped targets even with
 		}
 	} finally { await browser.close(); }
 });
+
+test('provider logos and connection badges remain separated and clickable in narrow and wide headers', async () => {
+	const browser = await launchBrowser();
+	try {
+		const page = await browser.newPage({ viewport: { width: 320, height: 800 }, reducedMotion: 'reduce' });
+		const push = await mountChat(page);
+		await push(state());
+		for (const width of [320, 480, 900, 1440]) {
+			await page.setViewportSize({ width, height: 800 });
+			const geometry = await page.locator('.provider-switch').evaluate(group => {
+				const buttons = [...group.querySelectorAll('.provider-option')];
+				const [first, second] = buttons.map(button => button.getBoundingClientRect());
+				return {
+					betweenButtons: second.left - first.right,
+					statusGaps: buttons.map(button => {
+						const icon = button.querySelector('.provider-icon').getBoundingClientRect();
+						const status = button.querySelector('.provider-status').getBoundingClientRect();
+						const hit = button.getBoundingClientRect();
+						return { gap: status.left - icon.right, inside: status.right <= hit.right && icon.left >= hit.left, target: [hit.width, hit.height] };
+					})
+				};
+			});
+			assert.ok(geometry.betweenButtons >= 8, 'individual agents have a visible gap at ' + width + 'px');
+			for (const status of geometry.statusGaps) {
+				assert.ok(status.gap >= 6, 'connection status does not touch the agent logo at ' + width + 'px');
+				assert.ok(status.inside, 'status and logo remain inside the button at ' + width + 'px');
+				assert.ok(status.target[0] >= 48 && status.target[1] >= 36, 'agent buttons retain usable pointer targets at ' + width + 'px');
+			}
+		}
+		await page.locator('[data-provider="codex"]').click();
+		assert.deepEqual(await page.evaluate(() => window.sent.at(-1)), { action: 'provider', provider: 'codex' });
+	} finally { await browser.close(); }
+});
