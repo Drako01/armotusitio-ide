@@ -342,7 +342,13 @@ jobs:
           msstore reconfigure --tenantId $env:ATS_STORE_TENANT_ID --sellerId $env:ATS_STORE_SELLER_ID --clientId $env:ATS_STORE_CLIENT_ID --clientSecret $env:ATS_STORE_CLIENT_SECRET
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           msstore settings --enableTelemetry false
-          exit $LASTEXITCODE
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # Fingerprints let the IDs be compared with Partner Center without printing them.
+          foreach ($name in @('ATS_STORE_TENANT_ID', 'ATS_STORE_SELLER_ID', 'ATS_STORE_CLIENT_ID')) {
+            $value = [Environment]::GetEnvironmentVariable($name); $bytes = [Text.Encoding]::UTF8.GetBytes($value)
+            $hash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+            Write-Host "$name sha256 prefix: $($hash.Substring(0, 12)) (length $($value.Length), surrounding whitespace: $($value -ne $value.Trim()))"
+          }
       - name: Submit the MSIX to Microsoft Store certification
         if: env.STORE_CHECK_ONLY != 'true'
         shell: pwsh
