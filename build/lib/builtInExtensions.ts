@@ -87,7 +87,7 @@ function getExtensionDownloadStream(extension: IExtensionDefinition) {
 	if (extension.vsix) {
 		input = ext.fromVsix(path.join(root, extension.vsix), extension);
 	} else if (extension.downloadUrl) {
-		input = ext.fromMarketplace('', extension);
+		input = ext.fromDownloadUrl(extension.downloadUrl, extension);
 	} else if (extension.platformSpecific) {
 		// A platform-specific extension publishes its VSIX assets on a GitHub release using a
 		// specific asset naming convention, so it is always downloaded from GitHub and never falls

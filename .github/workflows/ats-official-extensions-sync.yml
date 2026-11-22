@@ -1,0 +1,38 @@
+name: Sync official ArmoTuSitio extensions
+
+on:
+  schedule:
+    - cron: '17 8 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update-official-extensions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Verify updater
+        run: node --test scripts/ats-refresh-official-extensions.test.mts
+      - name: Discover stable releases and verify SHA-256
+        run: node scripts/ats-refresh-official-extensions.mts
+      - name: Create reviewable update PR (no auto-merge or release)
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: chore/sync-ats-official-extensions
+          delete-branch: true
+          add-paths: build/armotusitio/official-extensions.json
+          commit-message: 'chore(extensions): refresh Open VSX verified pins'
+          title: 'chore(extensions): update bundled Open VSX versions'
+          body: |
+            Automated weekly check of stable ArmotuSitio extensions on Open VSX.
+            Each candidate is checked for identity, MIT license, IDE engine compatibility,
+            exact registry download URL and SHA-256.
+            Only reproducible build pins change. Review CI before merging.
+          labels: dependencies
