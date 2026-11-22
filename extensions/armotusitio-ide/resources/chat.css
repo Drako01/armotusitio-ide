@@ -80,10 +80,10 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, .log:focus-v
 .mcp-pill:hover { background: var(--vscode-toolbar-hoverBackground) !important; }
 /* Reuse the agent status ring while keeping connection details in the accessible name. */
 .mcp-pill .mcp-status { margin-left: 2px; }
-.mcp-pill[data-state="connected"] .mcp-status { color: var(--chat-ok); border-color: var(--chat-ok); }
-.mcp-pill[data-state="disconnected"] .mcp-status, .mcp-pill[data-state="error"] .mcp-status { color: var(--chat-error); border-color: var(--chat-error); }
-.mcp-pill[data-state="checking"] .mcp-status { color: var(--chat-accent); border-color: var(--chat-accent); border-style: dotted; }
-.mcp-pill:not([data-state="connected"]):not([data-state="disconnected"]):not([data-state="error"]):not([data-state="checking"]) .mcp-status { color: var(--chat-warning); border-color: var(--chat-warning); }
+.mcp-pill[data-state="connected"] .mcp-status { border-color: var(--chat-ok); }
+.mcp-pill[data-state="disconnected"] .mcp-status, .mcp-pill[data-state="error"] .mcp-status { border-color: var(--chat-error); }
+.mcp-pill[data-state="checking"] .mcp-status { border-color: var(--chat-accent); border-style: dotted; }
+.mcp-pill:not([data-state="connected"]):not([data-state="disconnected"]):not([data-state="error"]):not([data-state="checking"]) .mcp-status { border-color: var(--chat-warning); }
 .icon-button { padding: 2px 10px; color: var(--vscode-foreground); background: transparent; font-size: 1.2em; line-height: 1.2; }
 .icon-button:hover { background: var(--vscode-toolbar-hoverBackground) !important; }
 
