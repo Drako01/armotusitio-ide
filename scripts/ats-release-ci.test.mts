@@ -61,7 +61,7 @@ test('optional Authenticode is all-or-nothing and Store submission is opt-in, pi
 	assert.match(submit, /microsoft\/microsoft-store-apppublisher@[a-f0-9]{40} /);
 	assert.ok(submit.indexOf('packageSha256') < submit.indexOf('msstore publish'), 'MSIX integrity must be checked before submission');
 	const reconfigure = submit.indexOf('msstore reconfigure');
-	for (const command of ['msstore settings', 'msstore publish', 'msstore apps get', 'msstore submission status']) {
+	for (const command of ['msstore settings', 'msstore publish', 'msstore apps list', 'msstore apps get', 'msstore submission status']) {
 		assert.ok(reconfigure !== -1 && reconfigure < submit.indexOf(command), `${command} fails with "SellerId is not set" before reconfigure`);
 	}
 	assert.match(submit, /msstore publish \$env:ATS_MSIX --appId/, 'msstore publish takes the .msix file itself as its first argument; a folder is not recognized as a project');
