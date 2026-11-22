@@ -43,7 +43,7 @@ Apply this baseline while you design, write, change or review code, not only at 
 
 ## Professional practice
 
-- Use Conventional Commits when that is the project's convention. Keep documentation useful and minimal; update docs the change makes wrong.
+- When the user requests commits, apply the native `conventional-commits` skill: use Conventional Commits and separate implementation, tests and ordinary documentation by purpose. Keep documentation useful and minimal; update docs the change makes wrong. Commit requests never imply push, PR creation or history rewriting.
 - Preserve backward compatibility of public APIs, data and configuration, or state the break explicitly. Optimize performance only where it is measured or clearly material.
 - For user interfaces apply accessibility (WCAG) and Nielsen's ten usability heuristics: visibility of system status, match with the real world, user control and freedom, consistency, error prevention, recognition over recall, flexibility, minimalist design, helpful error recovery and documentation. For mobile screens also apply the `mobile-ux-principles` skill.
 

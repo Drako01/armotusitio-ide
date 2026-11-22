@@ -27,9 +27,9 @@ export interface SkillSelectionInput {
 export interface SkillSelection { skills: EngineeringSkill[]; trace: Array<{ name: string; reason: string }> }
 const NAME = /^[a-z0-9][a-z0-9-]{0,63}$/;
 export const ENGINEERING_SKILL_NAMES = ['engineering-principles', 'abstraction-auditor', 'architecture-guardian', 'safe-refactoring', 'evidence-code-review', 'design-patterns', 'testing-strategy', 'api-contract-integrity', 'security-by-design', 'performance-engineering',
-	'software-engineering-best-practices', 'token-economy', 'mobile-ux-principles'] as const;
-/** Native rules that bind every development turn: they sit outside the three-skill ceiling and are never left out for budget. */
-export const MANDATORY_SKILL_NAMES: ReadonlySet<string> = new Set(['token-economy', 'mobile-ux-principles']);
+	'software-engineering-best-practices', 'token-economy', 'mobile-ux-principles', 'conventional-commits'] as const;
+/** Native policies are selected conditionally, outside the three-skill ceiling and automatic context budget. */
+export const MANDATORY_SKILL_NAMES: ReadonlySet<string> = new Set(['token-economy', 'mobile-ux-principles', 'conventional-commits']);
 /** Compact baseline of engineering practice added to every automatic development turn, outside the three-skill ceiling. */
 const BASELINE_SKILL = 'software-engineering-best-practices';
 const isMandatorySkill = (skill: EngineeringSkill): boolean => skill.source === 'native' && MANDATORY_SKILL_NAMES.has(skill.name);
@@ -79,10 +79,17 @@ const UI_TERMS = /\b(pantallas?|screens?|ui|ux|interfaz|interfaces?|formularios?
 const normalizedRequest = (request: string | undefined): string => (request ?? '').toLowerCase().normalize('NFC');
 const UI_FILE = /\.(?:tsx|jsx|html?|css|scss|sass|less|xaml|qml|razor|dart|swift|kt|vue|svelte|storyboard|xib)$|res\/layout\//;
 
+/** A request to create commits, not a discussion or review of existing history; publication is separate. */
+function requestsCommits(request: string): boolean {
+	const text = request.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/^\s*[\u00bf?]\s*/, '');
+	if (PLAIN_QUESTION.test(text) || /\b(?:no\s+(?:quiero\s+)?(?:(?:hagas?|hagan|hacer|realices|crees|crear|generes)\s+)?(?:un\s+)?(?:commits?|commite\w*)|sin\s+(?:hacer\s+)?commits?|(?:do\s+not|don't|never)\s+(?:(?:create|make|git)\s+)?(?:a\s+)?commits?)\b/.test(text)) { return false; }
+	return /\bcommite(?:a(?:me|lo|los)?|ando|ar)\b|\b(?:hace(?:me)?|hacer|crea(?:me)?|crear|realiza|realizar|genera|create|make)\s+(?:los\s+|estos\s+|un\s+|a\s+|the\s+|these\s+|small\s+)?commits?\b|(?:^|[.;!:\n,]\s*|\b(?:please|then|and|y|luego|solo|only)\s+|\b(?:can|could|would)\s+you\s+)(?:git\s+)?commit\b|\b(?:run|execute|ejecuta|corre)\s+git\s+commit\b/.test(text);
+}
+
 /** A turn that changes software: any request naming a development verb, or an Act turn that is not a plain question. */
 export function isDevelopmentRequest(input: Pick<SkillSelectionInput, 'request' | 'mode'>): boolean {
 	const request = normalizedRequest(input.request);
-	return DEVELOPMENT.test(request) || (input.mode === 'act' && !!request.trim() && !PLAIN_QUESTION.test(request));
+	return requestsCommits(request) || DEVELOPMENT.test(request) || (input.mode === 'act' && !!request.trim() && !PLAIN_QUESTION.test(request));
 }
 
 /** The mandatory native rules a turn carries, with the reason; none when the turn is not development. */
@@ -92,6 +99,7 @@ export function mandatorySkills(input: SkillSelectionInput): Array<{ name: strin
 	const rules = [{ name: 'token-economy', reason: 'mandatory: development turn' }];
 	const uiWork = UI_TERMS.test(request) || (input.files ?? []).some(file => UI_FILE.test(file.replace(/\\/g, '/').toLowerCase()));
 	if (uiWork || MOBILE_TERMS.test(request)) { rules.push({ name: 'mobile-ux-principles', reason: 'mandatory: interface UX and accessibility' }); }
+	if (requestsCommits(request)) { rules.push({ name: 'conventional-commits', reason: 'mandatory: requested commit creation' }); }
 	return rules;
 }
 

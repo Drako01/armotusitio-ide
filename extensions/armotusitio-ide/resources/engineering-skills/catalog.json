@@ -65,7 +65,7 @@
 			"name": "software-engineering-best-practices",
 			"source": "native",
 			"description": "Compact baseline of professional engineering practices applied while designing, implementing, refactoring or reviewing code - proportional, contextual, and the same for every provider.",
-			"digest": "9a41c5d9493134dca1e5b57be8ce390fd78384e350373d06d4b3d72f4d1ce119"
+			"digest": "b694dd3038b7f653ffada40573e1c50925e96d7fe26a728fdd6d85ddc02e49d5"
 		},
 		{
 			"name": "token-economy",
@@ -78,6 +78,12 @@
 			"source": "native",
 			"description": "Mandatory UX/UI guidance for web, desktop, IDE and mobile interfaces using Nielsen's ten usability heuristics, accessible states and controls, with conditional mobile interaction guidance.",
 			"digest": "5f5f37d7eb73f2524104ec7dd99e32a2b158484af02441b00cbb4b3c869530bb"
+		},
+		{
+			"name": "conventional-commits",
+			"source": "native",
+			"description": "Native commit guidance when the user requests commits - Conventional Commits, strict separation of implementation, tests and documentation, explicit staging, preserved hooks and authorization.",
+			"digest": "26576adb77a503d1ac21c38f8fe4b087207ddd8ac9c907670e9642f9b3ef020a"
 		}
 	]
 }
