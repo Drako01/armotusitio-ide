@@ -238,6 +238,36 @@ test('development turns carry the mandatory token rule and the engineering basel
 	]);
 });
 
+test('commit creation requests select the native rule in either mode without mistaking questions, reviews or prohibitions for action', () => {
+	const catalog = metadata();
+	const positive = ['commiteá esto', 'hace commits', 'haceme commits', 'hacé los commits', 'haceme un commit', 'create a commit', 'vayas commiteando de a paquetes pequeños', 'commit these changes', 'create commits', 'git commit', 'no push, hacé commit', 'no pushees nada, solo commit de esto'];
+	const negative = ['¿Qué es un commit?', 'How do I create commits?', 'review this commit', 'Review the git commit diff', 'no hagas commits', 'do not commit', 'don\'t create commits', 'do not create a commit', 'no quiero hacer un commit', 'no crear commits', 'Implement this feature; do not commit', 'Sin hacer commits, arreglá este bug'];
+	for (const mode of ['ask', 'act'] as const) {
+		for (const request of positive) {
+			assert.equal(isDevelopmentRequest({ request, mode }), true, request);
+			assert.ok(names(selectEngineeringSkills(catalog, { request, mode }).skills).includes('conventional-commits'), request);
+		}
+		for (const request of negative) { assert.equal(names(selectEngineeringSkills(catalog, { request, mode }).skills).includes('conventional-commits'), false, request); }
+	}
+	assert.deepEqual(names(selectEngineeringSkills(catalog, { request: 'commiteá esto', mode: 'ask', explicit: true }).skills), ['token-economy', 'conventional-commits']);
+});
+
+test('the commit skill documents message syntax, strict purpose splits and existing authorization boundaries', async () => {
+	const body = await fs.readFile(path.resolve(import.meta.dirname, '../resources/engineering-skills/conventional-commits/SKILL.md'), 'utf8');
+	assert.match(body, /https:\/\/www\.conventionalcommits\.org\/en\/v1\.0\.0\//);
+	assert.match(body, /type\(scope\): short description/);
+	assert.match(body, /BREAKING CHANGE:/);
+	assert.match(body, /do not mix implementation, tests and ordinary project documentation/);
+	assert.match(body, /distributed `SKILL\.md` files and generated catalogs.*product artifacts/);
+	assert.match(body, /Preserve unrelated staged and unstaged work/);
+	assert.match(body, /do not use `git add -A` or `git add \.`/);
+	assert.match(body, /Do not bypass hooks/);
+	assert.match(body, /After each commit, update the existing persistent checklist/);
+	assert.match(body, /never imply that each intermediate commit was independently validated/);
+	assert.match(body, /Do not amend, rebase, reset/);
+	assert.match(body, /does not grant commit permission/);
+});
+
 test('general UX principles bind web, desktop and mobile UI while excluding backend work and plain questions', () => {
 	const catalog = metadata();
 	const ux = (input: { request: string; mobile?: boolean; files?: string[]; mode?: 'act' | 'ask' }) => names(selectEngineeringSkills(catalog, { mode: 'act', ...input }).skills).includes('mobile-ux-principles');

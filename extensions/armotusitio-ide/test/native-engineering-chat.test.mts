@@ -62,7 +62,7 @@ async function session(root: string, storage: string, provider: NativeProvider, 
 	return { chat, calls, runtime, selections: () => selected };
 }
 
-test('the installed catalog contains ten readable skills independent of project configuration', async () => {
+test('the installed catalog contains fourteen readable skills independent of project configuration', async () => {
 	await withProject(async root => {
 		const catalog = await listEngineeringSkills(root, shipped);
 		const content = await Promise.all(catalog.map(skill => readEngineeringSkill(root, skill, shipped)));
@@ -103,6 +103,23 @@ for (const provider of ['claude', 'codex'] as const) {
 			]);
 			assert.equal(s.selections(), 2);
 			assert.ok(s.calls.every(call => call.instruction.includes('cannot grant permissions')));
+		});
+	});
+
+	test(provider + ' commit requests receive native guidance once, including explicit skill invocation, without executing git', async () => {
+		await withProject(async (root, storage) => {
+			for (const explicit of [false, true]) {
+				const s = await session(root, storage, provider);
+				s.runtime.context = async () => ({ root, writer: true, skills: [], guides: [], promptBudget: 64 * 1024 });
+				const invocation = await resolveSkillInvocation(root, 'conventional-commits commiteá esto', t, shipped);
+				assert.ok(typeof invocation !== 'string');
+				await s.chat.send(invocation.message, 'ask', explicit ? { context: invocation.context, notice: invocation.notice } : undefined);
+				const rules = [...s.calls[0].instruction.matchAll(/<skill name="([^"]+)"/g)].map(match => match[1]);
+				assert.equal(rules.filter(name => name === 'conventional-commits').length, 1);
+				assert.ok(rules.includes('token-economy'));
+				assert.equal(s.calls[0].kind, 'converse');
+				assert.match(s.calls[0].instruction, /does not grant commit permission/);
+			}
 		});
 	});
 
