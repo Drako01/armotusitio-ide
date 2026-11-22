@@ -210,8 +210,12 @@ async function prepare(): Promise<unknown> {
 	return result;
 }
 
-/** Workflows that may stay active once Actions is enabled; every upstream workflow must be disabled. */
-export const allowedActiveWorkflows = ['.github/workflows/ats-release.yml', '.github/workflows/ats-ide-extension.yml'];
+/**
+ * Workflows that may stay active once Actions is enabled; every upstream workflow must be disabled.
+ * Each one is ArmotuSitio's own and can neither tag nor publish: the extension gate only reads, and the official
+ * extensions sync only proposes a pin update PR labeled sin-release, so merging it never starts a release.
+ */
+export const allowedActiveWorkflows = ['.github/workflows/ats-release.yml', '.github/workflows/ats-ide-extension.yml', '.github/workflows/ats-official-extensions-sync.yml'];
 const releaseWorkflowPath = allowedActiveWorkflows[0];
 
 /** True when the listing is the complete one GitHub returns (a partial page could hide an active workflow). */

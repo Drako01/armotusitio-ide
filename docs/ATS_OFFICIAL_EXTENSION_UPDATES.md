@@ -20,7 +20,10 @@ las instala, el mecanismo nativo de extensiones de VS Code maneja sus actualizac
 
 Cada lunes, `.github/workflows/ats-official-extensions-sync.yml` consulta
 las versiones estables publicadas y genera **un PR para revisión** si existen cambios;
-no hace merge, no instala nada a los usuarios y no publica releases.
+no hace merge, no instala nada a los usuarios y no publica releases. El PR lleva la etiqueta
+`sin-release`: unirlo a `main` no dispara una versión nueva; los pines nuevos salen en la próxima
+versión que se publique. Este workflow puede quedar activo: está en la lista de workflows permitidos
+de la guarda de publicación (`scripts/ats-autoupdate.mts`).
 
 Para consultar y actualizar el manifiesto **localmente** (necesita acceso a Open VSX):
 

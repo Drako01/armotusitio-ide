@@ -33,6 +33,10 @@ test('seven exact official release pins compose additively with upstream builtin
 	assert.ok(officialExtensions.every(extension => !extension.metadata.id && !extension.metadata.publisherId));
 });
 
+test('the product names its own chat extension so the migration notice never flags @harness', () => {
+	assert.equal(armotusitioProduct.armotusitioChatExtensionId, 'armotusitio.armotusitio-ide');
+});
+
 test('official pin validation fails closed for wrong identity, duplicate, count, version, digest or source', () => {
 	const changes: Array<(value: typeof manifest) => void> = [
 		value => { value.schemaVersion = 2; },

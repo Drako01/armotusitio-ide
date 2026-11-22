@@ -145,7 +145,7 @@ node scripts/ats-autoupdate.mts publish --approve
 `--approve` confirma que revisaste los artefactos y completaste los ensayos requeridos.
 La publicación crea un borrador, sube los archivos, verifica los digests remotos y publica al final como última estable.
 Nunca reemplaza assets de una release publicada. Un fallo deja el borrador sin anunciarlo a los clientes.
-Antes de cada mutación se comprueba Actions: o está desactivado, o solo están activos `ats-release.yml` y `ats-ide-extension.yml` y no hay un release de CI en curso. Cualquier otro estado detiene la operación.
+Antes de cada mutación se comprueba Actions: o está desactivado, o solo están activos `ats-release.yml`, `ats-ide-extension.yml` y `ats-official-extensions-sync.yml` y no hay un release de CI en curso. Cualquier otro estado detiene la operación.
 No se necesita un servidor propio para este canal.
 
 ## Cliente Windows y recuperación
