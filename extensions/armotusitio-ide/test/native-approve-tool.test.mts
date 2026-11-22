@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { decidePermissionPrompt, plainCommandWords, type ApproveContext } from '../src/native-approve-tool.ts';
+import { commandVerdict, decidePermissionPrompt, plainCommandWords, shellSegments, type ApproveContext } from '../src/native-approve-tool.ts';
 import type { ApprovalDraft } from '../src/native-approval.ts';
 import { createCommandPolicy, denialText } from '../src/native-command-policy.ts';
 import { addUserRule, loadPermissions } from '../src/native-permissions.ts';
@@ -20,6 +20,30 @@ test('only plain command lines become words; anything a shell would interpret is
 		['pnpm', '--dir', 'apps/web', 'lint'], ['node', 'scripts/build x.js', '--flag'], ['git', 'log', '--oneline', '-5'], ['npm', 'test'],
 		undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined
 	]);
+});
+
+test('a shell line splits into its commands at &&, ||, ; and |, with safe redirections and variables; anything else is refused', () => {
+	assert.deepEqual([
+		'git status && git diff', 'pnpm test 2>&1 | tail -20', 'pnpm lint; pnpm test', 'NODE_ENV=test pnpm test', 'git diff HEAD~1 > /dev/null', 'node a.js || echo "a | b"',
+		'NODE_OPTIONS=--require=x node a.js', 'pnpm test > out.txt', 'sleep 9 &', 'ls && ', '&& ls', 'cat ~/x', 'node --x=~/y', 'git log $(id)', 'ls *.ts', 'a |& b'
+	].map(shellSegments), [
+		{ segments: [['git', 'status'], ['git', 'diff']], compound: true }, { segments: [['pnpm', 'test'], ['tail', '-20']], compound: true },
+		{ segments: [['pnpm', 'lint'], ['pnpm', 'test']], compound: true }, { segments: [['pnpm', 'test']], compound: true }, { segments: [['git', 'diff', 'HEAD~1']], compound: true },
+		{ segments: [['node', 'a.js'], ['echo', 'a | b']], compound: true },
+		undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined
+	]);
+});
+
+test('a compound line runs when every command may run, asks once for the whole line when one asks, and is denied naming the refused command', async () => {
+	const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'ats-compound-')));
+	try {
+		const permissions = await loadPermissions(root, root, undefined, { preset: 'dev' });
+		const policy = createCommandPolicy({ subprojects: [{ path: '.', ecosystem: 'node', packageManager: 'pnpm', scripts: ['test', 'lint'] }], delegate: false, extras: [], permissions });
+		const summary = (line: string) => { const verdict = commandVerdict({ policy }, line); return verdict.verdict === 'ask' ? ['ask', verdict.draft.rule, verdict.draft.command] : verdict.verdict === 'deny' ? ['deny', verdict.message.split('\n')[0], verdict.message.split('\n').at(-1)] : ['allow']; };
+		assert.deepEqual(['git status && git diff', 'pnpm test 2>&1 | tail -20', 'pnpm lint && node scripts/release.mjs', 'git log | sh', 'cd src && ls'].map(summary), [
+			['allow'], ['allow'], ['ask', '', 'pnpm lint && node scripts/release.mjs'], ['deny', 'POLICY_DENIED: shell-operator', 'In: sh'], ['deny', 'POLICY_DENIED: change-directory', 'In: cd src']
+		]);
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('Claude permission prompts are decided by the same policy and permissions as the structured tools', async () => {
@@ -40,6 +64,7 @@ test('Claude permission prompts are decided by the same policy and permissions a
 			await verdict('Bash', { command: 'node --version' }),
 			await verdict('Bash', { command: 'docker ps' }),
 			await verdict('Bash', { command: 'docker images' }),
+			// A compound line is judged command by command: both read-only here.
 			await verdict('Bash', { command: 'ls | grep x' }),
 			await verdict('Bash', { command: 'cd apps/web' }),
 			await verdict('Bash', { command: 'node --version', run_in_background: true }),
@@ -51,11 +76,16 @@ test('Claude permission prompts are decided by the same policy and permissions a
 			await verdict('Write', { file_path: 'secret/key.txt', content: 'x' }),
 			await verdict('Read', { file_path: path.join(root, 'src', 'a.ts') }),
 			await verdict('Read', { file_path: path.join(os.tmpdir(), 'outside.ts') }),
+			// Credential files are refused the same way to Read and to the terminal, and one refused command denies its line.
+			await verdict('Read', { file_path: path.join(root, '.env') }),
+			await verdict('Bash', { command: 'cat .env' }),
+			await verdict('Bash', { command: 'git status && rm -rf src' }),
 			await verdict('WebFetch', { url: 'https://example.com' }),
 			await verdict('Bash', 'not an object' as unknown as Record<string, unknown>)
 		], [
-			'allow', 'DENIED: the user did not allow it', 'allow', 'POLICY_DENIED: shell-operator', 'POLICY_DENIED: change-directory', 'POLICY_DENIED: background', 'POLICY_DENIED: credential-access',
-			'allow', 'allow', 'POLICY_DENIED: protected-path', 'POLICY_DENIED: path-outside-project', 'POLICY_DENIED: edit:secret/**', 'allow', 'POLICY_DENIED: path-outside-project', 'DENIED: the user did not allow it',
+			'allow', 'DENIED: the user did not allow it', 'allow', 'allow', 'POLICY_DENIED: change-directory', 'POLICY_DENIED: background', 'POLICY_DENIED: credential-access',
+			'allow', 'allow', 'POLICY_DENIED: protected-path', 'POLICY_DENIED: path-outside-project', 'POLICY_DENIED: edit:secret/**', 'allow', 'POLICY_DENIED: path-outside-project',
+			'POLICY_DENIED: credential-access', 'POLICY_DENIED: credential-access', 'POLICY_DENIED: destructive', 'DENIED: the user did not allow it',
 			denialText('invalid').split('\n', 1)[0]
 		]);
 		// An allowed prompt hands the input back unchanged; the cards were the two external CLI calls.

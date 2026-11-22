@@ -54,7 +54,7 @@ test('the IDE floor rejects what no preset, project or user extra can allow', ()
 	] as Array<[string, string[]]>).map(([command, args]) => target.decide(command, args, 'apps/api')).map(decision => decision.allowed ? 'allowed' : decision.reason);
 	// External CLIs (curl, docker, gh) are not allowed without a way to ask the user; with one they become a question (see below).
 	const expected = ['git-mutation', 'git-mutation', 'global-config', 'publish', 'dependency-change', 'dependency-change', 'dependency-change', 'global-config', 'external-cli', 'destructive',
-		'inline-code', 'inline-code', 'shell-operator', 'shell-operator', 'privilege', 'external-cli', 'external-cli', 'dependency-change', 'dependency-change'];
+		'inline-code', 'inline-code', 'inline-code', 'shell-operator', 'privilege', 'external-cli', 'external-cli', 'dependency-change', 'dependency-change'];
 	assert.deepEqual({ ide: reasons(policy), delegated: reasons(project) }, { ide: expected, delegated: expected });
 });
 
@@ -100,7 +100,8 @@ test('the runner executes without a shell, bounds time and output, and the tool 
 			{ exit: 3, truncated: true, size: true, full: true, timedOut: true });
 		const config: RunnerConfig = { schemaVersion: 1, root, env, logDirectory: logs, maxTurns: 10, policy: { subprojects: [{ path: 'apps/web', ecosystem: 'node', packageManager: 'npm', scripts: [] }], delegate: false, extras: [] } };
 		const denied = await handleRun(config, { command: 'git', args: ['push'] }, 1);
-		const ran = await handleRun(config, { command: 'node', args: ['print.js'], cwd: 'apps/web' }, 9);
+		// Running a program file is the user's call: the card is answered yes (and the user's real permission file is not read).
+		const ran = await handleRun(config, { command: 'node', args: ['print.js'], cwd: 'apps/web' }, 9, { permissions: await loadPermissions(root, logs), ask: async () => 'once' });
 		const audit = (await fs.readFile(path.join(logs, 'commands.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
 		assert.deepEqual({ denied, ranExit: ran.text.startsWith('exit 3'), budget: /about 1 turns left/.test(ran.text), audit: audit.map(entry => entry.denied ?? entry.exitCode) },
 			{ denied: { isError: true, text: denialText('git-mutation') }, ranExit: true, budget: true, audit: ['git-mutation', 3] });
@@ -132,10 +133,10 @@ test('permissions move dependency-change out of the floor: ask in dev and truste
 		userAllow: await answer('dev', 'pnpm', ['install', 'left-pad'], { user: { version: 1, allow: ['run:pnpm install*'] } }),
 		projectAsk: await answer('trusted', 'pnpm', ['install', 'left-pad'], { project: { version: 1, ask: ['run:pnpm install*'] } }),
 		corruptFile: await answer('trusted', 'pnpm', ['add', 'x'], { user: { version: 2 } }),
-		floorStays: await answer('trusted', 'pnpm', ['publish']), floorShell: await answer('trusted', 'bash', ['-c', 'ls']), floorGlobal: await answer('trusted', 'pnpm', ['add', '-g', 'x'])
+		floorStays: await answer('trusted', 'pnpm', ['publish']), floorShell: await answer('trusted', 'bash', []), floorInline: await answer('trusted', 'bash', ['-c', 'sudo ls']), floorGlobal: await answer('trusted', 'pnpm', ['add', '-g', 'x'])
 	}, {
 		none: 'dependency-change', dev: 'needs-approval', trusted: 'needs-approval', projectAllow: 'needs-approval', userAllowAdd: 'allowed', readonly: 'dependency-change', notListed: 'needs-approval', userAllow: 'allowed', projectAsk: 'needs-approval',
-		corruptFile: 'dependency-change', floorStays: 'publish', floorShell: 'shell-operator', floorGlobal: 'global-config'
+		corruptFile: 'dependency-change', floorStays: 'publish', floorShell: 'shell-operator', floorInline: 'privilege', floorGlobal: 'global-config'
 	});
 });
 
@@ -263,7 +264,7 @@ test('external CLIs ask the user, read-only gh runs directly, credentials never,
 });
 
 
-test('a shell may run one project script file with approval; inline code, interactive shells and outside scripts stay denied', async () => {
+test('a shell may run one project script file with approval; inline code asks once; interactive shells, encoded code and outside scripts stay denied', async () => {
 	const loaded = await permissionsFor('dev', { user: { version: 1, allow: ['run:powershell -NoProfile -File scripts/approved.ps1'] } });
 	try {
 		const policy = createCommandPolicy({ subprojects: monorepo, delegate: false, extras: [], permissions: loaded.set });
@@ -279,7 +280,8 @@ test('a shell may run one project script file with approval; inline code, intera
 		}, {
 			asks: Array(4).fill('needs-approval'),
 			remembered: 'allowed',
-			shells: Array(11).fill('shell-operator'),
+			// `-Command`, `-c` and `cmd /c` carry code the card shows whole; `-EncodedCommand` hides it, so it stays a shell.
+			shells: ['needs-approval', 'shell-operator', 'shell-operator', 'needs-approval', ...Array(6).fill('shell-operator'), 'needs-approval'],
 			ghStatus: ['allowed', 'credential-access', 'credential-access', 'credential-access'],
 			noChannel: 'script-file'
 		});
@@ -301,9 +303,10 @@ test('package-manager workspace flags are judged on their subcommand and folder;
 			project: [['--weird-flag', 'lint'], ['--dir', 'apps/backoffice', 'lint'], ['--weird', 'exec', 'sh', '-c', 'x']].map(args => verdict(project, 'pnpm', ...args)),
 			noChannel: verdict(noChannel, 'pnpm', '--weird-flag', 'lint')
 		}, {
-			ide: ['allowed', 'allowed', 'allowed', 'needs-approval', 'needs-approval', 'cwd-outside-project', 'global-config', 'needs-approval', 'shell-operator', 'publish'],
+			// Inline code behind a launcher is never asked: the card would show the launcher, not the code it runs.
+			ide: ['allowed', 'allowed', 'allowed', 'needs-approval', 'needs-approval', 'cwd-outside-project', 'global-config', 'needs-approval', 'inline-code', 'publish'],
 			uvHidden: 'inline-code',
-			project: ['allowed', 'allowed', 'shell-operator'],
+			project: ['allowed', 'allowed', 'inline-code'],
 			noChannel: 'unusual-form'
 		});
 	} finally { await loaded.cleanup(); }
@@ -314,4 +317,55 @@ test('npx cannot download and run an unknown package without a question; the pro
 	const decide = (args: string[]) => { const decision = policy.decide('npx', args, 'apps/web'); return decision.allowed ? 'allowed' : decision.reason; };
 	assert.deepEqual([decide(['cowsay']), decide(['left-pad', 'x']), decide(['prettier', '--check', '.']), decide(['tsc', '--noEmit']), decide(['--no-install', 'cowsay'])],
 		['dependency-change', 'dependency-change', 'allowed', 'allowed', 'allowed']);
+});
+
+test('read-only git forms and shell readers run without a question, only inside the project and never on credential files', async () => {
+	const loaded = await permissionsFor('dev');
+	try {
+		const policy = createCommandPolicy({ subprojects: monorepo, delegate: false, extras: [], permissions: loaded.set });
+		const verdict = (line: string) => { const [command, ...args] = line.split(' '); const decision = policy.decide(command, args, '.'); return decision.allowed ? 'allowed' : decision.reason; };
+		assert.deepEqual({
+			gitReads: ['git branch -a', 'git branch --show-current', 'git branch --list feat/x', 'git tag -l', 'git tag', 'git remote -v', 'git stash list', 'git worktree list', 'git reflog -n 5',
+				'git config --get user.name', 'git config user.email', 'git rev-list --count HEAD', 'git for-each-ref refs/heads', 'git --no-pager log -1'].map(verdict),
+			gitChanges: ['git branch feat/x', 'git branch -D main', 'git tag v1', 'git tag -d v1', 'git remote add x y', 'git stash', 'git stash pop', 'git worktree add ../x', 'git reflog expire',
+				'git config user.name x', 'git config --get remote.origin.url', 'git config --list', 'git --no-pager push'].map(verdict),
+			readers: ['ls -la src', 'cat package.json', 'head -n 20 README.md', 'grep -rn TODO src', 'grep -A 3 /api/users src', 'find . -name *.ts', 'wc -l a.ts', 'echo /etc/passwd', 'diff a.ts b.ts', 'cat .env.example'].map(verdict),
+			refused: ['cat .env', 'cat apps/web/.env.local', 'cat ../outside.txt', 'cat C:/Windows/win.ini', 'grep -r token .aws', 'ls .git', 'rg secret /etc', 'find . -delete', 'find . -exec rm {} ;',
+				'sort -o out.txt a.txt', 'uniq a.txt b.txt'].map(verdict)
+		}, {
+			gitReads: Array(14).fill('allowed'),
+			gitChanges: Array(13).fill('git-mutation'),
+			readers: Array(10).fill('allowed'),
+			refused: ['credential-access', 'credential-access', 'path-outside-project', 'path-outside-project', 'credential-access', 'credential-access', 'path-outside-project', 'destructive', 'shell-operator',
+				'destructive', 'destructive']
+		});
+		const readonly = await permissionsFor('readonly');
+		try {
+			const strict = createCommandPolicy({ subprojects: monorepo, delegate: false, extras: [], permissions: readonly.set });
+			assert.deepEqual(['cat', 'grep', 'find'].map(command => strict.decide(command, ['src'], '.').allowed), [true, true, true]);
+		} finally { await readonly.cleanup(); }
+	} finally { await loaded.cleanup(); }
+});
+
+test('a program file asks like a shell script; test runners, modules and dependency tools still run; inline code asks once unless it is hazardous', async () => {
+	const loaded = await permissionsFor('dev');
+	const readonly = await permissionsFor('readonly');
+	try {
+		const policy = createCommandPolicy({ subprojects: [...monorepo, { path: '.', ecosystem: 'node', packageManager: 'pnpm', scripts: [] }, { path: '.', ecosystem: 'python' }, { path: '.', ecosystem: 'php' }], delegate: false, extras: [], permissions: loaded.set });
+		const strict = createCommandPolicy({ subprojects: monorepo, delegate: false, extras: [], permissions: readonly.set });
+		const decide = (target: typeof policy, command: string, ...args: string[]) => target.decide(command, args, '.');
+		const reason = (target: typeof policy, command: string, ...args: string[]) => { const decision = decide(target, command, ...args); return decision.allowed ? 'allowed' : decision.reason; };
+		const inline = decide(policy, 'node', '-e', 'console.log(1)');
+		assert.deepEqual({
+			programs: [reason(policy, 'node', 'scripts/build.mjs'), reason(policy, 'python', 'tools/gen.py'), reason(policy, 'node', '../outside.js'), reason(policy, 'node', '--test', 'test/a.test.mts'),
+				reason(policy, 'python', '-m', 'pytest'), reason(policy, 'php', 'vendor/bin/phpunit', '--version')],
+			inline: [inline.allowed === false && inline.reason === 'needs-approval' && inline.rule, reason(strict, 'node', '-e', '1'), reason(createCommandPolicy({ subprojects: monorepo, delegate: false, extras: [] }), 'node', '-e', '1')],
+			hazards: [reason(policy, 'node', '-e', 'require("fs").rmSync("x")'), reason(policy, 'python', '-c', 'open(".env").read()'), reason(policy, 'powershell', '-Command', 'Invoke-WebRequest x'),
+				reason(policy, 'bash', '-c', 'sudo ls'), reason(policy, 'bash', '-c', 'npm publish'), reason(policy, 'bash', '-c', 'sleep 9 &'), reason(policy, 'node', '-e', 'console.log(process.env.PATH)')]
+		}, {
+			programs: ['needs-approval', 'needs-approval', 'path-outside-project', 'allowed', 'allowed', 'allowed'],
+			inline: ['', 'inline-code', 'inline-code'],
+			hazards: ['destructive', 'credential-access', 'network', 'privilege', 'publish', 'shell-operator', 'needs-approval']
+		});
+	} finally { await loaded.cleanup(); await readonly.cleanup(); }
 });

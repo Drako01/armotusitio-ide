@@ -73,7 +73,7 @@ test('run_in_terminal applies the same policy and approval as run before anythin
 		const ran = await handleRun(config, { command: 'node', args: ['setup.cjs'] }, 4, { permissions: permissionsOf('allow'), terminal }, 'terminal');
 		const audit = (await fs.readFile(path.join(config.logDirectory, 'commands.jsonl'), 'utf8')).split('\n').filter(Boolean).map(line => JSON.parse(line));
 		assert.deepEqual({
-			asked: asked.length, denied: denied.isError, noUi: noUi.isError, shell: shell.text.startsWith('POLICY_DENIED'), started, ran: ran.text.endsWith('answered'),
+			asked: asked.length, denied: denied.isError, noUi: noUi.isError, shell: shell.isError, started, ran: ran.text.endsWith('answered'),
 			audit: audit.filter(entry => entry.via === 'terminal' && entry.exitCode === 0).length
 		}, { asked: 1, denied: true, noUi: true, shell: true, started: ['node setup.cjs'], ran: true, audit: 1 });
 		void root;

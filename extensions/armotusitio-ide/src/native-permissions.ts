@@ -31,7 +31,47 @@ const FILE_KEYS = new Set(['version', 'preset', 'allow', 'ask', 'deny', 'project
 const SECTION_KEYS = new Set(['allow', 'ask', 'deny']);
 const DECISIONS: readonly PermissionDecision[] = ['deny', 'ask', 'allow'];
 const PRESETS: readonly PermissionPreset[] = ['readonly', 'dev', 'trusted'];
-const READONLY_COMMANDS = new Set(['git', 'ls', 'dir', 'cat', 'type', 'head', 'tail', 'wc', 'grep', 'rg', 'pwd', 'whoami', 'hostname']);
+/**
+ * Shell tools that only read or print: the policy runs them without a question (after checking their paths and output
+ * flags) and the readonly preset allows them. Shared with the command policy floor.
+ */
+export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set(['ls', 'cat', 'head', 'tail', 'wc', 'grep', 'pwd', 'echo', 'which', 'tree', 'du', 'sort', 'uniq',
+	'cut', 'file', 'stat', 'diff', 'basename', 'dirname', 'date', 'find', 'realpath', 'true']);
+const READONLY_COMMANDS = new Set(['git', 'rg', 'dir', 'type', 'whoami', 'hostname', ...READ_ONLY_TOOLS]);
+/**
+ * Cloud, container and HTTP CLIs: they act outside the project with the user's own credentials, so each call is the user's
+ * decision. Shared with the command policy floor; a family rule is never offered for them (`gh pr *` would include merge).
+ */
+export const EXTERNAL_CLIS: ReadonlySet<string> = new Set(['gh', 'aws', 'az', 'gcloud', 'docker', 'podman', 'kubectl', 'helm', 'terraform', 'vercel', 'netlify', 'firebase', 'flyctl', 'heroku', 'curl', 'wget']);
+/** Flags that make a runtime execute the code given on the command line instead of a file. */
+const INLINE = new Map<string, readonly string[]>([['node', ['-e', '--eval', '-p', '--print', '-r', '--require', '--import']], ['python', ['-c']], ['python3', ['-c']], ['py', ['-c']],
+['ruby', ['-e']], ['perl', ['-e', '-E']], ['php', ['-r']], ['deno', ['eval']], ['bun', ['-e', '--eval']]]);
+/** Shells and how each one takes inline code: `bash -c`, `powershell -Command`, `cmd /c`. A Map: a command named `constructor` is not a shell. */
+const SHELL_INLINE = new Map<string, readonly string[]>([['bash', ['-c']], ['sh', ['-c']], ['zsh', ['-c']], ['pwsh', ['-c', '-command']], ['powershell', ['-c', '-command']], ['cmd', ['/c', '/k']]]);
+const POWERSHELL_SETUP = new Set(['-noprofile', '-noninteractive', '-nologo']);
+
+/**
+ * The inline code a command runs (`node -e CODE`, `python -c CODE`, `powershell -NoProfile -Command CODE`, `cmd /c CODE`),
+ * or `undefined` when it runs no inline code. Such a call is approved once, with the whole code on the card, and never
+ * remembered: the next snippet is different code.
+ */
+export function inlineCode(command: string, args: readonly string[]): string | undefined {
+	const name = commandName(command);
+	const flags = INLINE.get(name);
+	if (flags) {
+		const index = args.findIndex(arg => flags.some(flag => flag.startsWith('--')
+			? arg === flag || arg.startsWith(flag + '=')
+			: flag.startsWith('-') ? /^-[^-]/.test(arg) && arg.slice(1).includes(flag.slice(1)) : arg === flag));
+		if (index < 0) { return undefined; }
+		const attached = args[index].includes('=') ? args[index].slice(args[index].indexOf('=') + 1) : undefined;
+		return attached ?? args.slice(index + 1).join(' ');
+	}
+	const shell = SHELL_INLINE.get(name);
+	if (!shell) { return undefined; }
+	let index = 0;
+	while (index < args.length && POWERSHELL_SETUP.has(args[index].toLowerCase())) { index++; }
+	return shell.includes(args[index]?.toLowerCase() ?? '') ? args.slice(index + 1).join(' ') : undefined;
+}
 const INFO_FLAGS = new Set(['--version', '-v', '-V', '--help', '-h']);
 
 /** `glob` is empty for a bare git rule, which applies in every project. */
@@ -369,6 +409,7 @@ function installsOrLaunches(request: Extract<PermissionRequest, { kind: 'run' }>
 /** Why an action cannot be remembered (shown on its card); `undefined` when `suggestRule` has a rule for it. */
 export function whyNotRemembered(request: PermissionRequest, root?: string): NoRememberReason | undefined {
 	if (suggestRule(request, root)) { return undefined; }
+	if (request.kind === 'run' && inlineCode(request.command, request.args) !== undefined) { return 'inline'; }
 	if (request.kind === 'edit') { return 'irreversible'; }
 	if (request.kind === 'git_pr_upsert') { return 'publication'; }
 	return request.kind === 'run' && installsOrLaunches(request) ? 'dependency' : 'inexact';
@@ -391,11 +432,29 @@ export function suggestRule(request: PermissionRequest, root?: string): string {
 	}
 	if (request.kind === 'web') { return /^[a-z0-9][a-z0-9.-]*$/.test(request.host) ? 'web:' + request.host : ''; }
 	if (request.kind !== 'run' || request.args.length === 0) { return ''; }
-	if (installsOrLaunches(request)) { return ''; }
+	if (installsOrLaunches(request) || inlineCode(request.command, request.args) !== undefined) { return ''; }
 	// No escaping syntax exists in the glob grammar. Refuse metacharacters, empty arguments and argument-boundary ambiguity.
 	const parts = [commandName(request.command), ...request.args];
 	if (parts.some(part => !part || /[\s*?\u0000-\u001f\u007f]/.test(part))) { return ''; }
 	const rule = 'run:' + parts.join(' ');
+	return rule.length <= MAX_RULE_LENGTH ? rule : '';
+}
+
+/** Subcommands whose next word picks what runs (`pnpm run lint`, `python -m pytest`): the family keeps that word. */
+const FAMILY_SELECTORS = new Set(['run', 'run-script', 'exec', '-m', 'x', 'tool']);
+
+/**
+ * The family of an exact command rule: the executable and its subcommand with any arguments (`run:cargo test *`,
+ * `run:pnpm run lint *`, `run:python -m pytest *`), so the user does not approve every variant by hand. Empty when the
+ * exact rule is not offered either, or for external CLIs, whose subcommand families mix reads with changes.
+ */
+export function familyRule(request: PermissionRequest, root?: string): string {
+	if (request.kind !== 'run' || !suggestRule(request, root) || EXTERNAL_CLIS.has(commandName(request.command))) { return ''; }
+	const width = FAMILY_SELECTORS.has(request.args[0].toLowerCase()) ? 2 : 1;
+	const prefix = request.args.slice(0, width);
+	// The family is a real generalization only when the subcommand is a word, not a value or a path outside the project.
+	if (prefix.length < width || prefix.some(word => !/^-{0,2}[A-Za-z0-9][\w.:/@-]*$/.test(word) || word.split(/[\\/]/).includes('..'))) { return ''; }
+	const rule = 'run:' + [commandName(request.command), ...prefix].join(' ') + ' *';
 	return rule.length <= MAX_RULE_LENGTH ? rule : '';
 }
 

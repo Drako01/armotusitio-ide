@@ -70,6 +70,23 @@ test('"always" stores the rule in the user permissions and tells the user, "deny
 	} finally { await denied.cleanup(); }
 });
 
+test('"family" stores the exact rule and its family; a card without a family cannot be answered with it', async () => {
+	const family = await actingSession({ card: { ...CARD, family: 'run:pnpm test *' } });
+	try {
+		await family.chat.resolveApproval(family.chat.snapshot().approvals![0].id, 'family');
+		family.release(); await family.running;
+		const notice = family.chat.snapshot().messages.find(message => message.role === 'notice' && /permissions\.json/.test(message.text));
+		assert.deepEqual({ answer: await family.answer(), remembered: family.remembered, notice: notice?.text.includes('«run:pnpm test *»') }, { answer: 'family', remembered: ['run:pnpm test', 'run:pnpm test *'], notice: true });
+	} finally { await family.cleanup(); }
+	const exact = await actingSession();
+	try {
+		const id = exact.chat.snapshot().approvals![0].id;
+		await exact.chat.resolveApproval(id, 'family');
+		assert.deepEqual({ pending: exact.chat.snapshot().approvals?.length, remembered: exact.remembered }, { pending: 1, remembered: [] });
+		await exact.chat.resolveApproval(id, 'deny');
+	} finally { exact.release(); await exact.running.catch(() => undefined); await exact.cleanup(); }
+});
+
 test('when the rule cannot be saved the action is allowed only once and the user is told', async () => {
 	const s = await actingSession({ remember: async () => { throw Error('PERMISSIONS_FILE_UNSAFE'); } });
 	try {

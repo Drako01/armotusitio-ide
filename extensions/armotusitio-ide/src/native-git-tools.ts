@@ -141,6 +141,14 @@ export function isSensitiveGitPath(relative: string): boolean {
 		/^(?:\.git-credentials|\.htpasswd|kubeconfig|.*\.(?:jks|keystore|tfstate(?:\.backup)?|tfvars(?:\.json)?))$/i.test(segments[segments.length - 1]);
 }
 
+/**
+ * A file whose content must never reach the model: a sensitive path (`isSensitiveGitPath`) other than an example or template
+ * copy (`.env.example`). Shared by the terminal's read tools and the agent's Read/Grep/Glob, so both refuse the same files.
+ */
+export function secretPath(relative: string): boolean {
+	return isSensitiveGitPath(relative) && !/\.(?:example|sample|template|dist)$/i.test(relative);
+}
+
 const git = async (root: string, args: string[]): Promise<string | undefined> =>
 (await gitOutput(root, [...GIT_BASE, ...args]).then(buffer => buffer.toString('utf8').trim(), () => undefined));
 
@@ -176,15 +184,50 @@ async function hookFingerprint(root: string): Promise<string> {
 	return hash.digest('hex');
 }
 
-/** sha256 over repository configuration and hook scripts, including worktree-specific metadata. */
+const digest = (value: string | Buffer): string => createHash('sha256').update(value).digest('hex');
+/** Where the repository config could not be parsed: the whole file is one entry, so any change to it is material. */
+const UNPARSED_CONFIG = '(config file)';
+
+/**
+ * The repository's config and hooks as comparable JSON: the hooks' digest and, per config key, a digest of its values
+ * (never the values: a URL or header may carry a credential). Editor bookkeeping is left out; a file git cannot parse is
+ * one entry hashed as is. Equal strings mean an unchanged repository; `repoDrift` names what changed.
+ */
 export async function repoFingerprint(root: string): Promise<string> {
-	const hash = createHash('sha256');
 	const config = await gitPath(root, 'config');
-	// Parsed entries, so editor bookkeeping is left out; a file git cannot parse is hashed as is (any change still counts).
 	const listed = config ? await git(root, ['config', '--file', config, '--list', '-z']) : undefined;
-	hash.update('config\0').update(listed !== undefined ? trackedConfig(listed).join('\0') : config ? await fs.readFile(config).catch(() => '') : 'no-repo');
-	hash.update('\0hooks\0').update(await hookFingerprint(root));
-	return hash.digest('hex');
+	const values = new Map<string, string[]>();
+	if (listed !== undefined) {
+		for (const entry of trackedConfig(listed)) {
+			const [key, ...value] = entry.split('\n');
+			values.set(key, [...values.get(key) ?? [], value.join('\n')]);
+		}
+	} else {
+		values.set(UNPARSED_CONFIG, [config ? (await fs.readFile(config).catch(() => '')).toString() : 'no-repo']);
+	}
+	const entries = [...values].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, list]) => [key, digest(list.join('\0'))]);
+	return JSON.stringify({ hooks: await hookFingerprint(root), config: Object.fromEntries(entries) });
+}
+
+/**
+ * Keys an editor, git or GitHub tooling writes on its own while the agent works: the upstream of a branch, merge-base
+ * bookkeeping, PR metadata, LFS capability probes and background maintenance. Never `pushRemote`, hooks, URLs or commands.
+ */
+const BENIGN_CONFIG_KEY = /^(?:branch\.[^\n]+\.(?:remote|merge|gh-merge-base|vscode-merge-base|github-pr-[\w.-]+)|lfs\.[^\n]+\.(?:access|locksverify)|maintenance\.[\w.-]+)$/i;
+
+/**
+ * What changed between two `repoFingerprint` values: whether the hooks changed, and the config keys added, removed or
+ * changed (benign editor keys left out). A value that is not a fingerprint counts as changed hooks: refused, never asked.
+ */
+export function repoDrift(baseline: string, current: string): { hooks: boolean; keys: string[] } {
+	const parse = (text: string): { hooks: string; config: Record<string, string> } | undefined => {
+		try { const value = JSON.parse(text) as { hooks?: unknown; config?: unknown }; return typeof value.hooks === 'string' && value.config && typeof value.config === 'object' ? value as { hooks: string; config: Record<string, string> } : undefined; } catch { return undefined; }
+	};
+	const [before, after] = [parse(baseline), parse(current)];
+	if (!before || !after) { return { hooks: true, keys: [] }; }
+	const keys = [...new Set([...Object.keys(before.config), ...Object.keys(after.config)])]
+		.filter(key => Object.hasOwn(before.config, key) !== Object.hasOwn(after.config, key) || before.config[key] !== after.config[key]).filter(key => !BENIGN_CONFIG_KEY.test(key)).sort();
+	return { hooks: before.hooks !== after.hooks, keys };
 }
 
 const insideOf = (parent: string, candidate: string): boolean => candidate === parent || candidate.startsWith(parent + path.sep);
@@ -195,7 +238,7 @@ const insideOf = (parent: string, candidate: string): boolean => candidate === p
  */
 async function assertHooksUntouched(context: GitToolsContext, paths: readonly string[]): Promise<void> {
 	const { root } = context;
-	if (context.repoBaseline !== undefined && await repoFingerprint(root) !== context.repoBaseline) { return refuse('repo-config-changed'); }
+	await acceptRepoDrift(context);
 	const hooks = await gitPath(root, 'hooks');
 	if (!hooks) { return; }
 	const real = await fs.realpath(root).catch(() => root);
@@ -345,6 +388,28 @@ const validName = async (root: string, raw: unknown): Promise<string> => {
 		.then(buffer => buffer.toString('utf8').trim(), (error: Error) => { if (error.message === 'HARNESS_SCOPE_GIT_FAILED') { return undefined; } throw error; });
 	return checked === raw ? raw : refuse('invalid-branch');
 };
+
+/**
+ * Brings the run's baseline up to date with the repository, or refuses `repo-config-changed`. Changed hooks are always
+ * refused; changes to benign editor keys are accepted silently; any other config change asks the user once, naming the
+ * changed keys (never their values), and is never remembered. An accepted change becomes the new baseline of the run.
+ */
+async function acceptRepoDrift(context: GitToolsContext): Promise<void> {
+	if (context.repoBaseline === undefined) { return; }
+	const current = await repoFingerprint(context.root);
+	if (current === context.repoBaseline) { return; }
+	const drift = repoDrift(context.repoBaseline, current);
+	if (drift.hooks) { return refuse('repo-config-changed'); }
+	if (drift.keys.length) {
+		const shown = drift.keys.slice(0, 8).join(', ') + (drift.keys.length > 8 ? ' (+' + (drift.keys.length - 8) + ')' : '');
+		const denial = await requestApproval(context.ask, {
+			kind: 'git_commit', title: 'Git config changed during the run', rule: '', noRemember: 'inexact', action: 'repo-drift',
+			detail: ['git config changed during the run: ' + shown.slice(0, 380), 'approve only if you or your tools made this change; the agent continues with it']
+		});
+		if (denial) { return refuse('repo-config-changed'); }
+	}
+	context.repoBaseline = current;
+}
 
 /** `git config --list -z` entries (`key\nvalue`), sorted, without the editor bookkeeping of `EDITOR_BRANCH_KEY`. */
 function trackedConfig(entries: string): string[] {
@@ -598,12 +663,12 @@ export async function handleGitTool(context: GitToolsContext, name: string, inpu
 	try {
 		const value = (input && typeof input === 'object' && !Array.isArray(input) ? input : {}) as Record<string, unknown>;
 		assertArguments(name, value);
-		if (name === 'git_commit') { return await commit(context, value); }
-		if (name === 'git_push') { return await push(context); }
-		if (name === 'git_branch_create') { return await branchCreate(context, value); }
-		if (name === 'git_pr_upsert') { return await prUpsert(context, value); }
-		if (name === 'git_fetch') { return await fetchRemote(context, value); }
-		return { isError: true, text: 'Unknown tool' };
+		const baseline = context.repoBaseline;
+		const result = name === 'git_commit' ? await commit(context, value) : name === 'git_push' ? await push(context)
+			: name === 'git_branch_create' ? await branchCreate(context, value) : name === 'git_pr_upsert' ? await prUpsert(context, value)
+				: name === 'git_fetch' ? await fetchRemote(context, value) : { isError: true, text: 'Unknown tool' };
+		// A config change the user accepted (`acceptRepoDrift`) is the run's new baseline, like an IDE-owned change.
+		return !result.isError && !result.repoBaseline && context.repoBaseline !== baseline ? { ...result, repoBaseline: context.repoBaseline } : result;
 	} catch (error) {
 		if (error instanceof GitToolError) { return { isError: true, text: error.message }; }
 		// A missing git reports its own HARNESS_EXECUTABLE_UNAVAILABLE; anything unexpected must not be blamed on the PATH.

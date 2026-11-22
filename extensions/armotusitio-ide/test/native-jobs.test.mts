@@ -95,7 +95,8 @@ test('a long install runs as a job whose exit code decides the result, with a ti
 	await withProject(async ({ root, config }) => {
 		await fs.writeFile(path.join(root, 'ok.cjs'), 'console.log("installed");');
 		const jobs = new JobTable();
-		const run = (script: string, timeoutSec = 30) => runAsJob(config, { command: 'node', args: [script], cwd: '.', timeoutSec }, 1, { jobs });
+		// A program file runs with the user's rule (here: allow everything), never with the real user's permission file.
+		const run = (script: string, timeoutSec = 30) => runAsJob(config, { command: 'node', args: [script], cwd: '.', timeoutSec }, 1, { jobs, permissions: permissionsOf('allow') });
 		const ok = await run('ok.cjs'), failed = await run('quick.cjs'), timedOut = await run('server.cjs', 1);
 		assert.deepEqual({
 			ok: [ok.isError, /exited \(exit 0\)/.test(ok.text), ok.text.includes('installed')],
@@ -110,7 +111,7 @@ test('cancelling a background repair stops the install process tree', async () =
 	await withProject(async ({ config }) => {
 		const jobs = new JobTable();
 		const abort = new AbortController();
-		const running = runAsJob(config, { command: 'node', args: ['server.cjs'], cwd: '.', timeoutSec: 60 }, 1, { jobs }, abort.signal);
+		const running = runAsJob(config, { command: 'node', args: ['server.cjs'], cwd: '.', timeoutSec: 60 }, 1, { jobs, permissions: permissionsOf('allow') }, abort.signal);
 		await until(() => jobs.list().some(job => job.state === 'running'));
 		abort.abort();
 		const result = await running;

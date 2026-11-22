@@ -64,7 +64,6 @@ async function withProject(work: (project: Project) => Promise<void>, name = 'wo
 	const base = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'ats-conformance-')));
 	const root = path.join(base, name), home = path.join(base, 'home'), bare = path.join(base, 'origin.git');
 	await fs.mkdir(path.join(root, 'apps', 'web'), { recursive: true });
-	await fs.mkdir(home);
 	execFileSync('git', ['init', '-q', '--bare', '-b', 'main', bare]);
 	execFileSync('git', ['init', '-q', '-b', 'main', root]);
 	git(root, 'config', 'user.name', 'Fixture'); git(root, 'config', 'user.email', 'fixture@example.test');
@@ -127,7 +126,8 @@ test('S1: with a delegated project Harness, subfolder commands and unusual forms
 		];
 		assert.deepEqual({ ran: results.slice(0, 2).map(result => [result.isError, harnessRan(result.text)]), floor: results.slice(2).map(result => result.text), asked: asked.length }, {
 			ran: [[false, { cwd: 'apps/web', command: ['pnpm', 'run', 'lint'] }], [false, { cwd: 'apps/web', command: ['pnpm', '--workspace-concurrency', '1', 'lint'] }]],
-			floor: [denialText('cwd-outside-project'), denialText('inline-code')], asked: 0
+			// Inline code is the user's call: one card with the code, never a rule (the fixture answers no).
+			floor: [denialText('cwd-outside-project'), 'DENIED: the user did not allow it'], asked: 1
 		});
 	});
 });
@@ -202,6 +202,8 @@ test('S4: installing a dependency is a card that can only be allowed once, and a
 
 test('S5: without a project Harness the IDE runs in the subfolder, safe package-manager flags pass and other forms ask', async () => {
 	await withProject(async ({ root, home, asked, runner }) => {
+		// Running a program file asks unless a rule names it; the fixture script is the user's own.
+		await addUserRule('run:node where.js', 'allow', home);
 		const policy = createCommandPolicy({ subprojects: [{ path: 'apps/web', ecosystem: 'node', packageManager: 'pnpm', scripts: ['lint'] }], delegate: false, extras: [], permissions: await loadPermissions(root, home) });
 		const agent = await runner({ policy: { subprojects: [{ path: 'apps/web', ecosystem: 'node', packageManager: 'pnpm', scripts: ['lint'] }], delegate: false, extras: [] } });
 		const where = await agent.call('run', { command: 'node', args: ['where.js'], cwd: 'apps/web' });
@@ -218,7 +220,9 @@ test('S5: without a project Harness the IDE runs in the subfolder, safe package-
 });
 
 test('S6: a refused call is answered from memory for that exact call only, and the run keeps working', async () => {
-	await withProject(async ({ asked, runner }) => {
+	await withProject(async ({ asked, home, runner }) => {
+		// Running a program file asks unless a rule names it; the fixture script is the user's own.
+		await addUserRule('run:node where.js', 'allow', home);
 		const agent = await runner({ policy: { subprojects: [], delegate: false, extras: ['node'] } });
 		const refused = await agent.call('run', { command: 'docker', args: ['ps'] });
 		const repeated = await agent.call('run', { command: 'docker', args: ['ps'] });
@@ -260,6 +264,9 @@ test('S8: a machine with only the editor\'s embedded Node is a doctor problem wi
 test('multiple workspaces: each runner works on its own repository', async () => {
 	await withProject(async first => {
 		await withProject(async second => {
+			// Running a program file asks unless a rule names it; the fixture script is the user's own.
+			await addUserRule('run:node where.js', 'allow', first.home);
+			await addUserRule('run:node where.js', 'allow', second.home);
 			const plain = { policy: { subprojects: [], delegate: false, extras: ['node'] } };
 			const [a, b] = [await first.runner(plain), await second.runner(plain)];
 			const whereA = cwdOf((await a.call('run', { command: 'node', args: ['where.js'] })).text);
@@ -274,7 +281,9 @@ test('multiple workspaces: each runner works on its own repository', async () =>
 });
 
 test('native transport pilot: approve is served only when enabled, asks through the card and remembers a refusal', async () => {
-	await withProject(async ({ asked, runner }) => {
+	await withProject(async ({ asked, home, runner }) => {
+		// Running a program file asks unless a rule names it; the fixture script is the user's own.
+		await addUserRule('run:node where.js', 'allow', home);
 		const structured = await runner();
 		const native = await runner({ approve: true, policy: { subprojects: [], delegate: false, extras: ['node'] } });
 		const prompt = async (tool_name: string, input: object) => JSON.parse((await native.call('approve', { tool_name, input, tool_use_id: 't' })).text) as { behavior: string; message?: string };
@@ -287,8 +296,9 @@ test('native transport pilot: approve is served only when enabled, asks through 
 			results: results.map(result => result.behavior === 'allow' ? 'allow' : result.message!.split('\n', 1)[0]), cards: asked.map(card => card.detail[0])
 		}, {
 			listed: [false, true],
-			results: ['allow', 'DENIED: the user did not allow it', 'DENIED: the user already refused this exact action in this run. Do something else or report it.', 'POLICY_DENIED: shell-operator', 'POLICY_DENIED: protected-path'],
-			cards: ['command: docker ps']
+			// A compound line is judged command by command: two program files ask, on one card for the whole line.
+			results: ['allow', 'DENIED: the user did not allow it', 'DENIED: the user already refused this exact action in this run. Do something else or report it.', 'DENIED: the user did not allow it', 'POLICY_DENIED: protected-path'],
+			cards: ['command: docker ps', 'command: node a.js && node b.js']
 		});
 	});
 });

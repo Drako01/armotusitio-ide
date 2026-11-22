@@ -782,9 +782,12 @@ function renderApprovals(): void {
 		if (item.global) { rule.textContent += ' ' + L.globalRule; }
 		rule.hidden = !rule.textContent;
 		const actions = el('div', 'approval-actions');
-		for (const [answer, label, className] of [['once', L.allowOnce, ''], ['task', L.allowTask, 'secondary'], ['session', L.allowSession, 'secondary'], ['always', L.allowAlways, 'secondary'], ['global', L.allowGlobal, 'secondary'], ['deny', L.denyApproval, 'secondary']]) {
+		// The family button names what it covers (`cargo test *`), so the user sees how far the answer reaches.
+		const family = typeof item.family === 'string' ? format(L.allowFamily, item.family.replace(/^run:/, '')) : '';
+		for (const [answer, label, className] of [['once', L.allowOnce, ''], ['task', L.allowTask, 'secondary'], ['session', L.allowSession, 'secondary'], ['always', L.allowAlways, 'secondary'], ['family', family, 'secondary'], ['global', L.allowGlobal, 'secondary'], ['deny', L.denyApproval, 'secondary']]) {
 			if (answer !== 'once' && answer !== 'deny' && !item.rule) { continue; }
 			if (answer === 'global' && !item.global) { continue; }
+			if (answer === 'family' && !family) { continue; }
 			const button = el('button', className, label) as HTMLButtonElement; button.type = 'button';
 			button.addEventListener('click', () => { button.disabled = true; api.postMessage({ action: 'approval', id: item.id, answer }); });
 			actions.append(button);

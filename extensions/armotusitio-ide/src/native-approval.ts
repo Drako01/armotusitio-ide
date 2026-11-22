@@ -8,15 +8,17 @@
  * an explicit yes (no channel, no UI, timeout, cancellation, error) is a denial: this module fails closed.
  */
 import { callToolChannel } from './native-tool-server.ts';
-import { globalRuleAllowed, suggestRule, whyNotRemembered } from './native-permissions.ts';
+import { familyRule, globalRuleAllowed, suggestRule, whyNotRemembered } from './native-permissions.ts';
 import { redactSecrets } from './native-redact.ts';
 import type { ApprovalAnswer, ApprovalRequest, PermissionRequest } from './native-permissions-types.ts';
 
 /** Without an answer the request is denied after this long. */
 export const APPROVAL_TIMEOUT_MS = 10 * 60 * 1000;
-export const APPROVAL_ANSWERS: readonly ApprovalAnswer[] = ['once', 'task', 'session', 'always', 'global', 'deny'];
+export const APPROVAL_ANSWERS: readonly ApprovalAnswer[] = ['once', 'task', 'session', 'always', 'family', 'global', 'deny'];
 /** Answers that reach beyond this one action; each needs a rule to remember. */
-export const REMEMBERING_ANSWERS: readonly ApprovalAnswer[] = ['task', 'session', 'always', 'global'];
+export const REMEMBERING_ANSWERS: readonly ApprovalAnswer[] = ['task', 'session', 'always', 'family', 'global'];
+/** Longest command line a card shows in full (in lines of 300 characters); a longer one is refused instead of shown cut. */
+export const MAX_SHOWN_COMMAND = 3000;
 
 /** What the tool server asks; the extension assigns the id. */
 export type ApprovalDraft = Omit<ApprovalRequest, 'id'>;
@@ -33,8 +35,8 @@ function subjectRequest(draft: Partial<ApprovalDraft> & ApprovalSubject): Permis
 	switch (draft.kind) {
 		case 'run': {
 			const { command, args, cwd } = draft;
-			if (typeof command !== 'string' || !command || command.length > 300 || (cwd !== undefined && typeof cwd !== 'string') ||
-				!Array.isArray(args) || args.length > MAX_PENDING_ARGS || !args.every(arg => typeof arg === 'string' && arg.length <= 1000)) { return undefined; }
+			if (typeof command !== 'string' || !command || (cwd !== undefined && typeof cwd !== 'string') || !Array.isArray(args) || args.length > MAX_PENDING_ARGS ||
+				!args.every(arg => typeof arg === 'string') || [command, ...args].join(' ').length > MAX_SHOWN_COMMAND) { return undefined; }
 			return { kind: 'run', command, args, cwd: cwd ?? '.' };
 		}
 		case 'edit': return typeof draft.path === 'string' && draft.path ? { kind: 'edit', path: draft.path } : undefined;
@@ -67,18 +69,25 @@ export function parseApprovalDraft(value: unknown, root?: string): ApprovalDraft
 	if (typeof draft.title !== 'string' || !Array.isArray(draft.detail) || draft.detail.length > 12 || !draft.detail.every(line => typeof line === 'string')) { return undefined; }
 	const request = subjectRequest(draft);
 	if (!request) { return undefined; }
+	// A command is shown whole (inline code, a compound line): what the user approves is exactly what runs.
 	const detail = request.kind === 'run'
-		? ['command: ' + [request.command, ...request.args].join(' ').slice(0, 300), 'cwd: ' + request.cwd.slice(0, 300)]
+		? [...([request.command, ...request.args].join(' ').match(/[\s\S]{1,300}/g) ?? ['']).map((part, index) => (index ? '\u2026 ' : 'command: ') + part), 'cwd: ' + request.cwd.slice(0, 300)]
 		: request.kind === 'git_branch_create'
 			? ['repository: ' + request.repo, 'new branch: ' + request.branch, 'from: ' + request.from]
 			: request.kind === 'git_pr_upsert'
 				? ['repository: ' + request.repo, 'head: ' + request.branch, 'base: ' + request.base, 'action: ' + draft.action, 'title: ' + request.title,
 				...((request.body.match(/[\s\S]{1,300}/g) ?? ['']).map((part, index) => 'body ' + (index + 1) + ': ' + part))]
 				: draft.detail.map(line => line.slice(0, 400));
-	const suggested = suggestRule(request, root);
+	// Accepting a config change of the repository is about this run only: it is never remembered.
+	const suggested = draft.action === 'repo-drift' ? '' : suggestRule(request, root);
 	const rule = redactSecrets(suggested) === suggested ? suggested : '';
 	const noRemember = rule ? undefined : whyNotRemembered(request, root) ?? 'inexact';
-	return { kind: request.kind, title: redactSecrets(draft.title.slice(0, 200)), rule, detail: detail.map(redactSecrets), ...(noRemember ? { noRemember } : {}), ...(rule && globalRuleAllowed(request, root) ? { global: true } : {}) };
+	const family = rule ? familyRule(request, root) : '';
+	return {
+		kind: request.kind, title: redactSecrets(draft.title.slice(0, 200)), rule, detail: detail.map(redactSecrets), ...(noRemember ? { noRemember } : {}),
+		...(rule && globalRuleAllowed(request, root) ? { global: true } : {}), ...(family && redactSecrets(family) === family ? { family } : {}),
+		...(draft.action === 'repo-drift' ? { drift: true } : {})
+	};
 }
 
 /** Asks through the run's channel. The client waits slightly longer than the extension, which answers `deny` on its own timeout. */
@@ -97,7 +106,7 @@ export async function requestApproval(ask: ApprovalAsk | undefined, request: App
 		// The extension owns the rule (it rebuilds it with the project root) and only offers a reaching answer when one exists,
 		// so any valid yes allows this action; a local rule hint may be empty (git_branch_create without the root).
 		// "Always" still needs an exact local rule: nothing permanent is ever granted for an action that cannot be remembered.
-		return answer === 'once' || answer === 'task' || answer === 'session' || ((answer === 'always' || answer === 'global') && !!request.rule) ? undefined : 'DENIED: the user did not allow it';
+		return answer === 'once' || answer === 'task' || answer === 'session' || ((answer === 'always' || answer === 'family' || answer === 'global') && !!request.rule) ? undefined : 'DENIED: the user did not allow it';
 	} catch (error) {
 		return (error as Error).message === 'HARNESS_TIMEOUT' ? 'DENIED: the user did not answer in time' : 'DENIED: the approval could not be requested';
 	}

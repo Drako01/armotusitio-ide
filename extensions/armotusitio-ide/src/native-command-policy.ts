@@ -8,10 +8,11 @@
  * Pure: no I/O, so the same decision is made in the extension and in the tool server process.
  */
 import type { Subproject } from './native-ecosystems.ts';
-import { commandName, dependencyDecision, suggestRule, type PermissionSet } from './native-permissions.ts';
+import { commandName, dependencyDecision, EXTERNAL_CLIS, inlineCode, READ_ONLY_TOOLS, suggestRule, type PermissionSet } from './native-permissions.ts';
+import { secretPath } from './native-git-tools.ts';
 
 /** Machine-readable denial returned to the agent as `POLICY_DENIED: <category>`. */
-export type PolicyDenial = 'shell-operator' | 'inline-code' | 'git-mutation' | 'publish' | 'network' | 'destructive' | 'privilege' | 'global-config' | 'dependency-change' | 'external-cli' | 'script-file' | 'credential-access' | 'unusual-form' | 'not-allowed' | 'cwd-outside-project' | 'invalid' | 'needs-approval';
+export type PolicyDenial = 'shell-operator' | 'inline-code' | 'git-mutation' | 'publish' | 'network' | 'destructive' | 'privilege' | 'global-config' | 'dependency-change' | 'external-cli' | 'script-file' | 'credential-access' | 'unusual-form' | 'not-allowed' | 'path-outside-project' | 'cwd-outside-project' | 'invalid' | 'needs-approval';
 /** `needs-approval` is a permission `ask`: still `allowed: false`, so a consumer that only reads `allowed` treats it as denied. */
 export type PolicyDecision = { allowed: true; executable: string; cwd: string; delegate: boolean }
 	| { allowed: false; reason: Exclude<PolicyDenial, 'needs-approval'> }
@@ -35,16 +36,10 @@ export interface CommandPolicyConfig {
 
 const OPERATOR = /^(&&|\|\||\||;|>|>>|<|&)$|`|\$\(/;
 const SHELLS = new Set(['sh', 'bash', 'zsh', 'fish', 'dash', 'cmd', 'powershell', 'pwsh', 'wsl', 'busybox', 'env', 'xargs', 'nohup', 'start', 'call']);
-const INLINE: Record<string, readonly string[]> = { node: ['-e', '--eval', '-p', '--print', '-r', '--require', '--import'], python: ['-c'], python3: ['-c'], py: ['-c'], ruby: ['-e'], perl: ['-e', '-E'], php: ['-r'], deno: ['eval'], bun: ['-e', '--eval'] };
 const NETWORK = new Set(['curl', 'wget', 'ssh', 'scp', 'sftp', 'ftp', 'nc', 'ncat', 'netcat', 'telnet', 'rsync', 'invoke-webrequest', 'invoke-restmethod', 'iwr', 'irm', 'certutil', 'bitsadmin']);
 const DESTRUCTIVE = new Set(['rm', 'del', 'erase', 'rmdir', 'rd', 'remove-item', 'format', 'shred', 'mkfs', 'dd', 'diskpart', 'takeown', 'icacls', 'chmod', 'chown']);
 const PRIVILEGE = new Set(['sudo', 'su', 'doas', 'runas', 'gsudo']);
 const PUBLISH_TOOLS = new Set(['twine']);
-/**
- * Cloud, container and HTTP CLIs: they act outside the project with the user's own credentials, so each call is the user's
- * decision (`external-cli`, approvable like a dependency change); without a way to ask, they stay denied.
- */
-const EXTERNAL_CLIS = new Set(['gh', 'aws', 'az', 'gcloud', 'docker', 'podman', 'kubectl', 'helm', 'terraform', 'vercel', 'netlify', 'firebase', 'flyctl', 'heroku', 'curl', 'wget']);
 /**
  * Calls that log in or print credentials, tokens or secrets: never approvable, because the output would reach the model and
  * its logs. Each entry matches when its words appear in this order among the arguments (flags in between do not hide it).
@@ -88,7 +83,98 @@ function externalCli(name: string, args: readonly string[]): PolicyDenial | unde
 	if (/^(login|logout|auth)(:|$)/i.test(args[0] ?? '') || CREDENTIAL_COMMANDS[name]?.some(words => inOrder(args, words))) { return 'credential-access'; }
 	return 'external-cli';
 }
-const GIT_READ = new Set(['status', 'diff', 'log', 'show', 'rev-parse', 'ls-files', 'blame', 'grep', 'describe', 'shortlog', 'cat-file', 'merge-base', 'name-rev', 'ls-tree']);
+const GIT_READ = new Set(['status', 'diff', 'log', 'show', 'rev-parse', 'ls-files', 'blame', 'grep', 'describe', 'shortlog', 'cat-file', 'merge-base', 'name-rev', 'ls-tree',
+	'rev-list', 'for-each-ref', 'show-ref', 'check-ignore', 'count-objects', 'whatchanged', 'range-diff', 'version']);
+/** `git branch` / `git tag` flags that only list; any other flag (delete, move, force, upstream) is a change. */
+const GIT_LIST_FLAGS = new Set(['-a', '-r', '-v', '-vv', '-l', '-n', '--all', '--remotes', '--verbose', '--list', '--show-current', '--no-color', '--merged', '--no-merged', '--contains', '--no-contains', '--points-at']);
+/** Configuration keys whose value may carry a credential (`remote.origin.url` with a token, `http.extraheader`). */
+const GIT_SECRET_KEY = /url|token|password|secret|credential|extraheader|auth|key/i;
+
+/** Read-only forms of git subcommands that can also change state: listing branches, tags, remotes, stashes, worktrees, one config key. */
+function gitReadForm(sub: string, rest: readonly string[]): boolean {
+	const words = rest.filter(arg => !arg.startsWith('-'));
+	const listing = (): boolean => rest.every(arg => !arg.startsWith('-') || GIT_LIST_FLAGS.has(arg) || /^--(?:sort|format|color)=/.test(arg)) &&
+		(!words.length || rest.some(arg => ['-l', '--list', '--merged', '--no-merged', '--contains', '--no-contains', '--points-at'].includes(arg)));
+	switch (sub) {
+		case 'branch': case 'tag': return listing();
+		case 'remote': return !rest.length || (rest.length === 1 && (rest[0] === '-v' || rest[0] === '--verbose'));
+		case 'stash': return rest[0] === 'list' || rest[0] === 'show';
+		case 'worktree': return rest[0] === 'list';
+		case 'reflog': return !rest.length || rest[0] === 'show' || rest[0].startsWith('-');
+		case 'config': return words.length === 1 && !GIT_SECRET_KEY.test(words[0]) && rest.every(arg => !arg.startsWith('-') || ['--get', '--get-all', '--local', '--show-origin'].includes(arg));
+		default: return false;
+	}
+}
+
+/** Tools of `READ_ONLY_TOOLS` whose flag takes the next word as its value, so that word is not judged as a path. */
+const VALUED_FLAGS: Record<string, readonly string[]> = {
+	grep: ['-A', '-B', '-C', '-m', '-e', '-f', '--max-count', '--include', '--exclude', '--exclude-dir'],
+	rg: ['-A', '-B', '-C', '-m', '-e', '-f', '-g', '--glob', '-t', '--type', '-T', '--type-not', '--max-count', '-M', '--max-columns', '-j', '--threads', '--sort'],
+	head: ['-n', '-c'], tail: ['-n', '-c'], cut: ['-d', '-f', '-c', '-b'], du: ['-d', '--max-depth'], sort: ['-k', '-t'], tree: ['-L', '-I', '-P'], diff: ['-U'], stat: ['-c', '--format'], ls: ['-I', '--ignore', '-w']
+};
+/** Flags that make a read tool write a file, run a command or change the system. */
+const READER_WRITES: Record<string, readonly string[]> = { find: ['-delete', '-fprint', '-fprint0', '-fprintf', '-fls'], sort: ['-o', '--output'], tree: ['-o'], date: ['-s', '--set'] };
+const FIND_EXEC = ['-exec', '-execdir', '-ok', '-okdir'];
+/** Read tools that never open the paths they are given. */
+const NO_PATHS = new Set(['echo', 'pwd', 'which', 'date', 'basename', 'dirname', 'true']);
+
+/**
+ * The floor for a path a command reads: inside the project and never a credential file. The same rule as the agent's Read,
+ * Grep and Glob tools (`secretPath`), so the terminal is not a way around them.
+ */
+export function readPathDenial(raw: string): Extract<PolicyDenial, 'path-outside-project' | 'credential-access'> | undefined {
+	const normalized = raw.replace(/\\/g, '/');
+	if (normalized === '/dev/null') { return undefined; }
+	if (/^(?:[a-zA-Z]:|\/)/.test(normalized) || normalized.split('/').includes('..')) { return 'path-outside-project'; }
+	return secretPath(normalized.replace(/^(?:\.\/)+/, '')) ? 'credential-access' : undefined;
+}
+
+/** Floor verdict for a read tool (`cat`, `grep`, `find`, `rg`...): no command execution, no written output, and only project paths. */
+function readerDenial(name: string, args: readonly string[]): PolicyDenial | undefined {
+	if (name === 'find' && args.some(arg => FIND_EXEC.includes(arg))) { return 'shell-operator'; }
+	if (READER_WRITES[name] && hasFlag(args, ...READER_WRITES[name])) { return 'destructive'; }
+	if (NO_PATHS.has(name)) { return undefined; }
+	const valued = VALUED_FLAGS[name] ?? [];
+	const positional: string[] = [];
+	let expression = false;
+	for (let index = 0; index < args.length; index++) {
+		const arg = args[index];
+		if (arg === '--') { positional.push(...args.slice(index + 1)); break; }
+		// `find` paths come before its expression; the expression's values (`-name "*.ts"`) are not paths.
+		if (arg.startsWith('-')) { expression ||= name === 'find'; if (valued.includes(arg)) { index++; } continue; }
+		if (!expression) { positional.push(arg); }
+	}
+	if (name === 'uniq' && positional.length > 1) { return 'destructive'; }
+	// grep and rg take the pattern first unless it was given with -e / -f.
+	const paths = (name === 'grep' || name === 'rg') && !hasFlag(args, '-e', '--regexp', '-f', '--file') ? positional.slice(1) : positional;
+	for (const candidate of paths) {
+		const denied = readPathDenial(candidate);
+		if (denied) { return denied; }
+	}
+	return undefined;
+}
+
+/** Runtimes that run a program file; the user approves each file (or remembers it), as for `bash script.sh`. */
+const SCRIPT_RUNTIMES = new Set(['node', 'python', 'python3', 'py', 'ruby', 'php']);
+/** The program file a runtime would run, or `undefined` for a test runner, a module (`python -m`) or a dependency tool (`php vendor/bin/phpunit`). */
+function programFile(name: string, args: readonly string[]): string | undefined {
+	if (!SCRIPT_RUNTIMES.has(name) || (name === 'node' && hasFlag(args, '--test', '--run'))) { return undefined; }
+	const index = args.findIndex(arg => !arg.startsWith('-'));
+	if (index < 0 || args.slice(0, index).includes('-m')) { return undefined; }
+	return name === 'php' && args[index].replace(/\\/g, '/').startsWith('vendor/bin/') ? undefined : args[index];
+}
+
+/** Inline code that does what the floor never allows is refused before the user is asked: the card is for ordinary snippets. */
+const INLINE_HAZARDS: ReadonlyArray<[RegExp, PolicyDenial]> = [
+	[/\b(?:sudo|doas|runas|gsudo)\b/i, 'privilege'],
+	[/\.ssh\b|\.aws\b|\.gnupg\b|\.kube\b|id_rsa|id_ed25519|\.npmrc|\.netrc|\.git-credentials|\bcredentials\b|(?:^|[\s'"\/\\])\.env\b/i, 'credential-access'],
+	[/\b(?:rm|rmdir|remove-item|shred|mkfs|format-volume|diskpart|rmtree|rmsync|unlink|unlinksync)\b/i, 'destructive'],
+	[/\b(?:curl|wget|invoke-webrequest|invoke-restmethod|iwr|irm|ssh|scp)\b|\bhttps?:\/\//i, 'network'],
+	[/\b(?:publish|twine)\b|\bgit\s+push\b|\bnpm\s+login\b/i, 'publish'],
+	// A background process outlives the IDE's control, like `run_in_background` outside the job tools.
+	[/&\s*$|&\s*;|\b(?:nohup|setsid|disown|start-process)\b|\bstart\s+\/b\b/i, 'shell-operator']
+];
+const inlineHazard = (code: string): PolicyDenial | undefined => INLINE_HAZARDS.find(([pattern]) => pattern.test(code))?.[1];
 const PACKAGE_MANAGERS = new Set(['npm', 'pnpm', 'yarn', 'bun']);
 /** Exact information probes help distinguish an unavailable runtime from a failed project command. */
 const INFO_TOOLS = new Set(['node', 'npm', 'npx', 'pnpm', 'pnpx', 'yarn', 'bun', 'bunx', 'go', 'gofmt', 'cargo', 'rustc', 'dotnet',
@@ -136,7 +222,7 @@ function leadingFlags(name: string, args: readonly string[]): { rest: string[]; 
 /** What the agent should do instead, per denial; sent with every `POLICY_DENIED` so a refusal is never a dead end. */
 const DENIAL_HINTS: Record<Exclude<PolicyDenial, 'needs-approval'>, string> = {
 	'shell-operator': 'Run one command per call, without a shell or shell operators; split it into separate `run` calls.',
-	'inline-code': 'Write the code to a file in the project and run that file.',
+	'inline-code': 'Inline code needs the user\'s approval each time and must not delete, reach the network, publish or read credentials; write longer code to a project file and run that file.',
 	'git-mutation': 'Change git state only with the structured tools: git_fetch, git_branch_create, git_commit, git_push, git_pr_upsert.',
 	'publish': 'Publishing, releases and deployments are the user\'s action: report what is ready instead.',
 	'network': 'Raw network tools are not available; use curl or wget (they ask the user) or report what you need.',
@@ -149,6 +235,7 @@ const DENIAL_HINTS: Record<Exclude<PolicyDenial, 'needs-approval'>, string> = {
 	'credential-access': 'Logins and credential output are never available: ask the user to authenticate in their own terminal (for example `aws sso login`, `gh auth login`) and then run the original command.',
 	'unusual-form': 'Use the `cwd` parameter (for example cwd "apps/web") and a plain subcommand instead of leading flags; the user may still approve this exact form.',
 	'not-allowed': 'This executable is not available to agents here; use a project script or another available tool.',
+	'path-outside-project': 'Read only inside the project, with project-relative paths; ask the user for anything outside it.',
 	'cwd-outside-project': 'Use a project-relative folder inside the project as `cwd`.',
 	'invalid': 'Pass the executable by its bare name and each argument as a separate item.'
 };
@@ -207,11 +294,11 @@ function floor(command: string, args: readonly string[], depth = 0): PolicyDenia
 	const name = base(command);
 	const sub = args[0]?.toLowerCase();
 	if (depth > 8 || !command || command.includes('\0') || args.some(arg => arg.includes('\0')) || args.length > 64) { return 'invalid'; }
+	// Inline code is judged before the shell check: `powershell -Command` and `bash -c` carry code, not a script file.
+	const code = inlineCode(command, args);
+	if (code !== undefined) { return inlineHazard(code) ?? 'inline-code'; }
 	if (OPERATOR.test(command) || args.some(arg => OPERATOR.test(arg))) { return 'shell-operator'; }
 	if (SHELLS.has(name)) { return projectScript(name, args) ? 'script-file' : 'shell-operator'; }
-	if (INLINE[name] && args.some(arg => INLINE[name].some(flag => flag.startsWith('--')
-		? arg === flag || arg.startsWith(flag + '=')
-		: flag.startsWith('-') ? /^-[^-]/.test(arg) && arg.slice(1).includes(flag.slice(1)) : arg === flag))) { return 'inline-code'; }
 	if (PRIVILEGE.has(name)) { return 'privilege'; }
 	// Only by bare name: a path could point at any binary, and the approval card must show the CLI the user knows.
 	if (EXTERNAL_CLIS.has(name)) {
@@ -228,6 +315,10 @@ function floor(command: string, args: readonly string[], depth = 0): PolicyDenia
 	if (informationProbe(name, args)) { return undefined; }
 	// Provider diagnostics must never become a nested agent, login or configuration invocation.
 	if (AGENT_TOOLS.has(name)) { return 'not-allowed'; }
+	if (name === 'rg' || READ_ONLY_TOOLS.has(name)) { return readerDenial(name, args); }
+	// `node build.mjs` runs whatever that file says: the user approves the file, like `bash script.sh`.
+	const program = programFile(name, args);
+	if (program !== undefined) { return readPathDenial(program) ?? 'script-file'; }
 	// Inspect the executable behind launchers before dependency approval can let the outer command through.
 	if ([...PACKAGE_MANAGERS, 'uv', 'poetry', 'bundle'].includes(name) && sub?.startsWith('-') &&
 		!(args.length === 1 && ['--version', '-v', '--help', '-h'].includes(sub))) {
@@ -251,8 +342,10 @@ function floor(command: string, args: readonly string[], depth = 0): PolicyDenia
 	}
 
 	if (name === 'git') {
+		// `git --no-pager log` is `git log` without a pager.
+		if (sub === '--no-pager') { return floor(command, args.slice(1), depth + 1); }
 		if (sub === 'config' && hasFlag(args, '--global', '--system')) { return 'global-config'; }
-		if (!sub || !GIT_READ.has(sub) || hasFlag(args, '--output', '-o', '--open-files-in-pager', '--paginate', '-P') || args.some(arg => arg.startsWith('-O'))) { return 'git-mutation'; }
+		if (!sub || !(GIT_READ.has(sub) || gitReadForm(sub, args.slice(1))) || hasFlag(args, '--output', '-o', '--open-files-in-pager', '--paginate', '-P') || args.some(arg => arg.startsWith('-O'))) { return 'git-mutation'; }
 	}
 	if (PACKAGE_MANAGERS.has(name)) {
 		if (['publish', 'login', 'adduser', 'logout', 'token', 'owner', 'dist-tag', 'deprecate', 'unpublish'].includes(sub ?? '')) { return 'publish'; }
@@ -334,7 +427,7 @@ function allowlisted(config: CommandPolicyConfig, extras: string[][], command: s
 	const name = /[\\/]/.test(command) ? command.replace(/\\/g, '/') : base(command);
 	// The project's Harness applies its own, possibly stricter, policy after the floor.
 	if (config.delegate) { return { allowed: true, executable: command, cwd: folder, delegate: true }; }
-	if (name === 'git' || name === 'rg' || informationProbe(name, args) || ghReadOnly(name, args)) { return { allowed: true, executable: command, cwd: folder, delegate: false }; }
+	if (name === 'git' || name === 'rg' || READ_ONLY_TOOLS.has(name) || informationProbe(name, args) || ghReadOnly(name, args)) { return { allowed: true, executable: command, cwd: folder, delegate: false }; }
 	// `pnpm --dir apps/web lint` is judged as `lint` in `apps/web`, the same as `cwd: "apps/web"` would be.
 	const leading = args[0]?.startsWith('-') ? leadingFlags(name, args) : undefined;
 	const sub = (leading?.rest ?? args)[0];
@@ -357,6 +450,11 @@ export function createCommandPolicy(config: CommandPolicyConfig): CommandPolicy 
 			const floorVerdict = floor(command, args) as Exclude<PolicyDenial, 'needs-approval'> | undefined;
 			// With a project Harness that runs commands itself, how a command is written is that Harness' decision, not the IDE's.
 			const denied = floorVerdict === 'unusual-form' && config.delegate ? undefined : floorVerdict;
+			// Inline code is asked every time with the whole code on the card: no rule or preset allows it in advance.
+			if (denied === 'inline-code' && config.permissions && config.permissions.preset !== 'readonly' && inlineCode(command, args) !== undefined &&
+				config.permissions.decide({ kind: 'run', command, args: [...args], cwd: folder }).decision !== 'deny') {
+				return { allowed: false, reason: 'needs-approval', rule: '', executable: command, cwd: folder, delegate: config.delegate };
+			}
 			const approvable = !!denied && APPROVABLE.has(denied) && !!config.permissions;
 			if (denied && !approvable) { return { allowed: false, reason: denied }; }
 			const permitted = permit(config.permissions, command, args, folder, approvable);
@@ -378,7 +476,7 @@ export function createCommandPolicy(config: CommandPolicyConfig): CommandPolicy 
 		describe() {
 			if (config.delegate) { return ['El Harness del proyecto decide qu\u00e9 comandos se ejecutan, dentro del piso del IDE.']; }
 			const lines = config.subprojects.map(project => project.path + ' (' + project.ecosystem + '): ' + Object.entries(presets(project)).map(([executable, allowed]) => allowed === true ? executable : executable + ' ' + allowed.slice(0, 6).join('/')).join(', '));
-			return ['git, rg (solo lectura)', 'gh de solo lectura (pr/issue/run view, list, checks); otros CLI externos (gh, aws, az, gcloud, docker, kubectl, terraform, curl...) piden permiso', ...lines, ...(extras.length ? ['Extras: ' + extras.map(parts => parts.join(' ')).join(', ')] : [])];
+			return ['git, rg y lectores de shell (ls, cat, head, tail, grep, find, wc...) de solo lectura, dentro del proyecto y sin archivos de credenciales', 'gh de solo lectura (pr/issue/run view, list, checks); otros CLI externos (gh, aws, az, gcloud, docker, kubectl, terraform, curl...) piden permiso', ...lines, ...(extras.length ? ['Extras: ' + extras.map(parts => parts.join(' ')).join(', ')] : [])];
 		}
 	};
 }
