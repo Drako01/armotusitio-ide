@@ -28,6 +28,7 @@ function el(tag: string, className?: string, text?: string): HTMLElement {
 function format(template: string, ...args: string[]): string { return template.replace(/\{(\d+)\}/g, (_, index) => args[Number(index)] ?? ''); }
 function providerName(provider: string): string { return provider === 'claude' ? L.claude : L.codex; }
 const providerStatusSymbols: Record<string, string> = { ready: '\u2713', unauthenticated: '!', unavailable: '\u00d7', incompatible: '\u2260', unknown: '?', checking: '\u2026' };
+const mcpStatusSymbols: Record<string, string> = { connected: providerStatusSymbols.ready, disconnected: providerStatusSymbols.unavailable, error: providerStatusSymbols.unavailable, checking: providerStatusSymbols.checking };
 /** Simple Icons v15.0.0 (CC0); OpenAI and Claude trademarks belong to their respective owners. */
 function providerIcon(provider: string): SVGElement {
 	const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -144,7 +145,8 @@ function shell(): void {
 	sandbox.append(sandboxBox, track, el('span', '', L.sandboxFull));
 	const mcp = el('button', 'mcp-pill') as HTMLButtonElement; mcp.type = 'button'; mcp.id = 'mcp-pill';
 	mcp.setAttribute('aria-expanded', 'false'); mcp.setAttribute('aria-controls', 'mcp-details');
-	mcp.append(el('span', 'dot'), el('span', 'mcp-label'));
+	const mcpStatus = el('span', 'provider-status mcp-status'); mcpStatus.setAttribute('aria-hidden', 'true');
+	mcp.append(el('span', 'dot'), el('span', 'mcp-label'), mcpStatus);
 	mcp.addEventListener('click', () => toggle('mcp-details', mcp));
 	const more = el('button', 'icon-button', '\u22ef') as HTMLButtonElement; more.type = 'button'; more.id = 'menu-button';
 	more.setAttribute('aria-label', L.menu); more.title = L.menu; more.setAttribute('aria-expanded', 'false'); more.setAttribute('aria-controls', 'menu');
@@ -382,7 +384,10 @@ function renderHeader(): void {
 	renderQuota(selected);
 	const mcp = state.mcp; const pill = document.getElementById('mcp-pill');
 	pill.dataset.state = mcp.state;
-	pill.querySelector('.mcp-label').textContent = L.mcp + ': ' + L.mcpState[mcp.state];
+	pill.querySelector('.mcp-label').textContent = L.mcp;
+	pill.querySelector('.mcp-status').textContent = mcpStatusSymbols[mcp.state] ?? providerStatusSymbols.unknown;
+	pill.title = L.mcp + ' \u00b7 ' + (L.mcpState[mcp.state] || mcp.state);
+	pill.setAttribute('aria-label', pill.title);
 	const details = document.getElementById('mcp-details'); details.textContent = '';
 	details.append(el('h2', undefined, L.mcp + ' \u00b7 ' + L.mcpState[mcp.state]));
 	const facts = el('dl', 'facts');

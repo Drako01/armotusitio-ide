@@ -120,3 +120,36 @@ test('provider logos and connection badges remain separated and clickable in nar
 		assert.deepEqual(await page.evaluate(() => window.sent.at(-1)), { action: 'provider', provider: 'codex' });
 	} finally { await browser.close(); }
 });
+
+test('MCP header reuses provider connection symbols while preserving descriptive accessible status', async () => {
+	const browser = await launchBrowser();
+	try {
+		const page = await browser.newPage({ viewport: { width: 320, height: 800 }, reducedMotion: 'reduce' });
+		const push = await mountChat(page);
+		const value = state();
+		for (const [connection, symbol, label] of [
+			['connected', '\u2713', 'Conectado'],
+			['disconnected', '\u00d7', 'Desconectado'],
+			['error', '\u00d7', 'Error'],
+			['checking', '\u2026', 'Verificando']
+		]) {
+			value.mcp.state = connection;
+			await push(value);
+			const pill = page.locator('#mcp-pill');
+			const fullLabel = 'ArmotuSitio MCP \u00b7 ' + label;
+			assert.equal(await pill.locator('.mcp-label').textContent(), 'ArmotuSitio MCP');
+			assert.equal(await pill.locator('.mcp-status').textContent(), symbol);
+			assert.equal(await pill.locator('.mcp-status').getAttribute('aria-hidden'), 'true');
+			assert.equal(await pill.getAttribute('aria-label'), fullLabel);
+			assert.equal(await pill.getAttribute('title'), fullLabel);
+			assert.equal(await pill.getAttribute('data-state'), connection);
+			assert.equal(await pill.locator('.dot').isVisible(), true);
+			const expectedColor = connection === 'connected' ? 'rgb(63, 185, 80)'
+				: connection === 'checking' ? 'rgb(0, 120, 212)' : 'rgb(248, 81, 73)';
+			assert.equal(await pill.locator('.mcp-status').evaluate(node => getComputedStyle(node).borderTopColor), expectedColor);
+		}
+		await page.locator('#mcp-pill').click();
+		assert.equal(await page.locator('#mcp-details h2').textContent(), 'ArmotuSitio MCP \u00b7 Verificando');
+		assert.equal(await page.locator('#mcp-pill').getAttribute('aria-expanded'), 'true');
+	} finally { await browser.close(); }
+});
