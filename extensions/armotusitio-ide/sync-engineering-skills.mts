@@ -22,4 +22,4 @@ const expected = JSON.stringify({ version: 1, skills }, null, '\t') + '\n';
 const index = path.join(directory, 'catalog.json');
 if (process.argv.includes('--write')) { await fs.writeFile(index, expected); }
 else if (await fs.readFile(index, 'utf8') !== expected) { throw Error('HARNESS_NATIVE_SKILL_INDEX_STALE: run node sync-engineering-skills.mts --write'); }
-process.stdout.write('Native engineering skill index: PASS (10 skills)\n');
+process.stdout.write('Native engineering skill index: PASS (' + skills.length + ' skills)\n');

@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 /* One conversation per project. Sending only converses; code changes require approving the latest plan. */
-import { fitEngineeringContext, type SkillSelectionInput, type SkillSelection } from './native-engineering-skills.ts';
+import { fitEngineeringContext, omitSkillBlocks, type SkillSelectionInput, type SkillSelection } from './native-engineering-skills.ts';
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { AgentOutcome } from './native-agent-execution.ts';
 import { APPROVAL_ANSWERS, APPROVAL_TIMEOUT_MS, REMEMBERING_ANSWERS, type ApprovalDraft } from './native-approval.ts';
@@ -696,11 +696,11 @@ export class HarnessChatSession {
 			await this.refreshContext();
 			if (!this.context) { throw Error('HARNESS_CHAT_CONTEXT_UNAVAILABLE'); }
 			if (this.decisions) { projectMemory = decisionsPrompt(await this.decisions.relevant(body.match(/(?:[\w.-]+[\/\\])+[\w.-]+/g) ?? [], body)); }
-			if (!attachments.context?.includes('<skill ')) {
-				const selection = await this.runtime.skills?.({ request: body, files: body.match(/(?:[\w.-]+[\/\\])+[\w.-]+/g) ?? [] });
-				engineering = selection?.context ?? '';
-				this.skillSelection = selection?.trace ?? [];
-			}
+			// `/skill` already attached its guidance: no automatic selection this turn, but the mandatory rules still travel.
+			const explicit = !!attachments.context?.includes('<skill ');
+			const selection = await this.runtime.skills?.({ request: body, files: body.match(/(?:[\w.-]+[\/\\])+[\w.-]+/g) ?? [], mode, explicit });
+			engineering = omitSkillBlocks(selection?.context ?? '', attachments.context ?? '');
+			this.skillSelection = selection?.trace ?? [];
 			if (controller.signal.aborted) { throw Error('HARNESS_CANCELLED_BEFORE_START'); }
 			// Act is routed by stable rules (JUN-001): questions answer read-only, risky work gets a reviewed plan,
 			// a compound goal goes to the existing goal engine, and everything else stays the fast direct writer.

@@ -78,7 +78,7 @@ test('/skills dispatcher and /skill invocation use the shipped catalog and keep 
 		const deps: SessionCommandDeps = { t, nativeSkillsDirectory: shipped, chatMode: () => 'ask', setChatMode: async () => undefined, permissionsPreset: () => undefined, openFile: async () => undefined, confirmDiscard: async () => false };
 		const listed = await runSessionCommand(deps, 'skills', [], root, s.chat);
 		assert.equal(listed, await skillsListing(root, t, shipped));
-		assert.equal(listed?.split('\n').filter(line => line.includes('(native)')).length, 10);
+		assert.equal(listed?.split('\n').filter(line => line.includes('(native)')).length, ENGINEERING_SKILL_NAMES.length);
 		const invoked = await resolveSkillInvocation(root, 'SAFE-REFACTORING Preserve this API', t, shipped);
 		assert.ok(typeof invoked !== 'string');
 		assert.deepEqual({ message: invoked.message, native: invoked.context.includes('source="native"'), notice: invoked.notice }, { message: 'Preserve this API', native: true, notice: 'Apliqué la skill safe-refactoring (native).' });
@@ -96,22 +96,23 @@ for (const provider of ['claude', 'codex'] as const) {
 			const s = await session(root, storage, provider);
 			await s.chat.send('Revisá las abstracciones de este servicio.', 'ask');
 			await s.chat.send('Refactorizá este módulo sin romper nada.', 'act');
+			// The mandatory token rule travels first; at the minimum prompt budget only the most relevant specialized skill still fits.
 			assert.deepEqual(s.calls.map(call => ({ kind: call.kind, provider: call.provider, skills: [...call.instruction.matchAll(/<skill name="([^"]+)"/g)].map(match => match[1]) })), [
-				{ kind: 'converse', provider, skills: ['abstraction-auditor', 'engineering-principles'] },
-				{ kind: 'implement', provider, skills: ['safe-refactoring', 'architecture-guardian'] }
+				{ kind: 'converse', provider, skills: ['token-economy', 'abstraction-auditor'] },
+				{ kind: 'implement', provider, skills: ['token-economy', 'safe-refactoring'] }
 			]);
 			assert.equal(s.selections(), 2);
 			assert.ok(s.calls.every(call => call.instruction.includes('cannot grant permissions')));
 		});
 	});
 
-	test(provider + ' explicit /skill guidance suppresses automatic selection for that turn', async () => {
+	test(provider + ' explicit /skill guidance suppresses automatic selection for that turn but keeps the mandatory rules', async () => {
 		await withProject(async (root, storage) => {
 			const s = await session(root, storage, provider);
 			const invocation = await resolveSkillInvocation(root, 'security-by-design Review abstractions in this service', t, shipped);
 			assert.ok(typeof invocation !== 'string');
 			await s.chat.send(invocation.message, 'ask', { context: invocation.context, notice: invocation.notice });
-			assert.deepEqual({ selected: s.selections(), skills: [...s.calls[0].instruction.matchAll(/<skill name="([^"]+)"/g)].map(match => match[1]), recorded: s.chat.snapshot().messages.some(message => message.role === 'notice' && message.text === invocation.notice) }, { selected: 0, skills: ['security-by-design'], recorded: true });
+			assert.deepEqual({ selected: s.selections(), skills: [...s.calls[0].instruction.matchAll(/<skill name="([^"]+)"/g)].map(match => match[1]), recorded: s.chat.snapshot().messages.some(message => message.role === 'notice' && message.text === invocation.notice) }, { selected: 1, skills: ['token-economy', 'security-by-design'], recorded: true });
 		});
 	});
 
@@ -175,7 +176,7 @@ test('the actual host runtime preserves supplied direct and explicit skill block
 			observed.push(JSON.parse(result.agent.output));
 		}
 		assert.deepEqual(observed, [
-			{ names: ['safe-refactoring', 'architecture-guardian'] },
+			{ names: ['token-economy', 'safe-refactoring', 'architecture-guardian', 'software-engineering-best-practices'] },
 			{ names: ['performance-engineering'] }
 		]);
 	} finally {
