@@ -175,3 +175,10 @@ Verificaciones adicionales del requerimiento18: build tests9/9 PASS; typecheck b
 - [x] UI requests and HTML/stylesheets activate the mandatory rule without a mobile-project condition; backend and plain-question exclusions, explicit selection and provider parity have focused regression coverage.
 - [x] Focused engineering selection and chat integration tests: 35/35 PASS; extension typecheck PASS; catalog consistency PASS (13 skills); scoped extension bundle PASS; targeted TypeScript lint and formatting PASS.
 - Physical-device, screen-reader and real-user acceptance: `PENDING_OWNER_VALIDATION`; automated routing and content tests do not certify usability.
+
+## Native commit guidance (2026-11-22)
+
+- [x] Added native `conventional-commits` guidance and regenerated the catalog (14 skills); the professional baseline points to it when committing.
+- [x] Requests to create commits select the mandatory rule in Spanish and English, including Ask mode and explicit `/skill`; questions, review-only requests and no-commit instructions do not select it.
+- [x] The skill separates implementation, tests and ordinary documentation by purpose; runtime skill resources are implementation artifacts. Existing staging, hooks, permissions and publication boundaries remain intact.
+- [x] Focused engineering selection and chat integration tests: 39/39 PASS; extension typecheck PASS; catalog consistency PASS (14 skills); scoped bundle PASS; targeted TypeScript lint and formatting PASS on the combined candidate.

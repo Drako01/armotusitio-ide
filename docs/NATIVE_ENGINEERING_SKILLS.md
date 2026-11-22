@@ -1,6 +1,6 @@
 # Native engineering skills
 
-The Chat Harness includes thirteen engineering capabilities without a global skill installation, project checkout, extra model call or new execution engine. Claude Code and Codex receive the same selected guidance through the existing structured and native transports.
+The Chat Harness includes fourteen engineering capabilities without a global skill installation, project checkout, extra model call or new execution engine. Claude Code and Codex receive the same selected guidance through the existing structured and native transports.
 
 ## Available capabilities
 
@@ -19,6 +19,7 @@ The Chat Harness includes thirteen engineering capabilities without a global ski
 | Baseline | `software-engineering-best-practices` | Compact, proportional baseline (SOLID, KISS, DRY, YAGNI, SoC, Clean Code, security, testing, compatibility, accessibility and Nielsen heuristics) applied while designing, implementing, refactoring or reviewing |
 | Mandatory | `token-economy` | Extreme token economy and zero redundant work on every development turn |
 | Mandatory | `mobile-ux-principles` | General UX: Nielsen's ten usability heuristics and accessible interfaces, with conditional mobile guidance; legacy name retained |
+| Mandatory when committing | `conventional-commits` | Conventional Commit messages, implementation/test/docs separation by purpose, safe staging and existing authorization boundaries |
 
 ## Use and selection
 
@@ -37,6 +38,7 @@ The catalog indexes only names, descriptions and hashes for shipped skills. Sele
 A turn is a development turn when the request names a development verb (implement, fix, refactor, review, add, build and their Spanish forms) or when it is an Act turn that is not a plain question. A greeting or a question in Ask mode loads nothing.
 
 - `token-economy` binds every development turn. It is rendered as a mandatory IDE rule (`mandatory="true"`), goes first, sits outside the three-skill ceiling and is never dropped by the automatic byte budget. It yields only to the explicit user request and to safety rules, and like every skill it cannot grant permissions.
+- `conventional-commits` is selected when the user requests commit creation in Spanish or English, including explicit commit instructions in Ask mode. Questions about commits, review-only requests and explicit no-commit instructions do not select it. It remains available through `/skill conventional-commits`; it is guidance and never executes Git or grants permission. This IDE workflow separates implementation, tests and ordinary documentation by purpose, a user policy stricter than the Conventional Commits specification. Runtime-consumed skill files and catalogs stay with implementation. Each authorized commit updates the existing checklist; a commit request does not imply push, PR creation or history rewriting.
 - `mobile-ux-principles` keeps its legacy identifier for existing `/skill` commands and saved references, but now applies to interface work on web, desktop, IDE and mobile. UI requests and UI files (including HTML and stylesheets) activate it without requiring a mobile project; existing mobile-platform requests still activate it. General backend work and plain questions do not activate this UX rule. It explicitly covers Nielsen's ten heuristics, visible alternatives to color, recognizable actions, keyboard and screen-reader behavior; mobile touch and thumb-zone guidance is conditional. The bounded mobile-project probe remains available and unchanged.
 - `software-engineering-best-practices` closes every automatic development turn, outside the ceiling and after the specialized skills, so a tight prompt budget drops it before the skill the request named. It delegates depth to the specialized skills instead of repeating them.
 
