@@ -259,7 +259,7 @@ test('git tools refuse modified hooks and config, including changes while approv
 	});
 });
 
-test('per-branch bookkeeping written by editor extensions does not count as a config change; anything else still does', async () => {
+test('per-branch bookkeeping written by editor extensions does not count as a config change; anything else asks once, naming the key', async () => {
 	await withRepo(async ({ root, context }) => {
 		await fs.writeFile(path.join(root, 'a.txt'), 'a\n');
 		await fs.writeFile(path.join(root, 'b.txt'), 'b\n');
@@ -268,8 +268,13 @@ test('per-branch bookkeeping written by editor extensions does not count as a co
 		git(root, 'config', 'branch.feat/work.github-pr-owner-number', 'Owner#repo#12');
 		const committed = (await handleGitTool(guarded, 'git_commit', { paths: ['a.txt'], message: 'm' })).text;
 		git(root, 'config', 'branch.feat/work.pushRemote', 'elsewhere');
-		const redirected = (await handleGitTool(guarded, 'git_commit', { paths: ['b.txt'], message: 'm' })).text;
-		assert.deepEqual({ committed: committed.split(' ')[0], redirected }, { committed: 'COMMITTED', redirected: 'POLICY_DENIED: repo-config-changed' });
+		const cards: string[] = [];
+		const refused = (await handleGitTool({ ...guarded, ask: async request => { cards.push(request.detail[0]); return 'deny'; } }, 'git_commit', { paths: ['b.txt'], message: 'm' })).text;
+		const accepted = await handleGitTool({ ...guarded, ask: async request => { cards.push(request.rule); return 'once'; } }, 'git_commit', { paths: ['b.txt'], message: 'm' });
+		assert.deepEqual({ committed: committed.split(' ')[0], refused, accepted: [accepted.text.split(' ')[0], accepted.repoBaseline === await repoFingerprint(root)], cards }, {
+			committed: 'COMMITTED', refused: 'POLICY_DENIED: repo-config-changed', accepted: ['COMMITTED', true],
+			cards: ['git config changed during the run: branch.feat/work.pushremote', '']
+		});
 	});
 });
 

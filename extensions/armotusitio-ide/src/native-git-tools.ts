@@ -215,6 +215,9 @@ export async function repoFingerprint(root: string): Promise<string> {
  */
 const BENIGN_CONFIG_KEY = /^(?:branch\.[^\n]+\.(?:remote|merge|gh-merge-base|vscode-merge-base|github-pr-[\w.-]+)|lfs\.[^\n]+\.(?:access|locksverify)|maintenance\.[\w.-]+)$/i;
 
+/** Keys that decide what git executes (hooks, helpers, filters, drivers, aliases, includes): changing one is never asked, it is refused. */
+const EXECUTING_CONFIG_KEY = /^(?:core\.(?:hookspath|fsmonitor|sshcommand|editor|pager|askpass|gitproxy)|.*\.helper|filter\..*|diff\..*\.(?:command|textconv)|merge\..*\.driver|alias\..*|include(?:if)?\..*|gpg\..*program|sequence\.editor|(?:remote|url)\..*\.(?:receivepack|uploadpack|vcs))$/i;
+
 /**
  * What changed between two `repoFingerprint` values: whether the hooks changed, and the config keys added, removed or
  * changed (benign editor keys left out). A value that is not a fingerprint counts as changed hooks: refused, never asked.
@@ -399,7 +402,7 @@ async function acceptRepoDrift(context: GitToolsContext): Promise<void> {
 	const current = await repoFingerprint(context.root);
 	if (current === context.repoBaseline) { return; }
 	const drift = repoDrift(context.repoBaseline, current);
-	if (drift.hooks) { return refuse('repo-config-changed'); }
+	if (drift.hooks || drift.keys.some(key => EXECUTING_CONFIG_KEY.test(key)) || drift.keys.includes(UNPARSED_CONFIG)) { return refuse('repo-config-changed'); }
 	if (drift.keys.length) {
 		const shown = drift.keys.slice(0, 8).join(', ') + (drift.keys.length > 8 ? ' (+' + (drift.keys.length - 8) + ')' : '');
 		const denial = await requestApproval(context.ask, {
