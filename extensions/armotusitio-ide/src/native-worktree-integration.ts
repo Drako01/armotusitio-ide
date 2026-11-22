@@ -42,7 +42,7 @@ export interface WorktreeIntegration {
 }
 const fail = (code: string) => Error('HARNESS_INTEGRATION_' + code);
 const view = (record: IntegrationRecord): WorktreeIntegration =>
-	({ id: record.id, status: record.status, files: [...record.files], patchDigest: record.patchDigest });
+({ id: record.id, status: record.status, files: [...record.files], patchDigest: record.patchDigest });
 const git = (root: string, args: string[], env?: Record<string, string>, raw = false): Promise<string> =>
 	managedGit(root, args, { env, raw, maxBuffer: MAX_PATCH_BYTES + 1024, failure: 'HARNESS_INTEGRATION_GIT_FAILED' });
 
