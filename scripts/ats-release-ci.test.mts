@@ -64,6 +64,6 @@ test('optional Authenticode is all-or-nothing and Store submission is opt-in, pi
 	for (const command of ['msstore settings', 'msstore publish', 'msstore apps get', 'msstore submission status']) {
 		assert.ok(reconfigure !== -1 && reconfigure < submit.indexOf(command), `${command} fails with "SellerId is not set" before reconfigure`);
 	}
-	assert.match(submit, /msstore publish \S+ --inputDirectory \S+ --appId/, 'msstore publish takes the package folder through --inputDirectory, not --inputFile');
+	assert.match(submit, /msstore publish \$env:ATS_MSIX --appId/, 'msstore publish takes the .msix file itself as its first argument; a folder is not recognized as a project');
 	assert.doesNotMatch(submit, /\$\{\{ secrets\.[A-Z_]+ \}\}.*msstore/, 'secrets reach msstore only through env');
 });
