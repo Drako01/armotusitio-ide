@@ -60,6 +60,24 @@
 			"source": "native",
 			"description": "Investigate measured latency, throughput, memory, CPU, and database bottlenecks.",
 			"digest": "fb6ac05b00cd550e531b55ee71eaa48937338a8fb69674e70e537ced80e4726a"
+		},
+		{
+			"name": "software-engineering-best-practices",
+			"source": "native",
+			"description": "Compact baseline of professional engineering practices applied while designing, implementing, refactoring or reviewing code - proportional, contextual, and the same for every provider.",
+			"digest": "9a41c5d9493134dca1e5b57be8ce390fd78384e350373d06d4b3d72f4d1ce119"
+		},
+		{
+			"name": "token-economy",
+			"source": "native",
+			"description": "Mandatory for every development task - extreme token economy and zero redundant work - no repeated validated work, surgical investigation, impact-based validation, minimal model and subagent calls.",
+			"digest": "baff0cede36fbf2cf08a2e3a3d4d0e1432b41167b3a31eb22ea67a7c4725724e"
+		},
+		{
+			"name": "mobile-ux-principles",
+			"source": "native",
+			"description": "Ten mandatory UX/UI principles for mobile development - simplicity, navigation, one-hand use, speed, touch targets, feedback, accessibility, forms, errors and justified permissions.",
+			"digest": "14c363916cf27c4837e7e537f49774a1be7f59b5db304cd532a2b7f0220e43e6"
 		}
 	]
 }

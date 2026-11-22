@@ -158,3 +158,12 @@ Verificaciones adicionales del requerimiento18: build tests9/9 PASS; typecheck b
 - `269b54f384e`: seis extensiones preinstaladas, auto-update configurable y empaquetado desktop/REH; gate precommit PASS.
 - Artefactos locales ignorados: `.build/engineering-evidence/native-engineering-skills.vsix`, `.build/official-extensions-verification`, `.build/engineering-probe/activation-report.json` y `.build/engineering-probe-baseline/signature-comparison.json`.
 - Push y Draft PR autorizados posteriormente por el usuario y realizados; el archivo original `PROMPT_CODEX.md` permanece sin seguimiento, sin alteraciones.
+
+## Mandatory rules and engineering baseline (2026-11-22)
+
+- [x] `token-economy`, `mobile-ux-principles` and `software-engineering-best-practices` shipped in the native catalog (13 names, regenerated index).
+- [x] Mandatory selection outside the three-skill ceiling, never dropped by the automatic byte budget, kept with `/skill` and not sent twice.
+- [x] Baseline added last on automatic development turns; plain questions and greetings load nothing.
+- [x] Bounded mobile project detection from manifests only.
+- [x] Same context for Claude Code and Codex (no provider input); persistent sessions keep deduplicating unchanged guidance.
+- Evidence: `node --test` over every suite that mentions skills, 183/183 passing; `tsc` clean; `node sync-engineering-skills.mts` PASS (13 skills).

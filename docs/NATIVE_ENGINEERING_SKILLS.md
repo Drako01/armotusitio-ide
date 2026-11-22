@@ -1,6 +1,6 @@
 # Native engineering skills
 
-The Chat Harness includes ten engineering capabilities without a global skill installation, project checkout, extra model call or new execution engine. Claude Code and Codex receive the same selected guidance through the existing structured and native transports.
+The Chat Harness includes thirteen engineering capabilities without a global skill installation, project checkout, extra model call or new execution engine. Claude Code and Codex receive the same selected guidance through the existing structured and native transports.
 
 ## Available capabilities
 
@@ -16,6 +16,9 @@ The Chat Harness includes ten engineering capabilities without a global skill in
 | P1 | `api-contract-integrity` | Keep implementation, specification, validation and consumers compatible |
 | P2 | `security-by-design` | Inspect real trust boundaries, permissions, secrets and isolation |
 | P2 | `performance-engineering` | Identify measurable resource problems before proposing optimization |
+| Baseline | `software-engineering-best-practices` | Compact, proportional baseline (SOLID, KISS, DRY, YAGNI, SoC, Clean Code, security, testing, compatibility, accessibility and Nielsen heuristics) applied while designing, implementing, refactoring or reviewing |
+| Mandatory | `token-economy` | Extreme token economy and zero redundant work on every development turn |
+| Mandatory | `mobile-ux-principles` | Ten UX/UI principles for mobile screens, flows and forms |
 
 ## Use and selection
 
@@ -25,9 +28,19 @@ Ordinary requests use deterministic Spanish and English intent rules. An abstrac
 
 Selection considers the current request and mentioned paths; approved plans also supply their actual file list. Language, architecture and risk hints are optional selector inputs, never guesses about frameworks or multi-tenancy. The selector does not crawl the repository or introduce another AI classifier. It is intentionally conservative; use `/skill` when intent wording is not recognized.
 
-Automatic selection admits at most three skills and 12 KiB of rendered guidance, then retains only complete skill blocks that fit the remaining prompt budget. Omitted selections remain visible in the selection trace. A custom project skill can be larger than this automatic budget and still be invoked explicitly under the existing project reader limit of 64 KiB. Explicit invocation retains existing attachment behavior; it is not truncated silently to the automatic budget.
+Automatic selection admits at most three specialized skills and 24 KiB of rendered guidance, then retains only complete skill blocks that fit the remaining prompt budget. Omitted selections remain visible in the selection trace. A custom project skill can be larger than this automatic budget and still be invoked explicitly under the existing project reader limit of 64 KiB. Explicit invocation retains existing attachment behavior; it is not truncated silently to the automatic budget.
 
 The catalog indexes only names, descriptions and hashes for shipped skills. Selected bodies are read and digest checked each turn. The existing project catalog still hashes project files during discovery for its integrity contract; it does not inject their bodies during discovery. Persistent native conversations omit identical previously delivered automatic guidance when continuing that provider session; a fresh-session fallback receives complete currently selected guidance. Structured runs receive self-contained guidance. Reset clears the delivery cache.
+
+## Mandatory rules and the engineering baseline
+
+A turn is a development turn when the request names a development verb (implement, fix, refactor, review, add, build and their Spanish forms) or when it is an Act turn that is not a plain question. A greeting or a question in Ask mode loads nothing.
+
+- `token-economy` binds every development turn. It is rendered as a mandatory IDE rule (`mandatory="true"`), goes first, sits outside the three-skill ceiling and is never dropped by the automatic byte budget. It yields only to the explicit user request and to safety rules, and like every skill it cannot grant permissions.
+- `mobile-ux-principles` binds a development turn that names a mobile platform (Android, iOS, React Native, Expo, Flutter, mobile) or that touches UI in a mobile project. The host detects a mobile project from small manifests only: Expo, React Native, Capacitor, Ionic or NativeScript dependencies, a Flutter `pubspec.yaml`, an `AndroidManifest.xml`, an Xcode project or a MAUI project, within two folder levels and at most 60 folders.
+- `software-engineering-best-practices` closes every automatic development turn, outside the ceiling and after the specialized skills, so a tight prompt budget drops it before the skill the request named. It delegates depth to the specialized skills instead of repeating them.
+
+`/skill NAME` suppresses the automatic selection for that turn, but the mandatory rules still travel, and a rule the user attached explicitly is not sent twice. A workspace skill with the same name as a mandatory rule replaces it and is treated as ordinary guidance. The selection takes no provider input: Claude Code and Codex receive the same rules for the same turn, and a persistent native session sends an unchanged rule only once.
 
 ## Precedence and safety
 
@@ -43,7 +56,7 @@ The existing `.codex/skills` checkout conventions and the independent `src/vs/se
 
 The canonical bodies live in `extensions/armotusitio-ide/resources/engineering-skills/<name>/SKILL.md`. `catalog.json` is generated metadata, not a second content source. It ships alongside the extension and works without the original checkout or global developer paths. Both native providers consume the same resources.
 
-Edit a body with a matching YAML `name` and single-line `description`. Keep the document specialized: scope and exclusions, minimum evidence, technical procedure, tradeoffs, counterexamples, verification and expected output. Run `node sync-engineering-skills.mts --write` from the extension directory to refresh hashes. `npm run check`, `npm run compile` and `npm run check:native-package` reject stale indexes; `.vscodeignore` explicitly includes all ten bodies and their catalog. Add a new catalog capability only with matching selector tests and a distinct responsibility; the current ten-name catalog is deliberately closed and validated.
+Edit a body with a matching YAML `name` and single-line `description`. Keep the document specialized: scope and exclusions, minimum evidence, technical procedure, tradeoffs, counterexamples, verification and expected output. Run `node sync-engineering-skills.mts --write` from the extension directory to refresh hashes. `npm run check`, `npm run compile` and `npm run check:native-package` reject stale indexes; `.vscodeignore` explicitly includes every body and the catalog. Add a new catalog capability only with matching selector tests and a distinct responsibility; the catalog is deliberately closed and validated against `ENGINEERING_SKILL_NAMES`.
 
 No additional dependencies are required. Generic principles were adapted from bounded RedEvent skills and ArmotuSitio's skill manifest; business routes, commands, roles, credentials and machine-specific skill paths were not copied.
 
