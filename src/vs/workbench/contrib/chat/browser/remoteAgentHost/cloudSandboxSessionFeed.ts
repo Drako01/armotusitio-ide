@@ -44,6 +44,9 @@ export class CloudSandboxSessionFeed extends Disposable {
 			this._resumeConnection = false;
 			void this._connect(true);
 		}
+		if (this._taskIds.size || this._refreshReason) {
+			this._refresh.schedule();
+		}
 	}, reconnectPolicy.initialDelayMs));
 	private readonly _refresh = this._register(new RunOnceScheduler(() => {
 		const reason = this._refreshReason;
@@ -92,11 +95,7 @@ export class CloudSandboxSessionFeed extends Disposable {
 		this._register(this._powerService.onDidResume(() => {
 			if (this._suspended) {
 				this._suspended = false;
-				const delay = computeReconnectDelay(reconnectPolicy, 1);
-				this._resume.schedule(Math.max(delay, this._retryNotBefore - Date.now()));
-				if (this._taskIds.size || this._refreshReason) {
-					this._refresh.schedule(delay);
-				}
+				this._resume.schedule(Math.max(computeReconnectDelay(reconnectPolicy, 1), this._retryNotBefore - Date.now()));
 			}
 		}));
 		this._register(toDisposable(() => {
