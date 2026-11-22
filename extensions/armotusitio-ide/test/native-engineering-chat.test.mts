@@ -109,10 +109,12 @@ for (const provider of ['claude', 'codex'] as const) {
 	test(provider + ' explicit /skill guidance suppresses automatic selection for that turn but keeps the mandatory rules', async () => {
 		await withProject(async (root, storage) => {
 			const s = await session(root, storage, provider);
-			const invocation = await resolveSkillInvocation(root, 'security-by-design Review abstractions in this service', t, shipped);
+			// This probe covers mandatory selection; separate small-budget tests verify whole-block omission.
+			s.runtime.context = async () => ({ root, writer: true, skills: [], guides: [], promptBudget: 64 * 1024 });
+			const invocation = await resolveSkillInvocation(root, 'security-by-design Review this desktop UI toolbar', t, shipped);
 			assert.ok(typeof invocation !== 'string');
 			await s.chat.send(invocation.message, 'ask', { context: invocation.context, notice: invocation.notice });
-			assert.deepEqual({ selected: s.selections(), skills: [...s.calls[0].instruction.matchAll(/<skill name="([^"]+)"/g)].map(match => match[1]), recorded: s.chat.snapshot().messages.some(message => message.role === 'notice' && message.text === invocation.notice) }, { selected: 1, skills: ['token-economy', 'security-by-design'], recorded: true });
+			assert.deepEqual({ selected: s.selections(), skills: [...s.calls[0].instruction.matchAll(/<skill name="([^"]+)"/g)].map(match => match[1]), recorded: s.chat.snapshot().messages.some(message => message.role === 'notice' && message.text === invocation.notice) }, { selected: 1, skills: ['token-economy', 'mobile-ux-principles', 'security-by-design'], recorded: true });
 		});
 	});
 

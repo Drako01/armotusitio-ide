@@ -32,10 +32,12 @@ async function fixture(work: (value: Fixture) => Promise<void>): Promise<void> {
 	const writeIndex = async (skills: NativeSkill[]) => fs.writeFile(path.join(directory, 'catalog.json'), JSON.stringify({ version: 1, skills }));
 	await writeIndex(entries);
 	try {
-		await work({ root, directory, entries, writeIndex, async writeBody(name, content) {
-			await fs.mkdir(path.join(directory, name), { recursive: true });
-			await fs.writeFile(path.join(directory, name, 'SKILL.md'), content);
-		} });
+		await work({
+			root, directory, entries, writeIndex, async writeBody(name, content) {
+				await fs.mkdir(path.join(directory, name), { recursive: true });
+				await fs.writeFile(path.join(directory, name, 'SKILL.md'), content);
+			}
+		});
 	} finally { await fs.rm(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 }
 const names = (skills: readonly { name: string }[]) => skills.map(skill => skill.name);
@@ -236,21 +238,47 @@ test('development turns carry the mandatory token rule and the engineering basel
 	]);
 });
 
-test('mobile UX principles bind mobile UI work in a mobile project or a request that names a mobile platform', () => {
+test('general UX principles bind web, desktop and mobile UI while excluding backend work and plain questions', () => {
 	const catalog = metadata();
-	const mobile = (input: { request: string; mobile?: boolean; files?: string[] }) => names(selectEngineeringSkills(catalog, { mode: 'act', ...input }).skills).includes('mobile-ux-principles');
+	const ux = (input: { request: string; mobile?: boolean; files?: string[]; mode?: 'act' | 'ask' }) => names(selectEngineeringSkills(catalog, { mode: 'act', ...input }).skills).includes('mobile-ux-principles');
 	assert.deepEqual([
-		mobile({ request: 'Agregá la pantalla de perfil', mobile: true }),
-		mobile({ request: 'Fix the date bug', mobile: true, files: ['app/screens/Profile.tsx'] }),
-		mobile({ request: 'Optimizá la consulta SQL del backend', mobile: true }),
-		mobile({ request: 'Agregá la pantalla de perfil', mobile: false }),
-		mobile({ request: 'Implementá el onboarding en React Native' })
-	], [true, true, false, false, true]);
+		ux({ request: 'Agregá la pantalla de perfil', mobile: true }),
+		ux({ request: 'Fix the date bug', mobile: true, files: ['app/screens/Profile.tsx'] }),
+		ux({ request: 'Agregá la pantalla de perfil', mobile: false }),
+		ux({ request: 'Implementá el onboarding en React Native' }),
+		ux({ request: 'Redesign the chat header and IDE toolbar' }),
+		ux({ request: 'Update desktop UI sidebar and webview' }),
+		ux({ request: 'Fix wrapping', files: ['public/index.html', 'styles/header.scss'] }),
+		ux({ request: 'Fix wrapping', files: ['Views/Main.xaml', 'views/Main.qml', 'Pages/Edit.razor'] }),
+		ux({ request: 'Optimizá la consulta SQL del backend', mobile: true }),
+		ux({ request: 'Review database design and payment flows' }),
+		ux({ request: 'Add HTTP response headers to the API' }),
+		ux({ request: '¿Qué es una interfaz?', mode: 'ask' })
+	], [true, true, true, true, true, true, true, true, false, false, false, false]);
+});
+
+test('the general UX skill preserves the legacy name, canonical ten heuristics and explicit accessibility and mobile scope', async () => {
+	const body = await fs.readFile(path.resolve(import.meta.dirname, '../resources/engineering-skills/mobile-ux-principles/SKILL.md'), 'utf8');
+	assert.match(body, /name: mobile-ux-principles/);
+	assert.deepEqual([...body.matchAll(/^### \d+\. (.+)$/gm)].map(match => match[1]), [
+		'Visibility of system status', 'Match between the system and the real world', 'User control and freedom',
+		'Consistency and standards', 'Error prevention', 'Recognition rather than recall', 'Flexibility and efficiency of use',
+		'Aesthetic and minimalist design', 'Help users recognize, diagnose, and recover from errors', 'Help and documentation'
+	]);
+	assert.match(body, /https:\/\/www\.nngroup\.com\/articles\/ten-usability-heuristics\//);
+	assert.match(body, /Never use color alone.*visible text, a distinct symbol/);
+	assert.match(body, /indecipherable icons/);
+	assert.match(body, /WCAG 2\.2 AA/);
+	assert.match(body, /Mobile and touch guidance, when applicable/);
+	assert.match(body, /48x48 logical-pixel.*not a universal WCAG AA minimum/);
+	assert.match(body, /24x24 CSS pixels with defined exceptions/);
+	assert.match(body, /PENDING_OWNER_VALIDATION/);
 });
 
 test('explicit /skill selection keeps the mandatory rules, skips the automatic ones and never sends a rule twice', () => {
 	const catalog = metadata();
 	const explicit = selectEngineeringSkills(catalog, { request: 'Refactorizá el módulo de pagos', mode: 'act', explicit: true });
+	assert.deepEqual(names(selectEngineeringSkills(catalog, { request: 'Redesign the toolbar', mode: 'act', explicit: true }).skills), ['token-economy', 'mobile-ux-principles']);
 	const attached = '<skill name="token-economy" source="native" mandatory="true">\nx\n</skill>';
 	const context = '<skill name="token-economy" source="native">\na\n</skill>\n\n<skill name="safe-refactoring" source="native">\nb\n</skill>';
 	assert.deepEqual({ explicit: names(explicit.skills), remaining: omitSkillBlocks(context, attached), untouched: omitSkillBlocks(context, '') }, {
@@ -275,7 +303,7 @@ test('the selection is provider independent: Claude and Codex turns get identica
 		// The context builder takes no provider argument: both transports receive the same bytes for the same turn.
 		const [claude, codex] = [await engineeringContext(root, shipped, input), await engineeringContext(root, shipped, input)];
 		assert.deepEqual({ same: claude.context === codex.context, rules: [...claude.context.matchAll(/<skill name="([^"]+)"/g)].map(match => match[1]), mandatory: claude.context.includes('<skill name="token-economy" source="native" mandatory="true">') },
-			{ same: true, rules: ['token-economy', 'software-engineering-best-practices'], mandatory: true });
+			{ same: true, rules: ['token-economy', 'mobile-ux-principles', 'software-engineering-best-practices'], mandatory: true });
 	});
 });
 

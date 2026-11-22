@@ -167,3 +167,11 @@ Verificaciones adicionales del requerimiento18: build tests9/9 PASS; typecheck b
 - [x] Bounded mobile project detection from manifests only.
 - [x] Same context for Claude Code and Codex (no provider input); persistent sessions keep deduplicating unchanged guidance.
 - Evidence: `node --test` over every suite that mentions skills, 183/183 passing; `tsc` clean; `node sync-engineering-skills.mts` PASS (13 skills).
+
+## General UX rule (2026-11-22)
+
+- [x] Generalized the existing `mobile-ux-principles` body and catalog description for web, desktop, IDE and mobile, preserving the legacy identifier and explicit invocation compatibility.
+- [x] Included Nielsen's ten canonical heuristics with their primary source, visible non-color status cues, recognizable controls and cross-platform accessibility; mobile comfort guidance is conditional and distinguishes 48 logical pixels from WCAG 2.2 AA target sizing.
+- [x] UI requests and HTML/stylesheets activate the mandatory rule without a mobile-project condition; backend and plain-question exclusions, explicit selection and provider parity have focused regression coverage.
+- [x] Focused engineering selection and chat integration tests: 35/35 PASS; extension typecheck PASS; catalog consistency PASS (13 skills); scoped extension bundle PASS; targeted TypeScript lint and formatting PASS.
+- Physical-device, screen-reader and real-user acceptance: `PENDING_OWNER_VALIDATION`; automated routing and content tests do not certify usability.

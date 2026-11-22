@@ -76,8 +76,8 @@
 		{
 			"name": "mobile-ux-principles",
 			"source": "native",
-			"description": "Ten mandatory UX/UI principles for mobile development - simplicity, navigation, one-hand use, speed, touch targets, feedback, accessibility, forms, errors and justified permissions.",
-			"digest": "14c363916cf27c4837e7e537f49774a1be7f59b5db304cd532a2b7f0220e43e6"
+			"description": "Mandatory UX/UI guidance for web, desktop, IDE and mobile interfaces using Nielsen's ten usability heuristics, accessible states and controls, with conditional mobile interaction guidance.",
+			"digest": "5f5f37d7eb73f2524104ec7dd99e32a2b158484af02441b00cbb4b3c869530bb"
 		}
 	]
 }

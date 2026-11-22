@@ -74,10 +74,10 @@ const RULES: ReadonlyArray<{ pattern: RegExp; names: readonly string[]; reason: 
 const DEVELOPMENT = /\b(implement\w*|desarroll\w*|constru\w*|cre[a\u00e1]\w*|agreg\w*|a[n\u00f1]ad\w*|arregl\w*|corrig\w*|fix\w*|bugs?|refactor\w*|migr\w*|integr\w*|modific\w*|cambi[a\u00e1]\w*|actualiz\w*|escrib\w*|program\w*|funcionalidad\w*|endpoints?|componentes?|pantallas?|add|build|create|write|update|change|develop\w*|dise[n\u00f1]\w*|design\w*|review\w*|revis\w*|audit\w*)\b/;
 const PLAIN_QUESTION = /^\s*(?:\u00bf|\?|qu[e\u00e9]\b|c[o\u00f3]mo\b|por qu[e\u00e9]\b|cu[a\u00e1]l\w*\b|d[o\u00f3]nde\b|what\b|how\b|why\b|where\b|which\b|explain)/;
 const MOBILE_TERMS = /\b(m[o\u00f3]vil\w*|mobile|android|ios|iphone|react native|expo|flutter|swiftui|jetpack compose|capacitor|ionic|thumb zone|touch targets?)\b/;
-const UI_TERMS = /\b(pantallas?|screens?|ui|ux|interfaz|interface|componentes?|components?|formularios?|forms?|bot[o\u00f3]n|botones|buttons?|navegaci[o\u00f3]n|navigation|layout|estilos?|styles?|theme|tema|accesib\w*|a11y|gestos?|touch|modal\w*|listas?|lists?|dise[n\u00f1]o|design|flujos?|flows?|onboarding|vistas?|views?|widgets?|activity|fragment|composable|scroll|tabs?|drawer|sheet)\b/;
+const UI_TERMS = /\b(pantallas?|screens?|ui|ux|interfaz|interfaces?|formularios?|forms?|bot[o\u00f3]n|botones|buttons?|navegaci[o\u00f3]n|navigation|layout|estilos?|styles?|theme|tema|accesib\w*|a11y|gestos?|touch|modal\w*|onboarding|vistas?|views?|widgets?|composable|scroll|tabs?|drawer|sheet|toolbar|webview|sidebar|desktop ui)\b|\b(?:chat|app|ide|page) header\b|\bheader (?:del? |de la )?(?:chat|app|ide|p[a\u00e1]gina)\b/;
 /** How every selector reads a request: lowercase, NFC, never undefined. */
 const normalizedRequest = (request: string | undefined): string => (request ?? '').toLowerCase().normalize('NFC');
-const UI_FILE = /\.(?:tsx|jsx|dart|swift|kt|vue|svelte|storyboard|xib)$|res\/layout\//;
+const UI_FILE = /\.(?:tsx|jsx|html?|css|scss|sass|less|xaml|qml|razor|dart|swift|kt|vue|svelte|storyboard|xib)$|res\/layout\//;
 
 /** A turn that changes software: any request naming a development verb, or an Act turn that is not a plain question. */
 export function isDevelopmentRequest(input: Pick<SkillSelectionInput, 'request' | 'mode'>): boolean {
@@ -91,7 +91,7 @@ export function mandatorySkills(input: SkillSelectionInput): Array<{ name: strin
 	const request = normalizedRequest(input.request);
 	const rules = [{ name: 'token-economy', reason: 'mandatory: development turn' }];
 	const uiWork = UI_TERMS.test(request) || (input.files ?? []).some(file => UI_FILE.test(file.replace(/\\/g, '/').toLowerCase()));
-	if (MOBILE_TERMS.test(request) || (input.mobile && uiWork)) { rules.push({ name: 'mobile-ux-principles', reason: 'mandatory: mobile development' }); }
+	if (uiWork || MOBILE_TERMS.test(request)) { rules.push({ name: 'mobile-ux-principles', reason: 'mandatory: interface UX and accessibility' }); }
 	return rules;
 }
 

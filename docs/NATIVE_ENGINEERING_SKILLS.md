@@ -18,7 +18,7 @@ The Chat Harness includes thirteen engineering capabilities without a global ski
 | P2 | `performance-engineering` | Identify measurable resource problems before proposing optimization |
 | Baseline | `software-engineering-best-practices` | Compact, proportional baseline (SOLID, KISS, DRY, YAGNI, SoC, Clean Code, security, testing, compatibility, accessibility and Nielsen heuristics) applied while designing, implementing, refactoring or reviewing |
 | Mandatory | `token-economy` | Extreme token economy and zero redundant work on every development turn |
-| Mandatory | `mobile-ux-principles` | Ten UX/UI principles for mobile screens, flows and forms |
+| Mandatory | `mobile-ux-principles` | General UX: Nielsen's ten usability heuristics and accessible interfaces, with conditional mobile guidance; legacy name retained |
 
 ## Use and selection
 
@@ -37,7 +37,7 @@ The catalog indexes only names, descriptions and hashes for shipped skills. Sele
 A turn is a development turn when the request names a development verb (implement, fix, refactor, review, add, build and their Spanish forms) or when it is an Act turn that is not a plain question. A greeting or a question in Ask mode loads nothing.
 
 - `token-economy` binds every development turn. It is rendered as a mandatory IDE rule (`mandatory="true"`), goes first, sits outside the three-skill ceiling and is never dropped by the automatic byte budget. It yields only to the explicit user request and to safety rules, and like every skill it cannot grant permissions.
-- `mobile-ux-principles` binds a development turn that names a mobile platform (Android, iOS, React Native, Expo, Flutter, mobile) or that touches UI in a mobile project. The host detects a mobile project from small manifests only: Expo, React Native, Capacitor, Ionic or NativeScript dependencies, a Flutter `pubspec.yaml`, an `AndroidManifest.xml`, an Xcode project or a MAUI project, within two folder levels and at most 60 folders.
+- `mobile-ux-principles` keeps its legacy identifier for existing `/skill` commands and saved references, but now applies to interface work on web, desktop, IDE and mobile. UI requests and UI files (including HTML and stylesheets) activate it without requiring a mobile project; existing mobile-platform requests still activate it. General backend work and plain questions do not activate this UX rule. It explicitly covers Nielsen's ten heuristics, visible alternatives to color, recognizable actions, keyboard and screen-reader behavior; mobile touch and thumb-zone guidance is conditional. The bounded mobile-project probe remains available and unchanged.
 - `software-engineering-best-practices` closes every automatic development turn, outside the ceiling and after the specialized skills, so a tight prompt budget drops it before the skill the request named. It delegates depth to the specialized skills instead of repeating them.
 
 `/skill NAME` suppresses the automatic selection for that turn, but the mandatory rules still travel, and a rule the user attached explicitly is not sent twice. A workspace skill with the same name as a mandatory rule replaces it and is treated as ordinary guidance. The selection takes no provider input: Claude Code and Codex receive the same rules for the same turn, and a persistent native session sends an unchanged rule only once.
