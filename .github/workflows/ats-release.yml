@@ -353,6 +353,9 @@ jobs:
       - name: Report the Store submission status
         shell: pwsh
         run: |
+          # The apps these credentials can manage; an empty list or a missing product points at Partner Center access.
+          msstore apps list
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           msstore apps get $env:ATS_STORE_PRODUCT_ID
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           msstore submission status $env:ATS_STORE_PRODUCT_ID
