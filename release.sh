@@ -28,7 +28,7 @@ The revision is max(published revisions for that version)+1, or 1; drafts do not
 --dry-run also checks local prerequisites, existing signed artifacts and isolated end-to-end fixtures.
 It never runs a production build, signs, creates tags/PRs or publishes; test fixtures use temporary files.
 Normal execution may create a metadata branch, commit ONLY product-overrides.json,
-push it, create a PR and squash-merge through repository protections, then update main.
+push it, create a PR and merge through repository protections, then update main.
 It runs the existing validation, complete build, signed artifacts and publication recipes.
 --no-publish stops after signed artifacts so you can smoke-test the packaged IDE.
 Completed build stages resume only for the same source commit and unchanged output hashes.
@@ -112,7 +112,7 @@ async function recipe() {
 		throw new Error('The selected draft belongs to different source/metadata. Inspect it before retrying; no draft was changed.');
 	}
 	if (planning) {
-		console.log(`Stages: ${config.revision === selected.revision ? '' : 'metadata-only commit, push, PR and protected squash merge; '}validate; build-all (Windows + Linux); artifacts${flags.includes('--no-publish') ? '' : '; publish --approve'}.`);
+		console.log(`Stages: ${config.revision === selected.revision ? '' : 'metadata-only commit, push, PR and protected merge commit; '}validate; build-all (Windows + Linux); artifacts${flags.includes('--no-publish') ? '' : '; publish --approve'}.`);
 		return;
 	}
 	const requiredNode = (await readFile(path.join(root, '.nvmrc'), 'utf8')).trim();
@@ -169,7 +169,7 @@ async function recipe() {
 		await requireIsolatedActions();
 		await gh('pr', 'create', '--repo', repository, '--base', 'main', '--head', branch, '--title', `chore(release): prepare ${selected.tag}`, '--body', `Prepare only the update revision for ${selected.tag}. The release recipe will validate, build and sign from clean main after this PR is merged.`);
 		await requireIsolatedActions();
-		await gh('pr', 'merge', branch, '--repo', repository, '--squash', '--match-head-commit', metadataCommit);
+		await gh('pr', 'merge', branch, '--repo', repository, '--merge', '--match-head-commit', metadataCommit);
 		const pr = JSON.parse(await gh('pr', 'view', branch, '--repo', repository, '--json', 'state'));
 		if (pr.state !== 'MERGED') { throw new Error('Metadata PR is not merged. Complete required reviews/checks, merge it, then return to clean updated main and retry.'); }
 		await git('switch', 'main');
