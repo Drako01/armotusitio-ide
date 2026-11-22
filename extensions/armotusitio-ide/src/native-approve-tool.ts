@@ -7,12 +7,14 @@
  * comes here (`--permission-prompt-tool mcp__ats-runner__approve`); Codex app-server approvals reuse the same verdicts
  * (`commandVerdict`, `editVerdict`). Every call is decided by the same rules as the structured transport: the command
  * policy floor and the user's/project's permission rules, and the user's card for anything that asks. Nothing hard becomes
- * approvable: a compound shell line is a shell operator unless it runs inside the provider's own sandbox.
+ * approvable: a compound line (`&&`, `||`, `;`, `|`, `2>&1`) is judged command by command with the same rules, and
+ * anything else a shell would interpret is a shell operator unless it runs inside the provider's own sandbox.
  */
 import * as path from 'node:path';
-import { requestApproval, type ApprovalAsk, type ApprovalDraft, type ApprovalSubject } from './native-approval.ts';
+import { MAX_SHOWN_COMMAND, requestApproval, type ApprovalAsk, type ApprovalDraft, type ApprovalSubject } from './native-approval.ts';
 import { denialText, type CommandPolicy } from './native-command-policy.ts';
 import { projectFilePath } from './native-file-tools.ts';
+import { secretPath } from './native-git-tools.ts';
 import type { PermissionSet } from './native-permissions.ts';
 import type { AgentQuestion, QuestionAnswers } from './runtime/contracts.ts';
 
@@ -48,29 +50,60 @@ const CHANGE_DIRECTORY = new Set(['cd', 'pushd', 'popd', 'chdir', 'set-location'
 const CHANGE_DIRECTORY_DENIAL = 'POLICY_DENIED: change-directory\nNext: Bash stays in the project root: pass the folder to the tool instead (pnpm --dir apps/web lint, npm --prefix apps/web test) or use the run tool with cwd.';
 const BACKGROUND_DENIAL = 'POLICY_DENIED: background\nNext: run the command in the foreground, or start it with the job_start tool of the IDE runner (the IDE stops its jobs when the run ends); other background processes outlive the IDE\'s control.';
 const MAX_QUESTIONS = 4;
-const MAX_COMPOUND_LINE = 4000;
+/** Output redirections a line may carry: they only merge or silence output, never write a file. */
+const SAFE_REDIRECT = /^(?:2>&1|[12&]?>\s*(?:\/dev\/null|nul))(?=$|[\s;|&])/i;
+const SEPARATORS = ['&&', '||', ';', '|'];
+/** Variables a line may set for its commands; one that changes what runs (`NODE_OPTIONS`, `PATH`) is refused. */
+const SAFE_ENV = new Set(['NODE_ENV', 'CI', 'DEBUG', 'FORCE_COLOR', 'NO_COLOR', 'TZ', 'LANG', 'LC_ALL', 'RUST_BACKTRACE', 'RUST_LOG', 'PYTHONUNBUFFERED', 'PYTHONDONTWRITEBYTECODE', 'TERM', 'COLUMNS']);
 
 /**
- * The words of a plain command line, or `undefined` when a shell would interpret anything in it (operators, expansions,
- * globs, escapes, redirections, env assignments). Quotes only group words; `$`, backticks and `\` are refused even inside
- * double quotes, because the shell would expand them there too.
+ * The commands of a shell line, split at `&&`, `||`, `;` and `|`, each as its words; `compound` when the line has more than
+ * one command, a safe redirection (`2>&1`, `>/dev/null`) or a safe variable (`NODE_ENV=test`). `undefined` when a shell
+ * would interpret anything else: expansions, globs, escapes, subshells, background jobs, file redirections. Quotes only group
+ * words; `$`, backticks and `\` are refused even inside double quotes, because the shell would expand them there too.
  */
-export function plainCommandWords(line: string): string[] | undefined {
-	const words: string[] = [];
-	let current = '', quote: '"' | '\'' | undefined, started = false;
-	for (const char of line.trim()) {
+export function shellSegments(line: string): { segments: string[][]; compound: boolean } | undefined {
+	const text = line.trim();
+	const segments: string[][] = [[]];
+	let current = '', quote: '"' | '\'' | undefined, started = false, compound = false;
+	const flush = (): void => { if (started) { segments[segments.length - 1].push(current); current = ''; started = false; } };
+	for (let index = 0; index < text.length; index++) {
+		const char = text[index];
 		if (quote) {
 			if (char === quote) { quote = undefined; } else if (quote === '"' && /[$`\\]/.test(char)) { return undefined; } else { current += char; }
 			continue;
 		}
 		if (char === '"' || char === '\'') { quote = char; started = true; continue; }
-		if (char === ' ' || char === '\t') { if (started) { words.push(current); current = ''; started = false; } continue; }
-		if (/[|&;<>()$`\\*?~{}[\]!#\r\n]/.test(char)) { return undefined; }
+		if (char === ' ' || char === '\t') { flush(); continue; }
+		const redirect = started ? undefined : SAFE_REDIRECT.exec(text.slice(index));
+		if (redirect) { compound = true; index += redirect[0].length - 1; continue; }
+		const separator = SEPARATORS.find(operator => text.startsWith(operator, index));
+		if (separator) {
+			flush();
+			if (!segments[segments.length - 1].length) { return undefined; }
+			segments.push([]); compound = true; index += separator.length - 1;
+			continue;
+		}
+		// `~` expands at the start of a word and after `=` or `:`; inside a word (`HEAD~1`) it is literal.
+		if (/[&<>()$`\\*?{}[\]!#\r\n]/.test(char) || (char === '~' && (!started || /[=:]$/.test(current)))) { return undefined; }
 		current += char; started = true;
 	}
 	if (quote) { return undefined; }
-	if (started) { words.push(current); }
-	return words.length && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0]) ? words : undefined;
+	flush();
+	for (const words of segments) {
+		while (words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0])) {
+			if (!SAFE_ENV.has(words[0].slice(0, words[0].indexOf('=')))) { return undefined; }
+			words.shift(); compound = true;
+		}
+		if (!words.length) { return undefined; }
+	}
+	return { segments, compound };
+}
+
+/** The words of a plain command line (one command, no redirection or variable), or `undefined`. */
+export function plainCommandWords(line: string): string[] | undefined {
+	const parsed = shellSegments(line);
+	return parsed && !parsed.compound ? parsed.segments[0] : undefined;
 }
 
 /** Project-relative path of a tool's file argument (absolute or relative), under the file floor; throws `POLICY_DENIED`. */
@@ -85,23 +118,40 @@ const allow = (input: Record<string, unknown>): PromptDecision => ({ behavior: '
 const deny = (message: string): PromptDecision => ({ behavior: 'deny', message });
 const refuse = (message: string): CallVerdict => ({ verdict: 'deny', message });
 
-/**
- * One shell command line. A plain line goes through the command policy (floor, Harness delegation, permission rules). A
- * compound line (pipes, operators) is refused unless it runs inside the provider's own sandbox (`sandboxed`, Codex): then
- * the user sees the exact line and may allow it once; it never becomes a remembered rule.
- */
-export function commandVerdict(context: Pick<ApproveContext, 'policy'>, line: string, options: { sandboxed?: boolean; background?: boolean } = {}): CallVerdict {
-	if (options.background) { return refuse(BACKGROUND_DENIAL); }
-	const words = plainCommandWords(line);
-	if (!words) {
-		if (!options.sandboxed || !line.trim() || line.length > MAX_COMPOUND_LINE) { return refuse(denialText('shell-operator')); }
-		return { verdict: 'ask', draft: { kind: 'run', title: 'Run command', rule: '', noRemember: 'inexact', command: line.slice(0, 300), args: [], cwd: '.', detail: ['command: ' + line.slice(0, 300), 'cwd: .', 'shell: provider sandbox'] } };
-	}
+/** A card for a whole line that cannot be a rule: the user sees all of it and allows it once. */
+const lineDraft = (line: string, ...extra: string[]): ApprovalDraft & ApprovalSubject =>
+({ kind: 'run', title: 'Run command', rule: '', noRemember: 'inexact', command: line, args: [], cwd: '.', detail: ['command: ' + line.slice(0, 300), 'cwd: .', ...extra] });
+
+/** One command of a line, through the command policy (floor, Harness delegation, permission rules). */
+function segmentVerdict(context: Pick<ApproveContext, 'policy'>, words: readonly string[]): CallVerdict {
 	if (CHANGE_DIRECTORY.has(words[0].toLowerCase())) { return refuse(CHANGE_DIRECTORY_DENIAL); }
 	const decision = context.policy.decide(words[0], words.slice(1), '.');
 	if (decision.allowed === true) { return { verdict: 'allow' }; }
 	if (decision.reason !== 'needs-approval') { return refuse(denialText(decision.reason)); }
 	return { verdict: 'ask', draft: { kind: 'run', title: 'Run command', rule: decision.rule, command: words[0], args: words.slice(1), cwd: '.', detail: ['command: ' + words.join(' ').slice(0, 300), 'cwd: .'] } };
+}
+
+/**
+ * One shell command line. Each of its commands goes through the command policy: any denial denies the line (naming the
+ * command), all allowed runs it, and otherwise one card shows the whole line, allowed once. A single command keeps its own
+ * card and rule. A line the parser refuses is a shell operator unless it runs inside the provider's own sandbox
+ * (`sandboxed`, Codex): then the user sees the exact line and may allow it once; it never becomes a remembered rule.
+ */
+export function commandVerdict(context: Pick<ApproveContext, 'policy'>, line: string, options: { sandboxed?: boolean; background?: boolean } = {}): CallVerdict {
+	if (options.background) { return refuse(BACKGROUND_DENIAL); }
+	const parsed = line.length <= MAX_SHOWN_COMMAND ? shellSegments(line) : undefined;
+	if (!parsed) {
+		if (!options.sandboxed || !line.trim() || line.length > MAX_SHOWN_COMMAND) { return refuse(denialText('shell-operator')); }
+		return { verdict: 'ask', draft: lineDraft(line, 'shell: provider sandbox') };
+	}
+	const verdicts = parsed.segments.map(words => segmentVerdict(context, words));
+	const denied = verdicts.findIndex(verdict => verdict.verdict === 'deny');
+	if (denied >= 0) {
+		const { message } = verdicts[denied] as Extract<CallVerdict, { verdict: 'deny' }>;
+		return parsed.segments.length > 1 ? refuse(message + '\nIn: ' + parsed.segments[denied].join(' ').slice(0, 200)) : verdicts[denied];
+	}
+	if (!parsed.compound) { return verdicts[0]; }
+	return verdicts.every(verdict => verdict.verdict === 'allow') ? { verdict: 'allow' } : { verdict: 'ask', draft: lineDraft(line) };
 }
 
 /** Files a tool wants to change: each must pass the file floor, and `edit:` rules decide (deny wins, any ask asks). */
@@ -210,8 +260,9 @@ export async function decidePermissionPrompt(context: ApproveContext, value: unk
 		if (editField) { return await edit(context, input, editField); }
 		if (READ_TOOLS.has(request.tool_name)) {
 			const field = READ_TOOLS.get(request.tool_name);
-			// Reads stay inside the project, like the structured transport's working directory.
-			if (field && input[field] !== undefined && input[field] !== '.') { await projectPath(context.root, input[field]); }
+			// Reads stay inside the project, like the structured transport's working directory, and never open a credential file
+			// (the same rule as `cat` or `grep` in the terminal).
+			if (field && input[field] !== undefined && input[field] !== '.' && secretPath(await projectPath(context.root, input[field]))) { return deny(denialText('credential-access')); }
 			return allow(input);
 		}
 	} catch (error) {

@@ -235,19 +235,13 @@ const baseHeaders = {
 	'X-Market-User-Id': '291C1CD0-051A-4123-9B4B-30D60EF52EE2',
 };
 
-export function fromMarketplace(serviceUrl: string, { name: extensionName, version, sha256, metadata }: IExtensionDefinition): Stream {
-	const [publisher, name] = extensionName.split('.');
-	const url = `${serviceUrl}/publishers/${publisher}/vsextensions/${name}/${version}/vspackage`;
-
-	fancyLog('Downloading extension:', ansiColors.yellow(`${extensionName}@${version}`), '...');
-
+/** All gallery and pinned-VSIX downloads pass through the same verified extraction pipeline. */
+function fromExtensionUrl(url: string, { name: extensionName, version, sha256, metadata }: IExtensionDefinition): Stream {
+	fancyLog('Downloading extension:', ansiColors.yellow(extensionName + '@' + version), '...');
 	const packageJsonFilter = filter('package.json', { restore: true });
-
 	return fetchUrls('', {
 		base: url,
-		nodeFetchOptions: {
-			headers: baseHeaders
-		},
+		nodeFetchOptions: { headers: baseHeaders },
 		checksumSha256: sha256
 	})
 		.pipe(vinylZip.src())
@@ -257,6 +251,22 @@ export function fromMarketplace(serviceUrl: string, { name: extensionName, versi
 		.pipe(buffer())
 		.pipe(jsonEditor({ __metadata: metadata }))
 		.pipe(packageJsonFilter.restore);
+}
+
+export function fromMarketplace(serviceUrl: string, extension: IExtensionDefinition): Stream {
+	const [publisher, name] = extension.name.split('.');
+	return fromExtensionUrl(serviceUrl + '/publishers/' + publisher + '/vsextensions/' + name + '/' + extension.version + '/vspackage', extension);
+}
+
+/** The official manifest pins an exact Open VSX download plus its SHA-256; never build a relative URL. */
+export function fromDownloadUrl(downloadUrl: string, extension: IExtensionDefinition): Stream {
+	const [publisher, shortName] = extension.name.split('.');
+	const expected = 'https://open-vsx.org/api/' + publisher + '/' + shortName + '/' + extension.version
+		+ '/file/' + extension.name + '-' + extension.version + '.vsix';
+	if (publisher !== 'armotusitio' || !/^[a-z0-9-]+$/.test(shortName) || downloadUrl !== expected) {
+		throw new Error('Invalid pinned Open VSX VSIX URL for ' + extension.name);
+	}
+	return fromExtensionUrl(downloadUrl, extension);
 }
 
 export function fromVsix(vsixPath: string, { name: extensionName, version, sha256, metadata }: IExtensionDefinition): Stream {

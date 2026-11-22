@@ -144,10 +144,12 @@ export function buildAgentInvocation(draft: AgentDraft, writableRoots: readonly 
 }
 
 /**
- * Claude Code approves shell commands it judges read-only (`docker ps`, `cat .env`) without consulting the permission prompt tool.
- * An `ask` rule outranks that heuristic, so every shell call reaches the IDE policy. Passed inline: user, project and local settings stay off.
+ * Claude Code approves shell commands it judges read-only (`docker ps`, `cat .env`) and pre-allowed reads (`Read .env`) without
+ * consulting the permission prompt tool. An `ask` rule outranks both, so every shell call and every read reaches the IDE policy, which
+ * refuses credential files with the same rule as the terminal and lets other reads through without a card.
+ * Passed inline: user, project and local settings stay off.
  */
-const MEDIATE_SHELL_SETTINGS = JSON.stringify({ permissions: { ask: ['Bash'] } });
+const MEDIATE_SHELL_SETTINGS = JSON.stringify({ permissions: { ask: ['Bash', 'Read', 'Glob', 'Grep'] } });
 
 /**
  * Claude's permission mode and tool lists, shared by one-shot runs and native sessions (r8). WebFetch is denied outright except in native sessions, where it asks per host;

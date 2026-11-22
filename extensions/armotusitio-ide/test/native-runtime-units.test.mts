@@ -145,7 +145,7 @@ test('provider policy: shell wrappers, sandboxed compound lines asked once, floo
 			unwrapped: unwrapShell('"C:\\Program Files\\PowerShell\\7\\pwsh.exe" -Command "git status"'),
 			bash: unwrapShell('/bin/bash -lc \'ls | wc -l\''),
 			plain: await decideProviderCall(context, { kind: 'command', name: 'commandExecution', command: 'git status' }),
-			compound: await decideProviderCall(context, { kind: 'command', name: 'commandExecution', command: 'bash -lc "ls | wc -l"' }),
+			compound: await decideProviderCall(context, { kind: 'command', name: 'commandExecution', command: 'bash -lc "ls | node tool.js"' }),
 			floor: await decideProviderCall(context, { kind: 'command', name: 'commandExecution', command: 'rm -rf build' }),
 			outside: await decideProviderCall(context, { kind: 'file_change', name: 'fileChange', paths: [path.join(os.tmpdir(), 'elsewhere.txt')] }),
 			escalation: await decideProviderCall(context, { kind: 'permissions', name: 'permissions', reason: 'network' }),
@@ -156,7 +156,7 @@ test('provider policy: shell wrappers, sandboxed compound lines asked once, floo
 		assert.deepEqual({ ...results, floor: results.floor.allowed, outside: results.outside.reason, unknown: results.unknown.allowed, untrusted: untrusted.reason, cards: cards.length }, {
 			unwrapped: 'git status', bash: 'ls | wc -l',
 			plain: { allowed: true, scope: 'once' },
-			// No exact rule for a compound line: "session" is downgraded to this action only.
+			// A compound line whose program file asks gets one card; no exact rule exists for it, so "session" is downgraded to this action only.
 			compound: { allowed: true, scope: 'once' },
 			floor: false, outside: 'POLICY_DENIED: path-outside-project',
 			escalation: { allowed: true, scope: 'once' }, unknown: false, untrusted: 'POLICY_DENIED: untrusted-workspace', cards: 2

@@ -243,8 +243,24 @@
 		}
 	],
 	"builtInExtensionsEnabledWithAutoUpdates": [
-		"GitHub.copilot-chat"
+		"GitHub.copilot-chat",
+		"armotusitio.orquestivo",
+		"armotusitio.probato-pr",
+		"armotusitio.indizivo",
+		"armotusitio.saturivo",
+		"armotusitio.noditrivo",
+		"armotusitio.vestigivo",
+		"armotusitio.vinculivo"
 	],
 	"sessionsWindowAllowedExtensions": [],
-	"voiceWsUrl": "wss://falcon-caas.mai.microsoft.com/voice-code/api/v1/realtime/voice"
+	"voiceWsUrl": "wss://falcon-caas.mai.microsoft.com/voice-code/api/v1/realtime/voice",
+	"autoUpdateBuiltinExtensionsByDefault": [
+		"armotusitio.orquestivo",
+		"armotusitio.probato-pr",
+		"armotusitio.indizivo",
+		"armotusitio.saturivo",
+		"armotusitio.noditrivo",
+		"armotusitio.vestigivo",
+		"armotusitio.vinculivo"
+	]
 }

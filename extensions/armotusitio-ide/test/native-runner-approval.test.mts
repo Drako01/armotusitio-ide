@@ -33,7 +33,8 @@ test('runner preparation errors preserve their system code instead of claiming a
 test('a project script failure keeps its actual output and exit code', async () => {
 	await withProject(async ({ root, config }) => {
 		await fs.writeFile(path.join(root, 'fail.cjs'), 'console.error("PROJECT_CHECK_FAILED"); process.exitCode = 7;');
-		const result = await handleRun(config, { command: 'node', args: ['fail.cjs'] }, 1);
+		// Running a program file is the user's call: here a user rule allows it.
+		const result = await handleRun(config, { command: 'node', args: ['fail.cjs'] }, 1, { permissions: permissionsOf('allow') });
 		assert.deepEqual({ error: result.isError, exit: result.text.startsWith('exit 7'), reason: result.text.includes('PROJECT_CHECK_FAILED') }, { error: true, exit: true, reason: true });
 	});
 });
@@ -122,12 +123,21 @@ test('the channel carries the approval to the extension and anything but an expl
 	} finally { await channel.close(); await fs.rm(storage, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
+test('inline code is shown whole on its card and never remembered; code too long to show is refused', () => {
+	const code = 'x'.repeat(650);
+	const card = parseApprovalDraft({ kind: 'run', title: 't', detail: [], rule: 'run:node -e x', command: 'node', args: ['-e', code], cwd: '.' });
+	assert.deepEqual({
+		card: card && { rule: card.rule, noRemember: card.noRemember, family: card.family, shown: card.detail.slice(0, -1).map(line => line.replace(/^(command: |\u2026 )/, '')).join('') },
+		tooLong: parseApprovalDraft({ kind: 'run', title: 't', detail: [], rule: '', command: 'node', args: ['-e', 'x'.repeat(3000)], cwd: '.' })
+	}, { card: { rule: '', noRemember: 'inline', family: undefined, shown: 'node -e ' + code }, tooLong: undefined });
+});
+
 test('the extension accepts only well-formed approval cards from the runner process', () => {
 	const good = { kind: 'run', title: 't', detail: ['a'], rule: 'run:node*', command: 'node', args: ['test.js'], cwd: '.' };
 	assert.deepEqual([
 		parseApprovalDraft(good), parseApprovalDraft({ ...good, kind: 'delete' }), parseApprovalDraft({ ...good, detail: 'a' }), parseApprovalDraft({ ...good, detail: Array(13).fill('x') }),
 		parseApprovalDraft({ ...good, detail: [1] }), parseApprovalDraft(null), parseApprovalDraft({ ...good, title: 'x'.repeat(500) })?.title.length
-	], [{ kind: 'run', title: 't', detail: ['command: node test.js', 'cwd: .'], rule: 'run:node test.js' }, undefined, undefined, undefined, undefined, undefined, 200]);
+	], [{ kind: 'run', title: 't', detail: ['command: node test.js', 'cwd: .'], rule: 'run:node test.js', family: 'run:node test.js *' }, undefined, undefined, undefined, undefined, undefined, 200]);
 });
 
 test('project permissions cannot be removed or rewritten before or during approval', async () => {

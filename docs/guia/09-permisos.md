@@ -160,6 +160,16 @@ Lo mismo aplica a `docker`, `aws`, `az`, `gcloud`, `kubectl`, `terraform`, `verc
 
 Los comandos del ecosistema detectado (`pnpm`, `go`, `cargo`, `dotnet`, `pytest`...) ya están permitidos con el preset `dev`. Para sumar otro, como `make test`, usá el ajuste `atsHarness.agentCommands.allow` o una regla `run:make test*`.
 
+## Comandos de terminal: qué corre solo, qué pregunta y qué se rechaza
+
+- **Líneas compuestas.** `git status && git diff`, `pnpm test 2>&1 | tail -20` o `NODE_ENV=test pnpm test` se juzgan comando por comando con las mismas reglas. Si todos pueden correr, la línea corre. Si alguno pide permiso, una sola tarjeta muestra la línea completa (solo esa vez). Si alguno se rechaza, se rechaza la línea y el mensaje dice cuál. `cd`, `$(...)`, comodines sin comillas, `&` y redirecciones a archivos siguen rechazados.
+- **Lecturas.** `git branch -a`, `git remote -v`, `git stash list`, `git tag -l`, `git worktree list`, `git config --get <clave>` y los lectores de shell (`ls`, `cat`, `head`, `tail`, `grep`, `find`, `wc`, `diff`...) corren sin preguntar, solo dentro del proyecto. Las claves de configuración que pueden tener credenciales (URLs, tokens) no se leen.
+- **Archivos de credenciales.** `.env`, `.ssh`, `.aws`, claves y similares se rechazan igual desde la terminal que desde Read, Grep y Glob. Las copias de ejemplo (`.env.example`) sí se leen.
+- **Código en línea.** `node -e`, `python -c`, `powershell -Command`, `bash -c` y `cmd /c` muestran el código completo en una tarjeta y se aprueban cada vez; nunca se guardan como regla. Se rechazan sin preguntar si el código borra, usa la red, publica, eleva privilegios, lee credenciales o deja procesos en segundo plano.
+- **Programas del proyecto.** `node scripts/build.mjs` o `python tools/gen.py` piden aprobación (como `bash script.sh`). `node --test`, `python -m pytest` y las herramientas de `vendor/bin` siguen corriendo solas.
+- **Reglas por familia.** La tarjeta ofrece «Siempre `cargo test *`»: guarda la regla exacta y la de la familia, para no aprobar cada variante. No se ofrece para CLI externos (`gh`, `docker`...), instalaciones ni código en línea.
+- **Configuración de git durante la ejecución.** Los cambios que escriben el editor o las herramientas de GitHub (upstream de la rama, merge-base, datos del PR) se aceptan solos. Otro cambio pide una tarjeta con los nombres de las claves (nunca los valores), válida solo para esa ejecución. Los cambios de hooks o de claves que deciden qué ejecuta git (`core.hooksPath`, helpers, filtros, alias) se rechazan siempre.
+
 ## Lo que no se puede habilitar
 
 Estos controles protegen tu máquina y tus credenciales y ninguna regla los desactiva.

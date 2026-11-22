@@ -8,11 +8,18 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { addUserRule, globalRuleAllowed, loadPermissions, removeUserRule, projectKey } from '../src/native-permissions.ts';
+import { addUserRule, familyRule, globalRuleAllowed, loadPermissions, removeUserRule, projectKey } from '../src/native-permissions.ts';
 import { parseApprovalDraft, requestApproval } from '../src/native-approval.ts';
 import type { PermissionRequest } from '../src/native-permissions-types.ts';
 
 const run = (command: string, ...args: string[]): PermissionRequest => ({ kind: 'run', command, args, cwd: '.' });
+
+test('a family keeps the executable and the word that picks what runs; none for external CLIs, inline code, installs or values', () => {
+	assert.deepEqual([
+		run('cargo', 'test', '--lib'), run('pnpm', 'run', 'lint', '--fix'), run('python', '-m', 'pytest', '-q'), run('node', '--test', 'a.mts'), run('node', 'scripts/build.mjs'),
+		run('gh', 'pr', 'view', '1'), run('docker', 'ps'), run('node', '-e', '1'), run('pnpm', 'add', 'zod'), run('node', '../x.js'), run('mytool', 'a b')
+	].map(request => familyRule(request)), ['run:cargo test *', 'run:pnpm run lint *', 'run:python -m pytest *', 'run:node --test *', 'run:node scripts/build.mjs *', '', '', '', '', '', '']);
+});
 
 test('only exact inspection commands may be remembered for every project', () => {
 	assert.deepEqual({

@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 /* One conversation per project. Sending only converses; code changes require approving the latest plan. */
-import { fitEngineeringContext, type SkillSelectionInput, type SkillSelection } from './native-engineering-skills.ts';
+import { fitEngineeringContext, omitSkillBlocks, type SkillSelectionInput, type SkillSelection } from './native-engineering-skills.ts';
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { AgentOutcome } from './native-agent-execution.ts';
 import { APPROVAL_ANSWERS, APPROVAL_TIMEOUT_MS, REMEMBERING_ANSWERS, type ApprovalDraft } from './native-approval.ts';
@@ -540,19 +540,23 @@ export class HarnessChatSession {
 		const pending = this.approvals.get(id);
 		if (!pending || pending.resolving || !APPROVAL_ANSWERS.includes(answer)) { return; }
 		if (REMEMBERING_ANSWERS.includes(answer) && !pending.request.rule) { return; }
-		const persistent = answer === 'always' || answer === 'global';
+		const persistent = answer === 'always' || answer === 'family' || answer === 'global';
 		// Only exact rules of inspection commands may leave the project: the card says so through `global`.
 		if (answer === 'global' && !pending.request.global) { return; }
+		if (answer === 'family' && !pending.request.family) { return; }
 		if (persistent && !this.runtime.rememberApproval) { return; }
 		// Claim this card before asynchronous persistence; cancellation and timeout can still deny it.
 		pending.resolving = true;
 		let final = answer;
 		if (persistent) {
 			try {
+				// A family keeps the exact rule too: `cargo test *` needs at least one argument, so it does not cover bare `cargo test`.
+				const saved = answer === 'family' && pending.request.family ? pending.request.family : pending.request.rule;
 				await this.runtime.rememberApproval?.(pending.request.rule, answer === 'global' ? 'global' : 'project');
+				if (saved !== pending.request.rule) { await this.runtime.rememberApproval?.(saved, 'project'); }
 				this.conversation.messages.push(chatMessage('notice', answer === 'global'
-					? this.t('Se guard\u00f3 la regla \u00ab{0}\u00bb para todos tus proyectos (~/.armotusitio/permissions.json). Revocala con /permisos quitar {0}', redactSecrets(pending.request.rule))
-					: this.t('Se guard\u00f3 la regla \u00ab{0}\u00bb en tu archivo de permisos (~/.armotusitio/permissions.json). Revocala con /permisos quitar {0}', redactSecrets(pending.request.rule)), { tone: 'info' }));
+					? this.t('Se guard\u00f3 la regla \u00ab{0}\u00bb para todos tus proyectos (~/.armotusitio/permissions.json). Revocala con /permisos quitar {0}', redactSecrets(saved))
+					: this.t('Se guard\u00f3 la regla \u00ab{0}\u00bb en tu archivo de permisos (~/.armotusitio/permissions.json). Revocala con /permisos quitar {0}', redactSecrets(saved)), { tone: 'info' }));
 			} catch {
 				final = 'once';
 				this.conversation.messages.push(chatMessage('notice', this.t('No se pudo guardar la regla \u00ab{0}\u00bb; se permiti\u00f3 solo esta vez.', redactSecrets(pending.request.rule)), { tone: 'error' }));
@@ -578,7 +582,7 @@ export class HarnessChatSession {
 			git_branch_create: this.t('Crear una rama'), git_pr_upsert: this.t('Crear o actualizar un pull request'), git_fetch: this.t('Traer cambios del remoto (fetch)'),
 			sandbox: this.t('Ampliar los permisos del sandbox'), mcp: this.t('Usar una herramienta de un servidor MCP'), web: this.t('Leer una p\u00e1gina de internet')
 		};
-		const title = titles[draft.kind];
+		const title = draft.drift ? this.t('Aceptar un cambio en la configuraci\u00f3n de git') : titles[draft.kind];
 		return new Promise<ApprovalAnswer>(resolve => {
 			const timer = setTimeout(() => this.settleApproval(id, 'deny'), APPROVAL_TIMEOUT_MS);
 			timer.unref();
@@ -696,11 +700,11 @@ export class HarnessChatSession {
 			await this.refreshContext();
 			if (!this.context) { throw Error('HARNESS_CHAT_CONTEXT_UNAVAILABLE'); }
 			if (this.decisions) { projectMemory = decisionsPrompt(await this.decisions.relevant(body.match(/(?:[\w.-]+[\/\\])+[\w.-]+/g) ?? [], body)); }
-			if (!attachments.context?.includes('<skill ')) {
-				const selection = await this.runtime.skills?.({ request: body, files: body.match(/(?:[\w.-]+[\/\\])+[\w.-]+/g) ?? [] });
-				engineering = selection?.context ?? '';
-				this.skillSelection = selection?.trace ?? [];
-			}
+			// `/skill` already attached its guidance: no automatic selection this turn, but the mandatory rules still travel.
+			const explicit = !!attachments.context?.includes('<skill ');
+			const selection = await this.runtime.skills?.({ request: body, files: body.match(/(?:[\w.-]+[\/\\])+[\w.-]+/g) ?? [], mode, explicit });
+			engineering = omitSkillBlocks(selection?.context ?? '', attachments.context ?? '');
+			this.skillSelection = selection?.trace ?? [];
 			if (controller.signal.aborted) { throw Error('HARNESS_CANCELLED_BEFORE_START'); }
 			// Act is routed by stable rules (JUN-001): questions answer read-only, risky work gets a reviewed plan,
 			// a compound goal goes to the existing goal engine, and everything else stays the fast direct writer.

@@ -10,8 +10,9 @@ import * as os from 'node:os';
 import { createHash } from 'node:crypto';
 import {
 	ENGINEERING_SKILL_NAMES, engineeringContext, engineeringSkillContext, listEngineeringSkills,
-	readEngineeringSkill, selectEngineeringSkills, type NativeSkill
+	readEngineeringSkill, selectEngineeringSkills, detectMobileProject, isDevelopmentRequest, MANDATORY_SKILL_NAMES, omitSkillBlocks, type NativeSkill
 } from '../src/native-engineering-skills.ts';
+import type { ProjectSkill } from '../src/native-project-skills.ts';
 
 const digest = (content: string) => createHash('sha256').update(content).digest('hex');
 const metadata = (content = '# Engineering guidance'): NativeSkill[] => ENGINEERING_SKILL_NAMES.map(name => ({ name, source: 'native', description: 'Guidance for ' + name, digest: digest(content) }));
@@ -31,13 +32,18 @@ async function fixture(work: (value: Fixture) => Promise<void>): Promise<void> {
 	const writeIndex = async (skills: NativeSkill[]) => fs.writeFile(path.join(directory, 'catalog.json'), JSON.stringify({ version: 1, skills }));
 	await writeIndex(entries);
 	try {
-		await work({ root, directory, entries, writeIndex, async writeBody(name, content) {
-			await fs.mkdir(path.join(directory, name), { recursive: true });
-			await fs.writeFile(path.join(directory, name, 'SKILL.md'), content);
-		} });
+		await work({
+			root, directory, entries, writeIndex, async writeBody(name, content) {
+				await fs.mkdir(path.join(directory, name), { recursive: true });
+				await fs.writeFile(path.join(directory, name, 'SKILL.md'), content);
+			}
+		});
 	} finally { await fs.rm(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 }
 const names = (skills: readonly { name: string }[]) => skills.map(skill => skill.name);
+/** The rules every development turn carries (mandatory and baseline); routing tests compare only the specialized skills. */
+const ALWAYS = new Set([...MANDATORY_SKILL_NAMES, 'software-engineering-best-practices']);
+const specialized = (skills: readonly { name: string }[]) => names(skills).filter(name => !ALWAYS.has(name));
 
 // These fixtures certify routing and loader behavior. They do not certify a model's engineering judgment.
 test('native discovery only reads metadata and unrelated turns never require skill body files', async () => {
@@ -57,7 +63,7 @@ test('workspace precedence is shared then Codex then Claude then native, case in
 		const catalog = await listEngineeringSkills(root, directory);
 		const chosen = selectEngineeringSkills(catalog, { manual: ['ENGINEERING-PRINCIPLES', 'SAFE-REFACTORING'] });
 		assert.deepEqual({ total: catalog.length, chosen: chosen.skills.map(skill => [skill.name, skill.source]), content: await Promise.all(chosen.skills.map(skill => readEngineeringSkill(root, skill, directory))) }, {
-			total: 10, chosen: [['Engineering-Principles', '.agents/skills'], ['safe-refactoring', '.codex/skills']], content: ['.agents', '.codex']
+			total: ENGINEERING_SKILL_NAMES.length, chosen: [['Engineering-Principles', '.agents/skills'], ['safe-refactoring', '.codex/skills']], content: ['.agents', '.codex']
 		});
 	});
 });
@@ -65,7 +71,7 @@ test('workspace precedence is shared then Codex then Claude then native, case in
 test('incomplete workspace skills do not suppress shipped defaults and optional catalog preserves legacy discovery', async () => {
 	await fixture(async ({ root, directory }) => {
 		await fs.mkdir(path.join(root, '.agents', 'skills', 'engineering-principles'), { recursive: true });
-		assert.deepEqual({ native: (await listEngineeringSkills(root, directory)).length, legacy: await listEngineeringSkills(root) }, { native: 10, legacy: [] });
+		assert.deepEqual({ native: (await listEngineeringSkills(root, directory)).length, legacy: await listEngineeringSkills(root) }, { native: ENGINEERING_SKILL_NAMES.length, legacy: [] });
 	});
 });
 
@@ -90,7 +96,7 @@ test('unknown skills and excessive manual selections fail closed while manual se
 	const catalog = metadata();
 	assert.throws(() => selectEngineeringSkills(catalog, { request: '', manual: ['missing'] }), /HARNESS_PROJECT_SKILL_SELECTION_INVALID/);
 	assert.throws(() => selectEngineeringSkills(catalog, { request: '', manual: ENGINEERING_SKILL_NAMES.slice(0, 4) }), /HARNESS_PROJECT_SKILL_SELECTION_INVALID/);
-	assert.deepEqual(names(selectEngineeringSkills(catalog, { request: 'security review', manual: ['safe-refactoring', 'SAFE-REFACTORING'] }).skills), ['safe-refactoring']);
+	assert.deepEqual(names(selectEngineeringSkills(catalog, { request: 'security review', manual: ['safe-refactoring', 'SAFE-REFACTORING'] }).skills), ['token-economy', 'safe-refactoring']);
 });
 
 test('routing covers engineering tasks in Spanish and English without implying model behavior', () => {
@@ -109,7 +115,7 @@ test('routing covers engineering tasks in Spanish and English without implying m
 		['Measure performance and latency', ['performance-engineering']],
 		['Evaluate SOLID cohesion', ['engineering-principles']]
 	];
-	assert.deepEqual(cases.map(([request]) => names(selectEngineeringSkills(metadata(), { request }).skills)), cases.map(([, expected]) => expected));
+	assert.deepEqual(cases.map(([request]) => specialized(selectEngineeringSkills(metadata(), { request }).skills)), cases.map(([, expected]) => expected));
 });
 
 test('negative scenarios load no guidance for unrelated questions or source filenames alone', () => {
@@ -126,7 +132,7 @@ test('file, language, architecture and risk context refine selected work with st
 		{ request: 'Refactor this module; add tests and secure authorization; measure performance' }
 	];
 	const results = contexts.map(input => selectEngineeringSkills(catalog, input));
-	assert.deepEqual(results.map(result => names(result.skills)), [
+	assert.deepEqual(results.map(result => specialized(result.skills)), [
 		['evidence-code-review', 'api-contract-integrity', 'security-by-design'],
 		['performance-engineering', 'testing-strategy'],
 		['evidence-code-review', 'architecture-guardian'],
@@ -204,12 +210,147 @@ test('malicious guidance stays inside its data block and secrets are redacted wi
 
 test('context applies a UTF-8 byte budget, records omissions and never includes skipped body text', async () => {
 	await fixture(async ({ root, directory, entries, writeBody, writeIndex }) => {
-		const content = 'ñ'.repeat(7000);
+		const content = 'ñ'.repeat(13000);
 		const first = entries.find(skill => skill.name === 'engineering-principles')!;
 		const second = entries.find(skill => skill.name === 'abstraction-auditor')!;
 		await writeBody(first.name, content); await writeBody(second.name, '# Useful audit guidance');
 		await writeIndex(entries.map(skill => skill.name === first.name ? { ...skill, digest: digest(content) } : skill.name === second.name ? { ...skill, digest: digest('# Useful audit guidance') } : skill));
 		const output = await engineeringContext(root, directory, { request: '', manual: [first.name, second.name] });
-		assert.deepEqual({ bytesWithinLimit: Buffer.byteLength(output.context) <= 12 * 1024, omitted: output.trace.some(entry => entry.name === first.name && entry.reason === 'omitted: byte budget'), leaked: output.context.includes('ññ'), loaded: output.context.includes('# Useful audit guidance') }, { bytesWithinLimit: true, omitted: true, leaked: false, loaded: true });
+		assert.deepEqual({ bytesWithinLimit: Buffer.byteLength(output.context) <= 24 * 1024, omitted: output.trace.some(entry => entry.name === first.name && entry.reason === 'omitted: byte budget'), leaked: output.context.includes('ññ'), loaded: output.context.includes('# Useful audit guidance') }, { bytesWithinLimit: true, omitted: true, leaked: false, loaded: true });
 	});
+});
+
+test('development turns carry the mandatory token rule and the engineering baseline outside the three-skill ceiling', () => {
+	const catalog = metadata();
+	const turns = [
+		{ request: 'Implementá el login con tests y autorización segura; medí el rendimiento', mode: 'act' as const },
+		{ request: 'continuá con lo que pedí', mode: 'act' as const },
+		{ request: '¿Qué hace esta función?', mode: 'act' as const },
+		{ request: 'Explicame el flujo de pagos', mode: 'ask' as const },
+		{ request: 'Agregá un endpoint de reportes', mode: 'ask' as const }
+	];
+	assert.deepEqual(turns.map(input => ({ development: isDevelopmentRequest(input), skills: names(selectEngineeringSkills(catalog, input).skills) })), [
+		{ development: true, skills: ['token-economy', 'testing-strategy', 'security-by-design', 'performance-engineering', 'software-engineering-best-practices'] },
+		{ development: true, skills: ['token-economy', 'software-engineering-best-practices'] },
+		{ development: false, skills: [] },
+		{ development: false, skills: [] },
+		{ development: true, skills: ['token-economy', 'api-contract-integrity', 'software-engineering-best-practices'] }
+	]);
+});
+
+test('commit creation requests select the native rule in either mode without mistaking questions, reviews or prohibitions for action', () => {
+	const catalog = metadata();
+	const positive = ['commiteá esto', 'hace commits', 'haceme commits', 'hacé los commits', 'haceme un commit', 'create a commit', 'vayas commiteando de a paquetes pequeños', 'commit these changes', 'create commits', 'git commit', 'no push, hacé commit', 'no pushees nada, solo commit de esto'];
+	const negative = ['¿Qué es un commit?', 'How do I create commits?', 'review this commit', 'Review the git commit diff', 'no hagas commits', 'do not commit', 'don\'t create commits', 'do not create a commit', 'no quiero hacer un commit', 'no crear commits', 'Implement this feature; do not commit', 'Sin hacer commits, arreglá este bug'];
+	for (const mode of ['ask', 'act'] as const) {
+		for (const request of positive) {
+			assert.equal(isDevelopmentRequest({ request, mode }), true, request);
+			assert.ok(names(selectEngineeringSkills(catalog, { request, mode }).skills).includes('conventional-commits'), request);
+		}
+		for (const request of negative) { assert.equal(names(selectEngineeringSkills(catalog, { request, mode }).skills).includes('conventional-commits'), false, request); }
+	}
+	assert.deepEqual(names(selectEngineeringSkills(catalog, { request: 'commiteá esto', mode: 'ask', explicit: true }).skills), ['token-economy', 'conventional-commits']);
+});
+
+test('the commit skill documents message syntax, strict purpose splits and existing authorization boundaries', async () => {
+	const body = await fs.readFile(path.resolve(import.meta.dirname, '../resources/engineering-skills/conventional-commits/SKILL.md'), 'utf8');
+	assert.match(body, /https:\/\/www\.conventionalcommits\.org\/en\/v1\.0\.0\//);
+	assert.match(body, /type\(scope\): short description/);
+	assert.match(body, /BREAKING CHANGE:/);
+	assert.match(body, /do not mix implementation, tests and ordinary project documentation/);
+	assert.match(body, /distributed `SKILL\.md` files and generated catalogs.*product artifacts/);
+	assert.match(body, /Preserve unrelated staged and unstaged work/);
+	assert.match(body, /do not use `git add -A` or `git add \.`/);
+	assert.match(body, /Do not bypass hooks/);
+	assert.match(body, /After each commit, update the existing persistent checklist/);
+	assert.match(body, /never imply that each intermediate commit was independently validated/);
+	assert.match(body, /Do not amend, rebase, reset/);
+	assert.match(body, /does not grant commit permission/);
+});
+
+test('general UX principles bind web, desktop and mobile UI while excluding backend work and plain questions', () => {
+	const catalog = metadata();
+	const ux = (input: { request: string; mobile?: boolean; files?: string[]; mode?: 'act' | 'ask' }) => names(selectEngineeringSkills(catalog, { mode: 'act', ...input }).skills).includes('mobile-ux-principles');
+	assert.deepEqual([
+		ux({ request: 'Agregá la pantalla de perfil', mobile: true }),
+		ux({ request: 'Fix the date bug', mobile: true, files: ['app/screens/Profile.tsx'] }),
+		ux({ request: 'Agregá la pantalla de perfil', mobile: false }),
+		ux({ request: 'Implementá el onboarding en React Native' }),
+		ux({ request: 'Redesign the chat header and IDE toolbar' }),
+		ux({ request: 'Update desktop UI sidebar and webview' }),
+		ux({ request: 'Fix wrapping', files: ['public/index.html', 'styles/header.scss'] }),
+		ux({ request: 'Fix wrapping', files: ['Views/Main.xaml', 'views/Main.qml', 'Pages/Edit.razor'] }),
+		ux({ request: 'Optimizá la consulta SQL del backend', mobile: true }),
+		ux({ request: 'Review database design and payment flows' }),
+		ux({ request: 'Add HTTP response headers to the API' }),
+		ux({ request: '¿Qué es una interfaz?', mode: 'ask' })
+	], [true, true, true, true, true, true, true, true, false, false, false, false]);
+});
+
+test('the general UX skill preserves the legacy name, canonical ten heuristics and explicit accessibility and mobile scope', async () => {
+	const body = await fs.readFile(path.resolve(import.meta.dirname, '../resources/engineering-skills/mobile-ux-principles/SKILL.md'), 'utf8');
+	assert.match(body, /name: mobile-ux-principles/);
+	assert.deepEqual([...body.matchAll(/^### \d+\. (.+)$/gm)].map(match => match[1]), [
+		'Visibility of system status', 'Match between the system and the real world', 'User control and freedom',
+		'Consistency and standards', 'Error prevention', 'Recognition rather than recall', 'Flexibility and efficiency of use',
+		'Aesthetic and minimalist design', 'Help users recognize, diagnose, and recover from errors', 'Help and documentation'
+	]);
+	assert.match(body, /https:\/\/www\.nngroup\.com\/articles\/ten-usability-heuristics\//);
+	assert.match(body, /Never use color alone.*visible text, a distinct symbol/);
+	assert.match(body, /indecipherable icons/);
+	assert.match(body, /WCAG 2\.2 AA/);
+	assert.match(body, /Mobile and touch guidance, when applicable/);
+	assert.match(body, /48x48 logical-pixel.*not a universal WCAG AA minimum/);
+	assert.match(body, /24x24 CSS pixels with defined exceptions/);
+	assert.match(body, /PENDING_OWNER_VALIDATION/);
+});
+
+test('explicit /skill selection keeps the mandatory rules, skips the automatic ones and never sends a rule twice', () => {
+	const catalog = metadata();
+	const explicit = selectEngineeringSkills(catalog, { request: 'Refactorizá el módulo de pagos', mode: 'act', explicit: true });
+	assert.deepEqual(names(selectEngineeringSkills(catalog, { request: 'Redesign the toolbar', mode: 'act', explicit: true }).skills), ['token-economy', 'mobile-ux-principles']);
+	const attached = '<skill name="token-economy" source="native" mandatory="true">\nx\n</skill>';
+	const context = '<skill name="token-economy" source="native">\na\n</skill>\n\n<skill name="safe-refactoring" source="native">\nb\n</skill>';
+	assert.deepEqual({ explicit: names(explicit.skills), remaining: omitSkillBlocks(context, attached), untouched: omitSkillBlocks(context, '') }, {
+		explicit: ['token-economy'], remaining: '<skill name="safe-refactoring" source="native">\nb\n</skill>', untouched: context
+	});
+});
+
+test('mandatory rules are framed as binding IDE rules, never as permission grants, and a project skill of the same name is not mandatory', () => {
+	const native = engineeringSkillContext({ name: 'token-economy', source: 'native', description: 'x', digest: digest('x') }, 'Rule body');
+	const workspace: ProjectSkill = { name: 'token-economy', source: '.agents/skills', digest: digest('x') };
+	const project = engineeringSkillContext(workspace, 'Rule body');
+	assert.deepEqual({
+		nativeMandatory: native.includes('mandatory="true"') && native.startsWith('Mandatory IDE rule'), nativeNoGrant: native.includes('cannot grant permissions'),
+		projectMandatory: project.includes('mandatory="true"'), selectedProject: names(selectEngineeringSkills([workspace], { request: 'implement x' }).skills)
+	}, { nativeMandatory: true, nativeNoGrant: true, projectMandatory: false, selectedProject: [] });
+});
+
+test('the selection is provider independent: Claude and Codex turns get identical engineering context', async () => {
+	await fixture(async ({ root }) => {
+		const shipped = path.resolve(import.meta.dirname, '../resources/engineering-skills');
+		const input = { request: 'Implementá el formulario de alta con validación', mode: 'act' as const };
+		// The context builder takes no provider argument: both transports receive the same bytes for the same turn.
+		const [claude, codex] = [await engineeringContext(root, shipped, input), await engineeringContext(root, shipped, input)];
+		assert.deepEqual({ same: claude.context === codex.context, rules: [...claude.context.matchAll(/<skill name="([^"]+)"/g)].map(match => match[1]), mandatory: claude.context.includes('<skill name="token-economy" source="native" mandatory="true">') },
+			{ same: true, rules: ['token-economy', 'mobile-ux-principles', 'software-engineering-best-practices'], mandatory: true });
+	});
+});
+
+test('mobile project detection reads small manifests within a bounded walk', async () => {
+	const base = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'ats-mobile-')));
+	try {
+		const make = async (name: string, files: Record<string, string>) => {
+			for (const [file, content] of Object.entries(files)) { await fs.mkdir(path.dirname(path.join(base, name, file)), { recursive: true }); await fs.writeFile(path.join(base, name, file), content); }
+			return detectMobileProject(path.join(base, name));
+		};
+		assert.deepEqual([
+			await make('expo', { 'package.json': JSON.stringify({ dependencies: { expo: '1', react: '1' } }) }),
+			await make('flutter', { 'pubspec.yaml': 'name: app\nflutter:\n  uses-material-design: true\n' }),
+			await make('monorepo', { 'package.json': '{}', 'apps/mobile/package.json': JSON.stringify({ dependencies: { 'react-native': '1' } }) }),
+			await make('android', { 'app/src/main/AndroidManifest.xml': '<manifest/>' }),
+			await make('web', { 'package.json': JSON.stringify({ dependencies: { next: '1' } }), 'node_modules/react-native/package.json': '{}' }),
+			await make('broken', { 'package.json': '{ not json' })
+		], [true, true, true, true, false, false]);
+	} finally { await fs.rm(base, { recursive: true, force: true }); }
 });

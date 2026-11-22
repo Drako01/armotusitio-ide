@@ -54,7 +54,7 @@ import { captureWorkingTree, diffWorkingTree, discardRunChanges, fingerprintFile
 import { ChatToolCheckpointRecorder, listChatToolCheckpoints, inspectChatToolCheckpoints, toolCheckpointBefore, restoreChatToolCheckpoint } from './native-chat-tool-checkpoints.ts';
 import { buildSupportReport, exportSupportReport } from './native-support.ts';
 import { inspectHarnessAuthority } from './native-authority.ts';
-import { fitEngineeringContext, engineeringContext, engineeringSkillContext, listEngineeringSkills, readEngineeringSkill } from './native-engineering-skills.ts';
+import { detectMobileProject, fitEngineeringContext, engineeringContext, engineeringSkillContext, listEngineeringSkills, readEngineeringSkill } from './native-engineering-skills.ts';
 import { listProjectSkills, readProjectSkill, type ProjectSkill } from './native-project-skills.ts';
 import { listProjectGuides, validateProjectGuides, type ProjectGuide } from './native-project-guidance.ts';
 import { readProjectGateCatalog, validateProjectGateCatalog, planProjectGateWaves } from './native-project-gates.ts';
@@ -738,7 +738,9 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 		return {
 			async skills(input) {
 				const directory = await skillDirectory();
-				return directory ? engineeringContext(await rootOf(), directory, input) : { context: '', trace: [] };
+				if (!directory) { return { context: '', trace: [] }; }
+				const root = await rootOf();
+				return engineeringContext(root, directory, { ...input, mobile: await detectMobileProject(root) });
 			},
 			async context() {
 				const root = await rootOf();
@@ -822,7 +824,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 				if (skills.some(skill => !skill)) { throw Error('HARNESS_PROJECT_SKILL_SELECTION_INVALID'); }
 				const selectedBodies: string[] = [];
 				for (const skill of skills) { selectedBodies.push(engineeringSkillContext(skill!, await readEngineeringSkill(root, skill!, directory))); }
-				const skillText = instruction.includes('<skill ') ? '' : selectedBodies.length ? selectedBodies.join('\n\n') : directory ? (await engineeringContext(root, directory, { request: plan.title + ' ' + plan.summary, files: plan.files })).context : '';
+				const skillText = instruction.includes('<skill ') ? '' : selectedBodies.length ? selectedBodies.join('\n\n') : directory ? (await engineeringContext(root, directory, { request: plan.title + ' ' + plan.summary, files: plan.files, mode: 'act', mobile: await detectMobileProject(root) })).context : '';
 				if (Buffer.byteLength(skillText) > 64 * 1024) { throw Error('HARNESS_PROJECT_SKILLS_TOO_LARGE'); }
 				const guides = await listProjectGuides(root);
 				const verification = await verificationOf(root);

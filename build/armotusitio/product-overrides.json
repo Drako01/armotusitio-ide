@@ -24,10 +24,29 @@
 	"armotusitioUpdate": {
 		"repository": "Drako01/armotusitio-ide",
 		"publicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAXhmSyY9FdlYjs5y5OVnNDxtiQUrJDdsEQ/ZIqP0slGo=\n-----END PUBLIC KEY-----\n",
-		"revision": 1
+		"revision": 2
 	},
 	"armotusitioUpstream": {
 		"ref": "1.147.0",
 		"commit": "8a14f0cc1b08d531eb83255ea3764ae22aa932b5"
-	}
+	},
+	"builtInExtensionsEnabledWithAutoUpdates": [
+		"GitHub.copilot-chat",
+		"armotusitio.orquestivo",
+		"armotusitio.probato-pr",
+		"armotusitio.indizivo",
+		"armotusitio.saturivo",
+		"armotusitio.noditrivo",
+		"armotusitio.vestigivo",
+		"armotusitio.vinculivo"
+	],
+	"autoUpdateBuiltinExtensionsByDefault": [
+		"armotusitio.orquestivo",
+		"armotusitio.probato-pr",
+		"armotusitio.indizivo",
+		"armotusitio.saturivo",
+		"armotusitio.noditrivo",
+		"armotusitio.vestigivo",
+		"armotusitio.vinculivo"
+	]
 }

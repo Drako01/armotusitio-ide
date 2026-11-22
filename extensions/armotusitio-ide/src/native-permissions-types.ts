@@ -78,6 +78,10 @@ export interface ApprovalRequest {
 	noRemember?: NoRememberReason;
 	/** The rule may also be remembered for every project; set only for exact rules of inspection commands (`globalRuleAllowed`). */
 	global?: boolean;
+	/** A family rule (`run:cargo test *`) the user may remember instead of the exact one; see `familyRule`. */
+	family?: string;
+	/** The card accepts a git config change made during the run (named keys, never values); allowed once, never remembered. */
+	drift?: boolean;
 	/** How much harm a wrong yes can do, shown on the card next to what, where and for how long. */
 	risk?: ApprovalRisk;
 }
@@ -85,8 +89,8 @@ export interface ApprovalRequest {
 export type ApprovalRisk = 'low' | 'medium' | 'high';
 /**
  * How far an approval reaches: this action only, the rest of the current run, the rest of the IDE session in this project,
- * always in this project, or in every project (`global`, offered only for inspection commands). Anything else is a denial.
+ * always in this project (the exact rule, or its `family`), or in every project (`global`, offered only for inspection commands). Anything else is a denial.
  */
-export type ApprovalAnswer = 'once' | 'task' | 'session' | 'always' | 'global' | 'deny';
-/** Why an approval is offered only once: dependency installs, irreversible file changes, publication, or no exact rule exists. */
-export type NoRememberReason = 'dependency' | 'irreversible' | 'publication' | 'inexact';
+export type ApprovalAnswer = 'once' | 'task' | 'session' | 'always' | 'family' | 'global' | 'deny';
+/** Why an approval is offered only once: dependency installs, irreversible file changes, publication, inline code, or no exact rule exists. */
+export type NoRememberReason = 'dependency' | 'irreversible' | 'publication' | 'inline' | 'inexact';
