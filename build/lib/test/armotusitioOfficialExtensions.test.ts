@@ -15,7 +15,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { finished } from 'node:stream/promises';
 import { ZipFile } from 'yazl';
-import { fromVsix } from '../extensions.ts';
+import { fromVsix, marketplaceExtensionDescriptions } from '../extensions.ts';
 import type File from 'vinyl';
 
 test('seven exact official release pins compose additively with upstream builtins and stable auto updates', () => {
@@ -90,4 +90,10 @@ test('the existing offline VSIX packaging stream includes executable contents, l
 	} finally {
 		await rm(directory, { recursive: true, force: true });
 	}
+});
+
+test('desktop packages ship the pinned official extensions; web packages keep the upstream list', () => {
+	const names = (forWeb: boolean) => marketplaceExtensionDescriptions(forWeb).map(extension => extension.name);
+	const official = officialExtensions.map(extension => extension.name);
+	assert.deepEqual({ desktop: official.filter(name => !names(false).includes(name)), web: official.filter(name => names(true).includes(name)) }, { desktop: [], web: [] });
 });

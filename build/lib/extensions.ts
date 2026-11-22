@@ -19,6 +19,7 @@ import ansiColors from 'ansi-colors';
 import * as jsoncParser from 'jsonc-parser';
 import { getProductionDependencies } from './dependencies.ts';
 import { type IExtensionDefinition, getExtensionStream } from './builtInExtensions.ts';
+import { withOfficialExtensions } from './armotusitioOfficialExtensions.ts';
 import { fetchUrls, fetchGithub } from './fetch.ts';
 import { getPnpmCommand } from './pnpm.ts';
 import { createTsgoStream, spawnTsgo } from './tsgo.ts';
@@ -613,11 +614,19 @@ function spawnAsync(command: string, args: string[], cwd: string, shell: boolean
 	});
 }
 
+/**
+ * The downloaded builtin extensions a package ships. Desktop packages also carry the pinned ArmotuSitio official
+ * extensions, the same list `builtInExtensions.ts` syncs locally; without them a CI-built release (no local
+ * `.build/builtInExtensions` cache) would ship without them. Web packages keep the upstream list.
+ */
+export function marketplaceExtensionDescriptions(forWeb: boolean): IExtensionDefinition[] {
+	return forWeb
+		? [...builtInExtensions.filter(({ name }) => !marketplaceWebExtensionsExclude.has(name)), ...webBuiltInExtensions]
+		: withOfficialExtensions(builtInExtensions);
+}
+
 export function packageMarketplaceExtensionsStream(forWeb: boolean): Stream {
-	const marketplaceExtensionsDescriptions = [
-		...builtInExtensions.filter(({ name }) => (forWeb ? !marketplaceWebExtensionsExclude.has(name) : true)),
-		...(forWeb ? webBuiltInExtensions : [])
-	];
+	const marketplaceExtensionsDescriptions = marketplaceExtensionDescriptions(forWeb);
 	const marketplaceExtensionsStream = minifyExtensionResources(
 		es.merge(
 			...marketplaceExtensionsDescriptions
