@@ -246,21 +246,26 @@ test('a changed draft identity or an already published release cannot continue p
 	}
 });
 
-test('Windows background updates use the versioned layout that inno_updater expects, end to end', async () => {
-	// inno_updater 0.26 only swaps `new_<exe>`; without versioned updates the installer staged into `_` and the swap failed.
+test('Windows background updates keep the flat layout with an inno_updater that still applies it, end to end', async () => {
+	// The public Electron build cannot start from a versioned folder (no ICU data), so the layout stays flat and the
+	// installer stages updates in `_`. inno_updater 0.26 removed that swap; 0.23 is the last version that applies it.
 	const product = JSON.parse(await readFile(new URL('../product.json', import.meta.url), 'utf8'));
+	const updater = await readFile(new URL('../build/win32/inno_updater.exe', import.meta.url), 'latin1');
+	const cargo = await readFile(new URL('../build/win32/Cargo.toml', import.meta.url), 'utf8');
 	const setup = (await readFile(new URL('../build/win32/code.iss', import.meta.url), 'utf8')).replaceAll('\r\n', '\n');
 	const msix = await readFile(new URL('./ats-package-msix.ps1', import.meta.url), 'utf8');
 	assert.deepEqual({
-		versioned: product.win32VersionedUpdate,
+		versioned: product.win32VersionedUpdate ?? false,
+		updaterVersion: /^version = "(?<version>[^"]+)"/m.exec(cargo)?.groups?.version,
+		updaterAppliesFlatLayout: updater.includes('using traditional update method') && updater.includes('move_update'),
 		// A manual install first stops helpers left running from the install folder, only when the editor itself is closed.
 		orphansStopped: /procedure StopOrphanHelperProcesses\(\);[^]*?if CheckForMutexes\('\{#AppMutex\}'\) then\n\s+exit;[^]*?function PrepareToInstall[^]*?StopOrphanHelperProcesses\(\);/.test(setup),
 		// A failed swap is logged as a failure, never as a success.
 		exitChecked: /if Exec\([^\n]*inno_updater\.exe[^\n]*UpdateResultCode\) and \(UpdateResultCode = 0\) then\n\s+Log\('inno_updater completed successfully'\)/.test(setup),
-		// The Store package reads the versioned folder and leaves updates to the Store.
+		// The Store package finds the resources in either layout and leaves updates to the Store.
 		msixVersioned: msix.includes(`Where-Object Name -CMatch '^[a-f0-9]{10}$'`),
 		msixNoSelfUpdate: msix.includes(`Remove('armotusitioUpdate')`)
-	}, { versioned: true, orphansStopped: true, exitChecked: true, msixVersioned: true, msixNoSelfUpdate: true });
+	}, { versioned: false, updaterVersion: '0.23.0', updaterAppliesFlatLayout: true, orphansStopped: true, exitChecked: true, msixVersioned: true, msixNoSelfUpdate: true });
 });
 
 test('packaged Windows resources are found under the commit folder and stale or mixed layouts are refused', async () => {
