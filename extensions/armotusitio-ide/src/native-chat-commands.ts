@@ -75,6 +75,7 @@ export function chatCommands(t: CommandTranslator): ChatCommand[] {
 		{ name: 'ayuda', description: t('Lista los comandos disponibles.'), session: false },
 		{ name: 'permisos', usage: '[usuario|proyecto|quitar REGLA|temporales quitar [REGLA]]', description: t('Muestra los permisos efectivos, tus reglas guardadas y los permisos temporales de esta sesi\u00f3n; con usuario o proyecto abre (o crea) su archivo JSON; con quitar revoca una regla tuya; con temporales quitar revoca permisos de esta tarea o sesi\u00f3n.'), session: true },
 		{ name: 'bifurcar', description: t('Contin\u00faa en una copia de la sesi\u00f3n nativa del proveedor; la original queda guardada sin cambios.'), session: true },
+		{ name: 'resumir', description: t('Resume la conversaci\u00f3n cuando vos quieras: lo viejo queda como memoria (tus pedidos, planes y resultados), los \u00faltimos mensajes siguen completos y la IA contin\u00faa con ese resumen. La conversaci\u00f3n completa queda en Sesiones guardadas.'), session: true },
 		{ name: 'modo', usage: '[actuar|preguntar]', description: t('Muestra o cambia el modo del chat.'), session: true },
 		{ name: 'deshacer', description: t('Descarta los cambios de la \u00faltima ejecuci\u00f3n.'), session: true },
 		{ name: 'checkpoints', usage: '[restaurar ID]', description: t('Lista los checkpoints granulares que dejaron las herramientas del agente (por turno y herramienta); "restaurar ID" vuelve esos archivos a su estado anterior solo si nadie los edit\u00f3 despu\u00e9s.'), session: true },
@@ -355,6 +356,11 @@ export async function runSessionCommand(deps: SessionCommandDeps, action: string
 		try { await session.fork(); }
 		catch { return t('Bifurcar necesita el transporte nativo (atsHarness.agentTransport) y que no haya una tarea en curso.'); }
 		return t('Listo: los pr\u00f3ximos mensajes contin\u00faan una copia de la sesi\u00f3n.');
+	}
+	if (action === 'resumir') {
+		if (session.busy) { return t('Esper\u00e1 a que termine la tarea para resumir la conversaci\u00f3n.'); }
+		const folded = await session.compact();
+		return folded ? t('Listo: resum\u00ed {0} mensajes. La IA sigue con el resumen y los \u00faltimos mensajes completos.', String(folded)) : t('La conversaci\u00f3n todav\u00eda es corta: no hace falta resumirla.');
 	}
 	if (action === 'deshacer') {
 		await session.refreshContext();

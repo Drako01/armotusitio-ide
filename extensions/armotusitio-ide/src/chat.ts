@@ -35,7 +35,7 @@ const { APPROVAL_ANSWERS } = require('./native-approval.ts');
 const { IncrementalContextIndex, IGNORED } = require('./context.ts');
 const { buildSetupItems, setupIcon } = require('./native-setup-check.ts');
 const { doctorReport } = require('./native-machine-doctor.ts');
-const { registerRunDiffView, validRunPath, RUN_DIFF_COMMAND, CHECKPOINT_DIFF_COMMAND } = require('./native-run-diff-view.ts');
+const { registerRunDiffView, validRunPath, runFileDiff, RUN_DIFF_COMMAND, CHECKPOINT_DIFF_COMMAND } = require('./native-run-diff-view.ts');
 
 interface ParticipantTurn { token: { isCancellationRequested: boolean }; started: boolean; queued?: string; observe(): void }
 
@@ -160,11 +160,11 @@ async function probeProvider(provider: any, diagnose = diagnoseProvider) {
 function labels(t: any) {
 	return {
 		title: t('Chat Harness'), project: t('Proyecto'), provider: t('IA'), codex: 'Codex', claude: 'Claude Code',
-		model: t('Modelo de {0}', '{0}'), modelDefault: t('Predeterminado: {0}', '{0}'), modelCliDefault: t('Predeterminado del CLI'),
-		effort: t('Razonamiento de {0}', '{0}'), effortShort: t('Esfuerzo'), effortDefault: t('Esfuerzo: predeterminado'), effortLevels: { low: t('Bajo'), medium: t('Medio'), high: t('Alto'), xhigh: t('Extra alto'), max: t('M\u00e1ximo') },
-		effortHint: t('La disponibilidad del nivel depende del modelo y del CLI instalado.'),
-		mode: t('Modo del chat'), modeAct: t('Modo: Actuar'), modeAsk: t('Modo: Preguntar'), directRun: t('Ejecuci\u00f3n directa'), executingDirect: t('Ejecutando directo con {0}'),
-		sandboxFull: t('Acceso total'), sandboxHint: t('Codex sin sandbox: sin l\u00edmites de enlaces, red ni carpetas. Desactivado, Codex queda confinado al proyecto.'), modeHint: t('Actuar: la IA cambia el c\u00f3digo directamente. Preguntar: solo conversa y propone planes que aprob\u00e1s antes de ejecutar.'),
+		model: t('Modelo de {0}', '{0}'), modelDefault: t('Predeterminado: {0}', '{0}'), modelCliDefault: t('Modelo predeterminado'),
+		effort: t('Razonamiento de {0}', '{0}'), effortShort: t('Razonamiento'), effortDefault: t('Razonamiento: predeterminado'), effortLevels: { low: t('Bajo'), medium: t('Medio'), high: t('Alto'), xhigh: t('Extra alto'), max: t('M\u00e1ximo') },
+		effortHint: t('M\u00e1s razonamiento: respuestas m\u00e1s pensadas, pero m\u00e1s lentas y con m\u00e1s consumo. Algunos niveles dependen del modelo.'),
+		mode: t('Modo del chat'), modeAct: t('Modo: Actuar'), modeAsk: t('Modo: Preguntar'), directRun: t('Ejecuci\u00f3n directa'), executingDirect: t('{0} est\u00e1 trabajando en tu pedido', '{0}'),
+		sandboxFull: t('Acceso total'), sandboxHint: t('Acceso total: Codex puede usar internet y tocar archivos fuera del proyecto sin pedirte permiso. Dejalo apagado salvo que sepas para qu\u00e9 lo necesit\u00e1s; apagado, Codex trabaja solo dentro del proyecto.'), modeHint: t('Actuar: la IA cambia el c\u00f3digo directamente. Preguntar: solo conversa y propone planes que aprob\u00e1s antes de ejecutar.'),
 		quotaWindow: { session: t('Sesi\u00f3n'), weekly: t('Semanal') }, quotaFree: t('{0} {1}% libre', '{0}', '{1}'), quotaResets: t('reinicia {0}', '{0}'),
 		quotaTitle: t('Cuota de {0} (informada por el proveedor)\n{1}', '{0}', '{1}'), quotaLevel: { warn: t('Queda poco cupo.'), critical: t('Cupo casi agotado.') },
 		providerStatus: { ready: t('Autenticado'), unauthenticated: t('Sin sesi\u00f3n iniciada'), unavailable: t('No instalado'), incompatible: t('Versi\u00f3n incompatible'), unknown: t('Estado desconocido'), checking: t('Verificando\u2026') },
@@ -172,15 +172,15 @@ function labels(t: any) {
 		mcpReason: { untrusted: t('El workspace no es confiable.'), disabled: t('La integraci\u00f3n est\u00e1 desactivada en este workspace.'), 'missing-key': t('No hay una clave configurada.'), auth: t('La clave fue rechazada o no tiene permisos.'), http: t('El servidor respondi\u00f3 con un error.'), protocol: t('La respuesta no cumple el protocolo MCP.'), network: t('No se pudo establecer la conexi\u00f3n.'), cancelled: t('Verificaci\u00f3n cancelada.') },
 		mcpTools: t('{0} disponibles para tu clave', '{0}'), toolsTerm: t('Herramientas'), mcpEndpoint: t('Servidor'), mcpChecked: t('\u00daltima verificaci\u00f3n'), mcpOptional: t('Opcional: la conversaci\u00f3n y la ejecuci\u00f3n funcionan sin MCP.'),
 		mcpCheck: t('Verificar ahora'), mcpConfigure: t('Configurar clave'), mcpEnable: t('Habilitar en este workspace'), mcpChangeKey: t('Cambiar clave'), mcpSettings: t('Abrir configuraci\u00f3n'),
-		emptyTitle: t('\u00bfEn qu\u00e9 trabajamos hoy?'), emptyBody: t('Convers\u00e1 con la IA sobre tu proyecto. Cuando haya un plan concreto, vas a poder revisarlo y aprobarlo ac\u00e1 mismo. Enviar nunca modifica c\u00f3digo.'),
-		suggestions: [t('Quiero agregar un CRUD de clientes'), t('Explicame la arquitectura de este proyecto'), t('\u00bfQu\u00e9 pruebas faltan?')],
-		placeholder: t('Escrib\u00ed tu mensaje\u2026 (/ para comandos)'), keyboard: t('Enter env\u00eda \u00b7 Shift+Enter nueva l\u00ednea '), send: t('Enviar'), cancel: t('Detener'), attach: t('Adjuntar archivos'), attachRemove: t('Quitar {0}'), attachPrompt: t('Revis\u00e1 los archivos adjuntos.'),
+		emptyTitle: t('\u00bfEn qu\u00e9 trabajamos hoy?'), emptyBodyAct: t('Pedile un cambio o hac\u00e9 una pregunta sobre tu proyecto. En modo Actuar la IA edita el c\u00f3digo, corre las verificaciones y te muestra qu\u00e9 cambi\u00f3; lo pod\u00e9s revertir.'), emptyBodyAsk: t('Convers\u00e1 con la IA sobre tu proyecto. En modo Preguntar no cambia nada: si hace falta un cambio, te propone un plan para aprobar ac\u00e1 mismo.'),
+		suggestions: [t('Explicame este proyecto como si reci\u00e9n empezara'), t('\u00bfC\u00f3mo lo corro en mi computadora?'), t('Busc\u00e1 errores y arreglalos'), t('Agreg\u00e1 una pantalla de contacto con su formulario')],
+		placeholder: t('Escrib\u00ed tu mensaje\u2026 (/ para comandos)'), keyboard: t('Enter env\u00eda \u00b7 Shift+Enter nueva l\u00ednea \u00b7 @ archivos \u00b7 / comandos'), keyboardBusy: t('Enter encola tu mensaje \u00b7 Esc detiene la tarea'), composerTools: t('Opciones del mensaje'), openLinkRef: t('Abrir {0} en el navegador', '{0}'), openFileRef: t('Abrir {0} en el editor', '{0}'), send: t('Enviar'), cancel: t('Detener'), attach: t('Adjuntar archivos'), attachRemove: t('Quitar {0}'), attachPrompt: t('Revis\u00e1 los archivos adjuntos.'),
 		attachLimit: t('Hasta {0} archivos por mensaje, de hasta {1} MB cada uno y {2} MB en total.'), attachUntrusted: t('Confi\u00e1 en esta carpeta para adjuntar archivos.'),
 		maxUploads: MAX_UPLOADS, maxUploadBytes: MAX_UPLOAD_BYTES, maxUploadTotalBytes: MAX_UPLOAD_TOTAL_BYTES,
-		you: t('Vos'), notice: t('Harness'), thinking: t('{0} est\u00e1 pensando\u2026', '{0}'), executing: t('Ejecutando plan v{0} con {1}', '{0}', '{1}'),
-		stage: { preparing: t('Preparando ejecuci\u00f3n segura'), agent: t('Agente implementador trabajando'), verifying: t('Ejecutando verificaciones'), repairing: t('Detect\u00e9 errores y los estoy corrigiendo') },
+		you: t('Vos'), notice: t('Aviso del IDE'), thinking: t('{0} est\u00e1 pensando\u2026', '{0}'), executing: t('Ejecutando plan v{0} con {1}', '{0}', '{1}'),
+		stage: { preparing: t('Preparando ejecuci\u00f3n segura'), agent: t('La IA est\u00e1 haciendo los cambios'), verifying: t('Comprobando que todo funcione'), repairing: t('Detect\u00e9 errores y los estoy corrigiendo') },
 		observed: t('{0} KB de actividad', '{0}'), elapsed: t('Tiempo'),
-		plan: t('Plan v{0}', '{0}'), planSteps: t('Pasos'), planFiles: t('Archivos'), planRisks: t('Riesgos'), planSkills: t('Skills del proyecto'), planVerification: t('Verificaciones autom\u00e1ticas'), planNoVerification: t('Sin verificaciones configuradas. Pod\u00e9s configurarlas con \u00abConfigurar Harness nativo del proyecto\u00bb.'),
+		plan: t('Plan v{0}', '{0}'), planSteps: t('Pasos'), planFiles: t('Archivos'), planRisks: t('Riesgos'), planSkills: t('Gu\u00edas del proyecto que va a seguir'), planVerification: t('Verificaciones autom\u00e1ticas'), planNoVerification: t('Sin verificaciones configuradas. Pod\u00e9s configurarlas con \u00abConfigurar Harness nativo del proyecto\u00bb.'),
 		approve: t('Aprobar y ejecutar'), requestChanges: t('Pedir cambios'), requestPrefix: t('Cambios al plan: '), superseded: t('Reemplazado por una versi\u00f3n m\u00e1s nueva'), approveHint: t('Al aprobar, el agente modifica archivos del proyecto con permisos de escritura acotados y luego corren las verificaciones.'),
 		run: { passed: t('Ejecuci\u00f3n completada'), failed: t('La ejecuci\u00f3n fall\u00f3'), cancelled: t('Ejecuci\u00f3n cancelada'), timeout: t('Tiempo agotado') },
 		outcome: { completed: t('Completada'), partial: t('Parcial'), blocked: t('Bloqueada'), unchanged: t('Sin cambios'), failed: t('Fallida') },
@@ -208,8 +208,8 @@ function labels(t: any) {
 		change: { added: t('nuevo'), modified: t('modificado'), deleted: t('borrado') },
 		continueRun: t('Continuar'), retry: t('Reintentar'), continuedRun: t('Continuaci\u00f3n'), maxMessageChars: MAX_USER_MESSAGE_CHARS,
 		discardRun: t('Deshacer esta ejecuci\u00f3n'), openHome: t('Ver en Inicio'),
-		checkpoints: t('Historial de checkpoints'), checkpointTurn: t('Turno {0}', '{0}'), checkpointEmpty: t('No hay checkpoints granulares seguros en este proyecto. Se crean cuando el agente edita archivos en una ejecuci\u00f3n del chat.'),
-		checkpointRestorable: t('se puede restaurar'), checkpointConflict: t('cambi\u00f3 despu\u00e9s: se preserva'), checkpointRestore: t('Restaurar'), checkpointDiff: t('Ver diff'), close: t('Cerrar'),
+		checkpoints: t('Puntos de restauraci\u00f3n'), checkpointTurn: t('Turno {0}', '{0}'), checkpointEmpty: t('No hay checkpoints granulares seguros en este proyecto. Se crean cuando el agente edita archivos en una ejecuci\u00f3n del chat.'),
+		checkpointRestorable: t('se puede restaurar'), checkpointConflict: t('cambi\u00f3 despu\u00e9s: se preserva'), checkpointRestore: t('Restaurar'), checkpointDiff: t('Ver cambios'), close: t('Cerrar'),
 		checkpointBlocked: t('Un archivo cambi\u00f3 despu\u00e9s de la herramienta: restaurar no tocar\u00eda nada. Revis\u00e1 el diff.'), checkpointKind: { edit: t('edici\u00f3n'), command: t('comando') },
 		goals: t('Objetivos aut\u00f3nomos en curso'), goalPause: t('Pausar'), goalStop: t('Detener'), goalQuestions: t('Preguntas pendientes'), goalSince: t('desde {0}', '{0}'),
 		goalStatus: { running: t('en ejecuci\u00f3n'), pausing: t('pausa pedida'), stopping: t('detenci\u00f3n pedida'), 'waiting-answers': t('espera tus respuestas') },
@@ -226,9 +226,9 @@ function labels(t: any) {
 		questions: t('Preguntas del agente'), questionOther: t('Otra respuesta'), questionSend: t('Responder'), questionSkip: t('No responder'),
 		gate: { pending: t('Pendiente'), running: t('En curso'), passed: t('Pas\u00f3'), failed: t('Fall\u00f3'), cancelled: t('Cancelada') },
 		verification: t('Verificaciones'), verificationSkipped: t('Sin verificaciones configuradas: los cambios no est\u00e1n comprobados. Configur\u00e1 test, lint o typecheck para que el IDE los verifique.'), duration: t('Duraci\u00f3n'), copy: t('Copiar'), copied: t('Copiado'),
-		copyMessage: t('Copiar respuesta'), partial: t('Respuesta en curso'), copyCode: t('Copiar c\u00f3digo'), activity: t('Actividad en curso'), idle: t('Sin actividad en curso'), cancelling: t('Deteniendo\u2026'),
+		copyMessage: t('Copiar respuesta'), writing: t('escribiendo\u2026'), todos: t('Plan del agente'), todosHead: t('Plan del agente: {0} de {1} hechos', '{0}', '{1}'), todoStatus: { pending: t('pendiente'), in_progress: t('en curso'), completed: t('hecho') }, showDiff: t('Mostrar cambios'), hideDiff: t('Ocultar cambios'), diffSummary: t('{0} l\u00edneas agregadas, {1} quitadas', '{0}', '{1}'), diffOf: t('Cambios de {0}', '{0}'), diffGap: t('\u22ef {0} l\u00edneas sin cambios', '{0}'), diffAdded: t('agregada'), diffRemoved: t('quitada'), diffTruncated: t('El cambio es largo: ac\u00e1 se ve el principio. \u00abAbrir en el editor\u00bb muestra todo.'), diffStatus: { same: t('El archivo ya no tiene diferencias con su versi\u00f3n anterior.'), binary: t('Es un archivo binario: no se puede mostrar ac\u00e1.'), 'too-large': t('Es muy grande para mostrarlo ac\u00e1: us\u00e1 \u00abAbrir en el editor\u00bb.'), preexisting: t('Este archivo ya ten\u00eda cambios tuyos antes de la tarea, as\u00ed que no hay una versi\u00f3n anterior confiable para comparar. Abrilo en el editor para revisarlo.') }, editMessage: t('Editar'), editMessageHint: t('Volver a este mensaje para cambiarlo. Lo que vino despu\u00e9s queda en Sesiones guardadas; tus archivos no cambian.'), compact: t('Resumir'), compactHint: t('Resume la conversaci\u00f3n cuando vos quieras: lo viejo queda como memoria y la IA sigue con los \u00faltimos mensajes completos.'), contextUsed: t('Espacio usado: {0} %', '{0}'), contextDetail: t('La IA tiene {0} de {1} tokens de su memoria de trabajo ocupados con esta conversaci\u00f3n.', '{0}', '{1}'), contextAdvice: t('Cuando se llena, la IA empieza a olvidar lo m\u00e1s viejo: us\u00e1 \u00abResumir\u00bb cuando termines un tema.'), copyCode: t('Copiar c\u00f3digo'), activity: t('Actividad en curso'), idle: t('Sin actividad en curso'), cancelling: t('Deteniendo\u2026'),
 		setupCheck: t('Revisar mi entorno'),
-		expandChat: t('Expandir Chat'), sidebarChat: t('Abrir Chat Lateral'), sessions: t('Sesiones guardadas'), menu: t('M\u00e1s opciones'), newChat: t('Nueva conversaci\u00f3n'), openTasks: t('Abrir panel de tareas'), refreshProviders: t('Verificar proveedores'), commands: t('Ver comandos'),
+		expandChat: t('Expandir Chat'), sidebarChat: t('Abrir Chat Lateral'), sessions: t('Sesiones guardadas'), menu: t('M\u00e1s opciones'), newChat: t('Nueva conversaci\u00f3n'), newChatBusy: t('Esper\u00e1 a que termine la tarea para empezar una conversaci\u00f3n nueva'), openTasks: t('Abrir panel de tareas'), refreshProviders: t('Verificar proveedores'), commands: t('Ver comandos'),
 		noProject: t('Abr\u00ed una carpeta para empezar a conversar sobre su c\u00f3digo.'), untrusted: t('Este workspace no es confiable. Marcalo como confiable para conversar y ejecutar.'), hybrid: t('Este proyecto tiene su propio Harness: pod\u00e9s conversar y planificar, pero la ejecuci\u00f3n con escritura requiere habilitar \u00abatsHarness.coordinatedProjectWriters\u00bb y un motor con lease de escritura.'),
 		isolation: t('Aislamiento de escritura: {0}.', '{0}'),
 		isolationLevel: { 'os-kernel': t('kernel del sistema'), 'provider-sandbox': t('sandbox del proveedor; las lecturas fuera del proyecto no est\u00e1n confinadas'), 'tool-allowlist': t('solo permisos de herramientas del proveedor, sin sandbox del sistema operativo'), none: t('sin aislamiento') },
@@ -242,7 +242,7 @@ function labels(t: any) {
 		suspendedAttachments: t('Adjunt\u00e1 de nuevo los archivos'), resumeSuspended: t('Retomar'), editSuspended: t('Editar'), discardSuspended: t('Descartar'),
 		assurance: { verified: t('Verificada'), unverified: t('Aplicada sin verificar') },
 		assuranceHint: { verified: t('Los cambios se aplicaron y las verificaciones del IDE pasaron.'), unverified: t('Los cambios se aplicaron, pero no corri\u00f3 ninguna verificaci\u00f3n: no est\u00e1 comprobado que funcione.') },
-		acceptanceUnproven: t('Funcional no verificado: ninguna prueba E2E o smoke recorri\u00f3 la app.'),
+		acceptanceUnproven: t('Nadie prob\u00f3 la app funcionando de punta a punta: abrila y revisala vos antes de darla por terminada.'),
 		repairAttempt: t('Correcci\u00f3n autom\u00e1tica {0} de {1}', '{0}', '{1}'),
 		repairStop: {
 			'not-repairable': t('No lo correg\u00ed solo: la causa est\u00e1 fuera del c\u00f3digo ({0}). Resolvela y retom\u00e1.', '{0}'),
@@ -251,7 +251,7 @@ function labels(t: any) {
 			'no-changes': t('La correcci\u00f3n no cambi\u00f3 ning\u00fan archivo; los errores siguen ({0}).', '{0}')
 		},
 		evidence: t('Ver evidencia ({0})', '{0}'), evidenceStatus: { passed: t('aprobado'), failed: t('fall\u00f3'), cancelled: t('cancelado'), skipped: t('omitido'), 'not-run': t('no corri\u00f3') }, evidenceCache: t('resultado reutilizado'),
-		viewChanges: t('Ver cambios'), revertFile: t('Revertir'), reverted: t('revertido'), stopHint: t('Detiene la tarea de la IA ahora mismo'),
+		viewChanges: t('Abrir en el editor'), revertFile: t('Revertir'), reverted: t('revertido'), stopHint: t('Detiene la tarea de la IA ahora mismo'),
 		commandList: chatCommands(t).map(({ name, usage, description }: any) => ({ name, usage: usage ?? '', description })),
 		commandsLabel: t('Comandos'), filesLabel: t('Archivos del proyecto')
 	};
@@ -619,7 +619,23 @@ function registerChat(context: any, controller: any, projects: any, mcp: any, vs
 			if (folder && vscode.workspace.isTrusted) { post({ type: 'completions', kind: 'mention', seq: message.seq, items: await suggestFiles(folder, message.query, source).catch(() => []) }, source); }
 			return;
 		}
+		// Links in answers: web pages only through VS Code's own external-link confirmation; any other scheme is ignored.
+		if (action === 'openLink') {
+			if (typeof message.href === 'string' && message.href.length <= 2048 && /^https?:\/\//i.test(message.href)) { await vscode.env.openExternal(vscode.Uri.parse(message.href)); }
+			return;
+		}
 		if (!folder) { return; }
+		// Files named in answers open in the editor, only inside the project; a missing file is said, never ignored.
+		if (action === 'openFile') {
+			if (!validRunPath(message.path)) { return; }
+			const line = Number.isSafeInteger(message.line) && message.line > 0 ? message.line - 1 : undefined;
+			try {
+				await vscode.window.showTextDocument(vscode.Uri.joinPath(folder.uri, message.path), { preview: true, ...(line === undefined ? {} : { selection: new vscode.Range(line, 0, line, 0) }) });
+			} catch {
+				await vscode.window.showWarningMessage(t('No encontr\u00e9 {0} en el proyecto.', message.path));
+			}
+			return;
+		}
 		if (!vscode.workspace.isTrusted) { publish(folder); return; }
 		const entry = await sessionFor(folder).catch((error: any) => { report(folder, error); return undefined; });
 		if (!entry) { return; }
@@ -745,6 +761,8 @@ function registerChat(context: any, controller: any, projects: any, mcp: any, vs
 			if (action === 'questionSkip' && typeof message.id === 'string' && message.id.length <= 64) { session.skipQuestion(message.id); }
 			// Per-file requests name a file of a run the session knows; anything else is ignored, never trusted.
 			const runFile = typeof message.messageId === 'string' && message.messageId.length <= 64 && validRunPath(message.path) ? session.runFile(message.messageId, message.path) : undefined;
+			// The same change, shown inside the chat (read only; the editor's diff stays one click away).
+			if (action === 'inlineDiff' && runFile) { post({ type: 'inlineDiff', messageId: message.messageId, path: runFile.path, diff: await runFileDiff(folder.uri.fsPath, runFile.path, runFile.change, runFile.preexisting) }, source); }
 			if (action === 'openDiff' && runFile) { await vscode.commands.executeCommand(RUN_DIFF_COMMAND, folder.uri.toString(), runFile.path, runFile.change, runFile.preexisting); }
 			if (action === 'revertFile' && runFile) {
 				const confirm = t('Revertir archivo');
@@ -757,6 +775,15 @@ function registerChat(context: any, controller: any, projects: any, mcp: any, vs
 				const text = await session.dropSuspended(message.id);
 				if (action === 'editSuspended' && text !== undefined) {
 					const draft = safeChatDraft(text, MAX_USER_MESSAGE_CHARS);
+					drafts.set(folder.uri.toString(), draft);
+					post({ type: 'draft', project: folder.uri.toString(), text: draft }, source);
+				}
+			}
+			// Edit an earlier message: confirm, go back to just before it and hand its text to the composer.
+			if (action === 'rewind' && typeof message.messageId === 'string' && message.messageId.length <= 64 && !session.busy) {
+				const confirm = t('Editar mensaje');
+				if (await vscode.window.showWarningMessage(t('\u00bfVolver a este mensaje para editarlo? Lo que vino despu\u00e9s sale de la conversaci\u00f3n (queda en Sesiones guardadas). Los archivos del proyecto no cambian.'), { modal: true }, confirm) === confirm) {
+					const draft = safeChatDraft(await session.rewind(message.messageId), MAX_USER_MESSAGE_CHARS);
 					drafts.set(folder.uri.toString(), draft);
 					post({ type: 'draft', project: folder.uri.toString(), text: draft }, source);
 				}

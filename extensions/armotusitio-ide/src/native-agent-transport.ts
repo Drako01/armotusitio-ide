@@ -93,6 +93,7 @@ const clip = (text: string, max: number): string => text.replace(/\s+/g, ' ').tr
 
 /** The step a tool call shows in the chat timeline; paths are relative to the project. */
 export function stepOf(root: string, id: string, call: ToolCall): ChatStep {
+	if (call.todos) { return { id, kind: 'tool', label: call.name, status: 'ok', todos: call.todos }; }
 	const files = (call.paths ?? []).map(file => relativeStepPath(root, file)).filter(Boolean);
 	const label = call.kind === 'command' || call.kind === 'web_search' ? clip(call.command ?? '', MAX_STEP_LABEL)
 		: files.length ? clip(files.slice(0, 3).join(', ') + (files.length > 3 ? ' +' + (files.length - 3) : ''), MAX_STEP_LABEL)

@@ -12,6 +12,7 @@ import type { NativeProvider } from '../native-providers.ts';
 import type { ProviderUsage } from '../native-provider-output.ts';
 import type { ProviderQuota } from '../native-quota.ts';
 import type { ChatImage } from '../native-chat-images.ts';
+import type { AgentTodo } from '../native-run-steps.ts';
 
 export type SessionState = 'starting' | 'ready' | 'running' | 'awaiting_approval' | 'awaiting_user_input' | 'interrupted' | 'recovering' | 'failed' | 'closed';
 
@@ -61,6 +62,8 @@ export interface ToolCall {
 	tool?: string;
 	/** The provider's own justification (Codex `reason`), shown on the card. */
 	reason?: string;
+	/** The agent's task list when this call publishes it (Claude TodoWrite, Codex plan updates); already redacted. */
+	todos?: AgentTodo[];
 }
 
 /** One option of an agent question. */

@@ -25,7 +25,7 @@ import { routeTask, type TaskRouting } from './native-task-router.ts';
 import { hasRecoveryHint, recoveryHint } from './native-error-catalog.ts';
 import type { ActivityActionId, ActivityItem } from './native-activity-feed.ts';
 import type { RunDiffSummary, RunFileChange } from './native-run-diff.ts';
-import { summarizeSteps, upsertStep, type ChatStep } from './native-run-steps.ts';
+import { summarizeSteps, upsertStep, type AgentTodo, type ChatStep } from './native-run-steps.ts';
 import {
 	buildContinuationInstruction, buildConversationDelta, buildConversationInstruction, buildDirectInstruction, buildImplementationInstruction, buildRepairInstruction, chatMessage, MAX_SUSPENDED, DIRECT_PLAN_VERSION, directPlan, extractChatPlan, harnessErrorCode, harnessErrorDetail, latestPlanMessage, MAX_USER_MESSAGE_CHARS, pendingAlive, promptBudget, samePlanContent,
 	type ChatConversation, type ChatMessage, type ChatMode, type ChatPlan, type ChatProjectContext, type ChatRunSummary, type ChatStore, type GateSummary, type RepairStopReason, type RunStatus, type SuspendedIntent
@@ -118,6 +118,8 @@ export interface ChatActivity {
 	partial?: string;
 	/** Live timeline of this turn (at most 200 steps); only a short summary is kept once the run ends. */
 	steps?: ChatStep[];
+	/** The agent's latest task list of this turn (what it plans and what it finished); never persisted. */
+	todos?: AgentTodo[];
 	stage?: ImplementStage;
 	planVersion?: number;
 	gates?: GateSummary[];
@@ -152,6 +154,8 @@ export interface ChatSnapshot {
 	isolation?: { writes: string; allowed: boolean };
 	/** Commands that run automatically after an approved implementation. */
 	verification: Array<{ id: string; command: string }>;
+	/** How full the provider's context was on the latest turn, only when the provider reported both numbers. */
+	context?: { provider: NativeProvider; used: number; window: number };
 }
 type Translate = (message: string, ...args: string[]) => string;
 
@@ -202,6 +206,9 @@ function interruptedStage(t: Translate, stage: ImplementStage | undefined): stri
 	if (stage === 'verifying') { return ' ' + t('Los cambios ya estaban aplicados; la verificaci\u00f3n qued\u00f3 incompleta y no cuenta como aprobada.'); }
 	return '';
 }
+
+/** Recent messages `/resumir` keeps verbatim; everything older becomes memory. */
+const KEEP_ON_REQUEST = 20;
 
 /** Messages that can wait behind the running turn. */
 export const MAX_QUEUED_MESSAGES = 5;
@@ -364,7 +371,12 @@ export class HarnessChatSession {
 
 	private noteUsage(provider: NativeProvider, usage: ProviderUsage | undefined, firstTokenMs?: number): void {
 		this.reportedUsage = usage ? { provider, at: new Date().toISOString(), usage, ...(firstTokenMs !== undefined ? { firstTokenMs } : {}) } : undefined;
+		// The gauge needs both real numbers; a turn without them keeps the last known reading of that provider.
+		if (usage?.contextTokens !== undefined && usage.contextWindow) { this.contextGauge = { provider, used: usage.contextTokens, window: usage.contextWindow }; }
 	}
+
+	/** Latest reported context occupancy; cleared whenever the provider session starts over (new, summarized, rewound). */
+	private contextGauge?: { provider: NativeProvider; used: number; window: number };
 
 	/** Latest limits known per provider, from the streams of this window or the provider's own files. */
 	private readonly quotas: Partial<Record<NativeProvider, ProviderQuota>> = {};
@@ -440,7 +452,8 @@ export class HarnessChatSession {
 			...(this.broker.list().length ? { grants: this.broker.list() } : {}),
 			writer,
 			isolation: this.context?.isolation?.[this.conversation.provider],
-			verification: this.context?.verification?.gates ?? []
+			verification: this.context?.verification?.gates ?? [],
+			...(this.contextGauge ? { context: { ...this.contextGauge } } : {})
 		};
 	}
 
@@ -491,19 +504,66 @@ export class HarnessChatSession {
 
 	async reset(): Promise<void> {
 		if (this.activity) { throw Error('HARNESS_ALREADY_RUNNING'); }
+		await this.replaceConversation({ ...this.conversation, messages: [], memory: undefined, suspended: undefined, conversationId: randomUUID() });
+	}
+
+	/** Swap in `next` with a fresh provider session; the stored conversation is archived first and a failed save restores it. */
+	private async replaceConversation(next: ChatConversation): Promise<void> {
 		const previous = this.conversation;
-		this.conversation = { ...previous, messages: [], memory: undefined, suspended: undefined, conversationId: randomUUID() };
+		this.conversation = next;
 		try { await this.persist({ replace: true }); }
 		catch (error) { this.conversation = previous; throw error; }
 		this.queue.length = 0;
-		this.deliveredSkills.clear(); this.skillSelection = [];
+		this.startOver();
 	}
+
+	/** A new provider session follows: nothing delivered to the previous one counts, and its context reading is gone. */
+	private startOver(): void {
+		this.deliveredSkills.clear(); this.deliveredDecisions.clear(); this.skillSelection = []; this.contextGauge = undefined;
+	}
+
+	/**
+	 * Summarize on request (`/resumir`): older messages fold into the IDE's deterministic memory (the user's requests, plans and
+	 * run records, never model prose) and the provider continues in a fresh session that receives that memory. The full
+	 * previous conversation stays in the saved sessions. Returns how many messages were folded (0 when too short).
+	 */
+	async compact(): Promise<number> {
+		if (this.activity) { throw Error('HARNESS_ALREADY_RUNNING'); }
+		const messages = this.conversation.messages;
+		const latestPlan = messages.findLastIndex(message => !!message.plan);
+		// The latest plan and what follows stay, so an approval keeps pointing at a plan the user can read.
+		const folded = Math.min(messages.length - KEEP_ON_REQUEST, latestPlan === -1 ? messages.length : latestPlan);
+		if (folded <= 0) { return 0; }
+		const notice = chatMessage('notice', this.t('Resum\u00ed la conversaci\u00f3n: {0} mensajes anteriores quedaron como memoria (tus pedidos, los planes y sus resultados) y la IA sigue en una sesi\u00f3n nueva con ese resumen. La conversaci\u00f3n completa qued\u00f3 en Sesiones guardadas.', String(folded)), { tone: 'info' });
+		await this.replaceConversation({ ...this.conversation, messages: [...messages.slice(folded), notice], memory: absorbMessages(this.conversation.memory, messages.slice(0, folded), this.context?.root ?? ''), conversationId: randomUUID() });
+		return folded;
+	}
+
+	/**
+	 * Edit an earlier message, as in Claude and Codex: the conversation goes back to just before it and the provider starts a
+	 * new session from there. Files are not touched (the notice points to /deshacer and the checkpoints); the full previous
+	 * conversation stays in the saved sessions. Returns the message text so the composer can offer it for editing.
+	 */
+	async rewind(messageId: string): Promise<string> {
+		if (this.activity) { throw Error('HARNESS_ALREADY_RUNNING'); }
+		const index = this.conversation.messages.findIndex(message => message.id === messageId && message.role === 'user');
+		if (index === -1) { throw Error('HARNESS_CHAT_MESSAGE_UNKNOWN'); }
+		const messages = this.conversation.messages;
+		const text = messages[index].text;
+		const changedFiles = messages.slice(index).some(message => (message.run?.outcome?.diff.count ?? 0) > 0 && !message.run?.discarded);
+		const notice = chatMessage('notice', changedFiles
+			? this.t('Volviste a un mensaje anterior para editarlo. Los archivos que cambi\u00f3 la IA despu\u00e9s de ese mensaje siguen como est\u00e1n: si quer\u00e9s deshacerlos, us\u00e1 Puntos de restauraci\u00f3n (en el men\u00fa \u22ef) antes de enviar. La conversaci\u00f3n anterior qued\u00f3 en Sesiones guardadas.')
+			: this.t('Volviste a un mensaje anterior para editarlo. La conversaci\u00f3n anterior qued\u00f3 en Sesiones guardadas.'), { tone: 'info' });
+		await this.replaceConversation({ ...this.conversation, messages: [...messages.slice(0, index), notice], conversationId: randomUUID() });
+		return text;
+	}
+
 	async sessions(query = ''): Promise<Array<{ id: string; title: string; at: string; provider: NativeProvider }>> { return this.store.sessions(query); }
 	async resume(id: string): Promise<void> {
 		if (this.activity) { throw Error('HARNESS_ALREADY_RUNNING'); }
 		this.conversation = await this.store.restore(id);
 		this.queue.length = 0;
-		this.deliveredSkills.clear(); this.skillSelection = [];
+		this.startOver();
 		await this.refreshContext();
 		this.emit();
 	}
@@ -1031,7 +1091,13 @@ export class HarnessChatSession {
 			},
 			progress: observedBytes => { if (this.activity) { this.activity.observedBytes = observedBytes; this.emit(); } },
 			message: text => { if (this.activity) { this.activity.partial = text.length > 8000 ? text.slice(-8000) : text; this.emit(); } },
-			step: step => { if (this.activity) { this.activity.steps = upsertStep(this.activity.steps ?? [], step); this.emit(); } },
+			step: step => {
+				if (!this.activity) { return; }
+				// The agent's task list is shown as a checklist, not as one more line of the timeline.
+				if (step.todos) { this.activity.todos = step.todos; }
+				else { this.activity.steps = upsertStep(this.activity.steps ?? [], step); }
+				this.emit();
+			},
 			approval: request => this.requestApproval(request),
 			question: questions => this.requestQuestion(questions),
 			notice: notice => {
@@ -1053,7 +1119,11 @@ export class HarnessChatSession {
 	private async persist(options: { replace?: boolean } = {}): Promise<void> {
 		// Old messages become memory; the latest plan and what follows it always stay.
 		const folded = compactionSplit(this.conversation.messages);
-		if (folded) { this.conversation.memory = absorbMessages(this.conversation.memory, this.conversation.messages.splice(0, folded), this.context?.root ?? ''); }
+		if (folded) {
+			this.conversation.memory = absorbMessages(this.conversation.memory, this.conversation.messages.splice(0, folded), this.context?.root ?? '');
+			// Never silent: the user learns that the oldest part became memory and how to keep control of it.
+			this.conversation.messages.push(chatMessage('notice', this.t('La conversaci\u00f3n lleg\u00f3 al l\u00edmite de lo que el IDE guarda: los {0} mensajes m\u00e1s viejos quedaron como memoria. Us\u00e1 /resumir cuando quieras hacerlo vos antes.', String(folded)), { tone: 'info' }));
+		}
 		this.revision++;
 		this.emit();
 		const stored = await this.store.save(this.conversation, options);

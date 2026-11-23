@@ -12,6 +12,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { resolveNativeCommand } from '../native-runtime.ts';
 import { validateChatImages } from '../native-chat-images.ts';
+import { parseAgentTodos } from '../native-run-steps.ts';
 import { CodexChildGuard, codexChildActivity, readonlyCodexSubagentOverrides } from '../native-codex-subagents.ts';
 import { captureAgentScope } from '../native-agent-scope.ts';
 import {
@@ -33,7 +34,7 @@ const HANDSHAKE_TIMEOUT_MS = 30_000;
 /** Notifications the adapter does not use; opting out keeps the stream small. */
 const IGNORED_NOTIFICATIONS = ['item/reasoning/summaryTextDelta', 'item/reasoning/summaryPartAdded', 'item/reasoning/textDelta', 'rawResponseItem/completed', 'rawResponse/completed', 'item/plan/delta', 'fuzzyFileSearch/sessionUpdated', 'fuzzyFileSearch/sessionCompleted'];
 /** Methods that are part of the session's normal life but carry nothing for the chat. */
-const QUIET_NOTIFICATIONS = new Set(['warning', 'account/rateLimits/updated', 'thread/started', 'thread/status/changed', 'account/updated', 'remoteControl/status/changed', 'mcpServer/startupStatus/updated', 'skills/changed', 'thread/settings/updated', 'serverRequest/resolved', 'hook/started', 'hook/completed', 'turn/diff/updated', 'turn/plan/updated', 'thread/name/updated', 'model/safetyBuffering/updated', 'thread/readState/changed', 'app/list/updated', 'thread/queue/changed']);
+const QUIET_NOTIFICATIONS = new Set(['warning', 'account/rateLimits/updated', 'thread/started', 'thread/status/changed', 'account/updated', 'remoteControl/status/changed', 'mcpServer/startupStatus/updated', 'skills/changed', 'thread/settings/updated', 'serverRequest/resolved', 'hook/started', 'hook/completed', 'turn/diff/updated', 'thread/name/updated', 'model/safetyBuffering/updated', 'thread/readState/changed', 'app/list/updated', 'thread/queue/changed']);
 
 /**
  * Oldest CLI whose app-server protocol was validated against these bindings. The generated file names the newest one;
@@ -352,11 +353,22 @@ class CodexConnection implements AgentConnection {
 				this.host.emit({ turnId, toolCallId: itemId, payload: { type: 'tool.output', chunk: delta } });
 				return;
 			}
+			case 'turn/plan/updated': {
+				// The whole plan is re-sent on each update: one step per turn, replaced each time.
+				const todos = parseAgentTodos(value);
+				if (todos) { this.host.emit({ turnId, toolCallId: 'plan-' + turnId, payload: { type: 'tool.started', call: { kind: 'other', name: 'update_plan', todos } } }); }
+				return;
+			}
 			case 'item/started': return this.itemStarted(value as unknown as ItemStartedNotification);
 			case 'item/completed': return this.itemCompleted(value as unknown as ItemCompletedNotification);
 			case 'thread/tokenUsage/updated': {
-				const usage = (value as unknown as ThreadTokenUsageUpdatedNotification).tokenUsage.last;
-				const reported = { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, cachedInputTokens: usage.cachedInputTokens };
+				const tokenUsage = (value as unknown as ThreadTokenUsageUpdatedNotification).tokenUsage;
+				const usage = tokenUsage.last;
+				// The last request's input (cache included) is what the thread holds now; the window comes with it when known.
+				const reported = {
+					inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, cachedInputTokens: usage.cachedInputTokens, contextTokens: usage.inputTokens,
+					...(typeof tokenUsage.modelContextWindow === 'number' && tokenUsage.modelContextWindow > 0 ? { contextWindow: tokenUsage.modelContextWindow } : {})
+				};
 				if (this.turn) { this.turn.usage = reported; }
 				this.host.emit({ turnId, payload: { type: 'usage', usage: reported } });
 				return;

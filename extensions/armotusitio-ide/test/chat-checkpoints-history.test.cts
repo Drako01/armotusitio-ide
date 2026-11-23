@@ -23,7 +23,7 @@ test('the checkpoint history lists tools by turn, blocks restores after later ed
 		assert.equal(await page.locator('#checkpoints').isHidden(), true);
 		// The menu asks the host; a listing for another project is ignored.
 		await page.click('#menu-button');
-		await page.click('#menu button:text-is("Historial de checkpoints")');
+		await page.click('#menu button:text-is("Puntos de restauraci\u00f3n")');
 		assert.deepEqual(await page.evaluate(() => window.sent.filter(message => message.action === 'checkpoints')), [{ action: 'checkpoints' }]);
 		await push({ type: 'checkpoints', project: 'other-project', items });
 		assert.equal(await page.locator('#checkpoints').isHidden(), true);
@@ -48,7 +48,7 @@ test('the checkpoint history lists tools by turn, blocks restores after later ed
 			{ name: '#1 · edición · edit <b>1</b>', files: ['src/<img src=x onerror=alert(1)>.ts · nuevo · se puede restaurar'], restore: false, why: null, injected: 0 },
 			{ name: '#2 · edición · edit <b>2</b>', files: ['src/b.ts · modificado · cambió después: se preserva', 'src/c.ts · borrado · se puede restaurar'], restore: true, why: 'Un archivo cambió después de la herramienta: restaurar no tocaría nada. Revisá el diff.' }
 		].map((card, index) => ({ ...card, injected: 0, why: index ? card.why : null })));
-		await page.click('#checkpoints li.approval:nth-child(1) button:text-is("Ver diff")');
+		await page.click('#checkpoints li.approval:nth-child(1) button:text-is("Ver cambios")');
 		await page.click('#checkpoints li.approval:nth-child(1) button:text-is("Restaurar")');
 		assert.deepEqual(await page.evaluate(() => window.sent.filter(message => message.action === 'checkpointDiff' || message.action === 'send')), [
 			{ action: 'checkpointDiff', id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', path: 'src/<img src=x onerror=alert(1)>.ts', change: 'added' },

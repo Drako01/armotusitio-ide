@@ -20,6 +20,31 @@ export interface ChatStep {
 	label: string;
 	status: ChatStepStatus;
 	detail?: string;
+	/** The agent's own task list, when this step is the agent updating it (Claude TodoWrite, Codex plan). Live only. */
+	todos?: AgentTodo[];
+}
+
+export type AgentTodoStatus = 'pending' | 'in_progress' | 'completed';
+/** One item of the agent's task list: what it plans to do and how far it got. */
+export interface AgentTodo { text: string; status: AgentTodoStatus }
+export const MAX_TODOS = 30;
+
+/**
+ * The task list the agent published, from any provider shape: Claude `TodoWrite` input (`todos[].content`), Codex app-server
+ * plan (`plan[].step`, `inProgress`) and Codex exec `todo_list` (`items[].text`, `completed`). Undefined when there is none.
+ */
+export function parseAgentTodos(raw: unknown): AgentTodo[] | undefined {
+	const value = object(raw);
+	const list = [value?.todos, value?.plan, value?.items].find(Array.isArray) as unknown[] | undefined;
+	if (!list) { return undefined; }
+	const todos: AgentTodo[] = [];
+	for (const entry of list.slice(0, MAX_TODOS).map(item => object(item))) {
+		const text = clip(entry?.content ?? entry?.step ?? entry?.text, MAX_STEP_LABEL);
+		if (!text) { continue; }
+		const status = entry!.status === 'completed' || entry!.completed === true ? 'completed' : entry!.status === 'in_progress' || entry!.status === 'inProgress' ? 'in_progress' : 'pending';
+		todos.push({ text, status });
+	}
+	return todos;
 }
 
 export const MAX_STEPS = 200;
@@ -108,6 +133,8 @@ export class RunStepExtractor {
 				if (block?.type !== 'tool_use' || typeof block.id !== 'string' || block.id.length > MAX_STEP_ID) { continue; }
 				const name = typeof block.name === 'string' ? block.name : '';
 				const input = object(block.input) ?? {};
+				const todos = name === 'TodoWrite' ? parseAgentTodos(input) : undefined;
+				if (todos) { this.put({ id: block.id, kind: 'tool', label: name, status: 'ok', todos }); continue; }
 				const kind = CLAUDE_KINDS[name] ?? 'tool';
 				const label = kind === 'read' || kind === 'edit' ? relativeStepPath(this.root, input.file_path ?? input.notebook_path ?? input.path)
 					: name === 'Bash' ? clip(input.command, MAX_STEP_LABEL)
@@ -136,9 +163,16 @@ export class RunStepExtractor {
 	}
 
 	private acceptCodex(event: Record<string, unknown>): void {
-		if (event.type !== 'item.started' && event.type !== 'item.completed') { return; }
+		if (event.type !== 'item.started' && event.type !== 'item.updated' && event.type !== 'item.completed') { return; }
 		const item = object(event.item);
 		if (!item) { return; }
+		// The task list is re-sent whole on every update; it is the only item kind followed through `item.updated`.
+		if (item.type === 'todo_list') {
+			const todos = parseAgentTodos(item);
+			if (todos && typeof item.id === 'string' && item.id.length <= MAX_STEP_ID) { this.put({ id: item.id, kind: 'tool', label: 'todo_list', status: 'ok', todos }); }
+			return;
+		}
+		if (event.type === 'item.updated') { return; }
 		const done = event.type === 'item.completed';
 		const id = typeof item.id === 'string' && item.id.length <= MAX_STEP_ID ? item.id : undefined;
 		const failedStatus = item.status === 'failed' || item.status === 'declined';

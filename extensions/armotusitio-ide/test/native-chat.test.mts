@@ -75,11 +75,11 @@ test('chat store persists per project, trims history and quarantines corrupt sta
 		const store = new ChatStore(path.join(directory, 'chat'));
 		assert.deepEqual((await store.load('codex')).conversation, { schemaVersion: 1, provider: 'codex', messages: [] });
 		const plan = extractChatPlan(block({ title: 'Plan', steps: ['Uno'] }), 1).plan!;
-		const messages = Array.from({ length: 205 }, (_, index) => chatMessage('user', 'm' + index));
+		const messages = Array.from({ length: 2005 }, (_, index) => chatMessage('user', 'm' + index));
 		messages.push(chatMessage('assistant', 'ok', { provider: 'claude', plan }));
 		await store.save({ schemaVersion: 1, provider: 'claude', messages });
 		const loaded = (await store.load('codex')).conversation;
-		assert.deepEqual({ provider: loaded.provider, count: loaded.messages.length, last: latestPlan(loaded.messages)?.digest }, { provider: 'claude', count: 200, last: plan.digest });
+		assert.deepEqual({ provider: loaded.provider, count: loaded.messages.length, last: latestPlan(loaded.messages)?.digest }, { provider: 'claude', count: 2000, last: plan.digest });
 		// A tampered plan breaks its digest: the whole state is quarantined, not partially trusted.
 		const file = path.join(directory, 'chat', 'conversation.json');
 		const raw = JSON.parse(await fs.readFile(file, 'utf8'));

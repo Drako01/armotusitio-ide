@@ -59,14 +59,31 @@ Si una tarea falla, la cancelás, el proveedor no responde o el IDE se cierra, l
 
 ## Sesiones persistentes
 
-Con `atsHarness.agentTransport` en `native` o `auto`, el chat mantiene **una sesión viva del proveedor**:
+Con `atsHarness.agentTransport` en `auto` (el valor predeterminado) o `native`, el chat mantiene **una sesión viva del proveedor**, con toda la memoria de trabajo del modelo:
 
 - La conversación sigue entre mensajes y también **después de reiniciar el IDE**.
 - El texto llega en tiempo real y cada herramienta aparece en la línea de tiempo.
 - La IA te puede hacer preguntas con una tarjeta en el chat.
 - Si el IDE se cierra a mitad de un turno, ese turno se marca como perdido y **nunca se repite solo**; tu pedido queda en **En pausa** para que decidas.
 
-Con `structured` (el valor predeterminado), cada mensaje lanza un proceso nuevo con el contexto resumido.
+Con `structured`, cada mensaje lanza un proceso nuevo con el contexto resumido. `auto` usa el estructurado solo si la versión instalada del proveedor no es compatible, y lo avisa.
+
+### Conversaciones largas
+
+El IDE guarda hasta 2000 mensajes por conversación y **no resume nada por su cuenta**: vos decidís cuándo con `/resumir` o con el botón **Resumir** debajo del cuadro de texto. Al lado ves **Espacio usado**, el porcentaje de la memoria de trabajo del modelo que ocupa la conversación, con los números que informa Claude o Codex (si no los informa, no se muestra nada). Al resumir, lo viejo queda como memoria (tus pedidos, los planes y sus resultados), los últimos 20 mensajes siguen completos y la conversación entera queda en **Sesiones guardadas**. Solo si se llega al límite de 2000 mensajes el IDE resume lo más viejo, y lo avisa en el chat.
+
+### Mientras trabaja la IA
+
+- La respuesta aparece **dentro de la conversación** a medida que se escribe.
+- **Plan del agente**: la lista de tareas que arma la IA, con lo hecho tachado y lo que está haciendo resaltado.
+- **Esc** detiene la tarea; **Enter** deja tu próximo mensaje en cola.
+
+### Después de cada cambio
+
+- **Mostrar cambios** muestra, dentro del chat, las líneas agregadas y quitadas de cada archivo; **Abrir en el editor** abre la comparación completa.
+- Los archivos que nombra la IA (`src/app.ts:42`) y los enlaces se abren con un clic.
+- **Editar**, debajo de cada mensaje tuyo, vuelve a ese punto para cambiarlo: lo que vino después queda en Sesiones guardadas y tus archivos no cambian (para deshacerlos usá **Puntos de restauración** del menú ⋯).
+- El botón con el globo y el **+**, arriba a la derecha, empieza una conversación nueva.
 
 ## Permisos
 
@@ -98,6 +115,7 @@ Cada adjunto se guarda en `.chat-attachments/` dentro del proyecto, una carpeta 
 | `/modo [actuar\|preguntar]` | Muestra o cambia el modo. |
 | `/permisos` | Permisos efectivos, tus reglas y los permisos temporales. |
 | `/permisos temporales quitar [REGLA]` | Revoca permisos de esta tarea o sesión. |
+| `/resumir` | Resume la conversación cuando vos quieras; la completa queda en Sesiones guardadas. |
 | `/bifurcar` | Sigue en una copia de la sesión; la original queda guardada. |
 | `/deshacer` | Descarta los cambios de la última ejecución. |
 | `/checkpoints [restaurar ID]` | Lista los checkpoints por herramienta (turno, archivos) y restaura uno con la misma confirmación que la paleta. |
@@ -111,9 +129,9 @@ Cada adjunto se guarda en `.chat-attachments/` dentro del proyecto, una carpeta 
 | `/proyectos`, `/tareas CLAVE`, `/tarea CLAVE-123` | Consultan Work Management. |
 | `/crear`, `/mover`, `/comentar` | Modifican tareas de Work Management (piden confirmación). |
 
-## Historial de checkpoints
+## Puntos de restauración
 
-En el menú del chat, «Historial de checkpoints» lista las herramientas que editaron archivos, agrupadas por turno. Cada archivo muestra si fue creado, modificado o borrado y si se puede restaurar; un archivo que cambiaste después bloquea la restauración completa y lo dice. «Ver diff» compara el contenido anterior a la herramienta con el archivo actual. «Restaurar» usa `/checkpoints restaurar ID`, con la misma confirmación.
+En el menú del chat, «Puntos de restauración» lista las herramientas que editaron archivos, agrupadas por turno. Cada archivo muestra si fue creado, modificado o borrado y si se puede restaurar; un archivo que cambiaste después bloquea la restauración completa y lo dice. «Ver cambios» compara el contenido anterior a la herramienta con el archivo actual. «Restaurar» usa `/checkpoints restaurar ID`, con la misma confirmación.
 
 ## Especialistas del proyecto
 
@@ -137,3 +155,4 @@ Los roles son `planner` o `reviewer`; `model` es opcional; `tools` solo admite `
 - Referencia completa del Harness y el chat: [README de la extensión](../../extensions/armotusitio-ide/README.md).
 - Arquitectura de las sesiones nativas: [R8_ARCHITECTURE.md](../R8_ARCHITECTURE.md).
 - Paridad entre Claude Code y Codex: [NATIVE_CHAT_PARITY_MATRIX.md](../NATIVE_CHAT_PARITY_MATRIX.md).
+- Comparativa de uso con Claude Code y Codex: [Comparativa de chats](10-comparativa-chats.md).

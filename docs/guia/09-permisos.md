@@ -1,6 +1,6 @@
 # 9. Configurar permisos
 
-[← Anterior: Historial](08-historial.md) · [Índice](../../README.md#índice)
+[← Anterior: Historial](08-historial.md) · [Índice](../../README.md#índice) · [Siguiente: Comparativa de chats →](10-comparativa-chats.md)
 
 El Chat Harness pide confirmación antes de cada acción sensible: hacer push, crear una rama, abrir un pull request o correr un CLI externo como `gh`. Esta guía explica cómo guardar reglas para que esas preguntas dejen de aparecer en tus proyectos, y qué controles no se pueden desactivar.
 

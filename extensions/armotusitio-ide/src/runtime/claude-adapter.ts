@@ -18,6 +18,7 @@ import { claudeToolArgs } from '../native-agent-execution.ts';
 import { ClaudeEventAccumulator, validSessionId } from '../native-provider-output.ts';
 import { resolveNativeCommand } from '../native-runtime.ts';
 import { validateChatImages } from '../native-chat-images.ts';
+import { parseAgentTodos } from '../native-run-steps.ts';
 import { RuntimeError, type AdapterHost, type AgentAdapter, type AgentConnection, type RuntimeCapabilities, type SessionOpenOptions, type ToolCall, type TurnInput, type TurnResult } from './contracts.ts';
 import { MAX_TEXT_CHARS } from './event-bridge.ts';
 import { ProviderRequestError } from './json-rpc.ts';
@@ -42,6 +43,9 @@ export function claudeToolCall(name: string, input: Record<string, unknown>): To
 	if (READ_TOOLS.has(name)) { return { kind: 'read', name, paths: [input.file_path ?? input.path ?? input.pattern].filter((file): file is string => typeof file === 'string') }; }
 	if (name === 'WebSearch') { return { kind: 'web_search', name, command: typeof input.query === 'string' ? input.query : '' }; }
 	if (name === 'AskUserQuestion') { return { kind: 'question', name }; }
+	// The agent's task list travels with its call, so the chat can show what it plans and what it finished.
+	const todos = name === 'TodoWrite' ? parseAgentTodos(input) : undefined;
+	if (todos) { return { kind: 'other', name, todos }; }
 	const mcp = /^mcp__(?<server>[^_]+(?:-[^_]+)*)__(?<tool>.+)$/.exec(name);
 	if (mcp) { return { kind: 'mcp', name, server: mcp.groups!.server, tool: mcp.groups!.tool }; }
 	return { kind: 'other', name };

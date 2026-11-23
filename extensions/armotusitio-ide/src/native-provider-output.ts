@@ -19,6 +19,10 @@ export interface ProviderUsage {
 	childOutputTokens?: number;
 	/** Distinct child threads that reported usage. */
 	childThreads?: number;
+	/** Tokens the latest model request held in its context (prompt plus cache); the real occupancy, never estimated. */
+	contextTokens?: number;
+	/** Context window of the model that answered, as the provider reported it. */
+	contextWindow?: number;
 }
 export interface ParsedProviderOutput {
 	message: string;
@@ -78,6 +82,8 @@ function claudeResult(data: Record<string, unknown> | undefined): ParsedProvider
 	const output = amount(stats?.output_tokens);
 	const cached = amount(stats?.cache_read_input_tokens);
 	const estimatedCostUsd = cost(data.total_cost_usd);
+	// Each model the turn used reports its window; the largest one is the conversation's limit.
+	const windows = Object.values(object(data.modelUsage) ?? {}).map(entry => amount(object(entry)?.contextWindow)).filter((value): value is number => value !== undefined && value > 0);
 	const providerError = data.is_error === true && !maxTurns;
 	return {
 		message: typeof data.result === 'string' ? data.result : errors.slice(0, MAX_FAILURE_TEXT), structured: true, providerError,
@@ -87,7 +93,8 @@ function claudeResult(data: Record<string, unknown> | undefined): ParsedProvider
 		usage: input !== undefined && output !== undefined
 			? {
 				inputTokens: input, outputTokens: output, ...(cached === undefined ? {} : { cachedInputTokens: cached }),
-				...(estimatedCostUsd === undefined ? {} : { estimatedCostUsd })
+				...(estimatedCostUsd === undefined ? {} : { estimatedCostUsd }),
+				...(windows.length ? { contextWindow: Math.max(...windows) } : {})
 			}
 			: undefined
 	};
@@ -236,6 +243,10 @@ export class ClaudeEventAccumulator extends ProviderEventAccumulator {
 		// Every event names the session, so a run stopped by the IDE (timeout, cancel) can still be resumed.
 		if (validSessionId(event.session_id)) { this.sessionId = event.session_id; }
 		if (event.type === 'assistant') {
+			// What the latest request held: its prompt, plus what it read from and wrote to the cache.
+			const stats = object(object(event.message)?.usage);
+			const held = [stats?.input_tokens, stats?.cache_read_input_tokens, stats?.cache_creation_input_tokens].map(amount);
+			if (held[0] !== undefined) { this.contextTokens = held.reduce<number>((sum, value) => sum + (value ?? 0), 0); }
 			const content = object(event.message)?.content;
 			const blocks = (Array.isArray(content) ? content : []).map(block => object(block));
 			for (const block of blocks) { if (block?.type === 'tool_use' && block.name === 'WebSearch') { this.search(object(block.input)?.query); } }
@@ -254,6 +265,7 @@ export class ClaudeEventAccumulator extends ProviderEventAccumulator {
 		this.providerError = result.providerError;
 		this.stopReason = result.stopReason;
 		this.rateLimited ||= !!result.rateLimited;
-		this.usage = result.usage;
+		this.usage = result.usage && this.contextTokens !== undefined ? { ...result.usage, contextTokens: this.contextTokens } : result.usage;
 	}
+	private contextTokens?: number;
 }

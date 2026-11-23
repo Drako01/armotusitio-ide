@@ -6,8 +6,10 @@
  * "Ver cambios" of a run: a read-only diff between the committed content (HEAD) and the file now. HEAD is the run's
  * "before" only when the user had no uncommitted edits in that file already; otherwise the file is simply opened.
  */
+import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import { gitOutput } from './native-git.ts';
+import { inlineDiff, type InlineDiff } from './native-inline-diff.ts';
 import { isProjectRelative } from './native-chat.ts';
 import type { RunFileChange } from './native-run-diff.ts';
 
@@ -21,6 +23,29 @@ const MAX_PATH = 4096;
 /** A path a webview or command argument may name: project-relative, bounded, no NUL. */
 export function validRunPath(file: unknown): file is string {
 	return typeof file === 'string' && !!file && file.length <= MAX_PATH && !file.includes('\0') && isProjectRelative(file);
+}
+
+/** Files larger than this are compared in the editor's diff view, never read into the chat. */
+const MAX_INLINE_BYTES = 1024 * 1024;
+
+/**
+ * The change of one run file for the chat, from the same "before" as the editor's diff (git HEAD) and the file on disk.
+ * A file that already had the user's own edits has no trustworthy "before", so it says so instead of mixing them in.
+ */
+export async function runFileDiff(root: string, file: string, change: RunFileChange['change'], preexisting: boolean): Promise<InlineDiff | { status: 'preexisting' }> {
+	if (preexisting) { return { status: 'preexisting' }; }
+	const target = path.resolve(root, file);
+	if (!validRunPath(file) || path.relative(root, target).startsWith('..')) { return { status: 'too-large' }; }
+	const read = async (): Promise<string | undefined> => {
+		if (change === 'deleted') { return ''; }
+		// Removed after the run (by the user or a later run): its current content is empty, as the editor's diff shows it.
+		const stat = await fs.stat(target).catch(() => undefined);
+		if (!stat) { return ''; }
+		return stat.size > MAX_INLINE_BYTES ? undefined : fs.readFile(target, 'utf8');
+	};
+	const before = change === 'added' ? '' : await gitOutput(root, ['show', 'HEAD:' + file]).then(output => output.length > MAX_INLINE_BYTES ? undefined : output.toString('utf8'), () => '');
+	const after = await read();
+	return before === undefined || after === undefined ? { status: 'too-large' } : inlineDiff(before, after);
 }
 
 type Translate = (message: string, ...args: string[]) => string;

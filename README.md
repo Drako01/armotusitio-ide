@@ -130,6 +130,7 @@ limitan los datos y rechazan solicitudes privilegiadas iniciadas por el servidor
 | [Chat Harness](docs/guia/04-chat-harness.md) | Modos, permisos y comandos |
 | [Configuración](docs/guia/05-configuracion.md) | Preferencias y seguridad |
 | [Configurar permisos](docs/guia/09-permisos.md) | Reglas para git, pull requests y CLI externos |
+| [Comparativa de chats](docs/guia/10-comparativa-chats.md) | Chat Harness frente a Claude Code y Codex, función por función |
 | [Desarrollo](docs/guia/06-desarrollo.md) | Build, tests y tooling |
 | [Releases](docs/guia/07-releases.md) | Publicación protegida |
 | [Referencia de la extensión](extensions/armotusitio-ide/README.md) | API, integración y comandos |

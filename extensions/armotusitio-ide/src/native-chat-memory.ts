@@ -22,9 +22,9 @@ export interface ChatMemory {
 	lastPlanVersion: number;
 }
 
-/** Compaction starts above this many stored messages and keeps the most recent ones. */
-export const COMPACT_THRESHOLD = 160;
-export const KEEP_MESSAGES = 100;
+/** Automatic compaction is only the storage safety net (it says so in the chat); summarizing earlier is the user's call (/resumir). */
+export const COMPACT_THRESHOLD = 1800;
+export const KEEP_MESSAGES = 1000;
 const MAX_REQUIREMENTS = 25;
 const MAX_DECISIONS = 15;
 const MAX_ENTRY_CHARS = 240;

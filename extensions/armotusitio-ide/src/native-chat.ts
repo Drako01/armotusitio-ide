@@ -127,9 +127,10 @@ import { validChatSteps, type ChatStep } from './native-run-steps.ts';
 import { GIT_TOOLS_CONTRACT, plannerContract } from './native-agent-contract.ts';
 
 const PROVIDERS: readonly NativeProvider[] = ['codex', 'claude'];
-const MAX_MESSAGES = 200;
+/** Stored messages per conversation: long conversations stay whole; the user decides when to summarize (/resumir). */
+const MAX_MESSAGES = 2000;
 const MAX_MESSAGE_CHARS = 64 * 1024;
-const MAX_STATE_BYTES = 8 * 1024 * 1024;
+const MAX_STATE_BYTES = 64 * 1024 * 1024;
 /** Longest message the user can send; the input, the session and the chat host share it. */
 export const MAX_USER_MESSAGE_CHARS = 10000;
 /** Smallest prompt budget; `atsHarness.promptBudgetKiB` can only raise it (the reviewed draft allows up to 320 KiB). */
