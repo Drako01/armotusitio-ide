@@ -68,6 +68,17 @@ Estado a la versión 1.147.0 r3. ✅ igual o mejor · ⚠️ parcial · ❌ falt
 |---|---|---|---|
 | Varias conversaciones trabajando a la vez en el mismo proyecto | Sí | Sí | ❌ Hay una conversación activa por proyecto. Se puede cambiar entre conversaciones guardadas, pero no tener dos trabajando al mismo tiempo: hoy el IDE deja un solo escritor por proyecto para que dos agentes no editen los mismos archivos a la vez. Para hacerlo bien hace falta coordinar qué conversación escribe y cuál solo lee. |
 
+## Mejoras futuras
+
+### Dictado propio, sin internet
+
+En Windows, el botón del **micrófono**, al lado de **Enviar**, abre el dictado de Windows (lo mismo que **Win+H**) y escribe en el cuadro lo que decís. La mejora futura es un dictado propio del IDE, como proyecto aparte:
+
+- **Qué es:** sumar un motor libre de voz a texto (por ejemplo, Whisper) que corra en tu computadora, sin mandar la voz a internet.
+- **Ventajas:** funcionaría en Windows y Linux, y también en el chat integrado del IDE, porque se conectaría al servicio de voz que el IDE ya trae.
+- **Costo:** suma una descarga de unos 75 a 150 MB y bastante más trabajo.
+- **Por qué no usamos «VS Code Speech»:** su licencia permite usarla solo con productos de Microsoft y prohíbe distribuirla, y no está en Open VSX.
+
 ## Qué está probado
 
 - Claude Code con sesión nativa: probado de punta a punta con el proveedor real.

@@ -114,6 +114,7 @@ const EXACT: Record<string, Hint> = {
 	HARNESS_CHAT_PLAN_CHANGED: t => t('El plan cambi\u00f3 mientras lo aprobabas. Revis\u00e1 la versi\u00f3n m\u00e1s nueva y aprobala.'),
 	HARNESS_CHAT_PLAN_NOT_APPROVABLE: t => t('Este plan no se puede aprobar ahora; el motivo aparece debajo del bot\u00f3n.'),
 	HARNESS_CHAT_MESSAGE_UNKNOWN: t => t('Ese mensaje ya no est\u00e1 en esta conversaci\u00f3n (otra ventana la cambi\u00f3 o se resumi\u00f3). Volv\u00e9 a abrir el chat y eleg\u00ed el mensaje de nuevo.'),
+	HARNESS_DICTATION_UNSUPPORTED: t => t('El dictado por voz usa el de Windows y en este sistema no est\u00e1 disponible. Escrib\u00ed el mensaje o us\u00e1 el dictado de tu sistema.'),
 	HARNESS_CHAT_STATE_BUSY: t => t('Otra ventana est\u00e1 guardando esta conversaci\u00f3n. Reintent\u00e1 en unos segundos.'),
 	HARNESS_CHAT_CONTEXT_UNAVAILABLE: t => t('No se pudo leer el estado del proyecto. Reintent\u00e1 en unos segundos.'),
 	HARNESS_CHAT_UNAVAILABLE: t => t('El Harness nativo est\u00e1 desactivado o no carg\u00f3. Revis\u00e1 \u00abatsHarness.enabled\u00bb y recarg\u00e1 la ventana.'),

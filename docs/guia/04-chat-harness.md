@@ -105,6 +105,8 @@ Las reglas permanentes viven en `~/.armotusitio/permissions.json` (tuyas) y `.ar
 
 Pegá, arrastrá o elegí con el botón **+** cualquier archivo: imágenes, PDF, texto, código, CSV o logs. Entran hasta 5 por mensaje, de hasta 10 MB cada uno y 20 MB en total. Se envían sin confirmación, en Preguntar o en Actuar, con Claude Code o con Codex.
 
+En Windows también podés **dictar**: tocá el botón del micrófono, al lado de **Enviar**. Se abre el dictado de Windows (lo mismo que apretar **Win+H**) y lo que decís se escribe en el cuadro. Revisalo y envialo como siempre.
+
 Cada adjunto se guarda en `.chat-attachments/` dentro del proyecto, una carpeta que git ignora localmente, y se borra a los 7 días. El agente recibe la ruta y lo abre con sus herramientas: Claude ve imágenes y PDF; Codex ve imágenes PNG y JPEG. Un binario que el agente no sabe leer, como un `.docx`, se adjunta igual, pero el chat te avisa que la IA no puede leerlo tal como está y el agente tiene indicado no afirmar que lo analizó: exportalo a PDF o texto si querés que lo use.
 
 ## Comandos del chat

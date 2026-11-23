@@ -37,7 +37,7 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, .log:focus-v
 .topbar #menu-button { position: absolute; top: 8px; right: 12px; min-height: 28px; }
 /* New conversation sits beside the menu, always in the same corner, like the editor's own chat. */
 .topbar #new-chat { position: absolute; top: 8px; right: 52px; display: inline-flex; align-items: center; justify-content: center; min-width: 36px; min-height: 28px; padding: 2px 8px; }
-.new-chat-icon { width: 16px; height: 16px; }
+.new-chat-icon, .mic-icon { width: 16px; height: 16px; }
 .brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .brand-text { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
 .brand h1 { margin: 0; font-size: 1em; font-weight: 600; white-space: nowrap; }
@@ -229,6 +229,7 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, .log:focus-v
 .pending-file .muted { overflow-wrap: anywhere; font-size: 12px; }
 .pending-file button { flex-shrink: 0; padding: 0 6px; }
 .composer-box .attach { flex-shrink: 0; align-self: flex-end; min-width: 32px; font-size: 16px; line-height: 1; }
+.composer-box .dictate { display: inline-flex; flex-shrink: 0; align-self: flex-end; align-items: center; justify-content: center; min-width: 32px; }
 /* Composer */
 .composer { position: relative; padding: 10px 16px 12px; border-top: 1px solid var(--chat-border); background: var(--chat-surface); }
 .composer-box { display: flex; align-items: flex-end; gap: 8px; max-width: 860px; margin: 0 auto; padding: 6px 6px 6px 12px; border: 1px solid var(--vscode-input-border, var(--chat-border)); border-radius: var(--chat-radius-large); background: var(--vscode-input-background); }

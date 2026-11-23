@@ -348,3 +348,26 @@ test('the answer streams inside the conversation, the agent plan is a checklist,
 		});
 	} finally { await browser.close(); }
 });
+
+test('the microphone puts the cursor in the box and asks the host for Windows dictation, and is absent where there is none', async () => {
+	const { labels } = require('../src/chat.ts');
+	const { dictationSupported, PRESS_WIN_H } = require('../src/native-dictation.ts');
+	const browser = await launchBrowser();
+	try {
+		const page = await browser.newPage({ viewport: { width: 900, height: 800 }, reducedMotion: 'reduce' });
+		const push = await mountChat(page);
+		await push({ type: 'init', labels: { ...labels(t), dictation: true } });
+		await push(state());
+		await page.getByRole('button', { name: 'Dictar con la voz', exact: true }).click();
+		const dictate = await page.evaluate(() => ({ sent: window.sent.at(-1), focused: document.activeElement?.id }));
+		await push({ type: 'init', labels: { ...labels(t), dictation: false } });
+		const absent = await page.locator('#dictate').count();
+		assert.deepEqual({ dictate, absent, windows: dictationSupported('win32'), linux: dictationSupported('linux'), winH: /keybd_event\(91, 0, 0,.*keybd_event\(72, 0, 0,/.test(PRESS_WIN_H) }, {
+			dictate: { sent: { action: 'dictate' }, focused: 'prompt' },
+			absent: 0,
+			windows: true,
+			linux: false,
+			winH: true
+		});
+	} finally { await browser.close(); }
+});
