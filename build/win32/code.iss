@@ -82,6 +82,7 @@ Type: filesandordirs; Name: "{app}\bin"
 Type: files; Name: "{app}\old_*"
 Type: files; Name: "{app}\new_*"
 Type: files; Name: "{app}\updating_version"
+Type: filesandordirs; Name: "{app}\tools\stale"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
@@ -107,7 +108,7 @@ Source: "bin\copilot-shim\copilot"; Flags: dontcopy noencryption
 Source: "*"; Excludes: "\CodeSignSummary*.md,\tools,\tools\*,\policies,\policies\*,\appx,\appx\*,\{#ProductJsonRelativePath},\{#ExeBasename}.exe,\{#ExeBasename}.VisualElementsManifest.xml,\bin,\bin\*"; DestDir: "{code:GetDestDir}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#ExeBasename}.exe"; DestDir: "{code:GetDestDir}"; DestName: "{code:GetExeBasename}"; Flags: ignoreversion
 Source: "{#ExeBasename}.VisualElementsManifest.xml"; DestDir: "{code:GetDestDir}"; DestName: "{code:GetVisualElementsManifest}"; Flags: ignoreversion
-Source: "tools\*"; DestDir: "{app}\{#VersionedResourcesFolder}\tools"; Flags: ignoreversion
+Source: "tools\*"; DestDir: "{app}\{#VersionedResourcesFolder}\tools"; BeforeInstall: MoveToolAsideIfHeld; Flags: ignoreversion
 Source: "policies\*"; DestDir: "{code:GetDestDir}\{#VersionedResourcesFolder}\policies"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 Source: "bin\{#TunnelApplicationName}.exe"; DestDir: "{code:GetDestDir}\bin"; DestName: "{code:GetBinDirTunnelApplicationFilename}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "bin\{#ApplicationName}.cmd"; DestDir: "{code:GetDestDir}\bin"; DestName: "{code:GetBinDirApplicationCmdFilename}"; Flags: ignoreversion
@@ -1840,6 +1841,8 @@ begin
 end;
 #endif
 
+#include AddBackslash(SourcePath) + "locked-files.iss"
+
 #ifdef CopilotShim
 #include AddBackslash(SourcePath) + "copilot.iss"
 #endif
@@ -1889,7 +1892,7 @@ begin
         StopTunnelServiceIfNeeded();
         Log('Invoking inno_updater for background update');
         // Record what really happened: a failed swap used to be logged as a success, hiding why the update did not apply.
-        if Exec(ExpandConstant('{app}\{#VersionedResourcesFolder}\tools\inno_updater.exe'), ExpandConstant('"{app}\{#ExeBasename}.exe" ' + BoolToStr(LockFileExists()) + ' "{cm:UpdatingVisualStudioCode}"'), '', SW_SHOW, ewWaitUntilTerminated, UpdateResultCode) and (UpdateResultCode = 0) then
+        if RunUpdaterAroundHeldFiles(ExpandConstant('{app}\{#VersionedResourcesFolder}\tools\inno_updater.exe'), ExpandConstant('{app}\{#ExeBasename}.exe'), ExpandConstant('"{app}\{#ExeBasename}.exe" ' + BoolToStr(LockFileExists()) + ' "{cm:UpdatingVisualStudioCode}"'), UpdateResultCode) then
           Log('inno_updater completed successfully')
         else
           Log('inno_updater failed with exit code ' + IntToStr(UpdateResultCode) + '; the previous version stays installed');

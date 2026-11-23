@@ -444,7 +444,7 @@ async function validate(): Promise<unknown> {
 		}
 	}
 	await run(process.execPath, [path.join(repositoryRoot, 'node_modules', '@typescript', 'native', 'bin', 'tsc'), '--project', 'extensions/armotusitio-ide/tsconfig.json', '--noEmit', '--pretty', 'false']);
-	await run(process.execPath, ['--test', 'scripts/ats-autoupdate.test.mts', 'scripts/ats-release-script.test.mts', 'scripts/ats-release-state.test.mts', 'scripts/ats-build-all.test.mts', 'scripts/ats-release-retry.test.mts', 'scripts/ats-release-check.test.mts', 'scripts/ats-authenticode.test.mts', 'scripts/ats-release-ci.test.mts'], repositoryRoot, 120000);
+	await run(process.execPath, ['--test', 'scripts/ats-autoupdate.test.mts', 'scripts/ats-release-script.test.mts', 'scripts/ats-release-state.test.mts', 'scripts/ats-build-all.test.mts', 'scripts/ats-release-retry.test.mts', 'scripts/ats-release-check.test.mts', 'scripts/ats-authenticode.test.mts', 'scripts/ats-release-ci.test.mts', 'scripts/ats-installer.test.mts'], repositoryRoot, 300000);
 	const result = { status: 'validated', commit: await run('git', ['rev-parse', 'HEAD']), checkedAt: new Date().toISOString(), buildExecuted: false };
 	await saveJSON(path.join(stateRoot, 'validation.json'), result);
 	return result;

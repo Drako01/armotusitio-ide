@@ -253,6 +253,7 @@ test('Windows background updates keep the flat layout with an inno_updater that 
 	const updater = await readFile(new URL('../build/win32/inno_updater.exe', import.meta.url), 'latin1');
 	const cargo = await readFile(new URL('../build/win32/Cargo.toml', import.meta.url), 'utf8');
 	const setup = (await readFile(new URL('../build/win32/code.iss', import.meta.url), 'utf8')).replaceAll('\r\n', '\n');
+	const heldFiles = await readFile(new URL('../build/win32/locked-files.iss', import.meta.url), 'utf8');
 	const msix = await readFile(new URL('./ats-package-msix.ps1', import.meta.url), 'utf8');
 	assert.deepEqual({
 		versioned: product.win32VersionedUpdate ?? false,
@@ -261,11 +262,17 @@ test('Windows background updates keep the flat layout with an inno_updater that 
 		// A manual install first stops helpers left running from the install folder, only when the editor itself is closed.
 		orphansStopped: /procedure StopOrphanHelperProcesses\(\);[^]*?if CheckForMutexes\('\{#AppMutex\}'\) then\n\s+exit;[^]*?function PrepareToInstall[^]*?StopOrphanHelperProcesses\(\);/.test(setup),
 		// A failed swap is logged as a failure, never as a success.
-		exitChecked: /if Exec\([^\n]*inno_updater\.exe[^\n]*UpdateResultCode\) and \(UpdateResultCode = 0\) then\n\s+Log\('inno_updater completed successfully'\)/.test(setup),
+		exitChecked: /if RunUpdaterAroundHeldFiles\([^\n]*inno_updater\.exe[^\n]*UpdateResultCode\) then\n\s+Log\('inno_updater completed successfully'\)/.test(setup)
+			&& heldFiles.includes(`Result := Exec(Updater, Params, '', SW_SHOW, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0);`),
+		// Files an antivirus holds are moved out of inno_updater's way, including the tools it replaces while staging
+		// (scripts/ats-installer.test.mts runs that end to end), and the uninstaller removes what is left of them.
+		heldFilesMovedAside: setup.includes('#include AddBackslash(SourcePath) + "locked-files.iss"')
+			&& /Source: "tools\\\*";[^\n]*BeforeInstall: MoveToolAsideIfHeld;/.test(setup)
+			&& setup.includes('Type: filesandordirs; Name: "{app}\\tools\\stale"'),
 		// The Store package finds the resources in either layout and leaves updates to the Store.
 		msixVersioned: msix.includes(`Where-Object Name -CMatch '^[a-f0-9]{10}$'`),
 		msixNoSelfUpdate: msix.includes(`Remove('armotusitioUpdate')`)
-	}, { versioned: false, updaterVersion: '0.23.0', updaterAppliesFlatLayout: true, orphansStopped: true, exitChecked: true, msixVersioned: true, msixNoSelfUpdate: true });
+	}, { versioned: false, updaterVersion: '0.23.0', updaterAppliesFlatLayout: true, orphansStopped: true, exitChecked: true, heldFilesMovedAside: true, msixVersioned: true, msixNoSelfUpdate: true });
 });
 
 test('packaged Windows resources are found under the commit folder and stale or mixed layouts are refused', async () => {
