@@ -31,12 +31,12 @@ test('a pending approval is a named, keyboard-operable card that answers with a 
 		});
 		assert.deepEqual(shown, {
 			name: 'Hacer commit', lines: card.detail, bold: 0, rule: '\u00abSiempre en este proyecto\u00bb guarda la regla \u00abgit_commit\u00bb en ~/.armotusitio/permissions.json; \u00abEsta tarea\u00bb y \u00abEsta sesi\u00f3n\u00bb no guardan nada.',
-			buttons: ['Permitir una vez', 'Esta tarea', 'Esta sesi\u00f3n', 'Siempre en este proyecto', 'Denegar'], focused: 'Permitir una vez'
+			buttons: ['Permitir una vez', 'Denegar', 'Esta tarea', 'Esta sesi\u00f3n', 'Siempre en este proyecto'], focused: 'Permitir una vez'
 		});
 		// Progress updates keep the same card, so focus is not stolen from the button the user is on.
 		await page.keyboard.press('Tab');
 		await push(withApprovals([card]));
-		assert.equal(await page.evaluate(() => document.activeElement.textContent), 'Esta tarea');
+		assert.equal(await page.evaluate(() => document.activeElement.textContent), 'Denegar');
 		const answers = [];
 		for (const label of ['Esta tarea', 'Esta sesi\u00f3n', 'Siempre en este proyecto', 'Denegar']) {
 			await page.click(`#approvals button:text-is("${label}")`);
@@ -54,7 +54,7 @@ test('a pending approval is a named, keyboard-operable card that answers with a 
 		const inspect = { id: 'ap-0123456789abcdef', kind: 'run', title: 'Ejecutar comando', detail: ['command: docker ps'], rule: 'run:docker ps', global: true };
 		await push(withApprovals([inspect]));
 		assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#approvals button')].map(button => button.textContent)),
-			['Permitir una vez', 'Esta tarea', 'Esta sesi\u00f3n', 'Siempre en este proyecto', 'En todos mis proyectos', 'Denegar']);
+			['Permitir una vez', 'Denegar', 'Esta tarea', 'Esta sesi\u00f3n', 'Siempre en este proyecto', 'En todos mis proyectos']);
 		await push(withApprovals([]));
 		assert.equal(await page.locator('#approvals').isHidden(), true);
 	} finally { await browser.close(); }

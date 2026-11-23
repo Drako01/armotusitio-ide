@@ -87,4 +87,44 @@ function parseMarkdown(source: string): Block[] {
 	return blocks;
 }
 
-module.exports = { parseMarkdown, parseInline };
+/** A piece of highlighted code: plain text or one token kind the stylesheet colors. Still text only, never markup. */
+type CodeToken = { type: 'text' | 'keyword' | 'string' | 'number' | 'comment'; text: string };
+
+/** Languages whose line comments start with `#`; the rest use `//` (and SQL/Lua `--`). */
+const HASH_COMMENTS = new Set(['py', 'python', 'sh', 'bash', 'zsh', 'shell', 'ps1', 'powershell', 'pwsh', 'yaml', 'yml', 'toml', 'rb', 'ruby', 'dockerfile', 'makefile', 'r', 'perl', 'ini', 'conf', 'env']);
+const DASH_COMMENTS = new Set(['sql', 'lua', 'hs', 'haskell']);
+/** Words shared by the languages people paste most; good enough to read code, not a full grammar. */
+const KEYWORDS = new Set(('abstract and as async await break case catch class const continue def default defer delete do elif else enum export extends ' +
+	'false final finally fn for foreach from func function go if impl implements import in interface is lambda let match mod module mut namespace new nil ' +
+	'none not null of or package pass private protected pub public raise readonly return select self static struct super switch then this throw throws ' +
+	'true try type typeof undefined use using var void when where while with yield echo fi esac done ' +
+	'SELECT FROM WHERE INSERT INTO UPDATE DELETE CREATE TABLE ALTER DROP JOIN LEFT RIGHT INNER OUTER ON GROUP BY ORDER LIMIT AND OR NOT NULL AS VALUES SET PRIMARY KEY ' +
+	'True False None').split(' '));
+/** Above this size a block stays plain: highlighting must never slow down the chat. */
+const MAX_HIGHLIGHT_CHARS = 20000;
+const NO_HIGHLIGHT = new Set(['', 'text', 'txt', 'plain', 'plaintext', 'log', 'output', 'console', 'diff', 'md', 'markdown']);
+
+/** Tokens of a code block for coloring; unknown or huge blocks come back as one plain token. */
+function highlightCode(language: string, source: string): CodeToken[] {
+	const lang = language.toLowerCase();
+	if (NO_HIGHLIGHT.has(lang) || source.length > MAX_HIGHLIGHT_CHARS) { return [{ type: 'text', text: source }]; }
+	const comment = HASH_COMMENTS.has(lang) ? '#[^\\n]*' : DASH_COMMENTS.has(lang) ? '--[^\\n]*' : '\\/\\/[^\\n]*|<!--[\\s\\S]*?-->';
+	const pattern = new RegExp('(?<comment>' + comment + '|\\/\\*[\\s\\S]*?\\*\\/)|(?<string>"(?:[^"\\\\\\n]|\\\\.)*"|\'(?:[^\'\\\\\\n]|\\\\.)*\'|`(?:[^`\\\\]|\\\\.)*`)|(?<number>\\b\\d[\\d_]*(?:\\.\\d+)?\\b)|(?<word>\\b[A-Za-z_]\\w*\\b)', 'g');
+	const tokens: CodeToken[] = [];
+	let last = 0;
+	const push = (type: CodeToken['type'], text: string) => {
+		const previous = tokens.at(-1);
+		if (previous?.type === type) { previous.text += text; } else { tokens.push({ type, text }); }
+	};
+	for (const match of source.matchAll(pattern)) {
+		const groups = match.groups!;
+		const type: CodeToken['type'] = groups.comment !== undefined ? 'comment' : groups.string !== undefined ? 'string' : groups.number !== undefined ? 'number' : KEYWORDS.has(match[0]) ? 'keyword' : 'text';
+		if (match.index > last) { push('text', source.slice(last, match.index)); }
+		push(type, match[0]);
+		last = match.index + match[0].length;
+	}
+	if (last < source.length) { push('text', source.slice(last)); }
+	return tokens;
+}
+
+module.exports = { parseMarkdown, parseInline, highlightCode };

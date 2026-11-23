@@ -33,7 +33,7 @@ test('J-16/J-03: the run card separates applied from verified, shows corrections
 		assert.deepEqual(cards.map(card => card.badge), ['Fallida', 'Verificada', 'Aplicada sin verificar', 'Fallida']);
 		assert.match(cards[1].head, /Correcci\u00f3n autom\u00e1tica 1 de 2/);
 		// Verified technically is not verified functionally: without an E2E or smoke gate the card says so.
-		assert.match(cards[1].text, /Funcional no verificado/);
+		assert.match(cards[1].text, /Nadie prob\u00f3 la app funcionando/);
 		assert.match(cards[2].text, /no corri\u00f3 ninguna verificaci\u00f3n/);
 		assert.match(cards[3].text, /la causa est\u00e1 fuera del c\u00f3digo \(test: service-down\)/);
 		assert.deepEqual(await page.$$eval('.run-summary summary', nodes => nodes.map(node => node.textContent).filter(text => text.startsWith('Ver evidencia'))), ['Ver evidencia (1)', 'Ver evidencia (1)']);

@@ -301,7 +301,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 	 * host permission prompts; otherwise the run keeps the structured transport and the user is told once per window.
 	 */
 	const nativeTransport = async (provider: NativeProvider, canAsk: boolean): Promise<boolean> => {
-		if (provider !== 'claude' || !canAsk || vscode.workspace.getConfiguration('atsHarness').get('agentTransport', 'structured') !== 'native') { return false; }
+		if (provider !== 'claude' || !canAsk || vscode.workspace.getConfiguration('atsHarness').get('agentTransport', 'auto') !== 'native') { return false; }
 		if (!hostPromptSupport) {
 			hostPromptSupport = probeHostPermissionPrompts(provider).catch(() => false);
 			if (!await hostPromptSupport) { void vscode.window.showWarningMessage(vscode.l10n.t('La versi\u00f3n instalada de Claude no permite que el IDE responda sus permisos: el chat usa el canal estructurado.')); }
@@ -521,7 +521,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 	const nativeChat = new NativeChatTransport({
 		storageFor: root => metricsDirectory(root),
 		profileFor: async (root, provider) => (await profiles.resolve(provider, root))?.id,
-		setting: () => parseTransportSetting(vscode.workspace.getConfiguration('atsHarness').get('agentTransport', 'structured')),
+		setting: () => parseTransportSetting(vscode.workspace.getConfiguration('atsHarness').get('agentTransport', 'auto')),
 		trusted: () => vscode.workspace.isTrusted,
 		environment: async (provider, profileId) => {
 			const toolchain = await currentToolchainEnvironment();
@@ -778,7 +778,7 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			async transport(provider, conversationId) {
 				const decision = await nativeChat.decide(provider);
 				if (!decision.native) {
-					if (decision.reason && parseTransportSetting(vscode.workspace.getConfiguration('atsHarness').get('agentTransport', 'structured')) !== 'structured' && !transportWarned.has(provider)) {
+					if (decision.reason && parseTransportSetting(vscode.workspace.getConfiguration('atsHarness').get('agentTransport', 'auto')) !== 'structured' && !transportWarned.has(provider)) {
 						transportWarned.add(provider);
 						void vscode.window.showWarningMessage(vscode.l10n.t('El chat usa el canal estructurado con {0}: {1}', provider === 'claude' ? 'Claude Code' : 'Codex', decision.reason));
 					}

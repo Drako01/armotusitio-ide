@@ -24,8 +24,8 @@ const conversation = (count: number): ChatMessage[] => Array.from({ length: coun
 test('compaction keeps recent messages and the latest plan, and never starts below the threshold', () => {
 	const short = conversation(COMPACT_THRESHOLD);
 	const long = conversation(COMPACT_THRESHOLD + 20);
-	// The plan is older than the newest 100 messages but not buried: only what precedes it may be folded.
-	const withPlan = [...conversation(50), planMessage(3, 'Plan reciente'), ...conversation(120)];
+	// The plan is older than the newest kept messages but not buried: only what precedes it may be folded.
+	const withPlan = [...conversation(50), planMessage(3, 'Plan reciente'), ...conversation(COMPACT_THRESHOLD - 10)];
 	const buried = [planMessage(1, 'Plan viejo'), ...conversation(COMPACT_THRESHOLD + 10)];
 	assert.deepEqual({
 		short: compactionSplit(short), long: compactionSplit(long),
@@ -108,7 +108,7 @@ const replies = (outputs: string[]): ChatRuntime => {
 	};
 };
 
-test('a long conversation compacts into persisted memory, keeps plan versions increasing and clears on reset', async () => {
+test('/resumir folds a long conversation into persisted memory when the user asks, keeps plan versions increasing and clears on reset', async () => {
 	const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-chat-memory-'));
 	const t = (text: string, ...args: string[]) => text.replace(/\{(\d+)\}/g, (_, index) => args[Number(index)]);
 	const planned = (title: string) => '```harness-plan\n' + JSON.stringify({ title, summary: 's', steps: ['paso'] }) + '\n```';
@@ -119,17 +119,20 @@ test('a long conversation compacts into persisted memory, keeps plan versions in
 		const chat = new HarnessChatSession(store, replies(outputs), () => undefined, t);
 		await chat.open();
 		for (let index = 0; index < 91; index++) { await chat.send('requisito ' + index); }
+		// Below the storage safety net nothing is folded by itself: the user decides when.
+		const before = chat.snapshot().messages.length;
+		const folded = await chat.compact();
 		const snapshot = chat.snapshot();
 		const stored = JSON.parse(await fs.readFile(path.join(directory, 'conversation.json'), 'utf8'));
 		const reloaded = new HarnessChatSession(new ChatStore(directory), replies([]), () => undefined, t);
 		await reloaded.open();
 		assert.deepEqual({
-			// 91 turns are 182 messages: the history was compacted instead of silently truncated.
-			bounded: snapshot.messages.length < 182, memoryCompacted: stored.memory.compacted > 0, memoryRoot: stored.memory.root,
+			// 91 turns are 182 messages: kept whole until /resumir, which keeps the latest plan and what follows.
+			untouchedBefore: before === 182, folded, bounded: snapshot.messages.length < 182, memoryCompacted: stored.memory.compacted > 0, memoryRoot: stored.memory.root,
 			firstRequirementRemembered: stored.memory.requirements.some((entry: string) => entry.startsWith('requisito')),
 			// The version never restarts at 1 once the first plan left the history.
 			planVersion: snapshot.plan?.version, survivesRestart: reloaded.snapshot().messages.length === snapshot.messages.length
-		}, { bounded: true, memoryCompacted: true, memoryRoot: root, firstRequirementRemembered: true, planVersion: 2, survivesRestart: true });
+		}, { untouchedBefore: true, folded: 162, bounded: true, memoryCompacted: true, memoryRoot: root, firstRequirementRemembered: true, planVersion: 2, survivesRestart: true });
 		await chat.reset();
 		assert.equal(JSON.parse(await fs.readFile(path.join(directory, 'conversation.json'), 'utf8')).memory, undefined);
 	} finally { await fs.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }

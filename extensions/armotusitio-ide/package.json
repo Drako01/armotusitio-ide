@@ -274,7 +274,7 @@
 						"Sesiones nativas persistentes (Claude Code y Codex): la conversación continúa en el proveedor entre mensajes y tras reiniciar el IDE, con streaming, preguntas del agente y permisos decididos por el IDE (y tu tarjeta cuando corresponde). Si la versión instalada no es compatible, se usa el estructurado y se avisa.",
 						"Usa sesiones nativas solo con proveedores cuya versión instalada es compatible; si no, el estructurado."
 					],
-					"default": "structured",
+					"default": "auto",
 					"scope": "application",
 					"description": "Transporte del chat con Claude Code y Codex. Es una preferencia de usuario: un repositorio no puede activarla."
 				},

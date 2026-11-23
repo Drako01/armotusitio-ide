@@ -61,9 +61,9 @@ test('Chat Harness webview is keyboard operable, announces phases only and rende
 			announcer: document.getElementById('announcer').textContent,
 			stopVisible: !document.getElementById('stop').hidden
 		}));
-		assert.deepEqual(live, { inLog: false, clockHidden: 'true', announcer: 'Ejecutando verificaciones. unit: En curso', stopVisible: true });
+		assert.deepEqual(live, { inLog: false, clockHidden: 'true', announcer: 'Comprobando que todo funcione. unit: En curso', stopVisible: true });
 		await push(state({ kind: 'executing', provider: 'claude', startedAt: at, observedBytes: 18000, stage: 'verifying', planVersion: 1, gates: [{ id: 'unit', status: 'running' }], cancelling: true }));
-		assert.deepEqual(await page.evaluate(() => ({ announcer: document.getElementById('announcer').textContent, stop: document.getElementById('stop').disabled })), { announcer: 'Ejecutando verificaciones. unit: En curso', stop: true });
+		assert.deepEqual(await page.evaluate(() => ({ announcer: document.getElementById('announcer').textContent, stop: document.getElementById('stop').disabled })), { announcer: 'Comprobando que todo funcione. unit: En curso', stop: true });
 
 		// Progress-only updates omit the history; the rendered conversation must not be lost.
 		const progressOnly = state({ kind: 'thinking', provider: 'claude', startedAt: at, observedBytes: 100 });
@@ -139,7 +139,7 @@ test('live timeline, queued messages and per-file run actions render inertly, ac
 		});
 		assert.deepEqual(live, {
 			labels: 32, injected: false, pwned: false, scrollable: true, atEnd: true, listLabel: 'Pasos del agente', inLiveRegion: false,
-			announcer: 'Agente implementador trabajando. En cola (2)', queued: ['despues arregla los tests', 'y el README'], send: 'Encolar', sendHidden: false, stop: 'Detener'
+			announcer: 'La IA est\u00e1 haciendo los cambios. En cola (2)', queued: ['despues arregla los tests', 'y el README'], send: 'Encolar', sendHidden: false, stop: 'Detener'
 		});
 		// A new step does not announce itself (no chatter), but the queue is removable and sending while busy posts as usual.
 		await page.click('#activity .queued button >> nth=1');
@@ -170,9 +170,9 @@ test('live timeline, queued messages and per-file run actions render inertly, ac
 			files: [...document.querySelectorAll('.run-file')].map(item => item.querySelector('code').textContent + ':' + [...item.querySelectorAll('button')].map(button => button.textContent).join('/')),
 			undo: [...document.querySelectorAll('.run-actions button')].map(button => button.textContent)
 		}));
-		assert.deepEqual(summary, { summaries: ['Archivos que cambi\u00f3 esta ejecuci\u00f3n (2)', 'Pasos de la ejecuci\u00f3n (3)'], files: ['src/a.ts:Ver cambios/Revertir', 'src/b.ts:Ver cambios/Revertir'], undo: ['Deshacer esta ejecuci\u00f3n', 'Ver en Inicio'] });
+		assert.deepEqual(summary, { summaries: ['Archivos que cambi\u00f3 esta ejecuci\u00f3n (2)', 'Pasos de la ejecuci\u00f3n (3)'], files: ['src/a.ts:Mostrar cambios/Abrir en el editor/Revertir', 'src/b.ts:Mostrar cambios/Abrir en el editor/Revertir'], undo: ['Deshacer esta ejecuci\u00f3n', 'Ver en Inicio'] });
 		await page.evaluate(() => document.querySelector('.run-files-slot details').open = true);
-		await page.click('.run-file >> nth=1 >> text=Ver cambios');
+		await page.click('.run-file >> nth=1 >> text=Abrir en el editor');
 		assert.deepEqual(await page.evaluate(() => window.sent.at(-1)), { action: 'openDiff', messageId: 'r1', path: 'src/b.ts' });
 		await page.click('.run-file >> nth=0 >> text=Revertir');
 		assert.deepEqual(await page.evaluate(() => window.sent.at(-1)), { action: 'revertFile', messageId: 'r1', path: 'src/a.ts' });
@@ -181,7 +181,7 @@ test('live timeline, queued messages and per-file run actions render inertly, ac
 		const after = JSON.parse(JSON.stringify(done)); after.chat.messages.find(message => message.id === 'r1').run.reverted = ['src/a.ts']; after.chat.revision = 2;
 		await push(after);
 		assert.deepEqual(await page.evaluate(() => ({ open: document.querySelector('.run-files-slot details')?.open, files: [...document.querySelectorAll('.run-file')].map(item => item.textContent.replace(/\s+/g, ' ').trim()) })), {
-			open: true, files: ['src/a.ts modificado \u00b7 revertido', 'src/b.ts nuevoVer cambiosRevertir']
+			open: true, files: ['src/a.ts modificado \u00b7 revertido', 'src/b.ts nuevoMostrar cambiosAbrir en el editorRevertir']
 		});
 
 		// A blocked run always ends with the concrete next step for what it needs, never a dead end.
@@ -255,5 +255,96 @@ test('project drafts restore without crossing projects and sidebar commands rema
 		await page.getByRole('button', { name: 'Expandir Chat', exact: true }).focus();
 		await page.keyboard.press('Enter');
 		assert.equal(await page.evaluate(() => window.sent.at(-1).action), 'expandChat');
+	} finally { await browser.close(); }
+});
+
+test('answers open project files and web links, New conversation is one click, Esc stops a running task and the empty state matches the mode', async () => {
+	const browser = await launchBrowser();
+	try {
+		const page = await browser.newPage({ viewport: { width: 900, height: 800 }, reducedMotion: 'reduce' });
+		const push = await mountChat(page);
+		const value = state();
+		value.chat.plan = undefined;
+		value.chat.messages = [
+			{ id: 'a1', role: 'assistant', provider: 'claude', at, text: 'Cambi\u00e9 `src/forms/register.ts:42`, `console.log` y [la gu\u00eda](https://example.com/guia); [otro](javascript:alert(1)) y [archivo](./src/app.ts#L7).' },
+			{ id: 'r1', role: 'run', provider: 'claude', at, text: '', run: { status: 'completed', provider: 'claude', planVersion: 0, durationMs: 1000, verification: { status: 'skipped', gates: [] } } }
+		];
+		await push(value);
+		const opened = [];
+		for (const button of await page.locator('.inline-link').all()) { await button.click(); opened.push(await page.evaluate(() => window.sent.at(-1))); }
+		const copies = await page.locator('article.run .copy').count();
+		await page.getByRole('button', { name: 'Nueva conversación', exact: true }).click();
+		const fresh = await page.evaluate(() => window.sent.at(-1));
+		await push({ ...state({ kind: 'thinking', provider: 'claude', startedAt: at }), chatMode: 'act' });
+		const hint = await page.locator('#composer-hint').textContent();
+		const freshWhileBusy = await page.locator('#new-chat').isDisabled();
+		await page.focus('#prompt'); await page.keyboard.press('Escape');
+		const stopped = await page.evaluate(() => window.sent.at(-1));
+		const empty = state(); empty.chat.messages = []; empty.chat.plan = undefined;
+		await push({ ...empty, chatMode: 'ask' });
+		const ask = await page.locator('#empty p').textContent();
+		assert.deepEqual({ opened, copies, fresh, freshWhileBusy, hint, stopped, ask }, {
+			opened: [
+				{ action: 'openFile', path: 'src/forms/register.ts', line: 42 },
+				{ action: 'openLink', href: 'https://example.com/guia' },
+				{ action: 'openFile', path: 'src/app.ts', line: 7 }
+			],
+			copies: 0,
+			fresh: { action: 'reset' },
+			freshWhileBusy: true,
+			hint: 'Enter encola tu mensaje \u00b7 Esc detiene la tarea',
+			stopped: { action: 'cancel' },
+			ask: 'Convers\u00e1 con la IA sobre tu proyecto. En modo Preguntar no cambia nada: si hace falta un cambio, te propone un plan para aprobar ac\u00e1 mismo.'
+		});
+	} finally { await browser.close(); }
+});
+
+test('the answer streams inside the conversation, the agent plan is a checklist, code is colored and file changes open inline', async () => {
+	const browser = await launchBrowser();
+	try {
+		const page = await browser.newPage({ viewport: { width: 900, height: 800 }, reducedMotion: 'reduce' });
+		const push = await mountChat(page);
+		const running = state({ kind: 'executing', provider: 'claude', planVersion: 0, stage: 'agent', startedAt: at, observedBytes: 0, partial: 'Estoy **revisando**', todos: [{ text: 'Leer', status: 'completed' }, { text: 'Validar', status: 'in_progress' }, { text: 'Probar', status: 'pending' }] });
+		running.chat.plan = undefined;
+		running.chat.context = { provider: 'claude', used: 170000, window: 200000 };
+		await push(running);
+		const live = await page.evaluate(() => ({
+			last: document.getElementById('thread').lastElementChild.id,
+			text: document.querySelector('#streaming .streaming-body').textContent,
+			hidden: document.getElementById('streaming').getAttribute('aria-hidden'),
+			inActivity: !!document.querySelector('#activity .partial'),
+			todos: [...document.querySelectorAll('#activity .todo')].map(item => item.className),
+			head: document.querySelector('.todos-head').textContent,
+			gauge: [document.getElementById('context-gauge').textContent, document.getElementById('context-gauge').dataset.level],
+			editDisabled: document.querySelector('.edit-message').disabled
+		}));
+		const done = state(); done.chat.plan = undefined;
+		done.chat.messages = [
+			{ id: 'u1', role: 'user', text: 'Hola', at },
+			{ id: 'a9', role: 'assistant', provider: 'claude', at, text: '```ts\nconst total = 42; // suma\n```' },
+			{ id: 'r1', role: 'run', provider: 'claude', at, text: '', run: { status: 'completed', provider: 'claude', planVersion: 0, durationMs: 1000, verification: { status: 'skipped', gates: [] }, outcome: { kind: 'completed', assurance: 'verified', diff: { available: true, count: 1, files: [{ path: 'src/a.ts', change: 'modified' }] } } } }
+		];
+		await push(done);
+		const tokens = await page.evaluate(() => [...document.querySelectorAll('.code-block code span')].map(span => span.className + ':' + span.textContent));
+		await page.click('.run-files summary');
+		await page.click('.diff-toggle');
+		const asked = await page.evaluate(() => window.sent.at(-1));
+		await page.evaluate(() => window.postMessage({ type: 'inlineDiff', messageId: 'r1', path: 'src/a.ts', diff: { status: 'ok', added: 1, removed: 1, truncated: false, lines: [{ kind: 'del', text: 'a', line: 1 }, { kind: 'add', text: 'b', line: 1 }, { kind: 'gap', skipped: 4 }] } }, '*'));
+		await page.waitForSelector('.inline-diff');
+		const diff = await page.evaluate(() => [...document.querySelectorAll('.diff-lines > span')].map(line => line.className));
+		await page.click('.edit-message');
+		const rewind = await page.evaluate(() => window.sent.at(-1));
+		assert.deepEqual({ live, tokens, asked, diff, rewind, streamingGone: await page.locator('#streaming').count() }, {
+			live: {
+				last: 'streaming', text: 'Estoy revisando', hidden: 'true', inActivity: false,
+				todos: ['todo completed', 'todo in_progress', 'todo pending'], head: 'Plan del agente: 1 de 3 hechos',
+				gauge: ['Espacio usado: 85 %', 'warn'], editDisabled: true
+			},
+			tokens: ['tok-keyword:const', 'tok-number:42', 'tok-comment:// suma'],
+			asked: { action: 'inlineDiff', messageId: 'r1', path: 'src/a.ts' },
+			diff: ['diff-del', 'diff-add', 'diff-gap'],
+			rewind: { action: 'rewind', messageId: 'u1' },
+			streamingGone: 0
+		});
 	} finally { await browser.close(); }
 });

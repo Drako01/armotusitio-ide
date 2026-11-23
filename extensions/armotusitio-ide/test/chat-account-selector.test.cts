@@ -62,7 +62,7 @@ test('the chat says when the conversation keeps one account but the next message
 	} finally { await browser.close(); }
 });
 
-test('the account selector looks like the other selectors of the bar: same computed background, color, radius and height', async () => {
+test('the account selector shares the shape of the message option selectors: same radius, height, border width and font', async () => {
 	const browser = await launchBrowser();
 	try {
 		const page = await browser.newPage({ viewport: { width: 900, height: 800 }, reducedMotion: 'reduce' });
@@ -71,7 +71,7 @@ test('the account selector looks like the other selectors of the bar: same compu
 		value.chat.provider = 'claude';
 		await push(value);
 		const styles = await page.evaluate(() => {
-			const read = id => { const style = getComputedStyle(document.getElementById(id)); return { background: style.backgroundColor, color: style.color, radius: style.borderRadius, height: style.minHeight, border: style.borderTopWidth + ' ' + style.borderTopColor, font: style.fontFamily }; };
+			const read = id => { const style = getComputedStyle(document.getElementById(id)); return { radius: style.borderRadius, height: style.minHeight, border: style.borderTopWidth, font: style.fontFamily }; };
 			return { account: read('account'), model: read('model') };
 		});
 		assert.deepEqual(styles.account, styles.model);

@@ -5,7 +5,7 @@
 /* Conversational Chat Harness. All content is rendered with textContent; the host owns every effect. */
 'use strict';
 const api = acquireVsCodeApi();
-const { parseMarkdown, parseInline } = require('./markdown.ts');
+const { parseMarkdown, parseInline, highlightCode } = require('./markdown.ts');
 const { createSuggest } = require('./composer-suggest.ts');
 
 const { safeChatDraft } = require('../src/native-chat-draft.ts');
@@ -40,6 +40,15 @@ function providerIcon(provider: string): SVGElement {
 	path.setAttribute('fill', 'currentColor');
 	icon.append(path); return icon;
 }
+/** A speech bubble with a plus: start a new conversation. */
+function newChatIcon(): SVGElement {
+	const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+	icon.setAttribute('viewBox', '0 0 16 16'); icon.setAttribute('class', 'new-chat-icon'); icon.setAttribute('aria-hidden', 'true');
+	const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+	path.setAttribute('d', 'M8 1.5a6.5 6.5 0 0 0-5.7 9.63L1.5 14.5l3.37-.8A6.5 6.5 0 1 0 8 1.5ZM8 5v6M5 8h6');
+	path.setAttribute('fill', 'none'); path.setAttribute('stroke', 'currentColor'); path.setAttribute('stroke-width', '1.2'); path.setAttribute('stroke-linecap', 'round'); path.setAttribute('stroke-linejoin', 'round');
+	icon.append(path); return icon;
+}
 function elapsed(from: string): string {
 	const seconds = Math.max(0, Math.floor((Date.now() - Date.parse(from)) / 1000));
 	return String(Math.floor(seconds / 60)).padStart(2, '0') + ':' + String(seconds % 60).padStart(2, '0');
@@ -52,12 +61,33 @@ function copyButton(text: string, className: string, label: string): HTMLButtonE
 	button.addEventListener('click', () => { void navigator.clipboard?.writeText(text).then(() => { button.textContent = L.copied; setTimeout(() => { button.textContent = L.copy; }, COPIED_FEEDBACK_MS); }); });
 	return button;
 }
+/** A project file named in an answer (`src/app.ts:42`, `src/app.ts#L42`): at least one folder, so `console.log` is never a file. */
+const FILE_REFERENCE = /^(?<path>(?:[\w.@-]+\/)+[\w.@-]+\.\w+)(?:(?::|#L)(?<line>\d+)(?::\d+)?)?$/;
+/** What a click on an inline part opens; the host validates it again. Any other scheme stays inert text. */
+function inlineTarget(part: any): { action: 'openLink'; href: string } | { action: 'openFile'; path: string; line?: number } | undefined {
+	const source = part.type === 'link' ? part.href : part.type === 'code' ? part.text : undefined;
+	if (typeof source !== 'string') { return undefined; }
+	if (part.type === 'link' && /^https?:\/\//i.test(source)) { return { action: 'openLink', href: source }; }
+	const file = FILE_REFERENCE.exec(source.replace(/^\.\//, ''))?.groups;
+	return file ? { action: 'openFile', path: file.path, ...(file.line ? { line: Number(file.line) } : {}) } : undefined;
+}
 function inlines(target: HTMLElement, parts: any[]): HTMLElement {
 	for (const part of parts) {
 		if (part.type === 'text') { target.append(document.createTextNode(part.text)); continue; }
 		const node = el(part.type === 'link' ? 'span' : part.type, part.type === 'link' ? 'md-link' : undefined, part.text);
-		if (part.type === 'link') { node.title = part.href; }
-		target.append(node);
+		const open = inlineTarget(part);
+		if (!open) {
+			if (part.type === 'link') { node.title = part.href; }
+			target.append(node);
+			continue;
+		}
+		// A real link opens like in Claude or Codex: pages through VS Code's own confirmation, files in the editor.
+		const button = el('button', 'inline-link') as HTMLButtonElement; button.type = 'button';
+		const where = open.action === 'openLink' ? open.href : open.path + (open.line ? ':' + open.line : '');
+		button.title = format(open.action === 'openLink' ? L.openLinkRef : L.openFileRef, where);
+		button.setAttribute('aria-label', part.text === where ? button.title : part.text + '. ' + button.title);
+		button.addEventListener('click', () => api.postMessage(open));
+		button.append(node); target.append(button);
 	}
 	return target;
 }
@@ -82,7 +112,10 @@ function markdown(source: string): HTMLElement {
 			const figure = el('div', 'code-block');
 			const bar = el('div', 'code-bar'); bar.append(el('span', 'code-lang', block.language || 'text'));
 			bar.append(copyButton(block.text, 'link-button', L.copyCode));
-			const pre = el('pre'); pre.append(el('code', undefined, block.text));
+			// Colored like the editor reads code; every token is still a text node.
+			const code = el('code');
+			for (const token of highlightCode(block.language, block.text)) { code.append(token.type === 'text' ? document.createTextNode(token.text) : el('span', 'tok-' + token.type, token.text)); }
+			const pre = el('pre'); pre.append(code);
 			figure.append(bar, pre); root.append(figure);
 		}
 	}
@@ -151,9 +184,15 @@ function shell(): void {
 	const more = el('button', 'icon-button', '\u22ef') as HTMLButtonElement; more.type = 'button'; more.id = 'menu-button';
 	more.setAttribute('aria-label', L.menu); more.title = L.menu; more.setAttribute('aria-expanded', 'false'); more.setAttribute('aria-controls', 'menu');
 	more.addEventListener('click', () => toggle('menu', more));
+	// Shortcut to the menu's New conversation: same host action and confirmation, one click away.
+	const fresh = el('button', 'icon-button new-chat') as HTMLButtonElement; fresh.type = 'button'; fresh.id = 'new-chat';
+	fresh.setAttribute('aria-label', L.newChat); fresh.title = L.newChat;
+	fresh.append(newChatIcon());
+	fresh.addEventListener('click', () => api.postMessage({ action: 'reset' }));
 	const quota = el('span', 'quota'); quota.id = 'quota'; quota.hidden = true; quota.setAttribute('role', 'group'); quota.tabIndex = 0;
 	quota.append(el('span', 'quota-icon'), el('span', 'quota-text'));
-	controls.append(providers, account, accountNote, model, effort, mode, sandbox, quota, mcp, more);
+	// The header says who answers and with which account; how this message runs lives next to the composer.
+	controls.append(providers, account, accountNote, quota, mcp, fresh, more);
 	header.append(brand, controls);
 
 	const details = el('section', 'popover mcp-details'); details.id = 'mcp-details'; details.hidden = true; details.setAttribute('aria-label', L.mcp);
@@ -187,7 +226,14 @@ function shell(): void {
 	stop.addEventListener('click', () => api.postMessage({ action: 'cancel' }));
 	const media = el('div', 'pending-media'); media.id = 'pending-media'; media.setAttribute('aria-live', 'polite'); media.hidden = true;
 	box.append(input, stop, send);
-	form.append(media, box, el('p', 'hint', L.keyboard));
+	// Mode, model and effort sit under the text, as in Claude and Codex: chosen where the message is written.
+	const tools = el('div', 'composer-tools'); tools.setAttribute('role', 'group'); tools.setAttribute('aria-label', L.composerTools);
+	// How full the conversation is, from the provider's own numbers, and summarizing whenever the user decides.
+	const gauge = el('span', 'context-gauge'); gauge.id = 'context-gauge'; gauge.hidden = true; gauge.setAttribute('role', 'status');
+	const compact = el('button', 'link-button compact', L.compact) as HTMLButtonElement; compact.type = 'button'; compact.id = 'compact'; compact.title = L.compactHint;
+	compact.addEventListener('click', () => submit('/resumir'));
+	tools.append(mode, model, effort, sandbox, gauge, compact, el('p', 'hint', L.keyboard));
+	form.append(media, box, tools);
 	// Any file type, like a chat with Claude Code or Codex: the host validates and saves it; nothing here asks for confirmation.
 	const picker = el('input') as HTMLInputElement; picker.type = 'file'; picker.multiple = true; picker.hidden = true;
 	const attach = el('button', 'secondary attach', '+') as HTMLButtonElement; attach.type = 'button'; attach.id = 'attach';
@@ -208,7 +254,7 @@ function shell(): void {
 		event.preventDefault();
 		capture(files);
 	});
-	(form.lastElementChild as HTMLElement).id = 'composer-hint';
+	(tools.lastElementChild as HTMLElement).id = 'composer-hint';
 	form.addEventListener('submit', event => { event.preventDefault(); submit(input.value); });
 	// An unsent message survives the view being hidden or reloaded. Text that looks like a credential is never kept.
 	if (state?.project?.id) { input.value = projectDraft(state.project.id); requestAnimationFrame(autosize); }
@@ -216,6 +262,8 @@ function shell(): void {
 	suggest = createSuggest(input, form, message => api.postMessage(message), { commands: L.commandsLabel, files: L.filesLabel, commandList: L.commandList });
 	input.addEventListener('keydown', event => {
 		if (suggest.key(event)) { event.preventDefault(); return; }
+		// Esc stops the running task, as in Claude and Codex; the suggestion list and popovers close first.
+		if (event.key === 'Escape' && busy() && !state.chat.activity.cancelling) { event.preventDefault(); api.postMessage({ action: 'cancel' }); return; }
 		if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); form.requestSubmit(); }
 	});
 	input.addEventListener('input', autosize);
@@ -536,6 +584,42 @@ function fileButton(label: string, path: string, action: string, messageId: stri
 	button.addEventListener('click', () => api.postMessage({ action, messageId, path }));
 	return button;
 }
+/** Shows or hides one file's change right under it; the first click asks the host, later ones only toggle. */
+function inlineDiffToggle(path: string, messageId: string): HTMLButtonElement {
+	const button = el('button', 'link-button diff-toggle', L.showDiff) as HTMLButtonElement; button.type = 'button';
+	button.setAttribute('aria-expanded', 'false'); button.setAttribute('aria-label', L.showDiff + ': ' + path);
+	button.addEventListener('click', () => {
+		const shown = button.closest('.run-file')?.querySelector<HTMLElement>('.inline-diff');
+		const open = button.getAttribute('aria-expanded') !== 'true';
+		button.setAttribute('aria-expanded', String(open));
+		button.textContent = open ? L.hideDiff : L.showDiff;
+		if (shown) { shown.hidden = !open; return; }
+		if (open) { api.postMessage({ action: 'inlineDiff', messageId, path }); }
+	});
+	return button;
+}
+/** The change of one file, as the host computed it: +/- lines with a little context, or why it cannot be shown here. */
+function renderInlineDiff(data: { messageId: string; path: string; diff: any }): void {
+	const row = [...document.querySelectorAll<HTMLElement>('.run-file')].find(item => item.dataset.path === data.path && item.dataset.messageId === data.messageId);
+	if (!row || row.querySelector('.inline-diff')) { return; }
+	const box = el('div', 'inline-diff');
+	box.hidden = row.querySelector('.diff-toggle')?.getAttribute('aria-expanded') !== 'true';
+	const diff = data.diff;
+	if (diff?.status !== 'ok') { box.append(el('p', 'muted', L.diffStatus[diff?.status] ?? L.diffStatus['too-large'])); row.append(box); return; }
+	box.append(el('p', 'muted diff-summary', format(L.diffSummary, String(diff.added), String(diff.removed))));
+	const pre = el('pre', 'diff-lines'); pre.setAttribute('aria-label', format(L.diffOf, data.path));
+	for (const line of diff.lines) {
+		if (line.kind === 'gap') { pre.append(el('span', 'diff-gap', format(L.diffGap, String(line.skipped)))); continue; }
+		const sign = line.kind === 'add' ? '+' : line.kind === 'del' ? '-' : ' ';
+		const node = el('span', 'diff-' + line.kind);
+		node.append(el('span', 'diff-number', String(line.line)), document.createTextNode(sign + ' ' + line.text));
+		if (line.kind !== 'context') { node.append(el('span', 'visually-hidden', ' ' + (line.kind === 'add' ? L.diffAdded : L.diffRemoved))); }
+		pre.append(node);
+	}
+	box.append(pre);
+	if (diff.truncated) { box.append(el('p', 'muted', L.diffTruncated)); }
+	row.append(box);
+}
 function changedFiles(message: any, current: any): HTMLElement | undefined {
 	const diff = message.run?.outcome?.diff;
 	if (!diff?.available || !diff.count) { return undefined; }
@@ -545,11 +629,11 @@ function changedFiles(message: any, current: any): HTMLElement | undefined {
 	box.append(el('summary', undefined, format(L.changedFiles, String(diff.count))));
 	const list = el('ul', 'commands');
 	for (const file of diff.files) {
-		const item = el('li', 'run-file');
+		const item = el('li', 'run-file'); item.dataset.path = file.path; item.dataset.messageId = message.id;
 		const done = reverted.includes(file.path);
 		item.append(el('code', undefined, file.path), el('span', 'muted', ' ' + L.change[file.change] + (file.preexisting ? ' \u00b7 ' + L.preexisting : '') + (done ? ' \u00b7 ' + L.reverted : '')));
 		const actions = el('span', 'file-actions');
-		if (!done) { actions.append(fileButton(L.viewChanges, file.path, 'openDiff', message.id)); }
+		if (!done) { actions.append(inlineDiffToggle(file.path, message.id), fileButton(L.viewChanges, file.path, 'openDiff', message.id)); }
 		if (!done && canRevert) { actions.append(fileButton(L.revertFile, file.path, 'revertFile', message.id)); }
 		item.append(actions);
 		list.append(item);
@@ -670,11 +754,20 @@ function messageNode(message: any): HTMLElement {
 	meta.append(el('span', 'author', who), el('time', 'muted', new Date(message.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })));
 	node.setAttribute('aria-label', who);
 	node.append(meta);
-	if (message.role === 'user') { node.append(el('div', 'bubble', message.text)); return node; }
+	if (message.role === 'user') {
+		node.append(el('div', 'bubble', message.text));
+		// Go back to this message and change it, as in Claude and Codex; the host confirms and says what happens to files.
+		const edit = el('button', 'link-button edit-message', L.editMessage) as HTMLButtonElement; edit.type = 'button';
+		edit.setAttribute('aria-label', L.editMessage + ': ' + message.text.slice(0, 60)); edit.title = L.editMessageHint;
+		edit.addEventListener('click', () => api.postMessage({ action: 'rewind', messageId: message.id }));
+		node.append(edit);
+		return node;
+	}
 	if (message.run) { node.append(runSummary(message.run, message.id)); }
 	if (message.text) { node.append(markdown(message.text)); }
 	if (message.plan) { node.append(planCard(message)); }
-	if (message.role === 'assistant' || message.run) {
+	// A run card without an answer has nothing to copy: no button that does nothing.
+	if ((message.role === 'assistant' || message.run) && message.text) {
 		node.append(copyButton(message.text, 'link-button copy', L.copyMessage));
 	}
 	return node;
@@ -688,9 +781,28 @@ function renderThread(): void {
 		if (rendered.has(message.id)) { continue; }
 		const node = messageNode(message); rendered.set(message.id, node); thread.append(node);
 	}
+	renderStreaming(thread);
 	updatePlanCards();
 	updateRunActions();
 	updateRunFiles();
+}
+/**
+ * The answer being written appears where it will stay, at the end of the conversation, as in Claude and Codex; the final
+ * message replaces it. Hidden from screen readers while it changes: the finished message is announced once instead.
+ */
+function renderStreaming(thread: HTMLElement): void {
+	const partial: string | undefined = state.chat?.activity?.partial;
+	let node = document.getElementById('streaming');
+	if (!partial?.trim()) { node?.remove(); return; }
+	if (!node) {
+		node = el('article', 'message assistant streaming'); node.id = 'streaming'; node.setAttribute('aria-hidden', 'true');
+		const meta = el('div', 'meta'); meta.append(el('span', 'author', providerName(state.chat.activity.provider)), el('span', 'muted typing', L.writing));
+		node.append(meta, el('div', 'streaming-body'));
+	}
+	// Always last, after any message added meanwhile; redrawn only when the text changed.
+	if (thread.lastElementChild !== node) { thread.append(node); }
+	const body = node.querySelector<HTMLElement>('.streaming-body');
+	if (body.dataset.text !== partial) { body.dataset.text = partial; body.textContent = ''; body.append(markdown(partial)); }
 }
 /** Rebuilt only when what it shows changes, so a progress update never takes focus from a button. */
 function updateRunFiles(): void {
@@ -713,7 +825,8 @@ function renderEmpty(): void {
 	const show = !!state.chat && !state.chat.messages.length && !state.chat.activity;
 	empty.hidden = !show;
 	if (!show) { return; }
-	empty.append(el('h2', undefined, L.emptyTitle), el('p', 'muted', L.emptyBody));
+	// The promise matches the selected mode: Act changes code, Ask never does.
+	empty.append(el('h2', undefined, L.emptyTitle), el('p', 'muted', state.chatMode === 'ask' ? L.emptyBodyAsk : L.emptyBodyAct));
 	const chips = el('div', 'chips');
 	for (const suggestion of L.suggestions) {
 		const chip = el('button', 'chip', suggestion) as HTMLButtonElement; chip.type = 'button';
@@ -749,10 +862,18 @@ function renderActivity(): void {
 	const clock = el('span', 'muted clock', elapsed(activity.startedAt)); clock.setAttribute('aria-hidden', 'true');
 	head.append(spinner, el('strong', undefined, title), clock);
 	box.append(head);
-	if (activity.partial) {
-		// Real intermediate message from the provider stream; replaced by the final answer when the turn ends.
-		const partial = el('div', 'partial'); partial.append(el('p', 'partial-label', L.partial), markdown(activity.partial));
-		box.append(partial);
+	// The agent's own task list: what it plans, what it is doing now and what it already finished.
+	if (activity.todos?.length) {
+		const todos = el('ol', 'todos'); todos.setAttribute('aria-label', L.todos);
+		const done = activity.todos.filter((todo: any) => todo.status === 'completed').length;
+		box.append(el('p', 'todos-head', format(L.todosHead, String(done), String(activity.todos.length))));
+		for (const todo of activity.todos) {
+			const item = el('li', 'todo ' + todo.status, todo.text);
+			item.append(el('span', 'visually-hidden', ' ' + L.todoStatus[todo.status]));
+			if (todo.status === 'in_progress') { item.setAttribute('aria-current', 'step'); }
+			todos.append(item);
+		}
+		box.append(todos);
 	}
 	if (activity.kind === 'executing') {
 		const stages = el('ol', 'stages');
@@ -809,7 +930,8 @@ function renderApprovals(): void {
 		const actions = el('div', 'approval-actions');
 		// The family button names what it covers (`cargo test *`), so the user sees how far the answer reaches.
 		const family = typeof item.family === 'string' ? format(L.allowFamily, item.family.replace(/^run:/, '')) : '';
-		for (const [answer, label, className] of [['once', L.allowOnce, ''], ['task', L.allowTask, 'secondary'], ['session', L.allowSession, 'secondary'], ['always', L.allowAlways, 'secondary'], ['family', family, 'secondary'], ['global', L.allowGlobal, 'secondary'], ['deny', L.denyApproval, 'secondary']]) {
+		// Allow once and Deny come first so both stay in reach in a narrow panel; wider scopes follow.
+		for (const [answer, label, className] of [['once', L.allowOnce, ''], ['deny', L.denyApproval, 'secondary deny'], ['task', L.allowTask, 'secondary'], ['session', L.allowSession, 'secondary'], ['always', L.allowAlways, 'secondary'], ['family', family, 'secondary'], ['global', L.allowGlobal, 'secondary']]) {
 			if (answer !== 'once' && answer !== 'deny' && !item.rule) { continue; }
 			if (answer === 'global' && !item.global) { continue; }
 			if (answer === 'family' && !family) { continue; }
@@ -979,6 +1101,25 @@ function renderComposer(): void {
 	const stop = document.getElementById('stop') as HTMLButtonElement;
 	stop.hidden = !running; stop.disabled = !!state.chat?.activity?.cancelling;
 	stop.textContent = state.chat?.activity?.cancelling ? L.cancelling : L.cancel; stop.title = L.stopHint;
+	document.getElementById('composer-hint').textContent = running ? L.keyboardBusy : L.keyboard;
+	// The host ignores a reset while a task runs: the button says so instead of doing nothing.
+	const fresh = document.getElementById('new-chat') as HTMLButtonElement;
+	fresh.disabled = !state.chat || running; fresh.title = running ? L.newChatBusy : L.newChat;
+	const context = state.chat?.context;
+	const gauge = document.getElementById('context-gauge');
+	const reading = context && context.provider === state.chat.provider && context.window > 0 ? Math.min(100, Math.round(context.used * 100 / context.window)) : undefined;
+	gauge.hidden = reading === undefined;
+	if (reading !== undefined) {
+		gauge.textContent = format(L.contextUsed, String(reading));
+		// Same thresholds as the provider quota: what is left decides the warning.
+		const level = quotaLevel(100 - reading);
+		gauge.dataset.level = level;
+		gauge.title = format(L.contextDetail, context.used.toLocaleString(), context.window.toLocaleString()) + (level === 'ok' ? '' : ' ' + L.contextAdvice);
+	}
+	const compact = document.getElementById('compact') as HTMLButtonElement;
+	compact.hidden = !state.chat?.messages?.length;
+	compact.disabled = running;
+	document.querySelectorAll<HTMLButtonElement>('.edit-message').forEach(button => { button.disabled = running; });
 	(document.getElementById('prompt') as HTMLTextAreaElement).disabled = !state.chat;
 	document.getElementById('composer').setAttribute('aria-busy', String(running));
 	const banner = document.getElementById('banner');
@@ -999,6 +1140,7 @@ window.addEventListener('message', event => {
 		const input = document.getElementById('prompt') as HTMLTextAreaElement;
 		input.value = safeChatDraft(data.text, L.maxMessageChars); retainDraft(input.value, false); autosize(); return;
 	}
+	if (data?.type === 'inlineDiff' && typeof data.path === 'string' && typeof data.messageId === 'string' && L) { renderInlineDiff(data); return; }
 	if (data?.type === 'checkpoints' && data.project === state?.project?.id && Array.isArray(data.items) && L) { renderCheckpoints(data.items); return; }
 	if (data?.type === 'init') { L = data.labels; shell(); if (state) { render(); } return; }
 	if (data?.type === 'state') {

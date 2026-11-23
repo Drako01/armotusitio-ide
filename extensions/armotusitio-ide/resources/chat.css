@@ -32,9 +32,12 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, .log:focus-v
 .chat-app { position: fixed; inset: 0; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
 
 /* Header: identity, provider and MCP are always visible. */
-.topbar { position: relative; display: flex; flex-wrap: wrap; flex-shrink: 0; align-items: center; gap: 8px 16px; padding: 8px 52px 8px 12px; border-bottom: 1px solid var(--chat-border); background: var(--chat-surface); }
-.topbar .brand { margin-right: 44px; max-width: calc(100% - 44px); }
+.topbar { position: relative; display: flex; flex-wrap: wrap; flex-shrink: 0; align-items: center; gap: 8px 16px; padding: 8px 92px 8px 12px; border-bottom: 1px solid var(--chat-border); background: var(--chat-surface); }
+.topbar .brand { margin-right: 84px; max-width: calc(100% - 84px); }
 .topbar #menu-button { position: absolute; top: 8px; right: 12px; min-height: 28px; }
+/* New conversation sits beside the menu, always in the same corner, like the editor's own chat. */
+.topbar #new-chat { position: absolute; top: 8px; right: 52px; display: inline-flex; align-items: center; justify-content: center; min-width: 36px; min-height: 28px; padding: 2px 8px; }
+.new-chat-icon { width: 16px; height: 16px; }
 .brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .brand-text { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
 .brand h1 { margin: 0; font-size: 1em; font-weight: 600; white-space: nowrap; }
@@ -129,10 +132,15 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, .log:focus-v
 .markdown blockquote { padding-left: 12px; border-left: 3px solid var(--chat-border); color: var(--chat-muted); }
 .markdown code { font-family: var(--vscode-editor-font-family); font-size: .92em; padding: 1px 4px; border-radius: 4px; background: var(--vscode-textCodeBlock-background); }
 .markdown .md-link { color: var(--vscode-textLink-foreground); text-decoration: underline; }
+/* Links and project files in answers: inline text that opens, never a boxed button in the middle of a sentence. */
+.inline-link { display: inline; min-height: 0; padding: 0; border: 0; border-radius: 3px; font: inherit; color: var(--vscode-textLink-foreground); background: transparent; text-align: inherit; }
+.inline-link:hover:not(:disabled) { background: transparent; color: var(--vscode-textLink-activeForeground, var(--vscode-textLink-foreground)); }
+.inline-link:hover code, .inline-link:hover .md-link { text-decoration: underline; }
+.inline-link code { color: inherit; }
 .markdown hr { border: 0; border-top: 1px solid var(--chat-border); }
 .code-block { margin: 0 0 12px; border: 1px solid var(--chat-border); border-radius: var(--chat-radius); overflow: hidden; }
 .code-bar { display: flex; justify-content: space-between; padding: 4px 10px; font-size: .85em; color: var(--chat-muted); background: var(--chat-raised); border-bottom: 1px solid var(--chat-border); }
-.code-block pre { margin: 0; padding: 10px 12px; overflow-x: auto; background: var(--vscode-textCodeBlock-background); }
+.code-block pre { margin: 0; padding: 10px 12px; overflow-x: auto; tab-size: 4; background: var(--vscode-textCodeBlock-background); }
 .code-block pre code { padding: 0; background: transparent; }
 .table-wrap { overflow-x: auto; margin: 0 0 12px; }
 .markdown table { border-collapse: collapse; }
@@ -190,12 +198,12 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, .log:focus-v
 .question-option { display: block; margin: 4px 0; }
 .question input[type="text"], .question input[type="password"] { box-sizing: border-box; width: 100%; margin-top: 4px; }
 .approval-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+/* Deny is the way out: always next to Allow once and recognizable without reading every button. */
+.approval-actions .deny { border-color: var(--chat-error); }
 
 /* Live activity */
 .activity { box-sizing: border-box; width: calc(100% - 32px); max-height: 40vh; overflow-y: auto; padding: 12px 14px; margin: 0 auto 10px; border: 1px dashed var(--chat-border); border-radius: var(--chat-radius-large); }
 .activity-head { display: flex; align-items: center; gap: 10px; }
-.partial { margin-top: 10px; padding-left: 12px; border-left: 2px solid var(--chat-border); }
-.partial-label { margin: 0 0 4px; font-size: .82em; color: var(--chat-muted); }
 .clock { margin-left: auto; font-variant-numeric: tabular-nums; }
 .spinner { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--chat-border); border-top-color: var(--chat-accent); animation: spin .8s linear infinite; }
 .stages { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 10px 0 0; padding: 0; list-style: none; }
@@ -233,7 +241,11 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, .log:focus-v
 .composer-box:focus-within { border-color: var(--chat-accent); }
 .composer textarea { flex: 1; min-height: 24px; max-height: 240px; padding: 4px 0; resize: none; border: 0; outline: none; font: inherit; color: var(--vscode-input-foreground); background: transparent; }
 .composer textarea:focus-visible { outline: none; }
-.hint { max-width: 860px; margin: 6px auto 0; font-size: .82em; color: var(--chat-muted); }
+/* Message options under the text: quiet until hovered or focused, so the text stays the main thing. */
+.composer-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; max-width: 860px; margin: 6px auto 0; }
+.composer-tools select { min-height: 24px; border-color: transparent; background: transparent; color: var(--chat-muted); }
+.composer-tools select:hover:not(:disabled), .composer-tools select:focus-visible { border-color: var(--vscode-dropdown-border, var(--chat-border)); background: var(--vscode-dropdown-background); color: var(--vscode-dropdown-foreground); }
+.hint { margin: 0 0 0 auto; font-size: .82em; color: var(--chat-muted); }
 
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes pulse { 50% { opacity: .35; } }
@@ -251,6 +263,48 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, .log:focus-v
 	.brand-text { flex-wrap: wrap; gap: 4px; }
 	.controls { width: 100%; min-width: 0; }
 	.account-select, .model-select { flex: 1 1 130px; }
+	.composer-tools .hint { flex-basis: 100%; margin-left: 0; }
 	.account-note { flex-basis: 100%; }
 	.project-select, .account-select, .model-select, .effort-select, .mode-select { max-width: 100%; min-width: 0; }
 }
+
+/* Code colors: the debug token colors follow the user's theme, light or dark. */
+.tok-keyword { color: var(--vscode-debugTokenExpression-name, #c586c0); }
+.tok-string { color: var(--vscode-debugTokenExpression-string, #ce9178); }
+.tok-number { color: var(--vscode-debugTokenExpression-number, #b5cea8); }
+.tok-comment { color: var(--chat-muted); font-style: italic; }
+
+/* The answer being written sits in the conversation, marked as still in progress. */
+.message.streaming { animation: none; }
+.typing { font-style: italic; }
+.typing::after { content: ''; display: inline-block; width: 6px; height: 6px; margin-left: 6px; border-radius: 50%; background: var(--chat-accent); animation: pulse 1.2s ease-in-out infinite; vertical-align: middle; }
+
+/* Agent task list: done items are crossed out, the current one stands out. */
+.todos-head { margin: 10px 0 4px; font-size: .9em; color: var(--chat-muted); }
+.todos { list-style: none; margin: 0; padding: 0; }
+.todo { display: flex; gap: 8px; align-items: baseline; padding: 1px 0; }
+.todo::before { content: '\25CB'; flex: none; color: var(--chat-muted); }
+.todo.in_progress { font-weight: 600; }
+.todo.in_progress::before { content: '\25CF'; color: var(--chat-accent); }
+.todo.completed { color: var(--chat-muted); text-decoration: line-through; }
+.todo.completed::before { content: '\2713'; color: var(--chat-ok); text-decoration: none; }
+
+/* One file's change inside the chat, read only. */
+.inline-diff { flex-basis: 100%; margin: 6px 0 10px; }
+.diff-summary { margin: 0 0 4px; font-size: .85em; }
+.diff-lines { margin: 0; max-height: 360px; overflow: auto; padding: 6px 0; border: 1px solid var(--chat-border); border-radius: var(--chat-radius); background: var(--vscode-textCodeBlock-background); font-family: var(--vscode-editor-font-family); font-size: .92em; tab-size: 4; }
+.diff-lines > span { display: block; padding: 0 10px 0 0; white-space: pre; }
+.diff-number { display: inline-block; min-width: 44px; padding-right: 8px; text-align: right; color: var(--chat-muted); user-select: none; }
+.diff-add { background: var(--vscode-diffEditor-insertedLineBackground, rgba(63, 185, 80, .18)); }
+.diff-del { background: var(--vscode-diffEditor-removedLineBackground, rgba(248, 81, 73, .18)); }
+.diff-gap { padding-left: 52px !important; color: var(--chat-muted); font-style: italic; }
+
+/* Editing an earlier message: a quiet link under the bubble, always reachable by keyboard and touch. */
+.edit-message { margin-top: 2px; font-size: .85em; opacity: .75; }
+.message.user:hover .edit-message, .edit-message:focus-visible { opacity: 1; }
+
+/* Context gauge and Summarize, next to the message options. */
+.context-gauge { font-size: .82em; color: var(--chat-muted); padding: 2px 6px; border: 1px solid var(--chat-border); border-radius: 999px; }
+.context-gauge[data-level="warn"] { color: var(--chat-warning); border-color: var(--chat-warning); }
+.context-gauge[data-level="critical"] { color: var(--chat-error); border-color: var(--chat-error); font-weight: 600; }
+.composer-tools .compact { font-size: .82em; }
