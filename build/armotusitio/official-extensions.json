@@ -3,17 +3,17 @@
 	"extensions": [
 		{
 			"name": "armotusitio.orquestivo",
-			"version": "0.2.0",
-			"sha256": "e5b7bf20304a9c37c2c6b4083dff768a9465c907c9f680521a927c500f45e7ca",
-			"downloadUrl": "https://open-vsx.org/api/armotusitio/orquestivo/0.2.0/file/armotusitio.orquestivo-0.2.0.vsix",
+			"version": "0.3.0",
+			"sha256": "eeff62ef565e9aca2a7e95979083173b8c6a0f66197f902010d11aee38f0641b",
+			"downloadUrl": "https://open-vsx.org/api/armotusitio/orquestivo/0.3.0/file/armotusitio.orquestivo-0.3.0.vsix",
 			"repo": "https://github.com/Drako01/orquestivo.git",
 			"license": "MIT"
 		},
 		{
 			"name": "armotusitio.probato-pr",
-			"version": "1.0.1",
-			"sha256": "38e83c43ea5a54a4aa00e3e0529489fdb2c214de9dab66a8a15c318ea09ff873",
-			"downloadUrl": "https://open-vsx.org/api/armotusitio/probato-pr/1.0.1/file/armotusitio.probato-pr-1.0.1.vsix",
+			"version": "1.1.5",
+			"sha256": "30f47f7e3ea32c84e1bf16a8ed85ef0260704d3e95337ac922aec0c08fd93e9c",
+			"downloadUrl": "https://open-vsx.org/api/armotusitio/probato-pr/1.1.5/file/armotusitio.probato-pr-1.1.5.vsix",
 			"repo": "https://github.com/Drako01/probato-pr.git",
 			"license": "MIT"
 		},
@@ -27,9 +27,9 @@
 		},
 		{
 			"name": "armotusitio.saturivo",
-			"version": "0.3.1",
-			"sha256": "b7fece92985eec11e7858b28f19ac10e121a07d87e9267db51a34a33845fd3f0",
-			"downloadUrl": "https://open-vsx.org/api/armotusitio/saturivo/0.3.1/file/armotusitio.saturivo-0.3.1.vsix",
+			"version": "0.4.1",
+			"sha256": "4ef52d9e6c92f1f7673ab9caf06d965d6ea8ff164aa8c1319a85cd6087dd2266",
+			"downloadUrl": "https://open-vsx.org/api/armotusitio/saturivo/0.4.1/file/armotusitio.saturivo-0.4.1.vsix",
 			"repo": "https://github.com/Drako01/saturivo.git",
 			"license": "MIT"
 		},
@@ -51,9 +51,9 @@
 		},
 		{
 			"name": "armotusitio.vinculivo",
-			"version": "0.2.1",
-			"sha256": "6086fbddb9fc717708c3098d64511f7a5d381d3ce19aec22aa7ed8f549dcb727",
-			"downloadUrl": "https://open-vsx.org/api/armotusitio/vinculivo/0.2.1/file/armotusitio.vinculivo-0.2.1.vsix",
+			"version": "0.3.0",
+			"sha256": "55741c779f07573ac8595eb688ce4d8254d41df4580fafb7dd504fd5801994f1",
+			"downloadUrl": "https://open-vsx.org/api/armotusitio/vinculivo/0.3.0/file/armotusitio.vinculivo-0.3.0.vsix",
 			"repo": "https://github.com/Drako01/vinculivo.git",
 			"license": "MIT"
 		}
