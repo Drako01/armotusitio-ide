@@ -253,12 +253,14 @@ test('Windows background updates use the versioned layout that inno_updater expe
 	const msix = await readFile(new URL('./ats-package-msix.ps1', import.meta.url), 'utf8');
 	assert.deepEqual({
 		versioned: product.win32VersionedUpdate,
+		// A manual install first stops helpers left running from the install folder, only when the editor itself is closed.
+		orphansStopped: /procedure StopOrphanHelperProcesses\(\);[^]*?if CheckForMutexes\('\{#AppMutex\}'\) then\n\s+exit;[^]*?function PrepareToInstall[^]*?StopOrphanHelperProcesses\(\);/.test(setup),
 		// A failed swap is logged as a failure, never as a success.
 		exitChecked: /if Exec\([^\n]*inno_updater\.exe[^\n]*UpdateResultCode\) and \(UpdateResultCode = 0\) then\n\s+Log\('inno_updater completed successfully'\)/.test(setup),
 		// The Store package reads the versioned folder and leaves updates to the Store.
 		msixVersioned: msix.includes(`Where-Object Name -CMatch '^[a-f0-9]{10}$'`),
 		msixNoSelfUpdate: msix.includes(`Remove('armotusitioUpdate')`)
-	}, { versioned: true, exitChecked: true, msixVersioned: true, msixNoSelfUpdate: true });
+	}, { versioned: true, orphansStopped: true, exitChecked: true, msixVersioned: true, msixNoSelfUpdate: true });
 });
 
 test('packaged Windows resources are found under the commit folder and stale or mixed layouts are refused', async () => {

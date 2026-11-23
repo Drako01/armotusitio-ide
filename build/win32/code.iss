@@ -1510,9 +1510,35 @@ begin
 end;
 
 
+// Helper tools started by the editor (ripgrep, tgrep of bundled extensions) can outlive it and keep their own files
+// open, so a manual install stops with "DeleteFile failed; code 5". Only when the editor itself is closed: the helpers
+// of a running editor are never touched, and the usual "close the application" prompt still applies.
+procedure StopOrphanHelperProcesses();
+var
+  ResultCode: Integer;
+  AppPrefix: String;
+begin
+  if CheckForMutexes('{#AppMutex}') then
+    exit;
+  AppPrefix := ExpandConstant('{app}\');
+  StringChangeEx(AppPrefix, '''', '''''', True);
+  Log('StopOrphanHelperProcesses: stopping processes left running from ' + ExpandConstant('{app}'));
+  if not ShellExec('', 'powershell.exe',
+    '-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -Command "' +
+    'Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith(''' + AppPrefix + ''', [StringComparison]::OrdinalIgnoreCase) -and $_.Name -ne ''{#ExeBasename}.exe'' } | ' +
+    'ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop } catch {} }"',
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    Log('StopOrphanHelperProcesses: ShellExec failed with error code ' + IntToStr(ResultCode))
+  else
+    Log('StopOrphanHelperProcesses: PowerShell exited with code ' + IntToStr(ResultCode));
+end;
+
 // called before the wizard checks for running application
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
+  if IsNotBackgroundUpdate() then
+    StopOrphanHelperProcesses();
+
   if IsNotBackgroundUpdate() then
     StopTunnelServiceIfNeeded();
 
