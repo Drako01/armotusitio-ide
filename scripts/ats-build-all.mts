@@ -8,7 +8,7 @@ import { promisify } from 'node:util';
 import { copyFile, mkdir, readFile, rename, rm, stat } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { releaseStages } from './ats-release-state.mts';
-import { fileDigest, run, withLock } from './ats-autoupdate.mts';
+import { fileDigest, run, windowsAppResources, withLock } from './ats-autoupdate.mts';
 
 const capture = promisify(execFile);
 type Runner = (file: string, args: string[], root: string, env?: NodeJS.ProcessEnv) => Promise<void>;
@@ -77,7 +77,7 @@ export async function buildAll(root = path.resolve(import.meta.dirname, '..'), d
 		if (receipt.commit !== commit || await source() !== commit) { throw new Error('Packaging did not validate the selected commit.'); }
 		console.log(`[2/${stages}] Versioned installer and ZIP`);
 		await stage('windows-archives', [installer, zip, path.join(root, '.build/ats-autoupdate/build-receipt.json')], async () => withLock(path.join(root, '.build', 'ats-autoupdate'), async () => {
-			const product = JSON.parse(await readFile(path.join(application, 'resources', 'app', 'product.json'), 'utf8'));
+			const product = JSON.parse(await readFile(path.join(await windowsAppResources(application, commit), 'product.json'), 'utf8'));
 			if (product.version !== version || product.commit !== commit) { throw new Error('Packaged application does not match the release version and commit.'); }
 			await mkdir(releases, { recursive: true });
 			const temporary = path.join(releases, `.ArmotuSitio-IDE-${randomUUID()}.tmp.exe`);

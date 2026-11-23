@@ -1862,9 +1862,12 @@ begin
       if not SessionEndFileExists() and not CancelFileExists() then begin
         StopTunnelServiceIfNeeded();
         Log('Invoking inno_updater for background update');
-        Exec(ExpandConstant('{app}\{#VersionedResourcesFolder}\tools\inno_updater.exe'), ExpandConstant('"{app}\{#ExeBasename}.exe" ' + BoolToStr(LockFileExists()) + ' "{cm:UpdatingVisualStudioCode}"'), '', SW_SHOW, ewWaitUntilTerminated, UpdateResultCode);
+        // Record what really happened: a failed swap used to be logged as a success, hiding why the update did not apply.
+        if Exec(ExpandConstant('{app}\{#VersionedResourcesFolder}\tools\inno_updater.exe'), ExpandConstant('"{app}\{#ExeBasename}.exe" ' + BoolToStr(LockFileExists()) + ' "{cm:UpdatingVisualStudioCode}"'), '', SW_SHOW, ewWaitUntilTerminated, UpdateResultCode) and (UpdateResultCode = 0) then
+          Log('inno_updater completed successfully')
+        else
+          Log('inno_updater failed with exit code ' + IntToStr(UpdateResultCode) + '; the previous version stays installed');
         DeleteFile(ExpandConstant('{app}\updating_version'));
-        Log('inno_updater completed successfully');
         #if "system" == InstallTarget
           if IsVersionedUpdate() then begin
             KillContextMenuComSurrogate();

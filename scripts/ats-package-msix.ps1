@@ -36,18 +36,24 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 [IO.Compression.ZipFile]::ExtractToDirectory($archiveFile.FullName, $staging)
 $staging = Join-Path $staging 'ArmotuSitio IDE'
 $appExe = Join-Path $staging 'ArmotuSitio IDE.exe'
-$productPath = Join-Path $staging 'resources/app/product.json'
-$packagePath = Join-Path $staging 'resources/app/package.json'
+# Versioned Windows updates keep resources under the first 10 characters of the commit (the layout inno_updater expects).
+$versioned = @(Get-ChildItem -LiteralPath $staging -Directory | Where-Object Name -CMatch '^[a-f0-9]{10}$')
+if ($versioned.Count -gt 1) { throw 'Release has more than one versioned resources folder.' }
+$appResources = if ($versioned.Count) { Join-Path $versioned[0].FullName 'resources/app' } else { Join-Path $staging 'resources/app' }
+$productPath = Join-Path $appResources 'product.json'
+$packagePath = Join-Path $appResources 'package.json'
 if (-not (Test-Path -LiteralPath $appExe) -or -not (Test-Path -LiteralPath $productPath)) { throw 'Expected ArmotuSitio IDE release layout missing.' }
 $product = Get-Content -LiteralPath $productPath -Raw | ConvertFrom-Json
 $package = Get-Content -LiteralPath $packagePath -Raw | ConvertFrom-Json
 if ($product.nameShort -ne 'ArmotuSitio IDE' -or $product.commit -notmatch '^[a-f0-9]{40}$') { throw 'Unexpected release product identity.' }
+if ($versioned.Count -and $versioned[0].Name -cne $product.commit.Substring(0, 10)) { throw 'Versioned resources folder does not match the release commit.' }
 # Store owns updates for this distribution. A packaged installation is not writable by the Inno updater.
 $product.PSObject.Properties.Remove('updateUrl')
+$product.PSObject.Properties.Remove('armotusitioUpdate')
 $product | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $productPath -Encoding utf8
 $assets = Join-Path $staging 'StoreAssets'
 New-Item -ItemType Directory -Path $assets | Out-Null
-$logo = Join-Path $staging 'resources/app/extensions/armotusitio-ide/resources/logo.png'
+$logo = Join-Path $appResources 'extensions/armotusitio-ide/resources/logo.png'
 if (-not (Test-Path -LiteralPath $logo)) { throw 'Original branded logo missing from release.' }
 Add-Type -AssemblyName System.Drawing
 $image = [Drawing.Image]::FromFile($logo)

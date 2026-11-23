@@ -14,7 +14,7 @@ import { pathToFileURL } from 'node:url';
 import { createWriteStream } from 'node:fs';
 import { pipeline } from 'node:stream/promises';
 import { armotusitioManifestName, armotusitioPlatforms, armotusitioReleaseTag, armotusitioRepository, compareArmotusitioVersions, parseArmotusitioManifest } from '../src/vs/platform/update/common/armotusitioUpdate.ts';
-import { fileDigest, selectUpstreamRelease, withLock, findReleaseByTag, validateDraftRelease } from './ats-autoupdate.mts';
+import { fileDigest, selectUpstreamRelease, withLock, findReleaseByTag, validateDraftRelease, windowsAppResources } from './ats-autoupdate.mts';
 
 // Load this standalone native module for focused tests without building the application.
 const require = createRequire(import.meta.url);
@@ -244,4 +244,37 @@ test('a changed draft identity or an already published release cannot continue p
 	for (const changed of [null, { ...draft, draft: false }, { ...draft, tag_name: 'other' }, { ...draft, target_commitish: 'b'.repeat(40) }, { ...draft, assets: null }]) {
 		assert.throws(() => validateDraftRelease(changed, tag, commit), /Publication stopped/);
 	}
+});
+
+test('Windows background updates use the versioned layout that inno_updater expects, end to end', async () => {
+	// inno_updater 0.26 only swaps `new_<exe>`; without versioned updates the installer staged into `_` and the swap failed.
+	const product = JSON.parse(await readFile(new URL('../product.json', import.meta.url), 'utf8'));
+	const setup = (await readFile(new URL('../build/win32/code.iss', import.meta.url), 'utf8')).replaceAll('\r\n', '\n');
+	const msix = await readFile(new URL('./ats-package-msix.ps1', import.meta.url), 'utf8');
+	assert.deepEqual({
+		versioned: product.win32VersionedUpdate,
+		// A failed swap is logged as a failure, never as a success.
+		exitChecked: /if Exec\([^\n]*inno_updater\.exe[^\n]*UpdateResultCode\) and \(UpdateResultCode = 0\) then\n\s+Log\('inno_updater completed successfully'\)/.test(setup),
+		// The Store package reads the versioned folder and leaves updates to the Store.
+		msixVersioned: msix.includes(`Where-Object Name -CMatch '^[a-f0-9]{10}$'`),
+		msixNoSelfUpdate: msix.includes(`Remove('armotusitioUpdate')`)
+	}, { versioned: true, exitChecked: true, msixVersioned: true, msixNoSelfUpdate: true });
+});
+
+test('packaged Windows resources are found under the commit folder and stale or mixed layouts are refused', async () => {
+	const root = await mkdtemp(path.join(tmpdir(), 'ats-win-layout-'));
+	const commit = 'a809c4a9b234a9631c581855b43efc172e5b638f';
+	try {
+		const flat = path.join(root, 'flat'), versioned = path.join(root, 'versioned'), mixed = path.join(root, 'mixed');
+		await mkdir(path.join(flat, 'resources', 'app'), { recursive: true });
+		await mkdir(path.join(versioned, commit.slice(0, 10), 'resources', 'app'), { recursive: true });
+		await mkdir(path.join(mixed, commit.slice(0, 10)), { recursive: true });
+		await mkdir(path.join(mixed, '7220267967'), { recursive: true });
+		assert.deepEqual([
+			path.relative(root, await windowsAppResources(flat, commit)),
+			path.relative(root, await windowsAppResources(versioned, commit))
+		], [path.join('flat', 'resources', 'app'), path.join('versioned', commit.slice(0, 10), 'resources', 'app')]);
+		await assert.rejects(windowsAppResources(mixed, commit), /unexpected versioned resources folder/);
+		await assert.rejects(windowsAppResources(versioned, 'b'.repeat(40)), /unexpected versioned resources folder/);
+	} finally { await rm(root, { recursive: true, force: true }); }
 });

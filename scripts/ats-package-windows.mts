@@ -6,7 +6,7 @@ import * as path from 'node:path';
 import { spawn } from 'node:child_process';
 import { access, mkdir, readdir, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
-import { extensionDependencyInstallArgs, fileDigest, npmCLI, run, withLock } from './ats-autoupdate.mts';
+import { extensionDependencyInstallArgs, fileDigest, npmCLI, run, windowsAppResources, withLock } from './ats-autoupdate.mts';
 import { ensureInnoSetup } from '../build/lib/innoSetup.ts';
 import { authenticode, authenticodeEnabled, signingConfiguration, verifyPublisher } from './ats-authenticode.mts';
 
@@ -85,7 +85,7 @@ async function main(): Promise<void> {
 		commit: sourceCommit,
 		authenticode: signed,
 		installerSha256: await fileDigest(path.join(root, '.build', 'win32-x64', 'user-setup', 'VSCodeSetup.exe')),
-		productSha256: await fileDigest(path.resolve(root, '..', 'ArmotuSitio-IDE-win32-x64', 'resources', 'app', 'product.json')),
+		productSha256: await fileDigest(path.join(await windowsAppResources(path.resolve(root, '..', 'ArmotuSitio-IDE-win32-x64'), sourceCommit), 'product.json')),
 		completedAt: new Date().toISOString()
 	}, null, 2) + '\n');
 }
