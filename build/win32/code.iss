@@ -1510,9 +1510,35 @@ begin
 end;
 
 
+// Helper tools started by the editor (ripgrep, tgrep of bundled extensions) can outlive it and keep their own files
+// open, so a manual install stops with "DeleteFile failed; code 5". Only when the editor itself is closed: the helpers
+// of a running editor are never touched, and the usual "close the application" prompt still applies.
+procedure StopOrphanHelperProcesses();
+var
+  ResultCode: Integer;
+  AppPrefix: String;
+begin
+  if CheckForMutexes('{#AppMutex}') then
+    exit;
+  AppPrefix := ExpandConstant('{app}\');
+  StringChangeEx(AppPrefix, '''', '''''', True);
+  Log('StopOrphanHelperProcesses: stopping processes left running from ' + ExpandConstant('{app}'));
+  if not ShellExec('', 'powershell.exe',
+    '-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -Command "' +
+    'Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith(''' + AppPrefix + ''', [StringComparison]::OrdinalIgnoreCase) -and $_.Name -ne ''{#ExeBasename}.exe'' } | ' +
+    'ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop } catch {} }"',
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    Log('StopOrphanHelperProcesses: ShellExec failed with error code ' + IntToStr(ResultCode))
+  else
+    Log('StopOrphanHelperProcesses: PowerShell exited with code ' + IntToStr(ResultCode));
+end;
+
 // called before the wizard checks for running application
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
+  if IsNotBackgroundUpdate() then
+    StopOrphanHelperProcesses();
+
   if IsNotBackgroundUpdate() then
     StopTunnelServiceIfNeeded();
 
@@ -1862,9 +1888,12 @@ begin
       if not SessionEndFileExists() and not CancelFileExists() then begin
         StopTunnelServiceIfNeeded();
         Log('Invoking inno_updater for background update');
-        Exec(ExpandConstant('{app}\{#VersionedResourcesFolder}\tools\inno_updater.exe'), ExpandConstant('"{app}\{#ExeBasename}.exe" ' + BoolToStr(LockFileExists()) + ' "{cm:UpdatingVisualStudioCode}"'), '', SW_SHOW, ewWaitUntilTerminated, UpdateResultCode);
+        // Record what really happened: a failed swap used to be logged as a success, hiding why the update did not apply.
+        if Exec(ExpandConstant('{app}\{#VersionedResourcesFolder}\tools\inno_updater.exe'), ExpandConstant('"{app}\{#ExeBasename}.exe" ' + BoolToStr(LockFileExists()) + ' "{cm:UpdatingVisualStudioCode}"'), '', SW_SHOW, ewWaitUntilTerminated, UpdateResultCode) and (UpdateResultCode = 0) then
+          Log('inno_updater completed successfully')
+        else
+          Log('inno_updater failed with exit code ' + IntToStr(UpdateResultCode) + '; the previous version stays installed');
         DeleteFile(ExpandConstant('{app}\updating_version'));
-        Log('inno_updater completed successfully');
         #if "system" == InstallTarget
           if IsVersionedUpdate() then begin
             KillContextMenuComSurrogate();

@@ -324,9 +324,23 @@ export async function fileDigest(file: string): Promise<string> {
 	return hash.digest('hex');
 }
 
+/**
+ * `resources\app` of a packaged Windows application. With versioned updates (product.json `win32VersionedUpdate`, the
+ * layout inno_updater expects) it lives under `<first 10 characters of the commit>\`; without them, at the top. A second
+ * versioned folder, or one that names another commit, means a stale or mixed build and is refused.
+ */
+export async function windowsAppResources(application: string, commit?: string): Promise<string> {
+	const versioned = (await readdir(application, { withFileTypes: true })).filter(entry => entry.isDirectory() && /^[a-f0-9]{10}$/.test(entry.name)).map(entry => entry.name);
+	if (versioned.length > 1 || (commit && versioned.length && versioned[0] !== commit.slice(0, 10))) {
+		throw new Error(`Packaged application has an unexpected versioned resources folder (${versioned.join(', ')}). Rebuild it.`);
+	}
+	return path.join(application, ...versioned, 'resources', 'app');
+}
+
 async function applicationInfo(): Promise<any> {
 	const application = path.resolve(repositoryRoot, '..', 'ArmotuSitio-IDE-win32-x64');
-	const product = await jsonFile(path.join(application, 'resources', 'app', 'product.json'));
+	const resources = await windowsAppResources(application, await run('git', ['rev-parse', 'HEAD']));
+	const product = await jsonFile(path.join(resources, 'product.json'));
 	const configuration = await jsonFile(overridesPath);
 	const receipt = await jsonFile(path.join(stateRoot, 'build-receipt.json'));
 	if (product.nameShort !== 'ArmotuSitio IDE' || product.armotusitioUpdate?.repository !== armotusitioRepository
@@ -334,7 +348,7 @@ async function applicationInfo(): Promise<any> {
 		|| product.armotusitioUpdate?.revision !== configuration.armotusitioUpdate?.revision
 		|| !/^[a-f0-9]{40}$/.test(product.commit) || product.commit !== await run('git', ['rev-parse', 'HEAD'])
 		|| receipt.commit !== product.commit || receipt.authenticode !== authenticodeEnabled() || receipt.installerSha256 !== await fileDigest(path.join(repositoryRoot, '.build', 'win32-x64', 'user-setup', 'VSCodeSetup.exe'))
-		|| receipt.productSha256 !== await fileDigest(path.join(application, 'resources', 'app', 'product.json'))) {
+		|| receipt.productSha256 !== await fileDigest(path.join(resources, 'product.json'))) {
 		throw new Error('Build metadata does not match this clean source revision and trusted update configuration. Rebuild first.');
 	}
 	if (await run('git', ['status', '--porcelain', '--untracked-files=no'])) {

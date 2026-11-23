@@ -40,15 +40,19 @@ function providerIcon(provider: string): SVGElement {
 	path.setAttribute('fill', 'currentColor');
 	icon.append(path); return icon;
 }
-/** A speech bubble with a plus: start a new conversation. */
-function newChatIcon(): SVGElement {
+/** A decorative 16px line icon drawn in the current text color. */
+function lineIcon(className: string, d: string): SVGElement {
 	const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-	icon.setAttribute('viewBox', '0 0 16 16'); icon.setAttribute('class', 'new-chat-icon'); icon.setAttribute('aria-hidden', 'true');
+	icon.setAttribute('viewBox', '0 0 16 16'); icon.setAttribute('class', className); icon.setAttribute('aria-hidden', 'true');
 	const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-	path.setAttribute('d', 'M8 1.5a6.5 6.5 0 0 0-5.7 9.63L1.5 14.5l3.37-.8A6.5 6.5 0 1 0 8 1.5ZM8 5v6M5 8h6');
+	path.setAttribute('d', d);
 	path.setAttribute('fill', 'none'); path.setAttribute('stroke', 'currentColor'); path.setAttribute('stroke-width', '1.2'); path.setAttribute('stroke-linecap', 'round'); path.setAttribute('stroke-linejoin', 'round');
 	icon.append(path); return icon;
 }
+/** A speech bubble with a plus: start a new conversation. */
+function newChatIcon(): SVGElement { return lineIcon('new-chat-icon', 'M8 1.5a6.5 6.5 0 0 0-5.7 9.63L1.5 14.5l3.37-.8A6.5 6.5 0 1 0 8 1.5ZM8 5v6M5 8h6'); }
+/** A microphone: dictate the message by voice. */
+function micIcon(): SVGElement { return lineIcon('mic-icon', 'M8 1.5a2 2 0 0 0-2 2v4a2 2 0 0 0 4 0v-4a2 2 0 0 0-2-2ZM4 7.5a4 4 0 0 0 8 0M8 11.5v3M5.5 14.5h5'); }
 function elapsed(from: string): string {
 	const seconds = Math.max(0, Math.floor((Date.now() - Date.parse(from)) / 1000));
 	return String(Math.floor(seconds / 60)).padStart(2, '0') + ':' + String(seconds % 60).padStart(2, '0');
@@ -226,6 +230,14 @@ function shell(): void {
 	stop.addEventListener('click', () => api.postMessage({ action: 'cancel' }));
 	const media = el('div', 'pending-media'); media.id = 'pending-media'; media.setAttribute('aria-live', 'polite'); media.hidden = true;
 	box.append(input, stop, send);
+	// Dictation: the cursor goes to the box first, so Windows voice typing writes the message there.
+	if (L.dictation) {
+		const mic = el('button', 'secondary dictate') as HTMLButtonElement; mic.type = 'button'; mic.id = 'dictate';
+		mic.title = L.dictateHint; mic.setAttribute('aria-label', L.dictate);
+		mic.append(micIcon());
+		mic.addEventListener('click', () => { input.focus(); api.postMessage({ action: 'dictate' }); });
+		box.insertBefore(mic, stop);
+	}
 	// Mode, model and effort sit under the text, as in Claude and Codex: chosen where the message is written.
 	const tools = el('div', 'composer-tools'); tools.setAttribute('role', 'group'); tools.setAttribute('aria-label', L.composerTools);
 	// How full the conversation is, from the provider's own numbers, and summarizing whenever the user decides.
@@ -1121,6 +1133,8 @@ function renderComposer(): void {
 	compact.disabled = running;
 	document.querySelectorAll<HTMLButtonElement>('.edit-message').forEach(button => { button.disabled = running; });
 	(document.getElementById('prompt') as HTMLTextAreaElement).disabled = !state.chat;
+	const mic = document.getElementById('dictate') as HTMLButtonElement | null;
+	if (mic) { mic.disabled = !state.chat; }
 	document.getElementById('composer').setAttribute('aria-busy', String(running));
 	const banner = document.getElementById('banner');
 	const text = !state.project ? L.noProject : !state.trusted ? L.untrusted : state.chat && !state.chat.writer ? L.hybrid : '';

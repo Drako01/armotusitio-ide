@@ -33,6 +33,7 @@ const { DecisionLog } = require('./native-decisions.ts');
 const { configuredPreset } = require('./native-permissions.ts');
 const { APPROVAL_ANSWERS } = require('./native-approval.ts');
 const { IncrementalContextIndex, IGNORED } = require('./context.ts');
+const { dictationSupported, startDictation } = require('./native-dictation.ts');
 const { buildSetupItems, setupIcon } = require('./native-setup-check.ts');
 const { doctorReport } = require('./native-machine-doctor.ts');
 const { registerRunDiffView, validRunPath, runFileDiff, RUN_DIFF_COMMAND, CHECKPOINT_DIFF_COMMAND } = require('./native-run-diff-view.ts');
@@ -174,7 +175,7 @@ function labels(t: any) {
 		mcpCheck: t('Verificar ahora'), mcpConfigure: t('Configurar clave'), mcpEnable: t('Habilitar en este workspace'), mcpChangeKey: t('Cambiar clave'), mcpSettings: t('Abrir configuraci\u00f3n'),
 		emptyTitle: t('\u00bfEn qu\u00e9 trabajamos hoy?'), emptyBodyAct: t('Pedile un cambio o hac\u00e9 una pregunta sobre tu proyecto. En modo Actuar la IA edita el c\u00f3digo, corre las verificaciones y te muestra qu\u00e9 cambi\u00f3; lo pod\u00e9s revertir.'), emptyBodyAsk: t('Convers\u00e1 con la IA sobre tu proyecto. En modo Preguntar no cambia nada: si hace falta un cambio, te propone un plan para aprobar ac\u00e1 mismo.'),
 		suggestions: [t('Explicame este proyecto como si reci\u00e9n empezara'), t('\u00bfC\u00f3mo lo corro en mi computadora?'), t('Busc\u00e1 errores y arreglalos'), t('Agreg\u00e1 una pantalla de contacto con su formulario')],
-		placeholder: t('Escrib\u00ed tu mensaje\u2026 (/ para comandos)'), keyboard: t('Enter env\u00eda \u00b7 Shift+Enter nueva l\u00ednea \u00b7 @ archivos \u00b7 / comandos'), keyboardBusy: t('Enter encola tu mensaje \u00b7 Esc detiene la tarea'), composerTools: t('Opciones del mensaje'), openLinkRef: t('Abrir {0} en el navegador', '{0}'), openFileRef: t('Abrir {0} en el editor', '{0}'), send: t('Enviar'), cancel: t('Detener'), attach: t('Adjuntar archivos'), attachRemove: t('Quitar {0}'), attachPrompt: t('Revis\u00e1 los archivos adjuntos.'),
+		placeholder: t('Escrib\u00ed tu mensaje\u2026 (/ para comandos)'), keyboard: t('Enter env\u00eda \u00b7 Shift+Enter nueva l\u00ednea \u00b7 @ archivos \u00b7 / comandos'), keyboardBusy: t('Enter encola tu mensaje \u00b7 Esc detiene la tarea'), composerTools: t('Opciones del mensaje'), openLinkRef: t('Abrir {0} en el navegador', '{0}'), openFileRef: t('Abrir {0} en el editor', '{0}'), send: t('Enviar'), cancel: t('Detener'), attach: t('Adjuntar archivos'), dictation: dictationSupported(), dictate: t('Dictar con la voz'), dictateHint: t('Dictar con la voz: abre el dictado de Windows (Win+H) y escribe en el cuadro lo que dec\u00eds.'), attachRemove: t('Quitar {0}'), attachPrompt: t('Revis\u00e1 los archivos adjuntos.'),
 		attachLimit: t('Hasta {0} archivos por mensaje, de hasta {1} MB cada uno y {2} MB en total.'), attachUntrusted: t('Confi\u00e1 en esta carpeta para adjuntar archivos.'),
 		maxUploads: MAX_UPLOADS, maxUploadBytes: MAX_UPLOAD_BYTES, maxUploadTotalBytes: MAX_UPLOAD_TOTAL_BYTES,
 		you: t('Vos'), notice: t('Aviso del IDE'), thinking: t('{0} est\u00e1 pensando\u2026', '{0}'), executing: t('Ejecutando plan v{0} con {1}', '{0}', '{1}'),
@@ -622,6 +623,11 @@ function registerChat(context: any, controller: any, projects: any, mcp: any, vs
 		// Links in answers: web pages only through VS Code's own external-link confirmation; any other scheme is ignored.
 		if (action === 'openLink') {
 			if (typeof message.href === 'string' && message.href.length <= 2048 && /^https?:\/\//i.test(message.href)) { await vscode.env.openExternal(vscode.Uri.parse(message.href)); }
+			return;
+		}
+		// The microphone opens Windows voice typing on the chat box; if it cannot, the user learns the shortcut.
+		if (action === 'dictate') {
+			await startDictation().catch(() => vscode.window.showInformationMessage(t('No pude abrir el dictado de Windows. Hac\u00e9 clic en el cuadro del chat y apret\u00e1 Win+H.')));
 			return;
 		}
 		if (!folder) { return; }

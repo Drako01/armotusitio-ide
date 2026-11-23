@@ -156,6 +156,10 @@ La descarga y el reinicio usan la interfaz nativa; los perfiles y extensiones no
 También se verifica el hash de un instalador ya almacenado en caché antes de reutilizarlo.
 Un error de red, firma o integridad conserva la instalación actual; no se ejecutan archivos desconocidos.
 
+Desde 1.147.0 r4 el producto usa actualizaciones versionadas (`win32VersionedUpdate` en `product.json`), igual que VS Code oficial: los recursos viven en una carpeta con los primeros 10 caracteres del commit y el instalador en segundo plano deja `new_ArmotuSitio IDE.exe`, que `inno_updater` intercambia al reiniciar. La versión 0.26 de `inno_updater` solo hace ese intercambio; con el esquema anterior, la actualización de r2 a r3 quedaba preparada en la carpeta `_` y fallaba con «New executable not found». El instalador ahora registra el código de salida de `inno_updater` en su log (`%TEMP%\Setup Log *.txt`) en lugar de anotar siempre un éxito. Quien quedó en una versión anterior por ese fallo instala la nueva a mano una sola vez; desde ahí las actualizaciones siguen solas.
+
+Antes de publicar un cambio que toque el instalador o el esquema de carpetas, ensayá la actualización real: instalá la versión publicada, ejecutá la publicación con la etiqueta `probar-release` y dejá que el IDE instalado se actualice solo a esa build.
+
 Para retirar una release defectuosa del canal estable:
 
 ```powershell

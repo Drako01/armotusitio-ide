@@ -5,6 +5,7 @@
 	"dataFolderName": ".armotusitio-ide",
 	"sharedDataFolderName": ".armotusitio-ide-shared",
 	"win32MutexName": "armotusitioide",
+	"win32VersionedUpdate": true,
 	"licenseName": "MIT",
 	"licenseUrl": "https://github.com/microsoft/vscode/blob/main/LICENSE.txt",
 	"serverLicenseUrl": "https://github.com/microsoft/vscode/blob/main/LICENSE.txt",
