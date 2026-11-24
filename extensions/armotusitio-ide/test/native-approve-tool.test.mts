@@ -97,6 +97,32 @@ test('Claude permission prompts are decided by the same policy and permissions a
 	}
 });
 
+test('editing credentials, CI workflows or git hooks shows a card once, even under an allowing preset; an explicit rule still decides', async () => {
+	const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'ats-protected-edit-')));
+	const home = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-protected-edit-home-'));
+	try {
+		await addUserRule('edit:.husky/**', 'allow', home);
+		const permissions = await loadPermissions(root, home, undefined, { preset: 'dev' });
+		const cards: ApprovalDraft[] = [];
+		const context: ApproveContext = { root, permissions, policy: createCommandPolicy({ subprojects: [], delegate: false, extras: [], permissions }), ask: async card => { cards.push(card); return card.detail[0].includes('ci.yml') ? 'once' : 'deny'; } };
+		const verdict = async (file: string) => { const decision = await decidePermissionPrompt(context, { tool_name: 'Write', input: { file_path: file, content: 'x' } }); return decision.behavior === 'allow' ? 'allow' : decision.message.split('\n', 1)[0]; };
+		assert.deepEqual({
+			results: [await verdict('.github/workflows/ci.yml'), await verdict('.env.local'), await verdict('.githooks/pre-commit'), await verdict('.husky/pre-push'), await verdict('src/app.ts')],
+			cards: cards.map(card => [card.title, card.detail[0], card.rule, card.noRemember])
+		}, {
+			results: ['allow', 'DENIED: the user did not allow it', 'DENIED: the user did not allow it', 'allow', 'allow'],
+			cards: [
+				['Edit protected file', 'edit (protected): .github/workflows/ci.yml', '', 'inexact'],
+				['Edit protected file', 'edit (protected): .env.local', '', 'inexact'],
+				['Edit protected file', 'edit (protected): .githooks/pre-commit', '', 'inexact']
+			]
+		});
+	} finally {
+		await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+		await fs.rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+	}
+});
+
 test('a tool of a user-added MCP server asks by default, obeys mcp rules, and an unknown server is unavailable', async () => {
 	const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'ats-approve-mcp-')));
 	const home = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-approve-mcp-home-'));

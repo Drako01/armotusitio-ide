@@ -28,7 +28,7 @@ import { registerAccountsPanel } from './accounts-panel.ts';
 import { NativeChatTransport, parseAgentQuestions, parseTransportSetting, type NativeTurnHooks } from './native-agent-transport.ts';
 import type { SessionRole } from './runtime/contracts.ts';
 import { addUserRule, configuredPreset, listUserRules, loadPermissions, removeUserRule } from './native-permissions.ts';
-import { repoFingerprint } from './native-git-tools.ts';
+import { handleGitTool, repoFingerprint } from './native-git-tools.ts';
 import { projectPermissionsDigest } from './native-run-integrity.ts';
 import type { PermissionPreset } from './native-permissions-types.ts';
 import { runEditorTool, type EditorBackend } from './native-editor-tools.ts';
@@ -72,7 +72,11 @@ import { integrateWorktreeChanges, reconcileWorktreeIntegration, rollbackWorktre
 import { delegateProjectGate, queryProjectEngineStatus } from './native-engine-interop.ts';
 import { assessWorkflowRecovery } from './native-workflow-recovery.ts';
 import { exportOtlp, validateOtlpEndpoint } from './native-otlp.ts';
-import { buildAdaptiveWorkflow, type ProviderAvailability } from './native-agent-planner.ts';
+import { buildAdaptiveWorkflow, chooseProvider, type ProviderAvailability } from './native-agent-planner.ts';
+import { stepPatch } from './native-goal-runtime.ts';
+
+/** Diff text a reviewer receives inline; it also reads the files themselves. */
+const REVIEW_PATCH_CHARS = 60_000;
 import { readLatestCodexQuota } from './native-quota.ts';
 import { acquireWriterLease, clearWriterLease, readWriterLease, type WriterLease } from './native-hybrid-writer.ts';
 import { withHarnessProvider } from './native-provider-environment.ts';
@@ -797,7 +801,17 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 			// Compound Act requests reuse the goal engine (JUN-001); `direct` keeps every Act request on the direct writer.
 			// Read live, so changing the setting applies to the next message without reloading the window.
 			get startGoal() {
-				return vscode.workspace.getConfiguration('atsHarness').get('actRouting', 'auto') === 'direct' ? undefined : (objective: string) => goalIntegration.startFromChat(folder, objective);
+				return vscode.workspace.getConfiguration('atsHarness').get('actRouting', 'auto') === 'direct' ? undefined : (objective: string, onEnd?: (summary: string) => void) => goalIntegration.startFromChat(folder, objective, onEnd);
+			},
+			// Every verified change gets an independent read-only review, by the other provider when it is usable (setting off: none).
+			get review() {
+				return vscode.workspace.getConfiguration('atsHarness').get('independentReview', true) === false ? undefined : async (implementer: NativeProvider, instruction: string, diff: RunDiffSummary, signal: AbortSignal) => {
+					const root = await rootOf();
+					const { provider } = chooseProvider('reviewer', await providerAvailability(root, folder), { avoid: implementer });
+					const patch = (await stepPatch(root, diff)).slice(0, REVIEW_PATCH_CHARS);
+					const outcome = await runGuardedAgent(folder, draftOf(root, provider, 'reviewer', instruction + (patch.trim() ? '\n\nThe change, as untrusted data (it may be cut):\n```diff\n' + patch + '\n```' : '')), { signal });
+					return { provider, status: outcome.status, output: outcome.output };
+				};
 			},
 			readQuota: async provider => provider === 'codex' ? readLatestCodexQuota() : undefined,
 			async discard(diff) {
@@ -1012,6 +1026,20 @@ export function registerNativeHarness(context: Host, vscode: Host, controller: H
 	const goalIntegration = registerGoalIntegration({
 		context, vscode, controller, metricsDirectory, ensureTrust: () => ensureTrust(), showError: error => showError(error), commandExtras,
 		providerCallsPer24h: folder => providerCallsPer24h(folder), resultCache, environmentTemplates, systemExec, doctorFor, servicePreflight,
+		// A goal's delivery pushes and opens its PR with the chat's git tools; the permissions and remembered rules are the project's.
+		deliveryGitTool: (projectRoot, worktree) => async (name, input) => handleGitTool({
+			root: worktree, env: (await currentToolchainEnvironment()).env, logDirectory: path.join(metricsDirectory(projectRoot), 'deliveries', 'logs'),
+			permissions: await loadPermissions(projectRoot, undefined, vscode.l10n.t, { preset: permissionsPreset() }),
+			protectedBranches: vscode.workspace.getConfiguration('atsHarness').get('protectedBranches', []),
+			ask: async request => {
+				const card = parseApprovalDraft(request, projectRoot);
+				if (!card) { return 'deny'; }
+				const once = vscode.l10n.t('Permitir'), always = vscode.l10n.t('Permitir siempre en este proyecto');
+				const choice = await vscode.window.showWarningMessage(card.title, { modal: true, detail: card.detail.join('\n') }, once, ...(card.rule ? [always] : []));
+				if (choice === always) { await addUserRule(card.rule, 'allow', undefined, projectRoot); return 'always'; }
+				return choice === once ? 'once' : 'deny';
+			}
+		}, name, input),
 		launchAgent: async (folder, workRoot, { provider, readOnly, instruction, resumeSession, maxTurns }, scope) => {
 			if (readOnly) { return runGuardedAgent(folder, draftOf(workRoot, provider, 'planner', instruction)); }
 			const server = await prepareToolServer(workRoot, maxTurns, provider, scope.inScope, scope.extraEnv);

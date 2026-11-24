@@ -179,7 +179,7 @@ function labels(t: any) {
 		attachLimit: t('Hasta {0} archivos por mensaje, de hasta {1} MB cada uno y {2} MB en total.'), attachUntrusted: t('Confi\u00e1 en esta carpeta para adjuntar archivos.'),
 		maxUploads: MAX_UPLOADS, maxUploadBytes: MAX_UPLOAD_BYTES, maxUploadTotalBytes: MAX_UPLOAD_TOTAL_BYTES,
 		you: t('Vos'), notice: t('Aviso del IDE'), thinking: t('{0} est\u00e1 pensando\u2026', '{0}'), executing: t('Ejecutando plan v{0} con {1}', '{0}', '{1}'),
-		stage: { preparing: t('Preparando ejecuci\u00f3n segura'), agent: t('La IA est\u00e1 haciendo los cambios'), verifying: t('Comprobando que todo funcione'), repairing: t('Detect\u00e9 errores y los estoy corrigiendo') },
+		stage: { preparing: t('Preparando ejecuci\u00f3n segura'), agent: t('La IA est\u00e1 haciendo los cambios'), verifying: t('Comprobando que todo funcione'), repairing: t('Detect\u00e9 errores y los estoy corrigiendo'), reviewing: t('Revisando los cambios con un revisor independiente') },
 		observed: t('{0} KB de actividad', '{0}'), elapsed: t('Tiempo'),
 		plan: t('Plan v{0}', '{0}'), planSteps: t('Pasos'), planFiles: t('Archivos'), planRisks: t('Riesgos'), planSkills: t('Gu\u00edas del proyecto que va a seguir'), planVerification: t('Verificaciones autom\u00e1ticas'), planNoVerification: t('Sin verificaciones configuradas. Pod\u00e9s configurarlas con \u00abConfigurar Harness nativo del proyecto\u00bb.'),
 		approve: t('Aprobar y ejecutar'), requestChanges: t('Pedir cambios'), requestPrefix: t('Cambios al plan: '), superseded: t('Reemplazado por una versi\u00f3n m\u00e1s nueva'), approveHint: t('Al aprobar, el agente modifica archivos del proyecto con permisos de escritura acotados y luego corren las verificaciones.'),

@@ -32,7 +32,8 @@ import { notifyWebhook, publishProcesses, readProcesses, type ProcessView } from
 import { integrationOrder, linkedPullRequestsSection, repoPartInstruction, type RepoDelivery } from './native-multi-repo.ts';
 import { cardKeyOf, cardObjective, commentMilestone, readCard, type CardClient, type CardContext } from './native-card-goal.ts';
 import { reviewObjective, reviewTasks, threadStates, type ReviewComment } from './native-review-comments.ts';
-import { acceptDelivery, commitMessage, commitStep, createDelivery, deliveryFiles, deliveryPackage, discardDelivery, pullRequestDescription, type Delivery } from './native-delivery.ts';
+import { acceptDelivery, commitMessage, commitStep, createDelivery, deliveryFiles, deliveryPackage, discardDelivery, publishDelivery, pullRequestDescription, type Delivery, type DeliveryGitTool, type PublishedDelivery } from './native-delivery.ts';
+import { MAX_PR_BODY_LENGTH } from './native-approval.ts';
 import { harnessErrorCode } from './native-chat.ts';
 import { inspectHarnessAuthority } from './native-authority.ts';
 import { loadProjectConfig } from './native-project.ts';
@@ -60,6 +61,8 @@ export interface GoalIntegrationDeps {
 	servicePreflight(root: string): Promise<boolean>;
 	/** The integration's guarded launch; `extraEnv` reaches the implementer's commands (offline modes, environment). */
 	launchAgent(folder: Host, workRoot: string, request: GoalAgentRequest, scope: { inScope(file: string): boolean; extraEnv: Record<string, string> }): Promise<AgentOutcome>;
+	/** The structured git tools in a delivery worktree, under the permissions of the project it belongs to. */
+	deliveryGitTool(projectRoot: string, worktree: string): DeliveryGitTool;
 }
 
 /** A goal running in this window: how to stop it, its pending question round, and the files the user saved meanwhile. */
@@ -87,16 +90,26 @@ export interface LiveGoalListing {
 }
 
 /** Whether a goal started; the reason says why not, so the chat can keep the request instead of losing it. */
-export interface GoalLaunch { started: boolean; reason?: 'declined' | 'busy' | 'untrusted' | 'service' | 'error' }
+export interface GoalLaunch { started: boolean; reason?: 'declined' | 'busy' | 'untrusted' | 'service' | 'error'; /** HARNESS_* code of an `error`. */ code?: string; /** The charter the goal runs under, shown in the chat. */ charter?: string }
 export interface GoalIntegration {
 	/** A compound chat request (JUN-001): same engine and charter card, without the advanced command questions. */
-	startFromChat(folder: Host, objective: string): Promise<GoalLaunch>;
+	startFromChat(folder: Host, objective: string, onEnd?: (summary: string) => void): Promise<GoalLaunch>;
 	running(): number;
 	list(): LiveGoalListing[];
 	/** Ask a running goal to pause or stop at its next safe point; `false` when the id is unknown. */
 	control(id: string, action: 'pause' | 'stop'): boolean;
 }
-interface GoalRunOptions { delivery?: Delivery; card?: CardContext; linked?: string }
+interface GoalRunOptions { delivery?: Delivery; card?: CardContext; linked?: string; /** Receives the end summary (the chat that started the goal). */ onEnd?: (summary: string) => void }
+
+/** How a goal ended, for the chat that started it: status, branch, push and pull request, in plain words. */
+export function goalSummary(t: (message: string, ...args: string[]) => string, report: Pick<GoalReport, 'status' | 'reason'>, delivery: Pick<Delivery, 'branch'> | undefined, published: PublishedDelivery | undefined): string {
+	const lines = [report.status === 'completed' ? t('El objetivo termin\u00f3 y cumpli\u00f3 la Definici\u00f3n de Terminado.') : t('El objetivo se detuvo sin terminar ({0}).', report.reason ?? report.status)];
+	if (delivery) { lines.push(t('Rama: {0}.', delivery.branch)); }
+	if (published?.pullRequest) { lines.push(t('Sub\u00ed la rama y abr\u00ed el pull request: {0}', published.pullRequest)); }
+	else if (published?.pushed) { lines.push(published.error === 'no-base-branch' ? t('Sub\u00ed la rama; no abr\u00ed el PR porque el proyecto no estaba en una rama al empezar.') : t('Sub\u00ed la rama, pero el PR no se pudo abrir: {0}', published.error ?? '')); }
+	else if (published) { lines.push(t('No se subi\u00f3 la rama: {0}', published.error ?? '')); }
+	return lines.join('\n');
+}
 interface GoalResult { status: string; delivery?: Delivery }
 
 const firstLine = (text: string, length: number): string => text.split('\n')[0].slice(0, length);
@@ -109,8 +122,9 @@ export function registerGoalIntegration(deps: GoalIntegrationDeps): GoalIntegrat
 	const log = vscode.window.createOutputChannel?.('ArmotuSitio Harness: objetivos', { log: true });
 	if (log) { context.subscriptions.push(log); }
 	/** Side work of a goal (decisions, card comments, history, commits): a failure never stops the goal, and it is logged. */
-	const bestEffort = async <T>(work: Promise<T>, what: string): Promise<T | undefined> => {
-		try { return await work; } catch (error) { log?.warn(what + ': ' + harnessErrorCode(error)); return undefined; }
+	const bestEffort = async <T>(work: Promise<T> | (() => Promise<T>), what: string): Promise<T | undefined> => {
+		// A function also covers work that fails before it returns its promise (a missing client, a bad argument).
+		try { return await (typeof work === 'function' ? work() : work); } catch (error) { log?.warn(what + ': ' + harnessErrorCode(error)); return undefined; }
 	};
 	const feed = (): ActivityFeed | undefined => controller.activityFeed;
 
@@ -127,7 +141,8 @@ export function registerGoalIntegration(deps: GoalIntegrationDeps): GoalIntegrat
 	};
 	/** Work Management client for card goals (block U); the extension wires it when MCP is enabled. */
 	const cardClient = (): CardClient => {
-		const client = controller.mcpClient;
+		// The extension keeps the connected Work Management client on `controller.mcp.client`.
+		const client = controller.mcp?.client;
 		if (!client) { throw Error('HARNESS_UNSUPPORTED'); }
 		return { tools: () => client.tools(), call: (name, args) => client.call(name, args) };
 	};
@@ -250,10 +265,15 @@ export function registerGoalIntegration(deps: GoalIntegrationDeps): GoalIntegrat
 		const files = delivery ? await bestEffort(deliveryFiles(delivery), 'list delivery files') ?? [] : [];
 		const content = { state, spec: report.spec, done: report.done, files, ...(options.card ? { card: options.card.key } : {}) };
 		await fs.writeFile(packageFile, deliveryPackage(content) + (options.linked ? '\n' + options.linked : '') + '\n## Descripci\u00f3n de PR\n\n' + pullRequestDescription(content) + (options.linked ?? ''));
-		if (options.card && report.status === 'completed') { await bestEffort(commentMilestone(cardClient(), options.card, t('Entrega lista en la rama {0}.', delivery?.branch ?? '')), 'card milestone'); }
+		if (options.card && report.status === 'completed') { await bestEffort(() => commentMilestone(cardClient(), options.card!, t('Entrega lista en la rama {0}.', delivery?.branch ?? '')), 'card milestone'); }
 		if (delivery) { deliveries.set(delivery.worktree, { delivery, folder, charter }); }
 		const title = firstLine(charter.objective, 80);
+		// A finished `branch-and-pr` goal pushes its branch and opens the PR; a refusal is reported, never worked around.
+		const published: PublishedDelivery | undefined = report.status === 'completed' && delivery && charter.delivery === 'branch-and-pr'
+			? await bestEffort(() => publishDelivery(delivery, deps.deliveryGitTool(delivery.root, delivery.worktree), { title: firstLine(charter.objective, 120), body: pullRequestDescription(content).slice(0, MAX_PR_BODY_LENGTH) }), 'publish delivery')
+			: undefined;
 		const message = report.status === 'completed' ? t('Objetivo terminado: {0}', title) : t('El objetivo se detuvo ({0}): {1}', report.reason ?? report.status, title);
+		options.onEnd?.(goalSummary(t, report, delivery, published));
 		void notifyWebhookSetting(message, report.status);
 		// A part of a multi-repo goal reports to its coordinator instead of asking.
 		if (options.linked) { return; }
@@ -322,13 +342,16 @@ export function registerGoalIntegration(deps: GoalIntegrationDeps): GoalIntegrat
 				}
 			});
 			void bestEffort(decisions.record({ title: 'Carta: ' + firstLine(charter.objective, 100), context: 'Carta aprobada', decision: firstLine(charter.objective, 300) + (charter.allowProduction ? '' : ' (sin tocar producci\u00f3n)'), alternatives: [], scope: charter.scope.flatMap(rule => rule.allow ?? []), source: 'charter' }), 'record charter');
-			if (options.card) { await bestEffort(commentMilestone(cardClient(), options.card, t('Plan aprobado: el Harness empez\u00f3 a trabajar en esta card.')), 'card milestone'); }
+			if (options.card) { await bestEffort(() => commentMilestone(cardClient(), options.card!, t('Plan aprobado: el Harness empez\u00f3 a trabajar en esta card.')), 'card milestone'); }
 			const report = await new GoalOrchestrator(new FileGoalJournal(storage, goalId), ports, goalId).run(charter, delivery?.base);
 			await bestEffort(new GoalUsageHistory(metricsDirectory(root)).record({ size: charter.size, tasks: Math.max(1, report.steps), calls: report.runs, at: new Date().toISOString() }), 'record usage');
 			const state = await new FileGoalJournal(storage, goalId).load(goalId);
 			await deliverGoal({ folder, charter, options, report, state, delivery, packageFile: path.join(storage, goalId + '-entrega.md') });
 			return { status: report.status, delivery };
-		} catch (error) { showError(error); return undefined; }
+		} catch (error) {
+			if (options.onEnd) { options.onEnd(t('El objetivo fall\u00f3 ({0}).', harnessErrorCode(error))); } else { showError(error); }
+			return undefined;
+		}
 		finally { goals.delete(goalId); decorationsChanged?.fire(undefined); await environment?.destroy(); }
 	};
 
@@ -400,7 +423,11 @@ export function registerGoalIntegration(deps: GoalIntegrationDeps): GoalIntegrat
 			inferred.allowProduction ? t('Puede tocar c\u00f3digo de producci\u00f3n y tests.') : t('S\u00f3lo tests: el c\u00f3digo de producci\u00f3n queda prohibido.'),
 			t('Prohibido: git, dependencias nuevas, publicar.'),
 			t('Presupuesto: {0} corridas, {1} minutos, {2} turnos por corrida.', String(charter.budget.maxRuns), String(charter.budget.maxMinutes), String(charter.budget.maxTurnsPerRun)),
-			charter.delivery === 'local-branch' ? t('Entrega: rama local con commits del orquestador; push y PR quedan para vos.') : t('Entrega: cambios en tu \u00e1rbol de trabajo.'),
+			{
+				'branch-and-pr': t('Entrega: rama con commits del orquestador; al terminar la sube y abre el pull request, con tus permisos de git.'),
+				'local-branch': t('Entrega: rama local con commits del orquestador; push y PR quedan para vos.'),
+				'working-tree': t('Entrega: cambios en tu \u00e1rbol de trabajo.')
+			}[charter.delivery],
 			...(charter.environment ? [t('Entorno ef\u00edmero: {0}, creado y destruido por el IDE.', charter.environment)] : []),
 			t('Estimaci\u00f3n: {0}\u2013{1} llamadas al proveedor ({2}).', String(estimate.low), String(estimate.high), estimate.basis === 'history' ? t('seg\u00fan tu historial') : t('valor inicial')),
 			...(quota.fits ? [] : [t('\u26a0 La estimaci\u00f3n supera el cupo disponible ({0} llamadas, reservando {1}% para tu trabajo manual). Divid\u00ed el objetivo o us\u00e1 el otro proveedor.', String(quota.available ?? 0), String(reserve))]),
@@ -436,28 +463,33 @@ export function registerGoalIntegration(deps: GoalIntegrationDeps): GoalIntegrat
 	 * Shared goal launcher. `quick` (from the chat, JUN-008) infers what is safe to infer: this folder only, the recommended
 	 * delivery and no ephemeral environment. The charter card, the doctor, the quota estimate and the service preflight still run.
 	 */
-	const launchGoal = async (folder: Host, objective: string, quick: boolean): Promise<GoalLaunch> => {
+	const launchGoal = async (folder: Host, objective: string, quick: boolean, onEnd?: (summary: string) => void): Promise<GoalLaunch> => {
 		const folders = vscode.workspace.workspaceFolders || [];
 		const root = await fs.realpath(folder.uri.fsPath);
 		// A card key in the instruction brings the card's description and criteria (U); without MCP it runs as plain text.
 		const key = cardKeyOf(objective);
-		const card = key && controller.mcp?.enabled?.() ? await bestEffort(readCard(cardClient(), key), 'read card ' + key) : undefined;
+		const card = key && controller.mcp?.enabled?.() ? await bestEffort(() => readCard(cardClient(), key), 'read card ' + key) : undefined;
 		const goalObjective = card ? cardObjective(objective, card) : objective;
 		const others = folders.filter((item: Host) => item.uri.toString() !== folder.uri.toString());
 		const extra = quick ? [] : others.length ? await vscode.window.showQuickPick(others.map((item: Host) => ({ label: item.name, folder: item })), { canPickMany: true, title: t('\u00bfEl objetivo cruza otros repositorios? Eleg\u00ed en orden de integraci\u00f3n (vac\u00edo: s\u00f3lo {0})', folder.name) }) : [];
 		if (extra === undefined) { return { started: false, reason: 'declined' }; }
 		const inferred = inferGoalOptions(objective, await detectEcosystems(root));
-		const branch = t('Rama local harness/\u2026 (recomendado)'), tree = t('Cambios en mi \u00e1rbol de trabajo');
+		const branch = t('Rama local harness/\u2026 (recomendado)'), tree = t('Cambios en mi \u00e1rbol de trabajo'), published = t('Rama, push y pull request');
 		const git = await pathExists(path.join(root, '.git'));
 		// From the chat the recommended delivery is inferred: a local branch keeps the user's uncommitted work untouched.
-		const deliveryChoice = quick ? (git ? branch : tree) : git ? await vscode.window.showQuickPick([branch, tree], { title: t('\u00bfC\u00f3mo quer\u00e9s recibir el trabajo?') }) : tree;
+		// A request that asks for the push or the PR gets them at the end, under the user's git permissions.
+		const inferredChoice = inferred.publish ? published : branch;
+		let deliveryChoice: string | undefined = tree;
+		if (git) { deliveryChoice = quick ? inferredChoice : await vscode.window.showQuickPick([branch, published, tree], { title: t('\u00bfC\u00f3mo quer\u00e9s recibir el trabajo?') }); }
 		if (!deliveryChoice) { return { started: false, reason: 'declined' }; }
 		const provider: NativeProvider = vscode.workspace.getConfiguration('atsHarness').get('goalProvider', 'claude') === 'codex' ? 'codex' : 'claude';
 		const templates = await bestEffort(deps.environmentTemplates(root), 'read environment templates') ?? [];
 		const none = t('Sin entorno ef\u00edmero');
 		const environmentChoice = !quick && templates.length ? await vscode.window.showQuickPick([none, ...templates.map(item => item.name)], { title: t('\u00bfEl objetivo necesita un entorno ef\u00edmero?') }) : none;
 		if (!environmentChoice) { return { started: false, reason: 'declined' }; }
-		const delivery = deliveryChoice === branch || extra.length ? 'local-branch' as const : 'working-tree' as const;
+		// Several repositories always deliver on branches, each integrated in order.
+		const deliveryByChoice: Record<string, GoalCharter['delivery']> = { [branch]: 'local-branch', [published]: 'branch-and-pr', [tree]: extra.length ? 'local-branch' : 'working-tree' };
+		const delivery = deliveryByChoice[deliveryChoice];
 		const charter: GoalCharter = { ...defaultCharter(goalObjective, provider, provider === 'claude' ? 'codex' : 'claude', { ...inferred, delivery }), ...(environmentChoice !== none ? { environment: environmentChoice } : {}) };
 		const { estimate, reserve, quota } = await estimateGoal(folder, root, provider, charter, 1 + extra.length);
 		// The full doctor runs before approval, so an environment problem shows now and not halfway through (X).
@@ -465,11 +497,12 @@ export function registerGoalIntegration(deps: GoalIntegrationDeps): GoalIntegrat
 		const repositories = [folder.name, ...extra.map((item: Host) => item.label)];
 		const approve = t('Aprobar carta');
 		const detail = charterDetail({ objective, charter, inferred, estimate, quota, reserve, card, repositories, problems });
-		if (await vscode.window.showWarningMessage(t('\u00bfAprob\u00e1s esta carta?'), { modal: true, detail }, approve) !== approve) { return { started: false, reason: 'declined' }; }
+		// From the chat the instruction is the approval: the charter is shown there, and the goal can be paused or stopped.
+		if (!quick && await vscode.window.showWarningMessage(t('\u00bfAprob\u00e1s esta carta?'), { modal: true, detail }, approve) !== approve) { return { started: false, reason: 'declined' }; }
 		if (!await deps.servicePreflight(root)) { return { started: false, reason: 'service' }; }
 		if (extra.length) { void runMultiRepo([folder, ...extra.map((item: Host) => item.folder)], charter, objective, goalObjective, card); }
-		else { void runGoal(folder, charter, card ? { card } : {}); }
-		return { started: true };
+		else { void runGoal(folder, charter, { ...(card ? { card } : {}), ...(onEnd ? { onEnd } : {}) }); }
+		return { started: true, charter: detail };
 	};
 	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.goal', async (requested?: string, objectiveArgument?: string) => {
 		try {
@@ -483,11 +516,16 @@ export function registerGoalIntegration(deps: GoalIntegrationDeps): GoalIntegrat
 		} catch (error) { showError(error); }
 	}));
 	return {
-		startFromChat: async (folder, objective) => {
+		startFromChat: async (folder, objective, onEnd) => {
 			if (!deps.ensureTrust()) { return { started: false, reason: 'untrusted' }; }
 			// A goal already running in this project is the writer: a second one would compete for the same lease.
 			if ([...goals.values()].some(goal => goal.folder.uri.toString() === folder.uri.toString())) { return { started: false, reason: 'busy' }; }
-			try { return await launchGoal(folder, objective, true); } catch (error) { showError(error); return { started: false, reason: 'error' }; }
+			// The chat shows the code and continues on the direct writer; the log keeps it for diagnosis.
+			try { return await launchGoal(folder, objective, true, onEnd); } catch (error) {
+				const code = harnessErrorCode(error);
+				log?.error('start from chat: ' + code);
+				return { started: false, reason: 'error', code };
+			}
 		},
 		running: () => goals.size,
 		list: () => [...goals.entries()].map(([id, goal]) => ({

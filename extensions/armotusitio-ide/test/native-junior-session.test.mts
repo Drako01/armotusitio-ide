@@ -144,14 +144,79 @@ test('J-08/JUN-008: a goal that does not start keeps the request suspended, and 
 	} finally { await s.cleanup(); }
 });
 
-test('risky and question requests in Act never reach a writer: risky work gets a reviewed plan, a question a read-only answer', async () => {
+/** A reviewer that answers with these `harness-review` blocks in order, recording what it was asked. */
+const reviewer = (answers: string[], asked: Array<{ implementer: string; instruction: string; files: string[] }> = []): ChatRuntime['review'] => async (implementer, instruction, diff) => {
+	asked.push({ implementer, instruction, files: diff.files.map(file => file.path) });
+	return { provider: 'codex', status: 'passed', output: answers.shift() ?? '```harness-review\n{"findings":[],"score":9}\n```' };
+};
+const blockingReview = (text: string) => '```harness-review\n{"findings":[{"severity":"blocking","text":"' + text + '","file":"src/sum.ts"}],"score":4}\n```';
+
+test('a verified change gets an independent review; blocking findings are corrected, verified and reviewed again', async () => {
+	const asked: Array<{ implementer: string; instruction: string; files: string[] }> = [];
+	const s = await session([passing(), passing()], { review: reviewer([blockingReview('La suma ignora los descuentos')], asked) });
+	try {
+		await s.chat.send('Corregí la suma del carrito', 'act');
+		const notices = s.chat.snapshot().messages.filter(message => message.role === 'notice').map(message => message.text).join('\n');
+		assert.deepEqual({ calls: s.calls.map(call => call.kind), reviews: asked.length, implementer: asked[0].implementer, files: asked[0].files, repair: runs(s.chat)[1].repair, ok: !s.chat.busy },
+			{ calls: ['implement', 'implement'], reviews: 2, implementer: 'claude', files: ['src/sum.ts'], repair: { attempt: 1, max: 2 }, ok: true });
+		assert.match(asked[0].instruction, /harness-review/);
+		assert.match(s.calls[1].instruction, /Review correction 1 of 2[\s\S]*La suma ignora los descuentos/);
+		assert.match(notices, /aprobada, puntaje 9 de 10/);
+	} finally { await s.cleanup(); }
+});
+
+test('the review is bounded: findings left after the corrections are shown and the task is not called done', async () => {
+	const s = await session([passing(), passing(), passing()], { review: reviewer([blockingReview('A'), blockingReview('B'), blockingReview('C')]) });
+	try {
+		await s.chat.send('Corregí la suma del carrito', 'act');
+		const last = s.chat.snapshot().messages.at(-1)!;
+		assert.deepEqual({ calls: s.calls.length, tone: last.tone }, { calls: 3, tone: 'error' });
+		assert.match(last.text, /todavía marca 1 problemas después de 2 correcciones[\s\S]*C/);
+	} finally { await s.cleanup(); }
+});
+
+test('no review without changes, after failed gates, or when the reviewer cannot answer; a broken review never blocks a verified change', async () => {
+	let reviews = 0;
+	const counting: ChatRuntime['review'] = async () => { reviews++; return { provider: 'codex', status: 'passed', output: 'sin bloque' }; };
+	const unchanged = await session([passing(changed())], { review: counting });
+	try { await unchanged.chat.send('Revisá el README', 'act'); } finally { await unchanged.cleanup(); }
+	const failed = await session([failing('ECONNREFUSED 127.0.0.1:5432')], { review: counting });
+	try { await failed.chat.send('Corregí la suma', 'act'); } finally { await failed.cleanup(); }
+	assert.equal(reviews, 0);
+	const invalid = await session([passing()], { review: counting });
+	try {
+		await invalid.chat.send('Corregí la suma', 'act');
+		assert.deepEqual({ reviews, calls: invalid.calls.length }, { reviews: 1, calls: 1 });
+		assert.match(invalid.chat.snapshot().messages.at(-1)!.text, /no devolvió un resultado válido/);
+	} finally { await invalid.cleanup(); }
+});
+
+test('a goal engine that fails to start says why and the request continues on the direct writer', async () => {
+	const s = await session([], { startGoal: async () => { throw Error('HARNESS_SOMETHING_BROKE'); } });
+	try {
+		await s.chat.send('Creame una app de clientes con login, roles y base de datos', 'act');
+		assert.deepEqual({ calls: s.calls.map(call => call.kind), suspended: s.chat.snapshot().suspended }, { calls: ['implement'], suspended: undefined });
+		assert.match(s.chat.snapshot().messages.map(message => message.text).join('\n'), /HARNESS_SOMETHING_BROKE/);
+	} finally { await s.cleanup(); }
+});
+
+test('in Act an instruction always reaches a writer, whatever it mentions; only a one-line question is answered read-only', async () => {
 	const s = await session([]);
 	try {
 		await s.chat.send('Deploy\u00e1 la app a producci\u00f3n', 'act');
 		await s.chat.send('\u00bfQu\u00e9 hace la funci\u00f3n total?', 'act');
-		assert.deepEqual(s.calls.map(call => call.kind), ['converse', 'converse']);
-		assert.match(s.calls[0].instruction, /Do not change anything in this turn/);
+		assert.deepEqual(s.calls.map(call => call.kind), ['implement', 'converse']);
 		assert.match(s.calls[1].instruction, /Answer it read-only/);
+	} finally { await s.cleanup(); }
+});
+
+test('Ask resolves the request: an answer, or the complete plan with assumptions; it asks only for a fact the project does not hold', async () => {
+	const s = await session([]);
+	try {
+		await s.chat.send('Agregá un filtro por fecha al listado', 'ask');
+		assert.deepEqual({ calls: s.calls.map(call => call.kind) }, { calls: ['converse'] });
+		assert.match(s.calls[0].instruction, /propose the complete plan now, with reasonable assumptions/);
+		assert.match(s.calls[0].instruction, /Never modify files now/);
 	} finally { await s.cleanup(); }
 });
 

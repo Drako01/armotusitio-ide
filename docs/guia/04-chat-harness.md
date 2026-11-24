@@ -8,21 +8,29 @@ El Chat Harness es una conversación con Claude Code o Codex dentro del IDE. La 
 
 Elegí el modo en la cabecera del chat o con `/modo`:
 
-- **Actuar** (predeterminado): la IA cambia el código directamente y corre los comandos permitidos.
-- **Preguntar**: la IA solo conversa y te propone un plan. No ejecuta nada hasta que lo aprobás.
+- **Actuar** (predeterminado): lo que pedís se hace. La IA cambia el código, corre los comandos permitidos, verifica y pasa el cambio por una revisión independiente.
+- **Preguntar**: la IA no cambia nada. Responde lo que preguntás y, si pedís un cambio, te propone el plan completo de una vez, con los supuestos a la vista; solo pregunta si le falta un dato que no está en el proyecto. El plan se ejecuta con **Aprobar y ejecutar**, por el mismo camino que Actuar.
 
 ## Un prompt → resultado verificado
 
-En **Actuar** escribís un solo pedido y el IDE decide cómo resolverlo con reglas locales (no gasta una llamada al modelo para clasificarlo y nunca cambia tus permisos):
+En **Actuar**, lo que pedís se hace. El chat conversa con el modelo; el Harness orquesta el trabajo y lo controla. Elige el camino con reglas locales (no gasta una llamada al modelo para clasificarlo y nunca cambia tus permisos):
 
-| Si el pedido es… | El IDE hace |
+| Si el pedido es… | El Harness hace |
 |---|---|
-| Una pregunta («¿qué hace esta función?») | Responde sin modificar archivos. |
-| Un cambio puntual («renombrá `total` a `subtotal`») | Lo implementa directo, corre las verificaciones y te entrega el resultado. |
-| Algo con varias partes («una API en Go con su frontend en Next.js, login y base de datos») | Lo ejecuta como **objetivo autónomo** por etapas: análisis, diseño, implementación, revisión y verificación. Te pide **una sola aprobación** con el alcance, el presupuesto y los permisos previstos; el resto lo infiere del proyecto (este repositorio, entrega en una rama local, sin entorno efímero). |
-| Algo riesgoso (producción, despliegue, borrar datos, reescribir historial) | No cambia nada: te propone un plan para revisar y, si falta una decisión importante, te hace una sola pregunta concreta. |
+| Una pregunta de una línea («¿qué hace esta función?») | Responde sin modificar archivos. |
+| Un cambio («renombrá `total` a `subtotal`», «corregí el login») | Lo implementa, corre las verificaciones, corrige lo que falle y pasa el cambio por una **revisión independiente**. |
+| Algo con varias partes («una API en Go con su frontend en Next.js, login y base de datos») | Lo ejecuta como **objetivo autónomo** por etapas: análisis, diseño, implementación, revisión y verificación. La carta (alcance y presupuesto) aparece en el chat y el objetivo arranca; lo pausás o detenés desde ahí. Trabaja en una rama aparte; si el pedido menciona el PR o el push, al terminar sube la rama y abre el pull request contra la rama en la que estabas. Cuando termina, el chat te dice cómo terminó. |
 
-El chat muestra en una línea por qué tomó ese camino. Si preferís que todo pedido de Actuar vaya directo al agente, como antes, configurá `atsHarness.actRouting` en `direct`. El comando **Objetivo autónomo** y `/objetivos` siguen disponibles para casos avanzados (varios repositorios, entorno efímero, elegir la entrega).
+Un pedido nunca se frena por las palabras que usa: «no despliegues» es un límite, no un pedido de despliegue. La seguridad actúa sobre cada acción: desplegar, publicar, forzar un push o leer credenciales sigue bloqueado aunque el pedido lo nombre, y el agente termina el resto y te deja el paso bloqueado con el comando exacto. Si preferís que todo pedido de Actuar vaya directo al agente, sin objetivos, configurá `atsHarness.actRouting` en `direct`. El comando **Objetivo autónomo** y `/objetivos` siguen disponibles para casos avanzados (varios repositorios, entorno efímero, elegir la entrega).
+
+### Revisión independiente
+
+Cuando un cambio pasó las verificaciones, otro agente lo revisa en modo de solo lectura: el otro proveedor si está instalado y con sesión iniciada, y si no, el mismo. Revisa el cambio real contra el pedido, la arquitectura, la seguridad, la duplicación y las reglas del proyecto, con el mismo criterio que el revisor de los objetivos. Mientras tanto ves «Revisando los cambios con un revisor independiente».
+
+- Si encuentra problemas graves, el agente los corrige, se vuelven a correr las verificaciones y se revisa de nuevo: como máximo **2 rondas**. Si quedan problemas, el chat los lista y no da la tarea por terminada.
+- Las sugerencias que no bloquean aparecen debajo de la aprobación.
+- Si la revisión no se puede hacer, el chat lo dice: el cambio queda verificado por las pruebas, pero sin revisión. Nunca se cuenta como aprobado.
+- Para apagarla, configurá `atsHarness.independentReview` en `false`.
 
 ### Corrección automática
 
@@ -98,6 +106,10 @@ Cuando la IA quiere correr un comando, editar un archivo protegido o usar git, a
 | Denegar | La IA recibe el rechazo y sigue por otro camino. |
 
 Hay un **piso de seguridad** que ninguna regla puede saltear: nada fuera de la carpeta del proyecto, nada dentro de `.git` ni `.armotusitio`, y ningún push a ramas protegidas.
+
+Editar un **archivo protegido** (credenciales como `.env`, workflows de `.github/workflows` y hooks de git en `.githooks` o `.husky`) siempre muestra una tarjeta «Edit protected file», que vale una sola vez y no se puede recordar. Si querés que la IA los edite sin preguntar, escribí una regla explícita (por ejemplo `edit:.github/workflows/**`); una regla `deny` los bloquea.
+
+Si elegís **Siempre** en una tarjeta de git (rama, commit, push o pull request), la acción se ejecuta en ese momento y la regla queda guardada para ese proyecto.
 
 Las reglas permanentes viven en `~/.armotusitio/permissions.json` (tuyas) y `.armotusitio/permissions.json` (del proyecto). Las administrás con `/permisos` o con **ArmoTuSitio: Gestionar permisos**. Para dejar de confirmar git, pull requests o `gh` en tus proyectos, seguí [Configurar permisos](09-permisos.md).
 

@@ -4,7 +4,8 @@
  *--------------------------------------------------------------------------------------------*/
 /**
  * Delivery (block R, decision D7). Work happens in a managed worktree on `harness/<slug>`, created from the base commit,
- * so the user's checkout and uncommitted changes are never touched. Only the orchestrator commits; push and PR need the user.
+ * so the user's checkout and uncommitted changes are never touched. Only the orchestrator commits; a `branch-and-pr` charter
+ * then pushes and opens the pull request through the structured git tools, under the user's permissions.
  */
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
@@ -13,7 +14,11 @@ import type { DoneResult } from './native-dod.ts';
 import type { GoalState } from './native-goal-journal.ts';
 import type { Spec } from './native-roles.ts';
 
-export interface Delivery { root: string; branch: string; base: string; worktree: string }
+export interface Delivery {
+	root: string; branch: string; base: string; worktree: string;
+	/** Branch the user was on when the goal started, the base of its pull request; absent on a detached HEAD. */
+	baseBranch?: string;
+}
 
 const git = (root: string, args: string[]) => managedGit(root, args, { failure: 'HARNESS_WORKTREE_GIT_FAILED', maxBuffer: 4 * 1024 * 1024 });
 
@@ -26,12 +31,29 @@ export function deliverySlug(objective: string): string {
 /** A new branch and worktree from the base commit; the user's checkout is not modified. */
 export async function createDelivery(root: string, storage: string, objective: string): Promise<Delivery> {
 	const base = await git(root, ['rev-parse', '--verify', 'HEAD']);
+	const baseBranch = await git(root, ['symbolic-ref', '--quiet', '--short', 'HEAD']).catch(() => undefined);
 	let branch = 'harness/' + deliverySlug(objective);
 	for (let suffix = 2; await git(root, ['rev-parse', '--verify', '--quiet', 'refs/heads/' + branch]).then(() => true, () => false); suffix++) { branch = 'harness/' + deliverySlug(objective) + '-' + suffix; }
 	await fs.mkdir(storage, { recursive: true, mode: 0o700 });
 	const worktree = path.join(await fs.realpath(storage), branch.replace('/', '-'));
 	await git(root, ['worktree', 'add', '-b', branch, worktree, base]);
-	return { root, branch, base, worktree: await fs.realpath(worktree) };
+	return { root, branch, base, worktree: await fs.realpath(worktree), ...(baseBranch ? { baseBranch } : {}) };
+}
+
+/** A structured git tool bound to the delivery's worktree, with its guards and permission cards. */
+export type DeliveryGitTool = (name: 'git_push' | 'git_pr_upsert', input: Record<string, unknown>) => Promise<{ isError: boolean; text: string }>;
+export interface PublishedDelivery { pushed: boolean; pullRequest?: string; /** Tool refusal or failure, as the tool reported it. */ error?: string }
+
+/**
+ * Push the delivery branch and open or update its pull request against the branch the user started from. A detached
+ * start has no base to assume: the branch is pushed and the result says so. Nothing is forced and nothing is merged.
+ */
+export async function publishDelivery(delivery: Delivery, tool: DeliveryGitTool, pullRequest: { title: string; body: string }): Promise<PublishedDelivery> {
+	const pushed = await tool('git_push', {});
+	if (pushed.isError) { return { pushed: false, error: pushed.text }; }
+	if (!delivery.baseBranch) { return { pushed: true, error: 'no-base-branch' }; }
+	const opened = await tool('git_pr_upsert', { base: delivery.baseBranch, title: pullRequest.title, body: pullRequest.body });
+	return opened.isError ? { pushed: true, error: opened.text } : { pushed: true, pullRequest: opened.text };
 }
 
 /** One Conventional Commit for what the step changed; nothing is committed when nothing changed. */

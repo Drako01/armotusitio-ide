@@ -14,7 +14,7 @@ import * as path from 'node:path';
 import { MAX_SHOWN_COMMAND, requestApproval, type ApprovalAsk, type ApprovalDraft, type ApprovalSubject } from './native-approval.ts';
 import { denialText, type CommandPolicy } from './native-command-policy.ts';
 import { projectFilePath } from './native-file-tools.ts';
-import { secretPath } from './native-git-tools.ts';
+import { isSensitiveGitPath, secretPath } from './native-git-tools.ts';
 import type { PermissionSet } from './native-permissions.ts';
 import type { AgentQuestion, QuestionAnswers } from './runtime/contracts.ts';
 
@@ -154,19 +154,34 @@ export function commandVerdict(context: Pick<ApproveContext, 'policy'>, line: st
 	return verdicts.every(verdict => verdict.verdict === 'allow') ? { verdict: 'allow' } : { verdict: 'ask', draft: lineDraft(line) };
 }
 
-/** Files a tool wants to change: each must pass the file floor, and `edit:` rules decide (deny wins, any ask asks). */
+/** CI workflows and git hooks run code outside the agent's sandbox: changing them is the user's call. */
+const AUTOMATION_PATH = /^(?:\.github\/workflows|\.githooks|\.husky)\//i;
+
+/** A file whose edit always shows a card unless the user wrote an explicit rule: credentials, CI workflows and git hooks. */
+export function isProtectedEditPath(relative: string): boolean {
+	return isSensitiveGitPath(relative) || AUTOMATION_PATH.test(relative);
+}
+
+/**
+ * Files a tool wants to change: each must pass the file floor, and `edit:` rules decide (deny wins, any ask asks).
+ * A protected file asks even under an allowing preset, once and never remembered; an explicit user or project rule still decides.
+ */
 export async function editVerdict(context: Pick<ApproveContext, 'root' | 'permissions'>, raws: readonly unknown[]): Promise<CallVerdict> {
 	if (!raws.length) { return refuse('POLICY_DENIED: invalid-path'); }
 	const files: string[] = [];
-	let ask = false;
+	let ask = false, guarded = false;
 	for (const raw of raws) {
 		const relative = await projectPath(context.root, raw);
 		const verdict = context.permissions.decide({ kind: 'edit', path: relative });
 		if (verdict.decision === 'deny') { return refuse('POLICY_DENIED: ' + (verdict.rule ?? 'denied by permissions')); }
-		ask ||= verdict.decision === 'ask';
+		const protectedFile = verdict.decision === 'allow' && !verdict.rule && isProtectedEditPath(relative);
+		guarded ||= protectedFile;
+		ask ||= verdict.decision === 'ask' || protectedFile;
 		files.push(relative);
 	}
-	return ask ? { verdict: 'ask', draft: { kind: 'edit', title: 'Edit file', detail: files.slice(0, 10).map(file => 'edit: ' + file), rule: '', path: files[0] } } : { verdict: 'allow' };
+	if (!ask) { return { verdict: 'allow' }; }
+	const detail = files.slice(0, 10).map(file => (isProtectedEditPath(file) ? 'edit (protected): ' : 'edit: ') + file);
+	return { verdict: 'ask', draft: { kind: 'edit', title: guarded ? 'Edit protected file' : 'Edit file', detail, rule: '', ...(guarded ? { noRemember: 'inexact' as const } : {}), path: files[0] } };
 }
 
 /** `undefined` when allowed; otherwise the denial text the model receives. Asking goes through the user's card. */
