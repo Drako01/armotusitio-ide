@@ -111,6 +111,33 @@ node scripts/ats-autoupdate.mts validate
 La validación queda vinculada al commit; un cambio posterior requiere validar de nuevo.
 El comando no compila el producto ni publica. Ante un fallo no se registra aprobación.
 
+### Que el upgrade no rompa la actualización de Windows
+
+La actualización automática de Windows depende de piezas propias que un merge de VS Code puede pisar sin que se note al compilar. El IDE se instala y arranca igual; lo que falla es la actualización siguiente, en la PC de cada usuario. Ya pasó dos veces: de r2 a r3 por la versión de `inno_updater` («New executable not found») y en r5 por rutas largas («os error 3»). El detalle técnico está en [Cliente Windows y recuperación](#cliente-windows-y-recuperación).
+
+Al resolver conflictos con upstream, estas piezas se conservan como están en `main`:
+
+| Pieza | Qué hace | Qué se rompe si se pierde |
+| --- | --- | --- |
+| `build/win32/inno_updater.exe`, `Cargo.toml` y `Cargo.lock` | Fijan `inno_updater` 0.23.0, la última versión que aplica el esquema plano. Upstream trae una más nueva en cada versión. | La actualización no termina: «New executable not found». |
+| `win32VersionedUpdate` ausente o en `false` en `product.json` | Mantiene el esquema plano (`_` y `inno_updater`). | Con el Electron público el IDE no arranca y el build de Windows falla. |
+| `build/lib/innoSetup.ts` y su uso en `build/gulpfile.vscode.win32.ts` | Fijan Inno Setup 7.1.0, con el que se escribió y probó `locked-files.iss`. | Un Inno Setup distinto puede no compilar el instalador o cambiar cómo corre el código. |
+| `build/win32/locked-files.iss` | Aparta los archivos que `inno_updater` no puede borrar y los devuelve si falla. | La actualización se traba con antivirus, rutas largas o archivos de solo lectura. |
+| Cambios propios en `build/win32/code.iss` | Incluyen `locked-files.iss`; agregan `BeforeInstall: MoveToolAsideIfHeld` a la línea de `tools`; borran `_` al empezar (`DeleteStagedUpdate`); cierran procesos auxiliares (`StopOrphanHelperProcesses`); corren `inno_updater` con `RunUpdaterAroundHeldFiles` y registran su código de salida; y listan el producto y `tools\stale` en `[UninstallDelete]`. | Cada línea perdida reabre uno de los fallos de arriba, o deja restos al desinstalar. |
+
+`code.iss` es el archivo que más cambia upstream, así que es el conflicto más probable. Tomá los cambios de Microsoft y volvé a aplicar encima cada punto de la tabla; no aceptes la versión de upstream completa.
+
+Si una versión nueva de `inno_updater` o de Inno Setup llegara a hacer falta, cambiala en un PR aparte, nunca dentro del upgrade. Comprobá que el binario siga diciendo «using traditional update method» y que `IsSkippedByUpdater` en `locked-files.iss` siga coincidiendo con las carpetas que ese `inno_updater` no toca.
+
+Dos pruebas cuidan todo esto y corren dentro de `validate`:
+
+- `scripts/ats-autoupdate.test.mts` comprueba la configuración: esquema plano, `inno_updater` 0.23.0, código de salida registrado y las líneas de `code.iss` que usan `locked-files.iss`.
+- `scripts/ats-installer.test.mts` compila un instalador de prueba con Inno Setup real y corre el `inno_updater` real con un ejecutable tomado como lo toma McAfee, una ruta de más de 260 caracteres, un archivo de solo lectura y un junction. También prueba la vuelta atrás si falla, la limpieza de `_` y la desinstalación.
+
+Si alguna falla después del upgrade, el error está en el merge: restaurá la pieza, no cambies la prueba.
+
+Antes de mergear el upgrade, ensayalo con la etiqueta `probar-release` y probá el instalador del ensayo actualizando una instalación de Windows que ya se haya usado, con extensiones instaladas (Copilot crea las rutas largas). Una instalación recién hecha no tiene esos archivos y no sirve como prueba: r5 pasó todas las pruebas con rutas cortas y falló en una PC real.
+
 ## Build y ZIP a cargo del propietario
 
 Ejecutá estos comandos desde un commit limpio, sin otro build ni una instalación de dependencias en curso.
