@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 import * as path from 'node:path';
-import { access, copyFile, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, chmod, copyFile, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { ensureInnoSetup } from '../build/lib/innoSetup.ts';
@@ -63,7 +63,7 @@ async function holdFiles(directory: string, files: string[]): Promise<() => Prom
 	return () => new Promise(resolve => { holder.once('exit', () => resolve()); holder.stdin.end(); });
 }
 
-test('a background update finishes while an antivirus holds installed files open, and a failed one keeps the previous version', { skip: process.platform !== 'win32' || process.arch !== 'x64' }, async () => {
+test('a background update finishes past files an antivirus holds, long paths and read-only files, a failed one keeps the previous version, and uninstall removes the product', { skip: process.platform !== 'win32' || process.arch !== 'x64' }, async () => {
 	const repository = path.resolve(import.meta.dirname, '..');
 	const compiler = await ensureInnoSetup(repository);
 	const workspace = path.join(repository, '.build');
@@ -76,7 +76,7 @@ test('a background update finishes while an antivirus holds installed files open
 		const setup = ['PrivilegesRequired=lowest', 'CreateUninstallRegKey=no', 'DisableDirPage=yes', 'DisableProgramGroupPage=yes', 'Compression=none',
 			'ArchitecturesAllowed=x64compatible', 'ArchitecturesInstallIn64BitMode=x64compatible', `DefaultDirName=${app}`, `OutputDir=${temporary}`];
 		const write = async (root: string, version: string) => {
-			for (const file of ['App.exe', 'lib\\a.dll', 'readme.txt', ...(version === 'v1' ? [] : ['lib\\added.txt'])]) {
+			for (const file of ['App.exe', 'resources\\a.dll', 'resources.pak', ...(version === 'v1' ? [] : ['resources\\added.txt'])]) {
 				await mkdir(path.dirname(path.join(root, file)), { recursive: true });
 				await writeFile(path.join(root, file), version);
 			}
@@ -85,8 +85,11 @@ test('a background update finishes while an antivirus holds installed files open
 		const exists = (file: string) => access(path.join(app, file)).then(() => true, () => false);
 		// The previous version, installed by Inno Setup so inno_updater finds a real unins000.dat.
 		await write(path.join(temporary, 'v1'), 'v1');
+		// The uninstall entries of the real installer, with the fixture's executable name.
+		const product = (await readFile(path.join(tools, 'code.iss'), 'utf8')).replaceAll('\r\n', '\n');
+		const uninstallDelete = product.slice(product.indexOf('[UninstallDelete]'), product.indexOf('\n[', product.indexOf('[UninstallDelete]'))).replaceAll('{#ExeBasename}', 'App');
 		await writeFile(path.join(temporary, 'base.iss'), ['[Setup]', 'AppName=ATS held files fixture', 'AppVersion=1', 'OutputBaseFilename=base', ...setup,
-			'[Files]', `Source: "${path.join(temporary, 'v1')}\\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs`].join('\r\n'));
+			'[Files]', `Source: "${path.join(temporary, 'v1')}\\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs`, ...uninstallDelete.split('\n')].join('\r\n'));
 		// The background update steps of code.iss: replace the tools, then run inno_updater around held files.
 		await writeFile(path.join(temporary, 'runner.iss'), ['[Setup]', 'AppName=ATS held files runner', 'AppVersion=2', 'OutputBaseFilename=runner', 'Uninstallable=no', 'UsePreviousAppDir=no', ...setup,
 			'[Files]',
@@ -96,6 +99,7 @@ test('a background update finishes while an antivirus holds installed files open
 			'procedure CurStepChanged(CurStep: TSetupStep);',
 			'var', '  ResultCode: Integer;', '  Updater, Params: String;',
 			'begin',
+			`  if (CurStep = ssInstall) and (ExpandConstant('{param:cleanstaged|}') <> '') then`, `    DeleteStagedUpdate(ExpandConstant('{app}'));`,
 			'  if CurStep <> ssPostInstall then', '    exit;',
 			`  Updater := ExpandConstant('{app}\\tools\\inno_updater.exe');`,
 			`  Params := ExpandConstant('"{app}\\App.exe" true "test"');`,
@@ -113,10 +117,28 @@ test('a background update finishes while an antivirus holds installed files open
 		for (const file of ['inno_updater.exe', 'vcruntime140.dll']) {
 			await copyFile(path.join(tools, file), path.join(app, 'tools', file));
 		}
-		// Windows Defender may briefly hold freshly copied tools too, so the summary looks only at the files this test holds.
-		const heldFiles = ['App.exe', 'lib\\a.dll'];
+		// What the editor and its extensions leave in the install folder while they run: a path past the Win32 limit, which
+		// inno_updater cannot open (os error 3), a read-only file, and a junction to a folder outside, which nothing may follow.
+		let longFile = 'resources\\app\\extensions\\copilot\\node_modules';
+		while (path.join(app, longFile).length < 265) { longFile += '\\nested-dependency'; }
+		longFile += '\\file.js';
+		const readOnlyFile = 'resources\\read-only.txt';
+		const outside = path.join(temporary, 'outside');
+		const addRuntimeFiles = async () => {
+			await mkdir(path.dirname(path.join(app, longFile)), { recursive: true });
+			await writeFile(path.join(app, longFile), 'runtime');
+			await writeFile(path.join(app, readOnlyFile), 'runtime');
+			await chmod(path.join(app, readOnlyFile), 0o444);
+			await mkdir(outside, { recursive: true });
+			await writeFile(path.join(outside, 'keep.txt'), 'outside');
+			await symlink(outside, path.join(app, 'resources', 'linked'), 'junction');
+		};
+		const isReadOnly = (file: string) => stat(path.join(app, file)).then(info => (info.mode & 0o200) === 0, () => null);
+		// Windows Defender may briefly hold freshly copied tools too, so the summary looks only at the files this test prepares.
+		const heldFiles = ['App.exe', 'resources\\a.dll'];
 		const heldTool = 'tools\\inno_updater.exe';
-		const ours = (files: string[]) => files.filter(file => heldFiles.includes(file)).sort();
+		const expectedMoves = [...heldFiles, longFile, readOnlyFile].sort();
+		const ours = (files: string[]) => files.filter(file => expectedMoves.includes(file)).sort();
 		const runner = async (...args: string[]) => {
 			const result = path.join(temporary, 'result.txt');
 			const log = path.join(temporary, 'runner.log');
@@ -124,35 +146,50 @@ test('a background update finishes while an antivirus holds installed files open
 			await execute(path.join(temporary, 'runner.exe'), ['/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/NOCLOSEAPPLICATIONS', `/LOG=${log}`, `/result=${result}`, ...args], { windowsHide: true, timeout: 120000 })
 				.catch(async error => { throw new Error(`${error.message}\n${await readFile(log, 'utf8').catch(() => '')}`); });
 			// The files this run moved out of inno_updater's way, from the Setup log.
-			const moved = [...(await readFile(log, 'utf8')).matchAll(/Moved a file held by another program out of the way: (?<file>.+?) -> /g)].map(match => path.relative(app, match.groups?.file ?? ''));
+			const moved = [...(await readFile(log, 'utf8')).matchAll(/Moved a file inno_updater cannot delete out of the way: (?<file>.+?) -> /g)].map(match => path.relative(app, match.groups?.file ?? ''));
 			return { result: await readFile(result, 'utf8'), moved: ours(moved), tool: moved.includes(heldTool) };
 		};
-		const stale = async () => {
-			const root = path.join(app, 'tools', 'stale');
-			const entries = await readdir(root, { recursive: true, withFileTypes: true }).catch(() => null);
-			return entries ? ours(entries.filter(entry => entry.isFile()).map(entry => path.relative(root, path.join(entry.parentPath, entry.name)).split(path.sep).slice(1).join('\\'))) : null;
-		};
 
+		await addRuntimeFiles();
 		await write(path.join(app, '_'), 'v2');
 		release = await holdFiles(temporary, [...heldFiles, heldTool].map(file => path.join(app, file)));
-		// Without moving the held files, inno_updater keeps retrying the exclusive open and changes nothing.
+		// Without moving those files, inno_updater keeps retrying the exclusive open and changes nothing.
 		const stalled = await execute(path.join(app, 'tools', 'inno_updater.exe'), [path.join(app, 'App.exe'), 'true', 'test'], { windowsHide: true, timeout: 8000 }).then(() => false, error => error.killed === true);
 		const baseline = { stalled, exe: await read('App.exe') };
-		const rollback = { ...await runner('/fail=1'), exe: await read('App.exe'), dll: await read('lib\\a.dll'), staged: await exists('_') };
+		const { tool, ...rollbackRun } = await runner('/fail=1');
+		const rollback = { ...rollbackRun, tool, exe: await read('App.exe'), dll: await read('resources\\a.dll'), long: await read(longFile), readOnly: await isReadOnly(readOnlyFile), staged: await exists('_') };
 		const { tool: _heldTool, ...heldRun } = await runner();
-		const held = { ...heldRun, exe: await read('App.exe'), dll: await read('lib\\a.dll'), added: await read('lib\\added.txt'), staged: await exists('_'), stale: await stale() };
+		const held = {
+			...heldRun, exe: await read('App.exe'), dll: await read('resources\\a.dll'), added: await read('resources\\added.txt'), long: await read(longFile), readOnly: await isReadOnly(readOnlyFile),
+			staged: await exists('_'), staleRemoved: !await exists('tools\\stale'), outside: await readFile(path.join(outside, 'keep.txt'), 'utf8').catch(() => null),
+		};
 		await release();
 		release = undefined;
+		// Leftovers of a failed update are deleted before a new one stages.
+		await write(path.join(app, '_'), 'leftover');
+		const { tool: _cleanupTool, ...cleanupRun } = await runner('/cleanstaged=1', '/fail=1');
+		const cleanup = { ...cleanupRun, staged: await exists('_') };
 		await write(path.join(app, '_'), 'v3');
 		const { tool: _cleanTool, ...cleanRun } = await runner();
 		const clean = { ...cleanRun, exe: await read('App.exe'), staleRemoved: !await exists('tools\\stale') };
+		// inno_updater 0.23.0 cannot rewrite the Inno Setup 7 uninstall log, so uninstalling after background updates relies
+		// on the [UninstallDelete] entries: the product goes, a portable data folder stays, and the junction is not followed.
+		await mkdir(path.join(app, 'data'), { recursive: true });
+		await writeFile(path.join(app, 'data', 'keep.txt'), 'user');
+		await symlink(outside, path.join(app, 'resources', 'linked'), 'junction');
+		await execute(path.join(app, 'unins000.exe'), ['/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'], { windowsHide: true, timeout: 60000 });
+		// The uninstaller runs from a temporary copy and deletes unins000.exe last.
+		for (let attempt = 0; attempt < 120 && await exists('unins000.exe'); attempt++) { await new Promise(resolve => setTimeout(resolve, 500)); }
+		const uninstall = { left: (await readdir(app).catch(() => [])).sort(), data: await read('data\\keep.txt'), outside: await readFile(path.join(outside, 'keep.txt'), 'utf8').catch(() => null) };
 
-		// Windows deletes a file that is held with delete sharing, so each run's cleanup already removes what earlier runs moved.
-		assert.deepEqual({ baseline, rollback, held, clean }, {
+		// Windows deletes a file that is held with delete sharing, so a successful update already removes what it moved.
+		assert.deepEqual({ baseline, rollback, held, cleanup, clean, uninstall }, {
 			baseline: { stalled: true, exe: 'v1' },
-			rollback: { result: 'failed 3', moved: heldFiles, tool: true, exe: 'v1', dll: 'v1', staged: true },
-			held: { result: 'updated', moved: heldFiles, exe: 'v2', dll: 'v2', added: 'v2', staged: false, stale: heldFiles },
+			rollback: { result: 'failed 3', moved: expectedMoves, tool: true, exe: 'v1', dll: 'v1', long: 'runtime', readOnly: true, staged: true },
+			held: { result: 'updated', moved: expectedMoves, exe: 'v2', dll: 'v2', added: 'v2', long: null, readOnly: null, staged: false, staleRemoved: true, outside: 'outside' },
+			cleanup: { result: 'failed 3', moved: [], staged: false },
 			clean: { result: 'updated', moved: [], exe: 'v3', staleRemoved: true },
+			uninstall: { left: ['data'], data: 'user', outside: 'outside' },
 		});
 	} finally {
 		await release?.();

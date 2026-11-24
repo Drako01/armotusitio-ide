@@ -83,6 +83,21 @@ Type: files; Name: "{app}\old_*"
 Type: files; Name: "{app}\new_*"
 Type: files; Name: "{app}\updating_version"
 Type: filesandordirs; Name: "{app}\tools\stale"
+; inno_updater 0.23.0 cannot rewrite the Inno Setup 7 uninstall log after a background update, so the log still lists
+; the files under {app}\_. These entries remove the product's own files instead; anything else in {app}, such as a
+; portable data folder, stays.
+Type: filesandordirs; Name: "{app}\resources"
+Type: filesandordirs; Name: "{app}\locales"
+Type: filesandordirs; Name: "{app}\policies"
+Type: filesandordirs; Name: "{app}\tools"
+Type: files; Name: "{app}\*.dll"
+Type: files; Name: "{app}\*.pak"
+Type: files; Name: "{app}\*.bin"
+Type: files; Name: "{app}\icudtl.dat"
+Type: files; Name: "{app}\vk_swiftshader_icd.json"
+Type: files; Name: "{app}\LICENSES.chromium.html"
+Type: files; Name: "{app}\{#ExeBasename}.exe"
+Type: files; Name: "{app}\{#ExeBasename}.VisualElementsManifest.xml"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
@@ -1852,6 +1867,9 @@ var
   UpdateResultCode: Integer;
 	StartServiceResultCode: Integer;
 begin
+  if (CurStep = ssInstall) and IsBackgroundUpdate() and not IsVersionedUpdate() then
+    DeleteStagedUpdate(ExpandConstant('{app}'));
+
   if CurStep = ssPostInstall then
   begin
     LogContextMenuInstallState();
@@ -1890,6 +1908,8 @@ begin
 
       if not SessionEndFileExists() and not CancelFileExists() then begin
         StopTunnelServiceIfNeeded();
+        // Helpers that outlive the editor can keep installed files and folders open, which inno_updater cannot delete.
+        StopOrphanHelperProcesses();
         Log('Invoking inno_updater for background update');
         // Record what really happened: a failed swap used to be logged as a success, hiding why the update did not apply.
         if RunUpdaterAroundHeldFiles(ExpandConstant('{app}\{#VersionedResourcesFolder}\tools\inno_updater.exe'), ExpandConstant('{app}\{#ExeBasename}.exe'), ExpandConstant('"{app}\{#ExeBasename}.exe" ' + BoolToStr(LockFileExists()) + ' "{cm:UpdatingVisualStudioCode}"'), UpdateResultCode) then

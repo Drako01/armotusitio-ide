@@ -160,7 +160,25 @@ El producto usa el esquema de carpetas plano: la actualización en segundo plano
 
 `inno_updater` 0.26 quitó el intercambio del esquema plano (upstream «remove legacy updater code»); con esa versión la actualización de r2 a r3 fallaba con «New executable not found». El repositorio fija la 0.23.0 en `build/win32` (binario, `Cargo.toml` y `Cargo.lock`), la última que lo aplica. No la actualices sin comprobar que el binario conserve «using traditional update method»; la prueba `scripts/ats-autoupdate.test.mts` lo verifica. El instalador nuevo copia su `inno_updater` en `tools` antes de ejecutarlo, así que el arreglo ya aplica a la actualización desde r3. El instalador registra el código de salida de `inno_updater` en su log (`%TEMP%\Setup Log *.txt`) en lugar de anotar siempre un éxito.
 
-Algunos antivirus mantienen abiertos los ejecutables que vigilan hasta reiniciar Windows; se vio con el servicio `mc-fw-host` de McAfee, que tomaba `ArmotuSitio IDE.exe` y `tools\inno_updater.exe`. Los abren permitiendo renombrarlos, pero `inno_updater` abre cada archivo de forma exclusiva antes de borrarlo y fallaba con «os error 32». Por eso el instalador (`build/win32/locked-files.iss`), antes de llamar a `inno_updater`, busca los archivos instalados que otro programa tiene abiertos y los mueve a `tools\stale`, una carpeta que `inno_updater` no toca; también lo hace con las herramientas que reemplaza al preparar la actualización. Si `inno_updater` falla igual, devuelve los archivos movidos a su lugar y la versión anterior sigue funcionando. La actualización siguiente borra `tools\stale`, y la desinstalación también. No se cierra ni se desactiva el antivirus. Revisar unos 34.000 archivos tarda pocos segundos. `scripts/ats-installer.test.mts` lo prueba de punta a punta con el `inno_updater` real y archivos abiertos como los abre McAfee; corre en la validación del release.
+Antes de borrar la versión instalada, `inno_updater` 0.23.0 abre cada archivo de forma exclusiva y con la ruta Win32 común. Tres tipos de archivo traban la actualización:
+
+- **Archivos que otro programa tiene abiertos.** Algunos antivirus mantienen abiertos los ejecutables que vigilan hasta reiniciar Windows; se vio con el servicio `mc-fw-host` de McAfee, que tomaba `ArmotuSitio IDE.exe` y `tools\inno_updater.exe`. Error «os error 32».
+- **Archivos con rutas largas.** `inno_updater` no maneja rutas largas, ni siquiera con la opción de Windows activada, y el editor y sus extensiones escriben archivos dentro de la carpeta de instalación mientras se usan. Se vio con más de 26.000 archivos en `resources\app\extensions\copilot\node_modules`, algunos de más de 260 caracteres. Error «os error 3».
+- **Archivos de solo lectura.**
+
+Por eso el instalador (`build/win32/locked-files.iss`), antes de llamar a `inno_updater`:
+
+- busca esos archivos y los mueve a `tools\stale`, una carpeta que `inno_updater` no toca, con nombres cortos numerados y usando rutas `\\?\`, que no tienen el límite de largo;
+- hace lo mismo con las herramientas que reemplaza al preparar la actualización;
+- no entra en enlaces ni junctions, así que nunca toca nada fuera de la carpeta del IDE;
+- cierra los procesos auxiliares que quedaron corriendo desde la carpeta de instalación, como ya hacía la instalación manual;
+- borra los restos que un intento fallido haya dejado en `_` antes de preparar la actualización nueva.
+
+Si `inno_updater` falla igual, devuelve los archivos movidos a su lugar y la versión anterior sigue funcionando. Si termina bien, borra `tools\stale`; lo que siga abierto queda para la actualización siguiente. No se cierra ni se desactiva el antivirus. Revisar unos 34.000 archivos tarda pocos segundos.
+
+`inno_updater` 0.23.0 tampoco entiende el registro de desinstalación de Inno Setup 7 («Header version not supported»), así que ese registro sigue apuntando a `_` después de una actualización. Por eso `[UninstallDelete]` borra explícitamente los archivos y carpetas del producto. No borra la carpeta completa, para no tocar otros datos, como una carpeta `data` portable.
+
+`scripts/ats-installer.test.mts` prueba todo esto de punta a punta, con el `inno_updater` real y archivos abiertos como los abre McAfee; corre en la validación del release. Antes de publicar la r6 se probó además sobre una copia de una instalación real: 34.107 archivos, 191 con rutas largas y el ejecutable tomado. La actualización terminó en unos 10 segundos con el resultado idéntico al paquete, y el intento fallado a propósito dejó la instalación sin cambios.
 
 Antes de publicar un cambio que toque el instalador o el esquema de carpetas, ensayá la actualización real: instalá la versión publicada, ejecutá la publicación con la etiqueta `probar-release` y dejá que el IDE instalado se actualice solo a esa build.
 

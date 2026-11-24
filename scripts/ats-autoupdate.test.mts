@@ -264,11 +264,13 @@ test('Windows background updates keep the flat layout with an inno_updater that 
 		// A failed swap is logged as a failure, never as a success.
 		exitChecked: /if RunUpdaterAroundHeldFiles\([^\n]*inno_updater\.exe[^\n]*UpdateResultCode\) then\n\s+Log\('inno_updater completed successfully'\)/.test(setup)
 			&& heldFiles.includes(`Result := Exec(Updater, Params, '', SW_SHOW, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0);`),
-		// Files an antivirus holds are moved out of inno_updater's way, including the tools it replaces while staging
-		// (scripts/ats-installer.test.mts runs that end to end), and the uninstaller removes what is left of them.
+		// Files inno_updater cannot delete (held by an antivirus, past the Win32 path limit or read-only) are moved out of its
+		// way, including the tools it replaces while staging (scripts/ats-installer.test.mts runs that end to end); the
+		// uninstaller removes what is left of them, and leftovers of a failed update are deleted before staging again.
 		heldFilesMovedAside: setup.includes('#include AddBackslash(SourcePath) + "locked-files.iss"')
 			&& /Source: "tools\\\*";[^\n]*BeforeInstall: MoveToolAsideIfHeld;/.test(setup)
-			&& setup.includes('Type: filesandordirs; Name: "{app}\\tools\\stale"'),
+			&& setup.includes('Type: filesandordirs; Name: "{app}\\tools\\stale"')
+			&& /if \(CurStep = ssInstall\) and IsBackgroundUpdate\(\) and not IsVersionedUpdate\(\) then\n\s+DeleteStagedUpdate\(ExpandConstant\('\{app\}'\)\);/.test(setup),
 		// The Store package finds the resources in either layout and leaves updates to the Store.
 		msixVersioned: msix.includes(`Where-Object Name -CMatch '^[a-f0-9]{10}$'`),
 		msixNoSelfUpdate: msix.includes(`Remove('armotusitioUpdate')`)
