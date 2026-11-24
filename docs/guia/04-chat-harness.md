@@ -21,6 +21,10 @@ En **Actuar**, lo que pedís se hace. El chat conversa con el modelo; el Harness
 | Un cambio («renombrá `total` a `subtotal`», «corregí el login») | Lo implementa, corre las verificaciones, corrige lo que falle y pasa el cambio por una **revisión independiente**. |
 | Algo con varias partes («una API en Go con su frontend en Next.js, login y base de datos») | Lo ejecuta como **objetivo autónomo** por etapas: análisis, diseño, implementación, revisión y verificación. La carta (alcance y presupuesto) aparece en el chat y el objetivo arranca; lo pausás o detenés desde ahí. Trabaja en una rama aparte; si el pedido menciona el PR o el push, al terminar sube la rama y abre el pull request contra la rama en la que estabas. Cuando termina, el chat te dice cómo terminó. |
 
+Un log de errores pegado (un job de CI que falló, una corrida de tests, un stack trace) se toma como pedido de arreglo y va directo al agente, aunque tenga viñetas o nombre la base de datos. Un pedido escrito después de un link o en la segunda oración («El repo cambió de nombre. ¿Podés asociarlo?») también se ejecuta: no se toma como consulta.
+
+Si el objetivo autónomo no puede arrancar (por ejemplo, git no puede crear su rama), el chat te dice por qué y el pedido sigue solo con el agente directo, con las mismas verificaciones.
+
 Un pedido nunca se frena por las palabras que usa: «no despliegues» es un límite, no un pedido de despliegue. La seguridad actúa sobre cada acción: desplegar, publicar, forzar un push o leer credenciales sigue bloqueado aunque el pedido lo nombre, y el agente termina el resto y te deja el paso bloqueado con el comando exacto. Si preferís que todo pedido de Actuar vaya directo al agente, sin objetivos, configurá `atsHarness.actRouting` en `direct`. El comando **Objetivo autónomo** y `/objetivos` siguen disponibles para casos avanzados (varios repositorios, entorno efímero, elegir la entrega).
 
 ### Revisión independiente
@@ -29,6 +33,7 @@ Cuando un cambio pasó las verificaciones, otro agente lo revisa en modo de solo
 
 - Si encuentra problemas graves, el agente los corrige, se vuelven a correr las verificaciones y se revisa de nuevo: como máximo **2 rondas**. Si quedan problemas, el chat los lista y no da la tarea por terminada.
 - Las sugerencias que no bloquean aparecen debajo de la aprobación.
+- Si un revisor no devuelve una revisión válida, la hace el otro proveedor.
 - Si la revisión no se puede hacer, el chat lo dice: el cambio queda verificado por las pruebas, pero sin revisión. Nunca se cuenta como aprobado.
 - Para apagarla, configurá `atsHarness.independentReview` en `false`.
 
@@ -41,6 +46,8 @@ Después de cada cambio corren las verificaciones del proyecto (test, lint, type
 - Si la causa está fuera del código (un servicio caído, una dependencia o herramienta que falta, un permiso denegado, el disco lleno) **no lo intenta como código**: te dice qué falta.
 - El agente tiene prohibido saltear o borrar tests, desactivar reglas de lint o tipos, bajar la cobertura o editar las verificaciones para que pasen.
 - Los permisos que diste «para esta tarea» siguen valiendo durante las correcciones; una denegación nunca se convierte en permiso.
+- Un `node_modules` dañado o trabado (por ejemplo por el antivirus) se informa como problema de dependencias: el agente no intenta «arreglarlo» cambiando código.
+- Si la corrida se queda sin turnos pero avanzó, sigue sola, hasta 3 veces seguidas, sin que toques **Continuar**. Si no avanzó, se detiene.
 
 ### Cómo leer el resultado
 
@@ -110,6 +117,10 @@ Hay un **piso de seguridad** que ninguna regla puede saltear: nada fuera de la c
 Editar un **archivo protegido** (credenciales como `.env`, workflows de `.github/workflows` y hooks de git en `.githooks` o `.husky`) siempre muestra una tarjeta «Edit protected file», que vale una sola vez y no se puede recordar. Si querés que la IA los edite sin preguntar, escribí una regla explícita (por ejemplo `edit:.github/workflows/**`); una regla `deny` los bloquea.
 
 Si elegís **Siempre** en una tarjeta de git (rama, commit, push o pull request), la acción se ejecuta en ese momento y la regla queda guardada para ese proyecto.
+
+En un proyecto con su **Harness propio**, el IDE le pasa los comandos para que los ejecute con sus reglas. Si ese Harness rechaza un comando que el IDE ya permitió (por ejemplo, porque no está en su lista, como `gh` o `docker ps`), el IDE lo ejecuta por su cuenta con su propio piso de seguridad y el agente recibe el aviso. Así un proyecto con Harness y uno sin Harness trabajan igual de fluido, sin tocar el Harness del proyecto. El agente tampoco usa los comandos internos de ese Harness (`harness:preflight`, `harness:run`): son para sus propios agentes.
+
+Un comando que responde con su código de salida, como `gh pr checks` (1 si hay checks fallados, 8 si hay pendientes) o una búsqueda sin resultados, aparece como hecho y no como error.
 
 Las reglas permanentes viven en `~/.armotusitio/permissions.json` (tuyas) y `.armotusitio/permissions.json` (del proyecto). Las administrás con `/permisos` o con **ArmoTuSitio: Gestionar permisos**. Para dejar de confirmar git, pull requests o `gh` en tus proyectos, seguí [Configurar permisos](09-permisos.md).
 

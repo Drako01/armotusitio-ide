@@ -32,6 +32,8 @@ export const REPAIRABLE: ReadonlySet<GateFailureClass> = new Set(['syntax-typech
  */
 const SHARED_CAUSES: Readonly<Record<string, GateFailureClass>> = { policy: 'permission-denied', 'disk-full': 'environment', 'lockfile-out-of-date': 'dependency-missing' };
 const ENVIRONMENT_RULES: ReadonlyArray<[GateFailureClass, RegExp]> = [
+	// An installed dependency the tool cannot read (a broken or locked install, an antivirus scan): reinstall, never edit code.
+	['dependency-missing', /(?:\bUNKNOWN: unknown error|\bEBUSY\b|\bEPERM\b|\bENOTEMPTY\b)[^\n]*node_modules/i],
 	['permission-denied', /\b(EACCES|EPERM)\b|permission denied|operation not permitted|HARNESS_[A-Z_]*DENIED/i],
 	['service-down', /\bECONNREFUSED\b|connection refused|could not connect to (?:the )?server|getaddrinfo (?:ENOTFOUND|EAI_AGAIN)|database .* does not exist|no route to host/i],
 	['environment', /heap out of memory|JavaScript heap|killed\s+signal\s+9|out of memory/i],

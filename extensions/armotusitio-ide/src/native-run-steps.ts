@@ -74,6 +74,19 @@ export function relativeStepPath(root: string, file: unknown): string {
 	return clip(relative.replace(/\\/g, '/'), MAX_STEP_LABEL);
 }
 
+/**
+ * Commands whose non-zero exit is their answer, not a failure: `gh pr checks` (1: a check failed, 8: checks pending),
+ * a search without matches, a diff that found changes. The step shows the code without the error mark.
+ */
+const ANSWER_EXITS: ReadonlyArray<[RegExp, readonly number[]]> = [
+	[/^gh\s+pr\s+checks\b/, [1, 8]],
+	[/^(?:grep|egrep|fgrep|rg|findstr)\b/, [1]],
+	[/^git\s+diff\b.*\s--(?:exit-code|quiet)\b/, [1]]
+];
+function answeredByExit(command: string, code: number): boolean {
+	return ANSWER_EXITS.some(([pattern, codes]) => codes.includes(code) && pattern.test(command.trim()));
+}
+
 const CLAUDE_KINDS: Record<string, ChatStepKind> = {
 	Read: 'read', NotebookRead: 'read', Edit: 'edit', Write: 'edit', MultiEdit: 'edit', NotebookEdit: 'edit',
 	Bash: 'command', Grep: 'search', Glob: 'search', WebSearch: 'search', WebFetch: 'search'
@@ -116,7 +129,11 @@ export class RunStepExtractor {
 
 	private finish(id: unknown, failed: boolean, detail?: string): void {
 		const known = typeof id === 'string' ? this.steps.get(id) : undefined;
-		if (known) { this.put({ ...known, status: failed ? 'error' : 'ok', ...(failed && detail ? { detail } : {}) }); }
+		if (!known) { return; }
+		// Claude reports a non-zero Bash exit as an error result whose first line names the code.
+		const code = Number(/exit code (\d+)/i.exec(detail ?? '')?.[1]);
+		if (failed && known.kind === 'command' && answeredByExit(known.label, code)) { this.put({ ...known, status: 'ok', detail: 'exit ' + code }); return; }
+		this.put({ ...known, status: failed ? 'error' : 'ok', ...(failed && detail ? { detail } : {}) });
 	}
 
 	private message(label: string): void {
@@ -184,8 +201,9 @@ export class RunStepExtractor {
 		if (!id) { return; }
 		if (item.type === 'command_execution') {
 			const code = item.exit_code;
-			const failed = failedStatus || (done && typeof code === 'number' && code !== 0);
-			this.put({ id, kind: 'command', label: clip(item.command, MAX_STEP_LABEL) || 'command', status: done ? (failed ? 'error' : 'ok') : 'running', ...(failed && typeof code === 'number' ? { detail: 'exit ' + code } : {}) });
+			const answered = done && typeof code === 'number' && answeredByExit(String(item.command ?? ''), code);
+			const failed = !answered && (failedStatus || (done && typeof code === 'number' && code !== 0));
+			this.put({ id, kind: 'command', label: clip(item.command, MAX_STEP_LABEL) || 'command', status: done ? (failed ? 'error' : 'ok') : 'running', ...((failed || answered) && typeof code === 'number' ? { detail: 'exit ' + code } : {}) });
 		} else if (item.type === 'file_change') {
 			const changes = (Array.isArray(item.changes) ? item.changes : []).map(change => object(change)).filter(change => !!change);
 			const files = changes.map(change => relativeStepPath(this.root, change!.path)).filter(Boolean);

@@ -135,7 +135,7 @@ const MAX_MESSAGES = 2000;
 const MAX_MESSAGE_CHARS = 64 * 1024;
 const MAX_STATE_BYTES = 64 * 1024 * 1024;
 /** Longest message the user can send; the input, the session and the chat host share it. */
-export const MAX_USER_MESSAGE_CHARS = 10000;
+export const MAX_USER_MESSAGE_CHARS = 40000;
 /** Smallest prompt budget; `atsHarness.promptBudgetKiB` can only raise it (the reviewed draft allows up to 320 KiB). */
 export const MIN_PROMPT_BUDGET = 13 * 1024;
 const MAX_PROMPT_BUDGET = 256 * 1024;

@@ -38,8 +38,22 @@ test('the router never sends Ask to a writer, answers one-line questions read-on
 		deploy: route('Deploy\u00e1 la app a producci\u00f3n'),
 		forbidden: route('Cre\u00e1 la rama y commite\u00e1. No autorizo compras, despliegues productivos ni publicaci\u00f3n comercial.'),
 		analyze: route('Analiz\u00e1 el repositorio e implement\u00e1 lo pendiente del ROADMAP'),
-		multiLine: route('\u00bfSegu\u00eds?\nContinu\u00e1 con la siguiente tarea del ROADMAP')
-	}, { ask: 'question', question: 'question', english: 'question', canYou: 'simple-edit', imperative: 'simple-edit', deploy: 'simple-edit', forbidden: 'simple-edit', analyze: 'simple-edit', multiLine: 'simple-edit' });
+		multiLine: route('\u00bfSegu\u00eds?\nContinu\u00e1 con la siguiente tarea del ROADMAP'),
+		afterLink: route('https://example.test/panel?view=backlog Necesito que crees un sprint nuevo y pases las cards pendientes?'),
+		secondSentence: route('El proyecto cambio de nombre en GitHub. Podes asociarlo?'),
+		myQuestion: route('Todo el codigo esta implementado? Puedo mergear el PR?')
+	}, { ask: 'question', question: 'question', english: 'question', canYou: 'simple-edit', imperative: 'simple-edit', deploy: 'simple-edit', forbidden: 'simple-edit', analyze: 'simple-edit', multiLine: 'simple-edit', afterLink: 'simple-edit', secondSentence: 'simple-edit', myQuestion: 'question' });
+});
+
+test('a pasted CI or test failure report is a fix request for the direct writer, not a compound goal', () => {
+	const route = (text: string) => routeTask(text, 'act');
+	const ciLog = 'Job 138736623646 failed because database migration tests exercised invalid operations.\n\nKey failures include:\n\n- `benefits_check` rejected invalid combinations.\n- Test roles lacked mutation permissions.\n- Rollback migrations raised an exception.';
+	assert.deepEqual({
+		ciLog: route(ciLog),
+		dashboardTest: route('Job 1 failed because one backoffice critical test failed: dashboard payloads are preserved').route,
+		trace: route('Traceback (most recent call last):\n  File "a.py", line 1\n- uno\n- dos\n- tres').route,
+		newApp: route('Los tests fallaron: armame una aplicaci\u00f3n nueva desde cero con login y base de datos').route
+	}, { ciLog: { route: 'simple-edit', reasons: ['failure-report'] }, dashboardTest: 'simple-edit', trace: 'simple-edit', newApp: 'compound-goal' });
 });
 
 test('J-05/J-14/J-16: failures are classified from observed output; environment causes are never "repaired" as code', () => {
@@ -53,9 +67,11 @@ test('J-05/J-14/J-16: failures are classified from observed output; environment 
 		relativeImport: failure('typecheck', `error TS2307: Cannot find module './missing' or its corresponding type declarations.`),
 		toolchain: failure('test', `'pnpm' is not recognized as an internal or external command`),
 		permission: failure('test', 'EACCES: permission denied, open /etc/x'),
+		brokenInstall: failure('typecheck', `[UNKNOWN] UNKNOWN: unknown error, open 'F:\\app\\node_modules\\.pnpm\\ms\\package.json'`),
+		lockedInstall: failure('lint', `EBUSY: resource busy or locked, rename 'node_modules/.pnpm/x'`),
 		killed: failure('test', 'partial output', null),
 		other: failure('custom', 'exit 2')
-	}, { ts: 'syntax-typecheck', test: 'test-failure', lintByKind: 'syntax-typecheck', service: 'service-down', dependency: 'dependency-missing', relativeImport: 'syntax-typecheck', toolchain: 'toolchain', permission: 'permission-denied', killed: 'environment', other: 'unknown' });
+	}, { ts: 'syntax-typecheck', test: 'test-failure', lintByKind: 'syntax-typecheck', service: 'service-down', dependency: 'dependency-missing', relativeImport: 'syntax-typecheck', toolchain: 'toolchain', permission: 'permission-denied', brokenInstall: 'dependency-missing', lockedInstall: 'dependency-missing', killed: 'environment', other: 'unknown' });
 	assert.equal(classifyGateFailure({ id: 'test', exitCode: 1, output: 'FAIL src/a.test.ts' }, true).failure, 'regression');
 	assert.deepEqual([...REPAIRABLE].sort(), ['regression', 'syntax-typecheck', 'test-failure']);
 	assert.deepEqual(['test-api', 'typecheck', 'lint-web-2', 'e2e', 'unit'].map(gateKind), ['test', 'typecheck', 'lint', 'e2e', 'other']);

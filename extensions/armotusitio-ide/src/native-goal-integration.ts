@@ -33,6 +33,7 @@ import { integrationOrder, linkedPullRequestsSection, repoPartInstruction, type 
 import { cardKeyOf, cardObjective, commentMilestone, readCard, type CardClient, type CardContext } from './native-card-goal.ts';
 import { reviewObjective, reviewTasks, threadStates, type ReviewComment } from './native-review-comments.ts';
 import { acceptDelivery, commitMessage, commitStep, createDelivery, deliveryFiles, deliveryPackage, discardDelivery, publishDelivery, pullRequestDescription, type Delivery, type DeliveryGitTool, type PublishedDelivery } from './native-delivery.ts';
+import { worktreeStorage } from './native-agent-worktree.ts';
 import { MAX_PR_BODY_LENGTH } from './native-approval.ts';
 import { harnessErrorCode } from './native-chat.ts';
 import { inspectHarnessAuthority } from './native-authority.ts';
@@ -289,6 +290,9 @@ export function registerGoalIntegration(deps: GoalIntegrationDeps): GoalIntegrat
 		}
 		if (choice === discard) { await discardDelivery(delivery); deliveries.delete(delivery.worktree); }
 	};
+	/** The goal's branch and worktree, or none when it works in the user's tree. */
+	const newDelivery = async (root: string, charter: GoalCharter): Promise<Delivery | undefined> =>
+		charter.delivery === 'working-tree' ? undefined : createDelivery(root, worktreeStorage(root, 'deliveries'), charter.objective);
 	/** Run one approved charter to the end in the background; the feed and notifications report it. */
 	const runGoal = async (folder: Host, charter: GoalCharter, options: GoalRunOptions = {}): Promise<GoalResult | undefined> => {
 		const root = await fs.realpath(folder.uri.fsPath);
@@ -298,7 +302,7 @@ export function registerGoalIntegration(deps: GoalIntegrationDeps): GoalIntegrat
 		const storage = path.join(metricsDirectory(root), 'goals');
 		let environment: Awaited<ReturnType<typeof createGoalEnvironment>>;
 		try {
-			const delivery = options.delivery ?? (charter.delivery === 'working-tree' ? undefined : await createDelivery(root, path.join(metricsDirectory(root), 'deliveries'), charter.objective));
+			const delivery = options.delivery ?? await newDelivery(root, charter);
 			const decisions = new DecisionLog(metricsDirectory(root));
 			// Decisions in force reach every agent; the analyst asks when the request contradicts one (AA).
 			charter = { ...charter, objective: charter.objective + decisionsPrompt(await bestEffort(decisions.relevant(), 'read decisions') ?? []) };
@@ -501,7 +505,12 @@ export function registerGoalIntegration(deps: GoalIntegrationDeps): GoalIntegrat
 		if (!quick && await vscode.window.showWarningMessage(t('\u00bfAprob\u00e1s esta carta?'), { modal: true, detail }, approve) !== approve) { return { started: false, reason: 'declined' }; }
 		if (!await deps.servicePreflight(root)) { return { started: false, reason: 'service' }; }
 		if (extra.length) { void runMultiRepo([folder, ...extra.map((item: Host) => item.folder)], charter, objective, goalObjective, card); }
-		else { void runGoal(folder, charter, { ...(card ? { card } : {}), ...(onEnd ? { onEnd } : {}) }); }
+		else {
+			// The branch and worktree exist before the goal is reported as started: if git cannot create them, the chat falls
+			// back to the direct writer instead of announcing a goal that dies on its first step.
+			const delivery = await newDelivery(root, charter);
+			void runGoal(folder, charter, { ...(card ? { card } : {}), ...(onEnd ? { onEnd } : {}), ...(delivery ? { delivery } : {}) });
+		}
 		return { started: true, charter: detail };
 	};
 	context.subscriptions.push(vscode.commands.registerCommand('atsHarness.goal', async (requested?: string, objectiveArgument?: string) => {

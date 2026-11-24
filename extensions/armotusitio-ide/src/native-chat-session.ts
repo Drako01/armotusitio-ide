@@ -37,6 +37,10 @@ import { parseReview, roleInstruction, type Finding } from './native-roles.ts';
 const findingList = (findings: readonly Finding[]): string => findings.slice(0, 20).map(finding => '- ' + (finding.file ? '`' + finding.file + '`: ' : '') + finding.text).join('\n');
 
 export type { ImplementStage } from './native-chat.ts';
+
+/** Automatic continuations of a run cut by its turn budget while it was still making progress. */
+const MAX_AUTO_CONTINUATIONS = 3;
+
 export interface ChatRunHooks {
 	/** Called once the provider process exists, so the session can cancel it. */
 	started(cancel: () => void): void;
@@ -114,7 +118,8 @@ export interface ChatRuntime {
 	 * Independent read-only review of a verified change, by the other provider when it is available. The integration adds the
 	 * change's real diff to the instruction. Absent or switched off: runs end after their gates, as before.
 	 */
-	review?(implementer: NativeProvider, instruction: string, diff: RunDiffSummary, signal: AbortSignal): Promise<{ provider: NativeProvider; status: RunStatus; output: string }>;
+	/** `avoid` is the provider not to pick when another is usable: the implementer, or a reviewer that already failed. */
+	review?(avoid: NativeProvider, instruction: string, diff: RunDiffSummary, signal: AbortSignal): Promise<{ provider: NativeProvider; status: RunStatus; output: string }>;
 }
 export interface ChatActivity {
 	kind: 'thinking' | 'executing';
@@ -1034,6 +1039,7 @@ export class HarnessChatSession {
 			const runAndRepair = async (first: RunRequest): Promise<void> => {
 				let request = first;
 				let previousSignature: string | undefined;
+				let continuations = 0;
 				for (let attempt = 0; ; attempt++) {
 					const runStarted = attempt ? Date.now() : started;
 					// A native writer turn continues the conversation's session; everything up to the latest message is in its input.
@@ -1064,6 +1070,17 @@ export class HarnessChatSession {
 							...(stop ? { repairStop: { reason: stop, failures: failures.map(item => ({ gate: item.id, failure: item.failure })) } } : {})
 						}
 					}));
+					// A run cut by its turn budget after real progress goes on by itself, bounded, instead of waiting for "Continuar".
+					if (outcome.kind === 'partial' && outcome.reason === 'max-turns' && result.diff.count > 0 && continuations < MAX_AUTO_CONTINUATIONS && !controller.signal.aborted) {
+						continuations++;
+						const resumeSession = !native && provider === 'claude' ? outcome.sessionId : undefined;
+						this.conversation.messages.push(chatMessage('notice', this.t('La corrida us\u00f3 todos sus turnos y avanz\u00f3: sigo sola (continuaci\u00f3n {0} de {1}).', String(continuations), String(MAX_AUTO_CONTINUATIONS)), { tone: 'info', provider }));
+						await this.persist();
+						request = { instruction: buildContinuationInstruction(plan, this.conversation.messages.at(-2)!.run!, this.conversation.messages, !!resumeSession || !!native, context), ...(resumeSession ? { resumeSession } : {}), continued: true };
+						// A continuation is not a correction: it does not spend the correction budget.
+						attempt--;
+						continue;
+					}
 					if (!failures.length || stop || controller.signal.aborted) { break; }
 					// Correct only what failed, under the same plan, fence, lease and permissions; the gates run again afterwards.
 					previousSignature = failureSignature(failures);
@@ -1107,13 +1124,23 @@ export class HarnessChatSession {
 	 * `harness-review` block is reported as not done, never as approved, and does not block the verified change.
 	 */
 	private async independentReview(plan: ChatPlan, provider: NativeProvider, diff: RunDiffSummary, signal: AbortSignal): Promise<Finding[]> {
-		let result: Awaited<ReturnType<NonNullable<ChatRuntime['review']>>>;
-		try { result = await this.runtime.review!(provider, buildReviewInstruction(plan, diff.files.map(file => file.path), roleInstruction('reviewer')), diff, signal); }
-		catch (error) {
-			this.conversation.messages.push(chatMessage('notice', this.t('No se pudo hacer la revisi\u00f3n independiente ({0}). Los cambios quedan verificados por las pruebas, sin revisi\u00f3n.', harnessErrorCode(error)), { tone: 'info', provider }));
+		const instruction = buildReviewInstruction(plan, diff.files.map(file => file.path), roleInstruction('reviewer'));
+		let avoid = provider;
+		let result: Awaited<ReturnType<NonNullable<ChatRuntime['review']>>> | undefined;
+		let review: ReturnType<typeof parseReview> | undefined;
+		let failure: string | undefined;
+		// A reviewer that cannot run or answers without a valid block hands the review to the other provider once.
+		for (let attempt = 0; attempt < 2 && !review && !signal.aborted; attempt++) {
+			try { result = await this.runtime.review!(avoid, instruction, diff, signal); }
+			catch (error) { failure = harnessErrorCode(error); continue; }
+			review = result.status === 'passed' ? parseReview(result.output) : undefined;
+			if (!review && result.provider === avoid) { break; }
+			avoid = result.provider;
+		}
+		if (!result) {
+			if (failure) { this.conversation.messages.push(chatMessage('notice', this.t('No se pudo hacer la revisi\u00f3n independiente ({0}). Los cambios quedan verificados por las pruebas, sin revisi\u00f3n.', failure), { tone: 'info', provider })); }
 			return [];
 		}
-		const review = result.status === 'passed' ? parseReview(result.output) : undefined;
 		if (!review) {
 			this.conversation.messages.push(chatMessage('notice', this.t('La revisi\u00f3n independiente de {0} no devolvi\u00f3 un resultado v\u00e1lido. Los cambios quedan verificados por las pruebas, sin revisi\u00f3n.', result.provider), { tone: 'info', provider: result.provider }));
 			return [];

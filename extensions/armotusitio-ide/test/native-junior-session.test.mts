@@ -177,7 +177,8 @@ test('the review is bounded: findings left after the corrections are shown and t
 
 test('no review without changes, after failed gates, or when the reviewer cannot answer; a broken review never blocks a verified change', async () => {
 	let reviews = 0;
-	const counting: ChatRuntime['review'] = async () => { reviews++; return { provider: 'codex', status: 'passed', output: 'sin bloque' }; };
+	const avoided: string[] = [];
+	const counting: ChatRuntime['review'] = async avoid => { reviews++; avoided.push(avoid); return { provider: 'codex', status: 'passed', output: 'sin bloque' }; };
 	const unchanged = await session([passing(changed())], { review: counting });
 	try { await unchanged.chat.send('Revisá el README', 'act'); } finally { await unchanged.cleanup(); }
 	const failed = await session([failing('ECONNREFUSED 127.0.0.1:5432')], { review: counting });
@@ -186,7 +187,8 @@ test('no review without changes, after failed gates, or when the reviewer cannot
 	const invalid = await session([passing()], { review: counting });
 	try {
 		await invalid.chat.send('Corregí la suma', 'act');
-		assert.deepEqual({ reviews, calls: invalid.calls.length }, { reviews: 1, calls: 1 });
+		// The reviewer that answered without a valid block hands the review to the other provider once.
+		assert.deepEqual({ reviews, avoided, calls: invalid.calls.length }, { reviews: 2, avoided: ['claude', 'codex'], calls: 1 });
 		assert.match(invalid.chat.snapshot().messages.at(-1)!.text, /no devolvió un resultado válido/);
 	} finally { await invalid.cleanup(); }
 });

@@ -4,8 +4,9 @@
  *--------------------------------------------------------------------------------------------*/
 /** Disposable Git worktree provisioning for explicitly approved local agent workflows. */
 import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
 import * as path from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { resolveNativeCommand } from './native-runtime.ts';
 
@@ -45,6 +46,15 @@ async function git(root: string, args: string[]): Promise<string> {
 			else { resolve(stdout.trim()); }
 		});
 	});
+}
+
+/**
+ * Short parent folder for one project's worktrees. The IDE's storage folder is already long, and Git refuses a worktree
+ * whose administrative path goes over the Windows limit ("'$GIT_DIR' too big"), so worktrees live under the home folder.
+ */
+export function worktreeStorage(root: string, kind: 'deliveries' | 'isolated'): string {
+	const key = createHash('sha256').update(process.platform === 'win32' ? root.toLowerCase() : root).digest('hex').slice(0, 12);
+	return path.join(os.homedir(), '.armotusitio', 'wt', key, kind);
 }
 
 export async function createAgentWorktree(root: string, storage: string): Promise<ManagedWorktree> {

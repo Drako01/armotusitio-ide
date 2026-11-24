@@ -138,3 +138,19 @@ test('stored step summaries are validated before they are trusted', () => {
 	assert.deepEqual([undefined, [good], [{ ...good, kind: 'launch' }], [{ ...good, status: 'weird' }], [{ ...good, label: 'x'.repeat(MAX_STEP_LABEL + 1) }], 'steps', Array(MAX_SUMMARY_STEPS + 1).fill(good)].map(validChatSteps),
 		[true, true, false, false, false, false, false]);
 });
+
+test('a command whose non-zero exit is its answer (gh pr checks, a search without matches) is not a failed step; a real failure still is', () => {
+	const bash = (id: string, command: string) => ({ type: 'tool_use', id, name: 'Bash', input: { command } });
+	const result = (id: string, text: string) => ({ type: 'tool_result', tool_use_id: id, is_error: true, content: text });
+	const claude = collect(ClaudeEventAccumulator, lines(
+		{ type: 'assistant', message: { content: [bash('toolu_1', 'gh pr checks 280'), bash('toolu_2', 'rg TODO src'), bash('toolu_3', 'pnpm test')] } },
+		{ type: 'user', message: { content: [result('toolu_1', 'Exit code 8\nCI  pending'), result('toolu_2', 'Exit code 1'), result('toolu_3', 'Exit code 1\n1 test failed')] } }
+	)).latest.map(step => [step.label, step.status, step.detail]);
+	const codex = collect(CodexEventAccumulator, lines(
+		{ type: 'item.completed', item: { id: 'item_0', type: 'command_execution', command: 'gh pr checks 280', exit_code: 1, status: 'failed' } }
+	)).latest.map(step => [step.label, step.status, step.detail]);
+	assert.deepEqual({ claude, codex }, {
+		claude: [['gh pr checks 280', 'ok', 'exit 8'], ['rg TODO src', 'ok', 'exit 1'], ['pnpm test', 'error', 'Exit code 1']],
+		codex: [['gh pr checks 280', 'ok', 'exit 1']]
+	});
+});

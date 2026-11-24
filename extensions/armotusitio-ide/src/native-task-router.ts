@@ -17,8 +17,8 @@ export interface TaskRouting {
 /** A one-line question gets a read-only answer even in Act; imperatives such as "analiza" or "explica" are work, not questions. */
 const QUESTION_START = /^(?:\u00bf|qu[e\u00e9]\b|c[o\u00f3]mo\b|por\s*qu[e\u00e9]\b|cu[a\u00e1]l(?:es)?\b|cu[a\u00e1]ndo\b|d[o\u00f3]nde\b|qui[e\u00e9]n\b|what\b|why\b|how\b|which\b|where\b|when\b|who\b|is\s+there\b|does\b|do\s+we\b)/i;
 const WRITE_VERB = /(?:cre[a\u00e1]|agreg|a\u00f1ad|implement|hac|arm[a\u00e1]|constru|correg|arregl|cambi|modific|renombr|refactoriz|elimin|quit|sac[a\u00e1]|actualiz|instal|configur|migr|escrib|gener|mov[e\u00e9]|dej[a\u00e1]|pon[e\u00e9]|add\b|create\b|build\b|implement\b|fix\b|change\b|rename\b|refactor\b|remove\b|delete\b|update\b|install\b|configure\b|write\b|generate\b|make\b|move\b|set\s+up\b)/i;
-/** "Can you ..." asks for work, not for an explanation. */
-const REQUEST_START = /^(?:\u00bf\s*)?(?:pod[e\u00e9]s|podr[i\u00ed]as|puedes|quiero\s+que|necesito\s+que|could\s+you|can\s+you|would\s+you|please)\b/i;
+/** "Can you ..." asks for work, also when it opens a later sentence or follows a pasted link ("https://... Necesito que ..."). */
+const REQUEST_START = /(?:^|[.!?]\s+|\S+:\/\/\S+\s+)(?:\u00bf\s*)?(?:pod[e\u00e9]s|podr[i\u00ed]as|puedes|quiero\s+que|necesito\s+que|could\s+you|can\s+you|would\s+you|please)\b/i;
 /** An imperative first word ("agrega" with an accent, "fix") is work even when the line ends with a question mark. */
 const IMPERATIVE_START = new RegExp('^(?:por\\s+favor\\s+|please\\s+)?' + WRITE_VERB.source, 'i');
 
@@ -33,6 +33,14 @@ const COMPOUND: ReadonlyArray<[string, RegExp]> = [
 	['tests-and-delivery', /\b(con\s+(?:sus\s+)?(?:tests?|pruebas)|with\s+tests|todo\s+funcionando|end[- ]to[- ]end|e2e)\b/i],
 	['multi-step', /(?:^|\n)\s*(?:\d+[.)]|[-*])\s+\S.*(?:\n\s*(?:\d+[.)]|[-*])\s+\S.*){2,}/]
 ];
+
+/**
+ * A pasted failure report (a CI job, a test run, a stack trace) asks to fix what failed: its bullets and words such as
+ * "database" or "tests" describe the failure, not deliverables, so it runs on the direct writer.
+ */
+const FAILURE_REPORT = /\b(?:job\s+\d+|ci|pipeline|workflow|checks?|tests?|suite|build|lint|prettier|tsc|migrati\w*)\b[^\n]{0,80}\b(?:failed|failing|fall[o\u00f3]|fallaron|fallan?)\b|\b(?:failed|fall[o\u00f3]|fallaron)\s+(?:because|porque)\b|^\s*(?:traceback\b|panic:|error:|FAIL\b)/im;
+/** A report still names a new deliverable when it asks for an application or a CRUD from scratch. */
+const NEW_DELIVERABLE: ReadonlySet<string> = new Set(['new-application', 'crud']);
 
 /** A request this short and with one target is a single focused edit. */
 const SHORT_REQUEST_CHARS = 160;
@@ -54,6 +62,7 @@ export function routeTask(text: string, mode: 'ask' | 'act'): TaskRouting {
 	const asksForWork = REQUEST_START.test(body) || IMPERATIVE_START.test(body);
 	if (!asksForWork && !body.includes('\n') && (QUESTION_START.test(body) || /\?\s*$/.test(body))) { return { route: 'question', reasons: ['question'] }; }
 	const compound = matched(COMPOUND, body);
+	if (FAILURE_REPORT.test(body) && !compound.some(name => NEW_DELIVERABLE.has(name))) { return { route: 'simple-edit', reasons: ['failure-report'] }; }
 	// One signal is not enough on a normal line: "agrega login al header" stays a simple edit.
 	if (compound.length >= COMPOUND_THRESHOLD || compound.some(name => STRONG.has(name)) || (compound.length >= 1 && body.length > SHORT_REQUEST_CHARS * 3)) { return { route: 'compound-goal', reasons: compound }; }
 	return { route: 'simple-edit', reasons: [body.length <= SHORT_REQUEST_CHARS ? 'short-request' : 'single-target'] };

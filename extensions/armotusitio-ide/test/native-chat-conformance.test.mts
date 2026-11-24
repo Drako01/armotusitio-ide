@@ -146,6 +146,38 @@ test('S1 live: the real RedEvent Harness runs a read-only command in apps/backof
 	} finally { await fs.rm(logs, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
+test('S1 live: a command the RedEvent Harness refuses (gh outside its allowlist) runs on the IDE runner instead of stopping the agent', { skip: !existsSync(REDEVENT_ENTRY) && 'RedEvent is not on this machine' }, async () => {
+	const root = await fs.realpath(REDEVENT);
+	const logs = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-conformance-redevent-'));
+	try {
+		const result = await runCommand({ root, cwd: '.', command: 'gh', args: ['--version'], env: process.env, logDirectory: logs, delegateEntry: REDEVENT_ENTRY, timeoutSec: 120 });
+		assert.deepEqual({ exit: result.exitCode, fallback: result.output.startsWith('[ats-runner] The project Harness refused this command'), version: /gh version \d+/.test(result.output) }, { exit: 0, fallback: true, version: true });
+	} finally { await fs.rm(logs, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
+});
+
+test('a project Harness refusal before running falls back to the IDE runner; a command that ran and failed is reported as it is', async () => {
+	const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'ats-delegate-refusal-')));
+	const logs = path.join(root, '..', path.basename(root) + '-logs');
+	try {
+		const entry = path.join(root, 'refuse.mjs');
+		await fs.writeFile(entry, [
+			'const command = process.argv.slice(process.argv.indexOf("--") + 1);',
+			'if (command[1] === "--version") { console.error("[harness] security denial: executable outside command allowlist"); process.exit(2); }',
+			'console.error("[harness] build failed: 3 errors"); process.exit(1);'
+		].join('\n'));
+		const run = (args: string[]) => runCommand({ root, cwd: '.', command: 'node', args, env: process.env, logDirectory: logs, delegateEntry: entry, timeoutSec: 60 });
+		const refused = await run(['--version']);
+		const failed = await run(['build.js']);
+		assert.deepEqual({
+			refused: [refused.exitCode, refused.output.startsWith('[ats-runner] The project Harness refused this command'), /v\d+\.\d+\.\d+/.test(refused.output)],
+			failed: [failed.exitCode, failed.output.trim()]
+		}, { refused: [0, true, true], failed: [1, '[harness] build failed: 3 errors'] });
+	} finally {
+		await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+		await fs.rm(logs, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+	}
+});
+
 test('S2: fetch, branch from origin with a dirty tree, commit skipping an ignored file and push; a refused branch does not stop the rest', async () => {
 	await withProject(async project => {
 		const { root, asked } = project;

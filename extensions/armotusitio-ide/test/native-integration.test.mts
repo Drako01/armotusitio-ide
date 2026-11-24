@@ -342,7 +342,7 @@ test('IDE integrates a reviewed worktree into the primary checkout and rolls it 
 	const f = await fixture();
 	try {
 		const { execFileSync } = await import('node:child_process');
-		const { createAgentWorktree, removeCleanAgentWorktree } = await import('../src/native-agent-worktree.ts');
+		const { createAgentWorktree, removeCleanAgentWorktree, worktreeStorage } = await import('../src/native-agent-worktree.ts');
 		const { createWorktreeCheckpoint } = await import('../src/native-worktree-checkpoint.ts');
 		const root = await fs.realpath(f.roots[0]);
 		execFileSync('git', ['init', '-q', root]);
@@ -352,7 +352,7 @@ test('IDE integrates a reviewed worktree into the primary checkout and rolls it 
 		execFileSync('git', ['-C', root, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-qm', 'seed']);
 		const digest = (await import('node:crypto')).createHash('sha256').update(root).digest('hex');
 		const storage = path.join(path.dirname(root), 'private', 'native-harness', digest);
-		const managed = await createAgentWorktree(root, path.join(storage, 'isolated-worktrees'));
+		const managed = await createAgentWorktree(root, worktreeStorage(root, 'isolated'));
 		const fence = await acquireSharedExecutionFence(root, storage, 'native-workflow');
 		try { await createWorktreeCheckpoint(managed, path.join(storage, 'checkpoints'), fence); }
 		finally { await fence.release(); }

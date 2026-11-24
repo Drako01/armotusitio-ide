@@ -364,7 +364,7 @@ test('only a completed run applies a plan: failed verification and unchanged run
 	} finally { await s.cleanup(); }
 });
 
-test('a run stopped by its turn budget is partial and Continue resumes the Claude session without a new approval', async () => {
+test('a run cut by its turn budget after progress continues by itself, resuming the Claude session; without progress it stops', async () => {
 	const session_id = '8b725e4b-cd27-430d-beca-a8a5e83257b3';
 	const s = await session([plan('Cobertura', ['Tests de identity'])]);
 	try {
@@ -372,20 +372,16 @@ test('a run stopped by its turn budget is partial and Continue resumes the Claud
 		const requests: Array<{ instruction: string; resumeSession?: string }> = [];
 		const results = [
 			{ agent: { ...outcome('Voy por la mitad', 'failed'), stopReason: 'max-turns' as const, sessionId: session_id }, verification: { status: 'skipped' as const, gates: [] }, diff: changed('identity_test.go') },
-			{ agent: outcome('Informe final'), verification: { status: 'passed' as const, gates: [] }, diff: changed('identity_test.go', 'services_test.go') }
+			{ agent: { ...outcome('Sin avances', 'failed'), stopReason: 'max-turns' as const, sessionId: session_id }, verification: { status: 'skipped' as const, gates: [] }, diff: { available: true, files: [], count: 0 } }
 		];
 		s.runtime.implement = async (request, hooks) => { requests.push({ instruction: request.instruction, resumeSession: request.resumeSession }); hooks.started(() => undefined); return results.shift()!; };
 		await s.chat.approve(s.chat.snapshot().plan!.digest);
-		const partial = s.chat.snapshot();
-		const runId = partial.run!.messageId;
-		assert.deepEqual({ kind: partial.messages.at(-1)!.run?.outcome?.kind, reason: partial.messages.at(-1)!.run?.outcome?.reason, files: partial.messages.at(-1)!.run?.outcome?.diff.count, run: partial.run, approvable: partial.plan?.approvable },
-			{ kind: 'partial', reason: 'max-turns', files: 1, run: { messageId: runId, continuable: true, retryable: true, discardable: false }, approvable: true });
-		await s.chat.continueRun(runId);
 		const done = s.chat.snapshot();
-		assert.deepEqual({ resumed: requests[1].resumeSession, short: /^Continue implementing the approved plan v1/.test(requests[1].instruction), kind: done.messages.at(-1)!.run?.outcome?.kind, continued: done.messages.at(-1)!.run?.continued, approvable: done.plan?.approvable },
-			{ resumed: session_id, short: true, kind: 'completed', continued: true, approvable: false });
-		// A run that is no longer the latest one cannot be continued.
-		await assert.rejects(s.chat.continueRun(runId), /HARNESS_CHAT_RUN_NOT_CONTINUABLE/);
+		assert.deepEqual({
+			runs: requests.length, resumed: requests[1].resumeSession, short: /^Continue implementing the approved plan v1/.test(requests[1].instruction),
+			notice: done.messages.some(message => /sigo sola \(continuaci\u00f3n 1 de 3\)/.test(message.text)),
+			last: [done.messages.at(-1)!.run?.outcome?.kind, done.messages.at(-1)!.run?.continued]
+		}, { runs: 2, resumed: session_id, short: true, notice: true, last: ['unchanged', true] });
 	} finally { await s.cleanup(); }
 });
 
