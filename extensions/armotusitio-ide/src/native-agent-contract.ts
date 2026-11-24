@@ -27,6 +27,9 @@ const WEB_SEARCH = 'You may use web search to read documentation of public libra
 const RUNNER = 'Run builds, tests and linters with the `run` tool of the `ats-runner` server: pass the executable in `command`, each argument separately in `args`, ' +
 	'and a project-relative `cwd` for subprojects; one command per call, no shell operators or inline code. A `POLICY_DENIED` answer comes with a `Next:` line: follow it (for example use `cwd` instead of a leading flag); never work around a safety denial by another mechanism. ' +
 	'External CLIs such as gh, aws, az, gcloud, docker, kubectl, terraform or curl are available through `run` after the user approves each call; use read-only gh queries (gh pr checks, gh run view --log-failed) to follow CI. ' +
+	'In a project with its own Harness the IDE already holds that Harness\'s writer lease and runs your commands for you: never run the ' +
+	'Harness\'s own task workflow (scripts such as harness:preflight, harness:run, harness:ide-lease, harness:status); they are for its ' +
+	'own agents and fail or hang under the IDE lease. Run the project tools directly instead (tests, lint, typecheck, format). ' +
 	'When the server also offers editor tools (definition, references, symbols, hover, callHierarchy, diagnostics, rename, organizeImports), prefer them over text search to navigate, and `rename` over text replacement to refactor. ' +
 	'Work Management tools, when connected, are exposed by this same server with the prefix `armotusitio__`; use them to read the live card before implementing. Never assume an IDE MCP connection is inherited by the provider CLI. Mutations require an explicit user confirmation; a denial is final.';
 

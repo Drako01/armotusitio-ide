@@ -45,7 +45,7 @@ const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 export function validSessionId(value: unknown): value is string {
 	return typeof value === 'string' && SESSION_ID.test(value);
 }
-const THROTTLED = /rate[ _-]?limit|too many requests|usage limit|quota exceeded|\b429\b/i;
+const THROTTLED = /rate[ _-]?limit|too many requests|usage limit|quota exceeded|requires usage credits|\b429\b/i;
 /** Recognize throttling from structured error fields only, never from successful answers. */
 function throttled(event: Record<string, unknown> | undefined): boolean {
 	if (!event) { return false; }

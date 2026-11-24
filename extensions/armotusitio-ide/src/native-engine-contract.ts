@@ -151,7 +151,9 @@ export async function probeProjectHandshake(root: string, trusted: () => boolean
 	const originalEntryDigest = await entryDigest(target, 'HARNESS_HANDSHAKE_ENTRY_UNSAFE');
 	const declared = await readProjectCapabilities(canonical);
 	const nonce = randomBytes(16).toString('hex');
-	const { output } = await runProjectEntry(canonical, target, ['capabilities', '--ide-protocol', '2', '--nonce', nonce], PROJECT_ENTRY_TIMEOUT_MS, 'HARNESS_HANDSHAKE');
+	const ask = () => runProjectEntry(canonical, target, ['capabilities', '--ide-protocol', '2', '--nonce', nonce], PROJECT_ENTRY_TIMEOUT_MS, 'HARNESS_HANDSHAKE');
+	// A cold start (interpreter, virtual environment, antivirus scan) can take most of the limit once; the second call is warm.
+	const { output } = await ask().catch(async (error: Error) => { if (error.message !== 'HARNESS_HANDSHAKE_TIMEOUT' || !trusted()) { throw error; } return ask(); });
 	if (!trusted()) { throw Error('HARNESS_UNTRUSTED_WORKSPACE'); }
 	let parsed: unknown;
 	try { parsed = JSON.parse(output); } catch { throw Error('HARNESS_HANDSHAKE_INVALID'); }

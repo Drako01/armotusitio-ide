@@ -6,6 +6,9 @@
 import type { NativeProvider } from './native-providers.ts';
 import type { RunDiffSummary } from './native-run-diff.ts';
 
+/** Longest objective: a chat message (pasted logs included) plus the project decisions appended to it. */
+const MAX_OBJECTIVE_CHARS = 48000;
+
 /** A verifiable acceptance criterion; `check` is how the IDE measures it (a gate id or a metric threshold). */
 export interface DoneCriterion { id: string; description: string; check?: { gate?: string; metric?: { atLeast: number } } }
 /** Paths the goal may change (`allow`) or must never touch (`deny`), as project-relative globs. */
@@ -58,7 +61,7 @@ const matches = (file: string, globs: readonly string[] | undefined): boolean =>
 /** A charter the orchestrator can run: bounded, non-empty and internally consistent. */
 export function validateCharter(charter: GoalCharter): GoalCharter {
 	const budget = charter.budget;
-	if (!charter.objective?.trim() || charter.objective.length > 10000 || !Array.isArray(charter.done) || !Array.isArray(charter.scope) ||
+	if (!charter.objective?.trim() || charter.objective.length > MAX_OBJECTIVE_CHARS || !Array.isArray(charter.done) || !Array.isArray(charter.scope) ||
 		!budget || !Number.isSafeInteger(budget.maxRuns) || budget.maxRuns < 1 || budget.maxRuns > 100 ||
 		!Number.isSafeInteger(budget.maxMinutes) || budget.maxMinutes < 5 || budget.maxMinutes > 24 * 60 ||
 		!Number.isSafeInteger(budget.maxTurnsPerRun) || budget.maxTurnsPerRun < 10 || budget.maxTurnsPerRun > 150 ||

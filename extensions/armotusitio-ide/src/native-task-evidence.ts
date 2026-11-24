@@ -32,6 +32,8 @@ export const REPAIRABLE: ReadonlySet<GateFailureClass> = new Set(['syntax-typech
  */
 const SHARED_CAUSES: Readonly<Record<string, GateFailureClass>> = { policy: 'permission-denied', 'disk-full': 'environment', 'lockfile-out-of-date': 'dependency-missing' };
 const ENVIRONMENT_RULES: ReadonlyArray<[GateFailureClass, RegExp]> = [
+	// An installed dependency the tool cannot read (a broken or locked install, an antivirus scan): reinstall, never edit code.
+	['dependency-missing', /(?:\bUNKNOWN: unknown error|\bEBUSY\b|\bEPERM\b|\bENOTEMPTY\b)[^\n]*node_modules/i],
 	['permission-denied', /\b(EACCES|EPERM)\b|permission denied|operation not permitted|HARNESS_[A-Z_]*DENIED/i],
 	['service-down', /\bECONNREFUSED\b|connection refused|could not connect to (?:the )?server|getaddrinfo (?:ENOTFOUND|EAI_AGAIN)|database .* does not exist|no route to host/i],
 	['environment', /heap out of memory|JavaScript heap|killed\s+signal\s+9|out of memory/i],
@@ -44,6 +46,15 @@ const CODE_RULES: ReadonlyArray<[GateFailureClass, RegExp]> = [
 ];
 
 export interface GateFailure { id: string; exitCode: number | null; output: string }
+/**
+ * `Cannot find module` naming a path of the project (relative, or absolute such as `C:\app\test`) is a wrong path in the
+ * code or a script, not a dependency to install; a path inside node_modules still is a broken install.
+ */
+function missingProjectFile(output: string): boolean {
+	const target = /Cannot find module '([^']+)'/.exec(output)?.[1];
+	return !!target && /^(?:\.{1,2}[\\/]|\/|[A-Za-z]:[\\/])/.test(target) && !/node_modules/.test(target);
+}
+
 export interface ClassifiedFailure { id: string; kind: GateKind; failure: GateFailureClass; exitCode: number | null; tail: string }
 
 /** Last lines of a gate's output, redacted and bounded: enough to correct, never the whole log. */
@@ -56,7 +67,7 @@ export function outputTail(output: string, limit = 3000): string {
 export function classifyGateFailure(gate: GateFailure, passedBefore = false): ClassifiedFailure {
 	const kind = gateKind(gate.id);
 	const tail = outputTail(gate.output);
-	const environment = SHARED_CAUSES[classifyFailure(gate.output).kind] ?? ENVIRONMENT_RULES.find(([, pattern]) => pattern.test(gate.output))?.[0];
+	const environment = SHARED_CAUSES[classifyFailure(gate.output).kind] ?? ENVIRONMENT_RULES.find(([cause, pattern]) => pattern.test(gate.output) && !(cause === 'dependency-missing' && missingProjectFile(gate.output)))?.[0];
 	let failure: GateFailureClass;
 	if (environment) { failure = environment; }
 	else if (gate.exitCode === null) { failure = 'environment'; }
