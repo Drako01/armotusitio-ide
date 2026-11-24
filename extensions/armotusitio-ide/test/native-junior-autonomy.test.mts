@@ -67,11 +67,12 @@ test('J-05/J-14/J-16: failures are classified from observed output; environment 
 		relativeImport: failure('typecheck', `error TS2307: Cannot find module './missing' or its corresponding type declarations.`),
 		toolchain: failure('test', `'pnpm' is not recognized as an internal or external command`),
 		permission: failure('test', 'EACCES: permission denied, open /etc/x'),
+		projectPath: failure('test', `Error: Cannot find module 'C:\\app\\test'\n  code: 'MODULE_NOT_FOUND'`),
 		brokenInstall: failure('typecheck', `[UNKNOWN] UNKNOWN: unknown error, open 'F:\\app\\node_modules\\.pnpm\\ms\\package.json'`),
 		lockedInstall: failure('lint', `EBUSY: resource busy or locked, rename 'node_modules/.pnpm/x'`),
 		killed: failure('test', 'partial output', null),
 		other: failure('custom', 'exit 2')
-	}, { ts: 'syntax-typecheck', test: 'test-failure', lintByKind: 'syntax-typecheck', service: 'service-down', dependency: 'dependency-missing', relativeImport: 'syntax-typecheck', toolchain: 'toolchain', permission: 'permission-denied', brokenInstall: 'dependency-missing', lockedInstall: 'dependency-missing', killed: 'environment', other: 'unknown' });
+	}, { ts: 'syntax-typecheck', test: 'test-failure', lintByKind: 'syntax-typecheck', service: 'service-down', dependency: 'dependency-missing', relativeImport: 'syntax-typecheck', toolchain: 'toolchain', permission: 'permission-denied', projectPath: 'test-failure', brokenInstall: 'dependency-missing', lockedInstall: 'dependency-missing', killed: 'environment', other: 'unknown' });
 	assert.equal(classifyGateFailure({ id: 'test', exitCode: 1, output: 'FAIL src/a.test.ts' }, true).failure, 'regression');
 	assert.deepEqual([...REPAIRABLE].sort(), ['regression', 'syntax-typecheck', 'test-failure']);
 	assert.deepEqual(['test-api', 'typecheck', 'lint-web-2', 'e2e', 'unit'].map(gateKind), ['test', 'typecheck', 'lint', 'e2e', 'other']);

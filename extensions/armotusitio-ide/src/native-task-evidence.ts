@@ -46,6 +46,15 @@ const CODE_RULES: ReadonlyArray<[GateFailureClass, RegExp]> = [
 ];
 
 export interface GateFailure { id: string; exitCode: number | null; output: string }
+/**
+ * `Cannot find module` naming a path of the project (relative, or absolute such as `C:\app\test`) is a wrong path in the
+ * code or a script, not a dependency to install; a path inside node_modules still is a broken install.
+ */
+function missingProjectFile(output: string): boolean {
+	const target = /Cannot find module '([^']+)'/.exec(output)?.[1];
+	return !!target && /^(?:\.{1,2}[\\/]|\/|[A-Za-z]:[\\/])/.test(target) && !/node_modules/.test(target);
+}
+
 export interface ClassifiedFailure { id: string; kind: GateKind; failure: GateFailureClass; exitCode: number | null; tail: string }
 
 /** Last lines of a gate's output, redacted and bounded: enough to correct, never the whole log. */
@@ -58,7 +67,7 @@ export function outputTail(output: string, limit = 3000): string {
 export function classifyGateFailure(gate: GateFailure, passedBefore = false): ClassifiedFailure {
 	const kind = gateKind(gate.id);
 	const tail = outputTail(gate.output);
-	const environment = SHARED_CAUSES[classifyFailure(gate.output).kind] ?? ENVIRONMENT_RULES.find(([, pattern]) => pattern.test(gate.output))?.[0];
+	const environment = SHARED_CAUSES[classifyFailure(gate.output).kind] ?? ENVIRONMENT_RULES.find(([cause, pattern]) => pattern.test(gate.output) && !(cause === 'dependency-missing' && missingProjectFile(gate.output)))?.[0];
 	let failure: GateFailureClass;
 	if (environment) { failure = environment; }
 	else if (gate.exitCode === null) { failure = 'environment'; }

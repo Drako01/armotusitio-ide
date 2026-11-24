@@ -1142,7 +1142,11 @@ export class HarnessChatSession {
 			return [];
 		}
 		if (!review) {
-			this.conversation.messages.push(chatMessage('notice', this.t('La revisi\u00f3n independiente de {0} no devolvi\u00f3 un resultado v\u00e1lido. Los cambios quedan verificados por las pruebas, sin revisi\u00f3n.', result.provider), { tone: 'info', provider: result.provider }));
+			// A reviewer that could not run says why (a usage limit, missing credits) instead of looking like a bad answer.
+			const reason = result.status === 'passed' ? '' : result.output.trim().split('\n', 1)[0].slice(0, 240);
+			this.conversation.messages.push(chatMessage('notice', reason
+				? this.t('La revisi\u00f3n independiente de {0} no se pudo hacer: {1} Los cambios quedan verificados por las pruebas, sin revisi\u00f3n.', result.provider, reason)
+				: this.t('La revisi\u00f3n independiente de {0} no devolvi\u00f3 un resultado v\u00e1lido. Los cambios quedan verificados por las pruebas, sin revisi\u00f3n.', result.provider), { tone: 'info', provider: result.provider }));
 			return [];
 		}
 		const blocking = review.findings.filter(finding => finding.severity === 'blocking');

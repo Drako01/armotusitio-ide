@@ -193,6 +193,15 @@ test('no review without changes, after failed gates, or when the reviewer cannot
 	} finally { await invalid.cleanup(); }
 });
 
+test('a reviewer that cannot run because of a usage limit says why instead of reporting an invalid answer', async () => {
+	const limited: ChatRuntime['review'] = async () => ({ provider: 'codex', status: 'failed', output: 'You have hit your usage limit. Try again later.' });
+	const s = await session([passing()], { review: limited });
+	try {
+		await s.chat.send('Corregi la suma', 'act');
+		assert.match(s.chat.snapshot().messages.at(-1)!.text, /no se pudo hacer: You have hit your usage limit/);
+	} finally { await s.cleanup(); }
+});
+
 test('a goal engine that fails to start says why and the request continues on the direct writer', async () => {
 	const s = await session([], { startGoal: async () => { throw Error('HARNESS_SOMETHING_BROKE'); } });
 	try {

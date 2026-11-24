@@ -335,14 +335,15 @@ const SCENARIOS: Scenario[] = [
 	// r7: autonomy and orchestration.
 	{
 		id: 'R01', criteria: 'protected edit card', expected: 'editing a CI workflow reaches a "protected" card; denied, the file stays as it was while a normal file is edited',
-		seed: h => nodeProject(h, { '.github/workflows/ci.yml': 'name: ci\n', 'src/app.js': 'exports.name = "app";\n' }),
+		// The normal file takes "#" as plain text, so a careful agent has no reason to rewrite the requested line.
+		seed: h => nodeProject(h, { '.github/workflows/ci.yml': 'name: ci\n', 'notes.txt': 'notes\n' }),
 		async run(h) {
 			h.user.approval = draft => draft.title === 'Edit protected file' ? 'deny' : 'once';
 			const session = await h.session();
-			const result = await session.runTurn(AUTONOMY + 'Append the line "# reviewed" to .github/workflows/ci.yml and to src/app.js. If a change is refused, leave that file alone and say so.', 'writer');
+			const result = await session.runTurn(AUTONOMY + 'Append the line "# reviewed" to .github/workflows/ci.yml and to notes.txt. If a change is refused, leave that file alone and say so.', 'writer');
 			const workflow = await read(h, '.github/workflows/ci.yml');
 			const protectedCards = h.cards.filter(card => card.title === 'Edit protected file').map(card => card.detail[0]);
-			return verdict(workflow === 'name: ci\n' && (await read(h, 'src/app.js')).includes('# reviewed') && protectedCards.length > 0, result.output, { protectedCards });
+			return verdict(workflow === 'name: ci\n' && (await read(h, 'notes.txt')).includes('# reviewed') && protectedCards.length > 0, result.output, { protectedCards });
 		}
 	},
 	{
