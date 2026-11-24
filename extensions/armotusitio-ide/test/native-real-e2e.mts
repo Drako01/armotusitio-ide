@@ -19,6 +19,8 @@ import { execFileSync } from 'node:child_process';
 import { harness, record, type Harness, type Provider } from './native-runtime-harness.mts';
 import { captureWorkingTree, diffWorkingTree, discardRunChanges, fingerprintFiles } from '../src/native-run-diff.ts';
 import type { AgentEvent } from '../src/runtime/contracts.ts';
+import { buildReviewInstruction, directPlan } from '../src/native-chat.ts';
+import { parseReview, roleInstruction } from '../src/native-roles.ts';
 
 type Status = 'PASS' | 'FAIL' | 'BLOCKED';
 interface Outcome { status: Status; obtained: string; evidence?: Record<string, unknown> }
@@ -329,6 +331,44 @@ const SCENARIOS: Scenario[] = [
 		id: 'A10', criteria: 'DoD-06', expected: 'legacy module and its test deleted with the IDE tools; tests pass',
 		seed: h => nodeProject(h, { 'src/legacy.js': 'exports.old = () => 1;\n', 'test/legacy.test.js': 'const test = require("node:test"); const assert = require("node:assert"); test("old", () => assert.equal(require("../src/legacy.js").old(), 1));\n', 'test/keep.test.js': 'require("node:test")("keep", () => {});\n' }),
 		async run(h) { const s = await h.session(); const r = await s.runTurn(AUTONOMY + 'Remove the obsolete module src/legacy.js and its test test/legacy.test.js (use the delete_path tool), then make sure `node --test` still passes.', 'writer'); return verdict(!await exists(h, 'src/legacy.js') && !await exists(h, 'test/legacy.test.js') && passes(h, 'node', ['--test']), r.output); }
+	},
+	// r7: autonomy and orchestration.
+	{
+		id: 'R01', criteria: 'protected edit card', expected: 'editing a CI workflow reaches a "protected" card; denied, the file stays as it was while a normal file is edited',
+		seed: h => nodeProject(h, { '.github/workflows/ci.yml': 'name: ci\n', 'src/app.js': 'exports.name = "app";\n' }),
+		async run(h) {
+			h.user.approval = draft => draft.title === 'Edit protected file' ? 'deny' : 'once';
+			const session = await h.session();
+			const result = await session.runTurn(AUTONOMY + 'Append the line "# reviewed" to .github/workflows/ci.yml and to src/app.js. If a change is refused, leave that file alone and say so.', 'writer');
+			const workflow = await read(h, '.github/workflows/ci.yml');
+			const protectedCards = h.cards.filter(card => card.title === 'Edit protected file').map(card => card.detail[0]);
+			return verdict(workflow === 'name: ci\n' && (await read(h, 'src/app.js')).includes('# reviewed') && protectedCards.length > 0, result.output, { protectedCards });
+		}
+	},
+	{
+		id: 'R02', criteria: 'always on git', expected: 'answering "always" to the branch card creates the branch in the same call',
+		async run(h) {
+			git(h.root, 'config', 'user.name', 'Fixture'); git(h.root, 'config', 'user.email', 'fixture@example.test');
+			git(h.root, 'remote', 'add', 'origin', 'https://github.com/fixture/e2e.git');
+			git(h.root, 'add', '.'); git(h.root, 'commit', '-qm', 'seed');
+			h.user.approval = draft => draft.kind === 'git_branch_create' ? 'always' : 'once';
+			const session = await h.session();
+			const result = await session.runTurn('Use the git_branch_create tool to create the branch feat/always. Reply with only: CREATED or the error you got.', 'writer');
+			const branch = git(h.root, 'branch', '--show-current');
+			return verdict(branch === 'feat/always', result.output, { branch, cards: h.cards.map(card => card.kind) });
+		}
+	},
+	{
+		id: 'R03', criteria: 'independent review contract', expected: 'the reviewer instruction yields a valid harness-review block that marks a seeded defect as blocking',
+		seed: h => nodeProject(h, { 'src/discount.js': 'exports.total = (price, percent) => price + price * percent / 100;\n' }),
+		async run(h) {
+			const session = await h.session();
+			const plan = directPlan('Apply a percentage discount to a price in src/discount.js');
+			const result = await session.runTurn(buildReviewInstruction(plan, ['src/discount.js'], roleInstruction('reviewer')), 'conversation');
+			const review = parseReview(result.output);
+			const blocking = review?.findings.filter(finding => finding.severity === 'blocking').length ?? 0;
+			return verdict(!!review && blocking > 0, result.output, { score: review?.score, blocking });
+		}
 	}
 ];
 

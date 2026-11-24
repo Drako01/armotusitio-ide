@@ -104,8 +104,7 @@ export async function requestApproval(ask: ApprovalAsk | undefined, request: App
 	try {
 		const answer = await ask(request);
 		// The extension owns the rule (it rebuilds it with the project root) and only offers a reaching answer when one exists,
-		// so any valid yes allows this action; a local rule hint may be empty (git_branch_create without the root).
-		// "Always" still needs an exact local rule: nothing permanent is ever granted for an action that cannot be remembered.
+		// so a reaching answer still needs an exact local rule: nothing permanent is ever granted for an action that cannot be remembered.
 		return answer === 'once' || answer === 'task' || answer === 'session' || ((answer === 'always' || answer === 'family' || answer === 'global') && !!request.rule) ? undefined : 'DENIED: the user did not allow it';
 	} catch (error) {
 		return (error as Error).message === 'HARNESS_TIMEOUT' ? 'DENIED: the user did not answer in time' : 'DENIED: the approval could not be requested';

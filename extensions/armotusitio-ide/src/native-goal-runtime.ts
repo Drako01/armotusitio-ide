@@ -51,7 +51,7 @@ export interface GoalRuntimeDeps {
 }
 
 /** Unified diff of a step: `git diff` for tracked files and the content of new files, for the integrity guards. */
-async function stepPatch(root: string, diff: RunDiffSummary): Promise<string> {
+export async function stepPatch(root: string, diff: RunDiffSummary): Promise<string> {
 	const parts: string[] = [];
 	for (const file of diff.files) {
 		if (file.change === 'added') {
@@ -152,12 +152,14 @@ export function createGoalPorts(deps: GoalRuntimeDeps): GoalPorts {
 }
 
 /** Charter options inferred from a plain instruction: a coverage target, "without touching production", the metric command. */
-export function inferGoalOptions(objective: string, ecosystems: ReadonlyArray<{ path: string; ecosystem: string }>): { target?: number; allowProduction: boolean; metric?: GoalCharter['metric'] } {
+export function inferGoalOptions(objective: string, ecosystems: ReadonlyArray<{ path: string; ecosystem: string }>): { target?: number; allowProduction: boolean; metric?: GoalCharter['metric']; publish: boolean } {
 	const text = objective.toLowerCase();
 	const coverage = /cobertura|coverage/.test(text);
 	const target = coverage ? Number(/(\d{1,3}(?:[.,]\d+)?)\s*%/.exec(text)?.[1].replace(',', '.')) : NaN;
 	const allowProduction = !/sin tocar (el )?(c\u00f3digo de )?producci\u00f3n|without touching production|no production/.test(text);
 	const go = ecosystems.find(project => project.ecosystem === 'go' && (text.includes(project.path) || ecosystems.length === 1)) ?? ecosystems.find(project => project.ecosystem === 'go');
 	const metric: GoalCharter['metric'] | undefined = coverage && go ? { command: 'go', args: ['test', './...', '-count=1', '-cover'], cwd: go.path, parse: 'go-coverage' } : undefined;
-	return { ...(Number.isFinite(target) ? { target } : {}), allowProduction, ...(metric ? { metric } : {}) };
+	// The request asks for the delivery itself: push the branch and open the pull request when the goal is done.
+	const publish = /\bPRs?\b/.test(objective) || /pull\s*requests?|\bpush\b|sub[i\u00ed]\s+(?:los\s+cambios|la\s+rama)/i.test(objective);
+	return { ...(Number.isFinite(target) ? { target } : {}), allowProduction, ...(metric ? { metric } : {}), publish };
 }

@@ -11,6 +11,7 @@ import { execFileSync } from 'node:child_process';
 import { endsGitDelivery, GIT_TOOLS, handleGitTool, isSensitiveGitPath, repoFingerprint, type GitToolsContext } from '../src/native-git-tools.ts';
 import type { ApprovalAnswer, PermissionDecision, PermissionRequest } from '../src/native-permissions-types.ts';
 import type { ApprovalDraft } from '../src/native-approval.ts';
+import { projectKey } from '../src/native-permissions.ts';
 
 const IDENTITY = ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', '-c', 'commit.gpgsign=false'];
 const git = (cwd: string, ...args: string[]): string => execFileSync('git', [...IDENTITY, '-C', cwd, ...args], { encoding: 'utf8' }).trim();
@@ -140,11 +141,21 @@ test('permissions decide git_commit: deny refuses, ask needs the user, allow run
 		const noUi = await handleGitTool({ ...context, ask: undefined }, 'git_commit', { paths: ['a.txt'], message: 'm' });
 		assert.deepEqual({ denied: denied.text.startsWith('POLICY_DENIED: '), refused: refused.text, noUi: noUi.text, unchanged: head(root) === before, card: asked.map(card => [card.kind, card.title, card.detail, card.rule]) }, {
 			denied: true, refused: 'DENIED: the user did not allow it', noUi: 'DENIED: this run has no way to ask the user', unchanged: true,
-			card: [['git_commit', 'Commit', ['branch: feat/work', 'files: a.txt', 'message: refuse me'], '']]
+			card: [['git_commit', 'Commit', ['branch: feat/work', 'files: a.txt', 'message: refuse me'], 'git_commit:' + projectKey(root)]]
 		});
 		set('ask', 'once');
 		assert.equal((await handleGitTool(context, 'git_commit', { paths: ['a.txt'], message: 'now' })).isError, false);
 		assert.notEqual(head(root), before);
+	});
+});
+
+test('"Always" on a git approval runs the call it answered', async () => {
+	await withRepo(async ({ root, context, set }) => {
+		await fs.writeFile(path.join(root, 'a.txt'), 'a\n');
+		const before = head(root);
+		set('ask', 'always');
+		const committed = await handleGitTool(context, 'git_commit', { paths: ['a.txt'], message: 'always' });
+		assert.deepEqual({ isError: committed.isError, moved: head(root) !== before }, { isError: false, moved: true });
 	});
 });
 

@@ -26,18 +26,20 @@ test('J-20/J-04/J-01: the router keeps trivial edits direct and sends compound g
 	}, { trivial: 'simple-edit', fix: 'simple-edit', singleSignal: 'simple-edit', crud: 'compound-goal', fullStack: 'compound-goal', list: 'compound-goal' });
 });
 
-test('the router never sends Ask to a writer, keeps questions read-only and gives risky work a reviewed plan', () => {
-	const route = (text: string, mode: 'ask' | 'act' = 'act') => routeTask(text, mode);
-	assert.equal(route('Creame una app con login y base de datos', 'ask').route, 'question');
-	assert.equal(route('\u00bfQu\u00e9 hace la funci\u00f3n total?').route, 'question');
-	assert.equal(route('Why does the build fail?').route, 'question');
-	assert.equal(route('\u00bfPod\u00e9s agregar validaci\u00f3n al formulario?').route, 'simple-edit');
-	assert.equal(route('Agreg\u00e1 validaci\u00f3n al formulario?').route, 'simple-edit');
-	assert.deepEqual(route('Deploy\u00e1 la app a producci\u00f3n').reasons.sort(), ['deploy', 'production']);
-	assert.equal(route('Borr\u00e1 los registros viejos de la base de datos').route, 'ambiguous-or-risky');
-	assert.equal(route('hac\u00e9 un force-push de la rama').route, 'ambiguous-or-risky');
-	// A Git push is not risky by itself: the permission broker already asks for it with its own card.
-	assert.equal(route('sub\u00ed los cambios').route, 'simple-edit');
+test('the router never sends Ask to a writer, answers one-line questions read-only and runs every instruction in Act', () => {
+	const route = (text: string, mode: 'ask' | 'act' = 'act') => routeTask(text, mode).route;
+	assert.deepEqual({
+		ask: route('Creame una app con login y base de datos', 'ask'),
+		question: route('\u00bfQu\u00e9 hace la funci\u00f3n total?'),
+		english: route('Why does the build fail?'),
+		canYou: route('\u00bfPod\u00e9s agregar validaci\u00f3n al formulario?'),
+		imperative: route('Agreg\u00e1 validaci\u00f3n al formulario?'),
+		// Risky words do not stop an instruction: the permission broker and the command policy act on the action itself.
+		deploy: route('Deploy\u00e1 la app a producci\u00f3n'),
+		forbidden: route('Cre\u00e1 la rama y commite\u00e1. No autorizo compras, despliegues productivos ni publicaci\u00f3n comercial.'),
+		analyze: route('Analiz\u00e1 el repositorio e implement\u00e1 lo pendiente del ROADMAP'),
+		multiLine: route('\u00bfSegu\u00eds?\nContinu\u00e1 con la siguiente tarea del ROADMAP')
+	}, { ask: 'question', question: 'question', english: 'question', canYou: 'simple-edit', imperative: 'simple-edit', deploy: 'simple-edit', forbidden: 'simple-edit', analyze: 'simple-edit', multiLine: 'simple-edit' });
 });
 
 test('J-05/J-14/J-16: failures are classified from observed output; environment causes are never "repaired" as code', () => {

@@ -8,7 +8,9 @@ import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { acceptDelivery, commitMessage, commitStep, createDelivery, deliveryFiles, deliverySlug, discardDelivery } from '../src/native-delivery.ts';
+import { acceptDelivery, commitMessage, commitStep, createDelivery, deliveryFiles, deliverySlug, discardDelivery, publishDelivery, type DeliveryGitTool } from '../src/native-delivery.ts';
+import { goalSummary } from '../src/native-goal-integration.ts';
+import { inferGoalOptions } from '../src/native-goal-runtime.ts';
 
 test('a delivery works on its own branch without touching the user\'s uncommitted changes; Accept detects collisions', async () => {
 	const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'ats-delivery-')));
@@ -41,4 +43,37 @@ test('a delivery works on its own branch without touching the user\'s uncommitte
 		assert.deepEqual({ suffix: second.branch, branches: git('branch', '--list', 'harness/*').split('\n').map(line => line.trim()).filter(Boolean) },
 			{ suffix: 'harness/subi-la-cobertura-de-apps-api-2', branches: ['harness/subi-la-cobertura-de-apps-api'] });
 	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); await fs.rm(storage, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
+});
+
+test('a branch-and-pr delivery pushes and opens the PR against the branch the user started from; a refusal is reported as is', async () => {
+	const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'ats-delivery-pr-')));
+	const storage = await fs.mkdtemp(path.join(os.tmpdir(), 'ats-delivery-pr-storage-'));
+	const git = (...args: string[]) => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
+	try {
+		git('init', '-q', '-b', 'qa'); git('config', 'user.email', 't@example.com'); git('config', 'user.name', 'T');
+		await fs.writeFile(path.join(root, 'a.txt'), 'base'); git('add', '.'); git('commit', '-qm', 'base');
+		const delivery = await createDelivery(root, storage, 'Agregar reportes');
+		const calls: Array<[string, Record<string, unknown>]> = [];
+		const tool = (answers: Array<{ isError: boolean; text: string }>): DeliveryGitTool => async (name, input) => { calls.push([name, input]); return answers.shift()!; };
+		const opened = await publishDelivery(delivery, tool([{ isError: false, text: 'PUSHED' }, { isError: false, text: 'https://github.com/o/r/pull/7' }]), { title: 'Agregar reportes', body: '## Resumen' });
+		const refused = await publishDelivery(delivery, tool([{ isError: true, text: 'DENIED: the user did not allow it' }]), { title: 't', body: 'b' });
+		const detached = await publishDelivery({ ...delivery, baseBranch: undefined }, tool([{ isError: false, text: 'PUSHED' }]), { title: 't', body: 'b' });
+		assert.deepEqual({ base: delivery.baseBranch, opened, refused, detached, calls: calls.map(([name]) => name), pr: calls[1][1] }, {
+			base: 'qa', opened: { pushed: true, pullRequest: 'https://github.com/o/r/pull/7' }, refused: { pushed: false, error: 'DENIED: the user did not allow it' },
+			detached: { pushed: true, error: 'no-base-branch' }, calls: ['git_push', 'git_pr_upsert', 'git_push', 'git_push'], pr: { base: 'qa', title: 'Agregar reportes', body: '## Resumen' }
+		});
+		await discardDelivery(delivery);
+	} finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); await fs.rm(storage, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
+});
+
+test('the chat hears how a goal ended, and a request that asks for the PR gets the publishing delivery', () => {
+	const t = (text: string, ...args: string[]) => text.replace(/\{(\d+)\}/g, (_, index) => args[Number(index)]);
+	assert.deepEqual([
+		goalSummary(t, { status: 'completed' }, { branch: 'harness/x' }, { pushed: true, pullRequest: 'https://github.com/o/r/pull/7' }),
+		goalSummary(t, { status: 'blocked', reason: 'budget-exhausted' }, undefined, undefined)
+	], [
+		'El objetivo terminó y cumplió la Definición de Terminado.\nRama: harness/x.\nSubí la rama y abrí el pull request: https://github.com/o/r/pull/7',
+		'El objetivo se detuvo sin terminar (budget-exhausted).'
+	]);
+	assert.deepEqual(['Implementá X y abrí un PR', 'Hacé push de la rama', 'Subí los cambios', 'Mejorá la presión del formulario'].map(text => inferGoalOptions(text, []).publish), [true, true, true, false]);
 });

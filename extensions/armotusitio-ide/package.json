@@ -298,7 +298,7 @@
 						"direct"
 					],
 					"enumDescriptions": [
-						"Actuar decide solo: una consulta se responde sin editar, un cambio simple va directo, un pedido con varias partes usa el motor de objetivos (una sola aprobacion de carta) y un pedido riesgoso (produccion, borrado de datos, despliegue) propone un plan para revisar.",
+						"Actuar hace lo que pedis: una pregunta de una linea se responde sin editar, un cambio va al agente con verificacion y revision independiente, y un pedido con varias partes usa el motor de objetivos (la carta aparece en el chat). La seguridad actua sobre cada accion, no sobre las palabras del pedido.",
 						"Todo pedido de Actuar va directo al agente implementador, como antes. Los objetivos autonomos siguen disponibles con el comando."
 					],
 					"default": "auto",
@@ -365,6 +365,12 @@
 					"maximum": 90,
 					"scope": "application",
 					"description": "Porcentaje del cupo local de llamadas que los objetivos autonomos nunca consumen, para que puedas seguir trabajando a mano."
+				},
+				"atsHarness.independentReview": {
+					"type": "boolean",
+					"default": true,
+					"scope": "application",
+					"description": "Cada cambio verificado del chat pasa por una revision independiente de solo lectura, con el otro proveedor cuando esta disponible. Los problemas graves se corrigen y se vuelven a verificar."
 				},
 				"atsHarness.goalProvider": {
 					"type": "string",

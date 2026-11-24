@@ -27,12 +27,16 @@ import type { ActivityActionId, ActivityItem } from './native-activity-feed.ts';
 import type { RunDiffSummary, RunFileChange } from './native-run-diff.ts';
 import { summarizeSteps, upsertStep, type AgentTodo, type ChatStep } from './native-run-steps.ts';
 import {
-	buildContinuationInstruction, buildConversationDelta, buildConversationInstruction, buildDirectInstruction, buildImplementationInstruction, buildRepairInstruction, chatMessage, MAX_SUSPENDED, DIRECT_PLAN_VERSION, directPlan, extractChatPlan, harnessErrorCode, harnessErrorDetail, latestPlanMessage, MAX_USER_MESSAGE_CHARS, pendingAlive, promptBudget, samePlanContent,
-	type ChatConversation, type ChatMessage, type ChatMode, type ChatPlan, type ChatProjectContext, type ChatRunSummary, type ChatStore, type GateSummary, type RepairStopReason, type RunStatus, type SuspendedIntent
+	buildContinuationInstruction, buildConversationDelta, buildConversationInstruction, buildDirectInstruction, buildImplementationInstruction, buildRepairInstruction, buildReviewFixInstruction, buildReviewInstruction, chatMessage, MAX_SUSPENDED, DIRECT_PLAN_VERSION, directPlan, extractChatPlan, harnessErrorCode, harnessErrorDetail, latestPlanMessage, MAX_USER_MESSAGE_CHARS, pendingAlive, promptBudget, samePlanContent,
+	type ChatConversation, type ChatMessage, type ChatMode, type ChatPlan, type ChatProjectContext, type ChatRunSummary, type ChatStore, type GateSummary, type ImplementStage, type RepairStopReason, type RunStatus, type SuspendedIntent
 } from './native-chat.ts';
 import { MAX_CORRECTIONS } from './native-orchestrator.ts';
+import { parseReview, roleInstruction, type Finding } from './native-roles.ts';
 
-export type ImplementStage = 'preparing' | 'agent' | 'verifying' | 'repairing';
+/** Review findings as a Markdown list for the chat. */
+const findingList = (findings: readonly Finding[]): string => findings.slice(0, 20).map(finding => '- ' + (finding.file ? '`' + finding.file + '`: ' : '') + finding.text).join('\n');
+
+export type { ImplementStage } from './native-chat.ts';
 export interface ChatRunHooks {
 	/** Called once the provider process exists, so the session can cancel it. */
 	started(cancel: () => void): void;
@@ -105,7 +109,12 @@ export interface ChatRuntime {
 	 * Starts the existing autonomous goal engine for a compound request (JUN-001, JUN-008): defaults inferred from the
 	 * project, one charter card for the user, the goal's own journal, lease and budget. Absent: compound requests run directly.
 	 */
-	startGoal?(objective: string): Promise<{ started: boolean; reason?: 'declined' | 'busy' | 'untrusted' | 'service' | 'error' }>;
+	startGoal?(objective: string, onEnd?: (summary: string) => void): Promise<{ started: boolean; reason?: 'declined' | 'busy' | 'untrusted' | 'service' | 'error'; code?: string; charter?: string }>;
+	/**
+	 * Independent read-only review of a verified change, by the other provider when it is available. The integration adds the
+	 * change's real diff to the instruction. Absent or switched off: runs end after their gates, as before.
+	 */
+	review?(implementer: NativeProvider, instruction: string, diff: RunDiffSummary, signal: AbortSignal): Promise<{ provider: NativeProvider; status: RunStatus; output: string }>;
 }
 export interface ChatActivity {
 	kind: 'thinking' | 'executing';
@@ -194,8 +203,7 @@ function writerBlockReason(t: Translate, block: ChatProjectContext['writerBlock'
 
 /** The visible assumption behind an Act request that did not go to the direct writer. */
 function routingNotice(t: Translate, routing: TaskRouting): string {
-	if (routing.route === 'compound-goal') { return t('Tu pedido tiene varias partes ({0}): lo ejecuto como objetivo aut\u00f3nomo por etapas, con revisi\u00f3n y verificaci\u00f3n. Te pido una sola aprobaci\u00f3n con el alcance, el presupuesto y los permisos.', routing.reasons.join(', ')); }
-	if (routing.route === 'ambiguous-or-risky') { return t('Este pedido toca {0}: no cambi\u00e9 nada todav\u00eda. Revis\u00e1 el plan y aprobalo si es lo que quer\u00e9s.', routing.reasons.join(', ')); }
+	if (routing.route === 'compound-goal') { return t('Tu pedido tiene varias partes ({0}): lo ejecuto como objetivo aut\u00f3nomo por etapas, con revisi\u00f3n y verificaci\u00f3n. Abajo va la carta con el alcance y el presupuesto.', routing.reasons.join(', ')); }
 	return t('Lo tom\u00e9 como una consulta: respond\u00ed sin modificar archivos. Si quer\u00e9s el cambio, pedilo con un verbo (\u00abagreg\u00e1\u00bb, \u00abcorreg\u00ed\u00bb).');
 }
 
@@ -204,6 +212,7 @@ function interruptedStage(t: Translate, stage: ImplementStage | undefined): stri
 	if (stage === 'preparing') { return ' ' + t('Se cort\u00f3 antes de que el agente empezara: no deber\u00eda haber cambios.'); }
 	if (stage === 'agent' || stage === 'repairing') { return ' ' + t('Se cort\u00f3 mientras el agente editaba: puede haber cambios parciales sin verificar.'); }
 	if (stage === 'verifying') { return ' ' + t('Los cambios ya estaban aplicados; la verificaci\u00f3n qued\u00f3 incompleta y no cuenta como aprobada.'); }
+	if (stage === 'reviewing') { return ' ' + t('Los cambios estaban aplicados y verificados; se cort\u00f3 durante la revisi\u00f3n independiente, que no lleg\u00f3 a completarse.'); }
 	return '';
 }
 
@@ -728,7 +737,7 @@ export class HarnessChatSession {
 		this.turnOk = false;
 		const provider = this.conversation.provider;
 		// Credentials pasted by mistake are neither stored nor sent to the provider.
-		this.conversation.messages.push(chatMessage('user', redactSecrets(body)));
+		const turnLength = this.conversation.messages.push(chatMessage('user', redactSecrets(body)));
 		// Mentioned file content is for this turn only: the history keeps the `@path` text, not the file. The notice is recorded
 		// after the instruction exists because the instruction builders require the user message to be the last one.
 		let engineering = '';
@@ -766,27 +775,25 @@ export class HarnessChatSession {
 			engineering = omitSkillBlocks(selection?.context ?? '', attachments.context ?? '');
 			this.skillSelection = selection?.trace ?? [];
 			if (controller.signal.aborted) { throw Error('HARNESS_CANCELLED_BEFORE_START'); }
-			// Act is routed by stable rules (JUN-001): questions answer read-only, risky work gets a reviewed plan,
-			// a compound goal goes to the existing goal engine, and everything else stays the fast direct writer.
+			// Act runs every instruction (JUN-001): a one-line question is answered read-only, a compound goal goes to the
+			// existing goal engine, and everything else to the fast direct writer. Permissions are enforced on each action.
 			const routing = mode === 'act' ? routeTask(body, 'act') : undefined;
 			this.routing = routing;
 			let routeContext = '';
 			if (routing && !this.writerBlockedReason(this.context.writer)) {
-				if (routing.route === 'compound-goal' && this.runtime.startGoal) {
-					await this.startGoal(body, provider, routing);
+				if (routing.route === 'compound-goal' && this.runtime.startGoal && await this.startGoal(body, provider, routing)) {
 					return;
 				}
-				if (routing.route === 'simple-edit' || (routing.route === 'compound-goal' && !this.runtime.startGoal)) {
+				if (routing.route !== 'question') {
 					// The instruction is built first: it requires the user message to be the latest one, and the preflight adds a notice.
-					const instruction = withAttachments(buildDirectInstruction(this.conversation.messages, this.context));
+					// Up to the user message: a goal engine that could not start may have added its notice after it.
+					const instruction = withAttachments(buildDirectInstruction(this.conversation.messages.slice(0, turnLength), this.context));
 					await this.preflightOnce(provider);
 					this.finish();
 					await this.execute(directPlan(body), provider, instruction);
 					return;
 				}
-				routeContext = routing.route === 'ambiguous-or-risky'
-					? '\n\nRouting: this request touches ' + routing.reasons.join(', ') + '. Do not change anything in this turn. Propose a harness-plan the user reviews and approves; if one decision changes the architecture or the risk, ask exactly one concrete question.'
-					: '\n\nRouting: the user asked a question. Answer it read-only; do not propose edits unless they ask for them.';
+				routeContext = '\n\nRouting: the user asked a question. Answer it read-only; do not propose edits unless they ask for them.';
 			}
 			const current = latestPlanMessage(this.conversation.messages)?.plan;
 			const userMessageId = this.conversation.messages.at(-1)!.id;
@@ -835,26 +842,38 @@ export class HarnessChatSession {
 	/**
 	 * A compound request in Act goes to the goal engine that already exists (analyst, architect, implementer, reviewer,
 	 * verifier, Definition of Done). The engine asks for the charter once; its journal, lease and budget stay authoritative.
+	 * Returns false when the engine itself failed: the request then runs on the direct writer instead of stopping.
 	 */
-	private async startGoal(body: string, provider: NativeProvider, routing: TaskRouting): Promise<void> {
+	private async startGoal(body: string, provider: NativeProvider, routing: TaskRouting): Promise<boolean> {
 		this.conversation.messages.push(chatMessage('notice', routingNotice(this.t, routing), { tone: 'info', provider }));
 		await this.persist();
 		let result: Awaited<ReturnType<NonNullable<ChatRuntime['startGoal']>>>;
-		try { result = await this.runtime.startGoal!(body); }
-		catch { result = { started: false, reason: 'error' }; }
+		// The goal runs in the background; how it ended comes back to this conversation.
+		const onEnd = (summary: string): void => {
+			this.conversation.messages.push(chatMessage('notice', summary, { tone: 'info', provider }));
+			this.emit();
+			void this.persist().catch(() => undefined);
+		};
+		try { result = await this.runtime.startGoal!(body, onEnd); }
+		catch (error) { result = { started: false, reason: 'error', code: harnessErrorCode(error) }; }
 		if (result.started) {
 			this.turnOk = true;
-			this.conversation.messages.push(chatMessage('notice', this.t('Objetivo iniciado. Lo sigo por etapas (an\u00e1lisis, dise\u00f1o, implementaci\u00f3n, revisi\u00f3n y verificaci\u00f3n); abajo pod\u00e9s pausarlo o detenerlo, y la entrega llega con su evidencia.'), { tone: 'info', provider }));
-			return;
+			this.conversation.messages.push(chatMessage('notice', this.t('Objetivo iniciado. Lo sigo por etapas (an\u00e1lisis, dise\u00f1o, implementaci\u00f3n, revisi\u00f3n y verificaci\u00f3n); abajo pod\u00e9s pausarlo o detenerlo, y la entrega llega con su evidencia.') + (result.charter ? '\n\n' + result.charter : ''), { tone: 'info', provider }));
+			return true;
 		}
-		// Not started: the request is kept, never lost and never run by itself.
+		if (!result.reason || result.reason === 'error') {
+			this.conversation.messages.push(chatMessage('notice', this.t('El motor de objetivos no pudo arrancar{0}. Sigo con el ejecutor directo, con las mismas verificaciones.', result.code ? ' (' + result.code + ')' : ''), { tone: 'info', provider }));
+			await this.persist();
+			return false;
+		}
+		// The user declined, or the project cannot host it now: the request is kept, never lost and never run by itself.
 		this.suspend([{ text: body, mode: 'act' }], 'preflight');
 		const reasons: Record<string, string> = {
 			declined: this.t('No aprobaste la carta del objetivo.'), busy: this.t('Ya hay un objetivo o una ejecuci\u00f3n escribiendo en este proyecto.'),
 			untrusted: this.t('El workspace no es confiable.'), service: this.t('Falta un servicio que el proyecto necesita.')
 		};
-		const why = reasons[result.reason ?? ''] ?? this.t('El motor de objetivos no pudo arrancar.');
-		this.conversation.messages.push(chatMessage('notice', why + ' ' + this.t('Tu pedido qued\u00f3 en pausa: retomalo cuando quieras o editalo.'), { tone: 'info', provider }));
+		this.conversation.messages.push(chatMessage('notice', reasons[result.reason] + ' ' + this.t('Tu pedido qued\u00f3 en pausa: retomalo cuando quieras o editalo.'), { tone: 'info', provider }));
+		return true;
 	}
 
 	/**
@@ -1008,49 +1027,71 @@ export class HarnessChatSession {
 			};
 			// Implement, verify, classify, correct, verify again (JUN-002): bounded by MAX_CORRECTIONS, stopped by a repeated
 			// failure, and only for failures a code change can fix. The task's approvals stay valid across corrections (JUN-005).
-			let request = { instruction, resumeSession: options.resumeSession, continued: options.continued, repair: undefined as { attempt: number; max: number } | undefined };
-			let previousSignature: string | undefined;
+			type RunRequest = { instruction: string; resumeSession?: string; continued?: boolean; repair?: { attempt: number; max: number } };
 			const passedGates = new Set<string>();
-			const changedFiles = new Set<string>();
-			for (let attempt = 0; ; attempt++) {
-				const runStarted = attempt ? Date.now() : started;
-				// A native writer turn continues the conversation's session; everything up to the latest message is in its input.
-				const native = !request.resumeSession && (await this.transportState(provider))?.native;
-				const transport: TurnTransport | undefined = native ? { conversationId: this.conversation.conversationId!, inputRef: this.conversation.messages.at(-1)?.id } : undefined;
-				const result = await this.runtime.implement({ provider, instruction: request.instruction, plan, verificationRevision: context.verification?.revision, ...(request.resumeSession ? { resumeSession: request.resumeSession } : {}), ...(transport ? { transport } : {}) }, hooks, controller.signal);
-				this.noteUsage(provider, result.agent.usage, result.agent.firstTokenMs);
-				await this.noteQuota(provider, result.agent.quota);
-				// The agent result decides first; a passing agent is only as good as its verification.
-				let status: RunStatus = result.agent.status;
-				if (status === 'passed' && result.verification.status !== 'skipped') { status = result.verification.status; }
-				const outcome = classifyRun({ agent: result.agent, verification: result.verification.status, diff: result.diff });
-				this.turnOk = status === 'passed' && !controller.signal.aborted;
-				for (const file of result.diff.files) { changedFiles.add(file.path); }
-				const failures = status === 'failed' && result.agent.status === 'passed' && outcome.kind === 'failed' ? (result.verification.failures ?? []).map(failure => classifyGateFailure(failure, passedGates.has(failure.id))) : [];
-				const stop = failures.length ? this.repairStop(failures, attempt, previousSignature, result.diff) : undefined;
-				for (const gate of result.verification.gates) { if (gate.status === 'passed') { passedGates.add(gate.id); } }
-				const steps = this.activity?.steps?.length ? summarizeSteps(this.activity.steps) : undefined;
-				// Gate outputs stay in memory for the correction; the history keeps statuses and the evidence ledger only.
-				const { status: verificationStatus, gates, error, evidence } = result.verification;
-				const verification = { status: verificationStatus, gates, ...(error ? { error } : {}) };
-				this.conversation.messages.push(chatMessage('run', result.agent.output.trim() || this.t('El agente no devolvi\u00f3 un informe.'), {
-					provider, tone: outcome.kind === 'failed' || outcome.kind === 'blocked' ? 'error' : 'info',
-					run: {
-						planVersion: plan.version, provider, status, agentStatus: result.agent.status, durationMs: Date.now() - runStarted, verification, outcome,
-						...(request.continued ? { continued: true } : {}), ...(steps ? { steps } : {}), ...(result.agent.searches?.length ? { searches: result.agent.searches } : {}),
-						...(evidence?.length ? { evidence } : {}), ...(request.repair ? { repair: request.repair } : {}),
-						...(stop ? { repairStop: { reason: stop, failures: failures.map(item => ({ gate: item.id, failure: item.failure })) } } : {})
-					}
-				}));
-				if (!failures.length || stop || controller.signal.aborted) { break; }
-				// Correct only what failed, under the same plan, fence, lease and permissions; the gates run again afterwards.
-				previousSignature = failureSignature(failures);
-				const next = { attempt: attempt + 1, max: MAX_CORRECTIONS };
-				this.conversation.messages.push(chatMessage('notice', this.t('Detect\u00e9 {0} verificaciones con errores ({1}) y las estoy corrigiendo: intento {2} de {3}.', String(failures.length), [...new Set(failures.map(item => item.failure))].join(', '), String(next.attempt), String(next.max)), { tone: 'info', provider }));
+			// What the task changed, for corrections and the reviewer's diff: a file created in one run stays "added" after later edits.
+			const changes = new Map<string, RunFileChange>();
+			const runAndRepair = async (first: RunRequest): Promise<void> => {
+				let request = first;
+				let previousSignature: string | undefined;
+				for (let attempt = 0; ; attempt++) {
+					const runStarted = attempt ? Date.now() : started;
+					// A native writer turn continues the conversation's session; everything up to the latest message is in its input.
+					const native = !request.resumeSession && (await this.transportState(provider))?.native;
+					const transport: TurnTransport | undefined = native ? { conversationId: this.conversation.conversationId!, inputRef: this.conversation.messages.at(-1)?.id } : undefined;
+					const result = await this.runtime.implement({ provider, instruction: request.instruction, plan, verificationRevision: context.verification?.revision, ...(request.resumeSession ? { resumeSession: request.resumeSession } : {}), ...(transport ? { transport } : {}) }, hooks, controller.signal);
+					this.noteUsage(provider, result.agent.usage, result.agent.firstTokenMs);
+					await this.noteQuota(provider, result.agent.quota);
+					// The agent result decides first; a passing agent is only as good as its verification.
+					let status: RunStatus = result.agent.status;
+					if (status === 'passed' && result.verification.status !== 'skipped') { status = result.verification.status; }
+					const outcome = classifyRun({ agent: result.agent, verification: result.verification.status, diff: result.diff });
+					this.turnOk = status === 'passed' && !controller.signal.aborted;
+					for (const file of result.diff.files) { changes.set(file.path, changes.get(file.path)?.change === 'added' ? { ...file, change: 'added' } : file); }
+					const failures = status === 'failed' && result.agent.status === 'passed' && outcome.kind === 'failed' ? (result.verification.failures ?? []).map(failure => classifyGateFailure(failure, passedGates.has(failure.id))) : [];
+					const stop = failures.length ? this.repairStop(failures, attempt, previousSignature, result.diff) : undefined;
+					for (const gate of result.verification.gates) { if (gate.status === 'passed') { passedGates.add(gate.id); } }
+					const steps = this.activity?.steps?.length ? summarizeSteps(this.activity.steps) : undefined;
+					// Gate outputs stay in memory for the correction; the history keeps statuses and the evidence ledger only.
+					const { status: verificationStatus, gates, error, evidence } = result.verification;
+					const verification = { status: verificationStatus, gates, ...(error ? { error } : {}) };
+					this.conversation.messages.push(chatMessage('run', result.agent.output.trim() || this.t('El agente no devolvi\u00f3 un informe.'), {
+						provider, tone: outcome.kind === 'failed' || outcome.kind === 'blocked' ? 'error' : 'info',
+						run: {
+							planVersion: plan.version, provider, status, agentStatus: result.agent.status, durationMs: Date.now() - runStarted, verification, outcome,
+							...(request.continued ? { continued: true } : {}), ...(steps ? { steps } : {}), ...(result.agent.searches?.length ? { searches: result.agent.searches } : {}),
+							...(evidence?.length ? { evidence } : {}), ...(request.repair ? { repair: request.repair } : {}),
+							...(stop ? { repairStop: { reason: stop, failures: failures.map(item => ({ gate: item.id, failure: item.failure })) } } : {})
+						}
+					}));
+					if (!failures.length || stop || controller.signal.aborted) { break; }
+					// Correct only what failed, under the same plan, fence, lease and permissions; the gates run again afterwards.
+					previousSignature = failureSignature(failures);
+					const next = { attempt: attempt + 1, max: MAX_CORRECTIONS };
+					this.conversation.messages.push(chatMessage('notice', this.t('Detect\u00e9 {0} verificaciones con errores ({1}) y las estoy corrigiendo: intento {2} de {3}.', String(failures.length), [...new Set(failures.map(item => item.failure))].join(', '), String(next.attempt), String(next.max)), { tone: 'info', provider }));
+					hooks.stage('repairing');
+					if (this.activity) { this.activity.steps = []; this.activity.partial = undefined; }
+					await this.persist();
+					request = { instruction: buildRepairInstruction(plan, failures, next.attempt, next.max, [...changes.keys()]), resumeSession: undefined, continued: true, repair: next };
+				}
+			};
+			await runAndRepair({ instruction, resumeSession: options.resumeSession, continued: options.continued });
+			// Independent review (the goal team's reviewer): blocking findings are corrected and verified again, bounded.
+			for (let round = 0; this.turnOk && changes.size && this.runtime.review && !controller.signal.aborted; round++) {
+				hooks.stage('reviewing');
+				const blocking = await this.independentReview(plan, provider, { available: true, files: [...changes.values()], count: changes.size }, controller.signal);
+				if (!blocking.length || controller.signal.aborted) { break; }
+				if (round >= MAX_CORRECTIONS) {
+					this.turnOk = false;
+					this.conversation.messages.push(chatMessage('notice', this.t('La revisi\u00f3n independiente todav\u00eda marca {0} problemas despu\u00e9s de {1} correcciones; no lo doy por terminado. Revisalos:', String(blocking.length), String(MAX_CORRECTIONS)) + '\n\n' + findingList(blocking), { tone: 'error', provider }));
+					break;
+				}
+				const next = { attempt: round + 1, max: MAX_CORRECTIONS };
+				this.conversation.messages.push(chatMessage('notice', this.t('La revisi\u00f3n independiente encontr\u00f3 {0} problemas y los estoy corrigiendo (ronda {1} de {2}):', String(blocking.length), String(next.attempt), String(next.max)) + '\n\n' + findingList(blocking), { tone: 'info', provider }));
 				hooks.stage('repairing');
 				if (this.activity) { this.activity.steps = []; this.activity.partial = undefined; }
 				await this.persist();
-				request = { instruction: buildRepairInstruction(plan, failures, next.attempt, next.max, [...changedFiles]), resumeSession: undefined, continued: true, repair: next };
+				await runAndRepair({ instruction: buildReviewFixInstruction(plan, blocking, next.attempt, next.max, [...changes.keys()]), continued: true, repair: next });
 			}
 		} catch (error) {
 			this.conversation.messages.push(chatMessage('notice', this.errorNotice(error), { tone: cancelledBeforeStart(error) ? 'info' : 'error', provider }));
@@ -1059,6 +1100,30 @@ export class HarnessChatSession {
 			await this.persist();
 			await this.drainQueue(controller.signal.aborted);
 		}
+	}
+
+	/**
+	 * One independent review round; returns its blocking findings. A review that cannot run or answers without a valid
+	 * `harness-review` block is reported as not done, never as approved, and does not block the verified change.
+	 */
+	private async independentReview(plan: ChatPlan, provider: NativeProvider, diff: RunDiffSummary, signal: AbortSignal): Promise<Finding[]> {
+		let result: Awaited<ReturnType<NonNullable<ChatRuntime['review']>>>;
+		try { result = await this.runtime.review!(provider, buildReviewInstruction(plan, diff.files.map(file => file.path), roleInstruction('reviewer')), diff, signal); }
+		catch (error) {
+			this.conversation.messages.push(chatMessage('notice', this.t('No se pudo hacer la revisi\u00f3n independiente ({0}). Los cambios quedan verificados por las pruebas, sin revisi\u00f3n.', harnessErrorCode(error)), { tone: 'info', provider }));
+			return [];
+		}
+		const review = result.status === 'passed' ? parseReview(result.output) : undefined;
+		if (!review) {
+			this.conversation.messages.push(chatMessage('notice', this.t('La revisi\u00f3n independiente de {0} no devolvi\u00f3 un resultado v\u00e1lido. Los cambios quedan verificados por las pruebas, sin revisi\u00f3n.', result.provider), { tone: 'info', provider: result.provider }));
+			return [];
+		}
+		const blocking = review.findings.filter(finding => finding.severity === 'blocking');
+		const suggestions = review.findings.length - blocking.length;
+		if (!blocking.length) {
+			this.conversation.messages.push(chatMessage('notice', this.t('Revisi\u00f3n independiente de {0}: aprobada, puntaje {1} de 10.', result.provider, String(review.score)) + (suggestions ? ' ' + this.t('Sugerencias (no bloquean):') + '\n\n' + findingList(review.findings) : ''), { tone: 'info', provider: result.provider }));
+		}
+		return blocking;
 	}
 
 	/**

@@ -292,7 +292,8 @@ async function authorize(context: GitToolsContext, request: Exclude<PermissionRe
 	const verdict = context.permissions.decide(request);
 	if (verdict.decision === 'deny') { return 'POLICY_DENIED: ' + (verdict.reason ?? verdict.rule ?? 'denied by permissions'); }
 	if (verdict.decision === 'allow') { return undefined; }
-	return requestApproval(context.ask, { kind: request.kind, title, detail, rule: suggestRule(request), ...subject });
+	// The rule carries the project root, as the one the extension remembers: without it "Always" saved the rule and still denied the call.
+	return requestApproval(context.ask, { kind: request.kind, title, detail, rule: suggestRule(request, context.root), ...subject });
 }
 
 async function runGit(context: GitToolsContext, args: string[], timeoutSec?: number): Promise<Awaited<ReturnType<typeof runCommand>>> {
